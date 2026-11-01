@@ -107,6 +107,83 @@ class TestU8ExitRegressions(unittest.TestCase):
                         self.assertEqual({p.relative_to(home): p.read_bytes()
                             for p in home.rglob('*') if p.is_file()}, before)
 
+    def test_locale_decoded_context_keeps_its_legacy_key(self):
+        # A locale change can change the decoded name itself. Preserve the
+        # legacy key for that context too, rather than inventing a migration.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            context = root / 'caf\u00c3\u00a9'
+            legacy = hashlib.sha256(str(context).encode('utf-8')).hexdigest()[:12]
+            native_os = types.SimpleNamespace(**vars(os))
+            native_os.getcwd = lambda: str(context)
+            native_os.fsencode = lambda value: os.fspath(value).encode('latin-1', 'surrogateescape')
+            with mock.patch.object(paths, 'os', native_os), \
+                    mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(root / 'xdg')}):
+                state, runs, _ = paths.resolve_paths(need_root=True)
+            self.assertEqual(state.parent.name, 'caf-' + legacy)
+            self.assertEqual(runs, state.parent / 'runs')
+
+    def assert_witness_roundtrip(self, entry, fail_body):
+        directory = Path(entry['state_dir'])
+        names = (readiness.MARKER, readiness.SENTINEL)
+        before = {name: (directory / name).read_bytes() for name in names}
+        entries = sorted(p.name for p in directory.iterdir())
+        # An old fixed timestamp makes late cleanup detectable even on a
+        # filesystem whose timestamp resolution cannot separate adjacent calls.
+        os.utime(directory, ns=(1234567890000000000, 1234567890000000000))
+        original = directory.stat()
+        def consume():
+            with missing_installation(entry):
+                self.assertFalse(any((directory / name).exists() for name in names))
+                if fail_body:
+                    raise RuntimeError('synthetic consumer failure')
+        try:
+            if fail_body:
+                with self.assertRaisesRegex(RuntimeError, 'synthetic consumer failure'):
+                    consume()
+            else:
+                consume()
+        finally:
+            self.assertEqual({name: (directory / name).read_bytes() for name in names}, before)
+            self.assertEqual(sorted(p.name for p in directory.iterdir()), entries)
+            after = directory.stat()
+            self.assertEqual((after.st_ino, after.st_mtime_ns),
+                             (original.st_ino, original.st_mtime_ns))
+            self.assertEqual(readiness.state(directory), readiness.READY)
+
+    def test_missing_installation_state_is_mountpoint(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            entry = ready_installation(Path(temporary).resolve())
+            directory = Path(entry['state_dir'])
+            original_rename = Path.rename
+            def volume(path):
+                path = Path(path).absolute()
+                return 1 if path == directory or directory in path.parents else 2
+            def rename(source, target):
+                if volume(source) != volume(target):
+                    raise OSError(errno.EXDEV, 'synthetic state mountpoint', str(source))
+                return original_rename(source, target)
+            for fail_body in (False, True):
+                with self.subTest(fail_body=fail_body), mock.patch.object(Path, 'rename', rename):
+                    self.assert_witness_roundtrip(entry, fail_body)
+
+    def test_missing_installation_parent_is_not_writable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            entry = ready_installation(Path(temporary).resolve())
+            directory = Path(entry['state_dir'])
+            original_temporary = tempfile.TemporaryDirectory
+            def temporary_with_readonly_parent(*args, **kwargs):
+                # Model EACCES at the allocation boundary; works even when
+                # CI runs with privileges that bypass real permission bits.
+                parent = kwargs.get('dir')
+                if parent is not None and Path(parent) == directory.parent:
+                    raise PermissionError(errno.EACCES, 'synthetic readonly parent')
+                return original_temporary(*args, **kwargs)
+            for fail_body in (False, True):
+                with self.subTest(fail_body=fail_body), \
+                        mock.patch.object(tempfile, 'TemporaryDirectory', temporary_with_readonly_parent):
+                    self.assert_witness_roundtrip(entry, fail_body)
+
     def test_missing_installation_cross_device(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
