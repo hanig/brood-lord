@@ -69,7 +69,7 @@ def missing_installation(entry):
     """
     directory = Path(entry['state_dir'])
     original = directory.stat()
-    with tempfile.TemporaryDirectory(dir=directory.parent) as tmp:
+    with tempfile.TemporaryDirectory(dir=directory) as tmp:
         moved = []
         absent = original
         try:
@@ -85,6 +85,9 @@ def missing_installation(entry):
             untouched = (after.st_ino, after.st_mtime_ns) == (absent.st_ino, absent.st_mtime_ns)
             for source, target in reversed(moved):
                 target.rename(source)
+            # Remove staging before resetting times: its later cleanup would
+            # otherwise change the state directory after the metadata restore.
+            Path(tmp).rmdir()
             # Undo fixture metadata only when the consumer left it untouched.
             # An extra entry or write must remain visible to snapshot assertions.
             if untouched:
