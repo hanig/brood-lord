@@ -234,18 +234,45 @@ class TestInstalledSkillDrift(unittest.TestCase):
         self.install(".agents", "hanig-foo", self.base).unlink()
         real_run = S.U.run
 
-        def unavailable(argv, **kwargs):
-            if argv[:4] == ["git", "-C", str(self.repo.resolve()), "ls-tree"]:
-                return 128, "", "fixture catalog unavailable"
-            return real_run(argv, **kwargs)
+        for stage in ("root", "listing"):
+            with self.subTest(stage=stage):
+                def unavailable(argv, **kwargs):
+                    if ((stage == "root" and "skill-catalog" in argv)
+                            or (stage == "listing" and argv[:4] == [
+                                "git", "-C", str(self.repo.resolve()), "ls-tree"])):
+                        return 128, "", "fixture catalog unavailable"
+                    return real_run(argv, **kwargs)
 
-        with mock.patch.object(S.U, "run", unavailable):
-            _attempt, facts, warning = self.dispatch()
-        self.assertEqual(facts["installed_skills"]["skills"], [])
-        self.assertEqual(len(facts["installed_skills"]["errors"]), 1)
-        self.assertIn("fixture catalog unavailable", warning)
+                with mock.patch.object(S.U, "run", unavailable):
+                    _attempt, facts, warning = self.dispatch(stage)
+                self.assertEqual(facts["installed_skills"]["skills"], [])
+                self.assertEqual(len(facts["installed_skills"]["errors"]), 1)
+                self.assertIn("fixture catalog unavailable", warning)
+                self.assertIn("Advisory only; dispatch continues.", warning)
+                self.assertNotIn("hanig-foo", warning)
+
+    def assert_shipped_symlink_warns(self, source, target):
+        git(self.repo, "mv", source, target)
+        link = self.repo / source
+        link.symlink_to(os.path.relpath(self.repo / target, link.parent),
+                        target_is_directory=True)
+        git(self.repo, "add", source)
+        self.advance_repo_base()
+        link.unlink()
+        link.symlink_to("uncommitted-missing")
+        self.install(".agents", "hanig-swarm", self.base).unlink()
+        _attempt, facts, warning = self.dispatch()
+        self.assertEqual([row["skill"] for row in facts["installed_skills"]["skills"]],
+                         ["hanig-swarm"])
+        self.assertEqual(warning.count("installed skill audit incomplete"), 1)
+        self.assertIn("FileNotFoundError", warning)
         self.assertIn("Advisory only; dispatch continues.", warning)
-        self.assertNotIn("hanig-foo", warning)
+
+    def test_shipped_root_symlink_warns(self):
+        self.assert_shipped_symlink_warns("skills", "catalog")
+
+    def test_shipped_bundle_symlink_warns(self):
+        self.assert_shipped_symlink_warns("skills/hanig-swarm", "catalog")
 
     def test_dangling_skill_entry_warns_and_persists_one_advisory_error(self):
         marker = self.install(".agents", "hanig-swarm", self.base)

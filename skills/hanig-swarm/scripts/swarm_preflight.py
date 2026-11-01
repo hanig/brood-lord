@@ -732,9 +732,30 @@ def _installed_skill_snapshot(repo, base):
     a version and report it at dispatch. This does not certify installed bytes.
     """
     snapshot = {"skills": [], "errors": []}
+
+    def tree_at(path):
+        expression = base + ":" + path
+        # Git 2.23 follows in-tree links through batch stdin. Shell arguments
+        # stay quoted data; U.run bounds the whole process group as usual.
+        rc, info, error = U.run([
+            "/bin/sh", "-c", 'printf "%s\\n" "$2" | git -C "$1" cat-file '
+            '\'--batch-check=%(objecttype) %(objectname)\' --follow-symlinks',
+            "skill-catalog", str(repo), expression], timeout=5,
+            preserve_newlines=True)
+        match = re.fullmatch(r"(tree|blob|commit) ([0-9a-f]{40}|[0-9a-f]{64})", info)
+        if rc == 0 and match:
+            return match[2] if match[1] == "tree" else None
+        if rc != 0 or info != expression + " missing":
+            snapshot["errors"].append({"path": str(repo) + ":" + path,
+                                       "error": error or info or str(rc)})
+        return None
+
+    tree = tree_at("skills")
+    if tree is None:
+        return snapshot
     rc, paths, error = U.run(
-        ["git", "-C", str(repo), "ls-tree", "-d", "-z", "--name-only",
-         base, "--", "skills/"], timeout=5, preserve_newlines=True)
+        ["git", "-C", str(repo), "ls-tree", "-z", tree],
+        timeout=5, preserve_newlines=True)
     if rc != 0:
         snapshot["errors"].append({
             "path": str(repo),
@@ -742,8 +763,14 @@ def _installed_skill_snapshot(repo, base):
         return snapshot
     # Match selected_sources' authored-directory classifier on the pinned
     # repository tree. Prefix ownership is not inferred from installed names.
-    shipped = {path[len("skills/"):] for path in paths.split("\0")
-               if path.startswith("skills/hanig-") and ".bak" not in path}
+    shipped = set()
+    for entry in paths.split("\0"):
+        metadata, separator, name = entry.partition("\t")
+        if not separator or not name.startswith("hanig-") or ".bak" in name:
+            continue
+        mode = metadata.split(" ", 1)[0]
+        if mode == "040000" or (mode == "120000" and tree_at("skills/" + name)):
+            shipped.add(name)
     if not shipped:
         return snapshot
     resolved_versions = {}
