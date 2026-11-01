@@ -1,4 +1,5 @@
 """Synthetic submitted effect child; R3's installation-side M5 consumer."""
+from contextlib import nullcontext
 import os
 from pathlib import Path
 import subprocess
@@ -23,10 +24,10 @@ def main():
         os.set_inheritable(inherited, False)
         with record.drain(inherited_fd=inherited):
             os.close(inherited)
-            with mock.patch.object(ledger.registry, "d5_active", return_value=True), \
+            with nullcontext(), \
                     mock.patch.object(ledger.registry, "lookup", return_value={
                         "registration_id": "a" * 32, "record_dir": directory}):
-                attempt = ledger.prepare("fixture", "p", "fixture", record_id="a" * 32,
+                attempt = ledger.prepare("fixture", "p", ledger.readiness.installation(directory)["state_dir"], record_id="a" * 32,
                     custody=dict(generation=1, session_id="fixture", anchor_pid=42, anchor_start_us=101),
                     kind="synthetic", scope=dict(plans=["p"], repositories=["r"], actions=["a"], trackers=[]),
                     correlation={"request_id": "M5"})

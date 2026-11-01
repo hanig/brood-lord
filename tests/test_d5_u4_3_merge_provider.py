@@ -1,4 +1,5 @@
 """U4.3 actual merge boundary, split START, durable provider and no replay."""
+from contextlib import nullcontext
 import argparse
 from contextlib import ExitStack
 import hashlib
@@ -45,7 +46,7 @@ class TestMergeProvider(unittest.TestCase):
         self.c = t.TestSubmission()
         self.c.setUp()
         self.addCleanup(self.c.doCleanups)
-        self.stack.enter_context(mock.patch.object(activation, 'd5_active', return_value=True))
+        self.stack.enter_context(nullcontext())
         self.stack.enter_context(mock.patch.object(M, 'merge_launch_admitted', return_value=True))
         self.binding = dict(unit='u', attempt='a', head='a' * 40,
             repo='https://github.com/example/project', target='main', pr=7)
@@ -75,6 +76,29 @@ class TestMergeProvider(unittest.TestCase):
         self.boundary = M._MergeBoundary(self.c.state_dir, self.binding, str(self.c.repo),
             'github.com', 'example/project', self.cmd, self.intent)
         self.c.boundary = self.boundary
+
+    def test_journal_callers_resolve_relative_state_before_classifying(self):
+        from tests.fixtures.d5.ready import missing_installation
+        entry = readiness.require(self.c.state_dir)
+        previous = Path.cwd()
+        try:
+            os.chdir(self.c.state_dir.parent)
+            relative = Path(self.c.state_dir.name)
+            for locator in (relative, self.c.state_dir):
+                with self.subTest(locator=locator):
+                    with J.protocol.pin(entry['record_dir']) as record:
+                        with record.drain():
+                            self.assertEqual(J._held(locator), entry)
+                    with J.recovery_drain(locator):
+                        pass
+                    with missing_installation(entry):
+                        with self.assertRaisesRegex(J.AuthorityError, '^D5 merge journal: inactive$'):
+                            J._held(locator)
+                        with self.assertRaisesRegex(J.AuthorityError, '^D5 merge journal: inactive$'):
+                            with J.recovery_drain(locator):
+                                pass
+        finally:
+            os.chdir(previous)
 
     def save_forge(self):
         self.forge_path.write_text(json.dumps(self.forge))
@@ -591,7 +615,7 @@ class TestOperator(unittest.TestCase):
         self.addCleanup(c.doCleanups)
         with ExitStack() as stack:
             stack.enter_context(mock.patch.dict(os.environ, c.env))
-            stack.enter_context(mock.patch.object(activation, 'd5_active', return_value=True))
+            stack.enter_context(nullcontext())
             stack.enter_context(mock.patch.object(M, 'merge_launch_admitted', return_value=True))
             stack.enter_context(mock.patch.object(t.registry.CP, '_external_base', return_value=c.directory / 'external'))
             stack.enter_context(mock.patch.object(t.host, 'session_anchor', return_value=('native', t.ANCHOR)))

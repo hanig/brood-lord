@@ -1,4 +1,5 @@
 """U4.9a named-entry refusals and merge containment; no isolation claim."""
+from contextlib import nullcontext
 from contextlib import ExitStack, redirect_stdout, redirect_stderr
 import builtins
 import io
@@ -72,8 +73,9 @@ class TestMergeAdmission(unittest.TestCase):
                 case = TestD5Registry()
                 case.setUp()
                 stack.callback(case.doCleanups)
-                if installed:
-                    ready(case, case.repo, 'p', case.state)
+                ready(case, case.repo, 'p', case.state)
+                if not installed:
+                    (case.state / DR.MARKER).unlink()
                 tmp = stack.enter_context(tempfile.TemporaryDirectory())
                 fixture = SurfaceFixture(tmp)
                 fixture.args.state_dir = str(case.state)
@@ -91,14 +93,14 @@ class TestMergeAdmission(unittest.TestCase):
                         (urllib.request, 'urlopen')):
                     probes.append(stack.enter_context(mock.patch.object(owner, name,
                         side_effect=AssertionError('unexpected ' + name))))
-                stack.enter_context(mock.patch.object(M.D5, 'd5_active', return_value=True))
+                stack.enter_context(nullcontext())
                 output = io.StringIO()
                 with no_effects() as effects, redirect_stderr(output):
                     for call in calls:
-                        with self.assertRaisesRegex(M.Refusal, 'U7.*executable binding'):
+                        with self.assertRaisesRegex(M.Refusal, 'executable binding.*U8 cutover'):
                             call()
                     self.assertEqual(M.main(fixture.margv), 1)
-                    self.assertIn('U7', output.getvalue())
+                    self.assertIn('U8 cutover', output.getvalue())
                     self.assertIn('executable binding', output.getvalue())
                     self.assertEqual(effects, ([], []))
                 for probe in probes:
@@ -205,12 +207,16 @@ class TestMergeAudit(unittest.TestCase):
                 imported.append(name)
                 raise AssertionError('unexpected tracker import')
             return original(name, *args, **kwargs)
-        with mock.patch.object(M.D5, 'd5_active', return_value=True), \
+        from tests.fixtures.d5.ready import ready_installation
+        installed = tempfile.TemporaryDirectory()
+        self.addCleanup(installed.cleanup)
+        entry = ready_installation(installed.name)
+        with nullcontext(), \
                 mock.patch.object(builtins, '__import__', importing), \
                 mock.patch.object(M.skill_paths, 'sibling_skill_root') as lookup, \
                 mock.patch.object(M.tempfile, 'TemporaryDirectory') as temporary, \
                 redirect_stdout(io.StringIO()) as output, no_effects() as effects:
-            M.print_tracker_audit(SimpleNamespace())
+            M.print_tracker_audit(SimpleNamespace(state_dir=entry['state_dir']))
             self.assertIn('Tracker: UNAVAILABLE (D5 active:', output.getvalue())
             self.assertEqual(effects, ([], []))
             self.assertEqual(imported, [])

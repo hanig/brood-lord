@@ -1,4 +1,5 @@
 """D5 lease API through real registration and the record store."""
+from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 from pathlib import Path
@@ -16,7 +17,7 @@ import d5_authority_store as store
 import d5_host as host
 import d5_lease as lease
 import d5_registry as registry
-from tests.fixtures.d5.ready import ready
+from tests.fixtures.d5.ready import ready, classification_only, missing_installation
 from tests.test_d5_locks import isolate_pool
 
 
@@ -52,9 +53,9 @@ class TestD5Lease(unittest.TestCase):
                                    return_value=self.directory / "installed-registry"):
                 ready(self, self.repo, "p", self.state)
 
-    def register(self):
-        with mock.patch.object(registry, "d5_active", return_value=True):
-            return ready(self, self.repo, "p", self.state)
+    def register(self, promote=True):
+        with nullcontext():
+            return ready(self, self.repo, "p", self.state, promote=promote)
 
     def grant(self, **changes):
         args = dict(self.args, **changes)
@@ -74,9 +75,9 @@ class TestD5Lease(unittest.TestCase):
     def test_inactive_refuses_before_filesystem_access(self):
         self.base.mkdir()
         before = self.tree()
-        self.assertFalse(registry.d5_active())
-        with mock.patch.object(registry, "lookup", side_effect=AssertionError("lookup")), \
+        with classification_only(self.state), mock.patch.object(registry, "lookup", side_effect=AssertionError("lookup")), \
                 mock.patch.object(store, "present", side_effect=AssertionError("stat")):
+            self.assertFalse(registry.d5_active(self.state))
             for operation in (self.grant,
                               lambda: lease.revoke(self.repo, "p", self.state, 150, "stop")):
                 with self.subTest(operation=operation):
@@ -87,7 +88,7 @@ class TestD5Lease(unittest.TestCase):
 
     def test_management_requires_registration(self):
         before = self.tree()
-        with mock.patch.object(registry, "d5_active", return_value=True), \
+        with nullcontext(), \
                 mock.patch.object(store, "create") as create, \
                 mock.patch.object(store, "replace") as replace, \
                 mock.patch.object(store, "revoke") as revoke:
@@ -104,7 +105,7 @@ class TestD5Lease(unittest.TestCase):
 
     def test_grant_stores_exact_record_and_confirmation(self):
         entry = self.register()
-        with mock.patch.object(registry, "d5_active", return_value=True):
+        with nullcontext():
             result = self.grant()
         record = authority.decode((Path(entry["record_dir"]) / store.RECORD_NAME).read_bytes())
         self.assertEqual(record, result)
@@ -120,7 +121,7 @@ class TestD5Lease(unittest.TestCase):
     def test_expiry_beyond_24_hours_validates_before_any_write(self):
         self.register()
         before = self.tree()
-        with mock.patch.object(registry, "d5_active", return_value=True), \
+        with nullcontext(), \
                 mock.patch.object(registry, "lookup", side_effect=AssertionError("lookup")), \
                 mock.patch.object(authority, "validate", wraps=authority.validate) as validate:
             with self.assertRaisesRegex(registry.AuthorityError, "expires_at"):
@@ -131,17 +132,17 @@ class TestD5Lease(unittest.TestCase):
     def test_second_grant_replaces_and_archives_first(self):
         entry = self.register()
         directory = Path(entry["record_dir"])
-        with mock.patch.object(registry, "d5_active", return_value=True):
+        with nullcontext():
             first = self.grant()
             raw = (directory / store.RECORD_NAME).read_bytes()
-            second = self.grant(owner_response="Nouvelle confirmation\n", expires_at=300)
+            second = self.grant(owner_response="Nouvelle confirmation\n", confirmed_at=102, expires_at=300)
         self.assertNotEqual(first["grant_id"], second["grant_id"])
         self.assertEqual((directory / "superseded" / (first["grant_id"] + ".json")).read_bytes(), raw)
         self.assertEqual(authority.decode((directory / store.RECORD_NAME).read_bytes()), second)
 
     def test_replacement_keeps_store_consent_rules(self):
         self.register()
-        with mock.patch.object(registry, "d5_active", return_value=True):
+        with nullcontext():
             self.grant()
             before = self.tree()
             with self.assertRaisesRegex(registry.AuthorityError, "fresh confirmation"):
@@ -168,7 +169,7 @@ class TestD5Lease(unittest.TestCase):
             except registry.AuthorityError as exc:
                 return exc
 
-        with mock.patch.object(registry, "d5_active", return_value=True), \
+        with nullcontext(), \
                 mock.patch.object(store, "present", side_effect=synchronized_present), \
                 ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda _: attempt(), range(2)))
@@ -182,7 +183,7 @@ class TestD5Lease(unittest.TestCase):
 
     def test_revoke_persists_store_transition(self):
         entry = self.register()
-        with mock.patch.object(registry, "d5_active", return_value=True):
+        with nullcontext():
             first = self.grant()
             result = lease.revoke(self.repo, "p", self.state, 150, "owner stopped\n")
         self.assertEqual(result, authority.revoked(first, 150, "owner stopped\n"))
@@ -202,7 +203,7 @@ class TestD5Lease(unittest.TestCase):
                 if not release.wait(20):
                     raise AssertionError("publication release deadline")
 
-        with mock.patch.object(registry, "d5_active", return_value=True), \
+        with nullcontext(), \
                 mock.patch.object(store, "_write", side_effect=paused_write), \
                 ThreadPoolExecutor(max_workers=2) as pool:
             first = pool.submit(self.grant)
@@ -218,12 +219,12 @@ class TestD5Lease(unittest.TestCase):
             self.assertFalse((path.parent / "superseded").exists())
             # The permanent lock must be released: sequential replacement
             # remains allowed by the store's consent rules.
-            replacement = self.grant()
+            replacement = self.grant(confirmed_at=102)
             self.assertNotEqual(replacement["grant_id"], record["grant_id"])
 
     def test_revoke_without_record_returns_store_domain_error(self):
         entry = self.register()
-        with mock.patch.object(registry, "d5_active", return_value=True):
+        with nullcontext():
             with self.assertRaisesRegex(registry.AuthorityError, "filesystem operation failed") as caught:
                 lease.revoke(self.repo, "p", self.state, 150, "cleanup")
         self.assertIsInstance(caught.exception.__cause__, FileNotFoundError)
@@ -241,7 +242,7 @@ class TestD5Lease(unittest.TestCase):
                 self.assertEqual(self.base.exists(), base_exists)
 
     def test_status_registered_without_record_creates_nothing(self):
-        entry = self.register()
+        entry = self.register(promote=False)
         (self.base / "hanig-authority/v1/registry.lock").unlink()
         before = self.tree()
         self.assertEqual(self.status(), {"state": "inactive", "registration": entry,
@@ -251,7 +252,7 @@ class TestD5Lease(unittest.TestCase):
     def test_status_reads_without_lock_or_persistent_invalidation(self):
         entry = self.register()
         directory = Path(entry["record_dir"])
-        with mock.patch.object(registry, "d5_active", return_value=True):
+        with nullcontext():
             record = self.grant()
         # Remove fixture locks to detect O_CREAT even for store.read.
         (directory / "authority.lock").unlink()
@@ -262,7 +263,8 @@ class TestD5Lease(unittest.TestCase):
             for changes, expected in (({}, "valid"), ({"now": 200}, "expired"),
                                       ({"mandate_bytes": b"changed"}, "mandate_changed")):
                 with self.subTest(active=active, expected=expected), \
-                        mock.patch.object(registry, "d5_active", return_value=active):
+                        (nullcontext() if active else missing_installation(entry)):
+                    before = self.tree()
                     self.assertEqual(self.status(**changes), {
                         "state": "active" if active else "inactive", "registration": entry,
                         "record": record, "record_state": expected})

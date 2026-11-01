@@ -5,7 +5,16 @@ Title: D5 preparatory cutover runbook
 Purpose: Bound the U7 race evidence and list the human checks and owner decisions before U8.
 
 The owner's 2026-10-28 "Drop U5, shrink U7" decision drops U5 because U6
-closes row 75. U8 remains owner-controlled; [the mandate](orchestrator-mandate.md) is unchanged.
+closes row 75. Only the owner merges U8 and [the amended mandate](orchestrator-mandate.md).
+Activation happens per state directory at the owner's later `d5_install` publish,
+not at merge. Merging U8 alone leaves never-installed directories inactive. Merge launch remains closed.
+
+For an implicit state path, the coordinator uses `coordinator_paths.resolve_paths`
+for the operated plan. Its read-only Git discovery queries (`rev-parse
+--show-toplevel` and `worktree list --porcelain`) may run before classification.
+READY and BROKEN are classified before any Git operation with effects, including
+fetch, checkout, worktree changes, commit, ref writes, merge and push. No separate
+parser reads Git worktree metadata to guess the state location.
 
 ## Quiescence and human inventory
 
@@ -33,16 +42,36 @@ read-only checklist. No automated route scanner or state mutation is involved.
 
 ## Queued writes and rollback
 
+**After activation, do not run `linear_sync drain` until a P1 unit delivers
+tracker lease authority.** Measured with synthetic transports: active
+`linear_sync drain` first sent two mutations, then receipt recording refused
+(exit 3, zero receipts). An immediate repeat against the same stub tracker and
+queue sent zero mutations and again refused receipt recording (exit 3, zero
+receipts): the already-satisfied state and comment were not resent. These are
+measured histories, not a general retry guarantee. Do not drain to
+discover whether a queued operation was sent. Preserve the queue and reconcile
+external outcomes read-only before any later authorized replay.
+
 **Park existing writes.** Pre-D5 items lack D5 plan identity, scope and
-provenance. U6's row-75 drain refuses. Preserve them unprovenanced and parked
+provenance. U6's `merge_unit.print_tracker_drain` route refuses. Preserve them unprovenanced and parked
 until a separately authorized post-D5 unit handles them.
 
 **P1 is a hard precondition:** before any change makes any row-75 route stop
 refusing, a prior unit must deliver per-item lease authority (the original U5
 M1-M5 scope) AND migration or disposition of the pre-D5 queue. Activation leaves U6 in place.
 
-Preparatory rollback is to leave `merge_launch_admitted()` **False** and **not
-merge U8**. Preserve unresolved records. This is not a post-activation cancellation procedure.
+Rollback: do not merge U8, or revert its merge. Deactivation requires reverting
+U8, not deleting readiness files. Publication writes the state-local
+`d5-installed.json` sentinel first, then the external installation record and
+readiness marker. Withdrawal keeps the sentinel, so missing or invalid readiness
+remains BROKEN and refuses; repair through `d5_install promote` at quiescence. `merge_launch_admitted()`
+remains **False**. Preserve unresolved records; rollback is not cancellation
+or permission to replay uncertain effects.
+
+A same-UID operator invoking `unit.py` or `remote_verify.py` directly without
+`--state-dir` is not D5-contained. Coordinator-mediated entries carry the operated
+state; remote stages receive the originating path as audit data after the
+originating host checks activation. This is a mechanism, not isolation.
 
 ## What the seven scenarios measure
 
@@ -80,11 +109,31 @@ The U4.x test names were checked at base `7a7559bdff5ef60d00e064a51d5ba892622ff6
 (`test_d5_u4*.py` and `test_d5_containment.py`): none names compaction. U7 drops
 context-compaction testing. 
 
+## Test guard scope
+
+The activation fixture check is an exact Python syntax check under `tests/`:
+the two retired helper files and imports of them are forbidden, as are string
+literals containing `d5_active` and attribute stores with that name. The three
+exact installation filenames are allowed only in the named corruption and
+fixture files in `test_d5_activation_guards.py`. It performs no dataflow or
+provenance analysis. Indirect pins are review-enforced.
+
+Inactive I/O observation covers the calling thread. During its guard window,
+`threading.Thread.start` and `_thread.start_new_thread` are forbidden; subprocess
+spawns remain observed at consumer call boundaries. Cached or indirect thread
+launches and arbitrary syscalls are review-enforced. START/no-DRAIN control tests
+call through the real lock and observe it before mutation and after release;
+file metadata does not establish lock acquisition. Refusal-route completeness
+beyond the mechanical sweep is review-enforced.
+
 ## Non-claims
 
 - Process isolation and same-UID isolation; neither the stubs nor descriptor
   options establish an OS security boundary. Interpreter effects, including
   bytecode suppression, are outside this work.
+- No liveness guarantee against a concurrent same-UID writer replacing
+  installation files. A replacement can block classification before effects;
+  the hang grants no authority.
 - Repository-wide quiet, non-canonical guard coverage, OD4 closure, the
   `linear_sync` mutator direct-root refusals, and a route-inventory drift guard.
   No source/path scanner is added. 
@@ -92,8 +141,7 @@ context-compaction testing.
   and context-compaction behavior. 
 - gh executable identity and integrity are not bound; a same-UID actor can
   replace the executable or its path. No hashing or path guard is supplied.
-  The refusal text still calls binding a U7 obligation; the owner decision
-  carries it to U8 as a non-claim.
+  U8 retains closed merge admission because that obligation is undelivered.
 - The carried OD5 tracker lease precondition is vacuous only while U6 refuses.
   Tracker sends have no per-item lease fencing. Separately, the merge caller's
   OD5 obligation to hold the coordinator lease throughout submit still applies:
@@ -111,7 +159,9 @@ context-compaction testing.
   admission-refusal wording before admitting merge launch.
 - Review the lease non-claims and keep P1 binding on every future U6 lift.
 - Check that **U6's refusal is still in place at activation** on every row-75
-  route; U8 must not enable tracker enqueue, send, drain or acknowledgment writes.
+  route that currently refuses; U8 must not lift those refusals. Direct
+  linear_sync mutators are an explicit enforcement gap (ARC-3766-OD1a),
+  measured separately; activation is not a general tracker fence.
   Review parked items separately.
 - Review R2's unresolved pre-launch gap and the simulated-death evidence limits.
   Confirm quiescence, prepared-state eligibility and candidate checks on U8.

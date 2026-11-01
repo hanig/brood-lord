@@ -16,22 +16,46 @@ dispatch, gate, adjudicate, merge, record, advance, drain, re-dispatch. The
 coordinator judges units and holds authority. The review gate refutes claims.
 The workers do the work. This file says what the orchestrator may decide alone.
 
-## First, every new session confirms its authority
+## First, confirm a bounded lease
 
-An orchestrator coming online for the first time in a run MUST show the owner
-the grant and the bounds below and ask for confirmation before operating
-unattended. Not a summary: the enumerated list, so the owner is confirming
-something specific rather than a posture.
+A NEW grant requires fresh owner confirmation after cutover. Read the current
+mandate and show its complete `Granted, without asking`, `Bounded by`, and
+`Always stop and ask` sections verbatim, with the exact plan, repository,
+state directory, actions, tracker scope and UTC expiry. Preserve the exact
+response and displayed bounds in coordinator authority state.
+No default or override: issue time < expiry <= issue time + 24 hours.
+The session cap is exactly one operating orchestrator. Existing confirmations
+are not leases: no receipt import, automatic renewal or silent grandfathering.
 
-This is deliberate friction, once per run. It exists because a fresh session on
-a different machine, or a different model, will otherwise either improvise its
-authority or stop and ask about everything, and both have happened.
+Register authority outside operated worktrees, bound to canonical repository,
+plan and state identity and SHA-256 of exact mandate bytes. Conversation or
+handoff prose cannot replace a valid record. Missing, expired, revoked,
+conflicting or invalid authority means narrow mode: read, survey, plan, report
+and non-spending local gates; no dispatch, merge, coordinator mutation, tracker
+enqueue/send or committee/review spend. Closed routes stay closed to valid holders.
 
-Until confirmed, the orchestrator operates in the narrow mode: it may read,
-survey, plan, run the gate and report, and it may not dispatch, merge, spend or
-mutate a tracker.
+## One native session; death-only succession
 
-## Once confirmed, act
+Custody requires native `CLAUDE_CODE_SESSION_ID` (nonempty) and a verified
+long-lived ancestor's PID and kernel start identity on one supported host and
+local filesystem. Every admitted start rechecks identity and ancestry.
+Missing or unknown identity means narrow mode. There is no
+supervisor wrapper or generated fallback ID.
+
+The same native ID and ancestor continue after compaction under a valid lease.
+A successor may claim a still-valid lease without renewed confirmation
+only after verified predecessor death, exclusive action-drain access, fresh
+validation and a new custody generation. Alive or unknown liveness refuses.
+Relinquishment, expiry, inactivity, changed session ID and timeouts are not death.
+Kernel start identity distinguishes PID reuse. A persistent ancestor can delay
+succession after its logical session ends. No heartbeat or TTL takeover;
+expiry never steals a coordinator flock.
+
+Worker review delegation must bind coordinator-issued authority to grant,
+attempt and gate operation, conferring no custody. Worker admission remains
+a non-claim, not an exception to these bounds.
+
+## Once confirmed and holding valid custody, act
 
 The confirmation is the answer to every choice the grant already covers. From
 that point the orchestrator acts and reports; it does not re-ask. Routine
@@ -96,6 +120,10 @@ This list is complete. Nothing outside it is a reason to stop a confirmed run.
 - Evidence that stays inconclusive after bounded investigation. Investigate
   first; an unread log is not inconclusive evidence.
 - Any change to this file.
+- New, renewed, extended or differently scoped authorization is needed.
+- Custody cannot be established under the defined process-death protocol.
+- Authority records or scope registrations conflict or require consent to be invented.
+- The requested operation is outside the supported envelope or permissions.
 
 ## Adjudication policy
 
@@ -419,9 +447,62 @@ parts that can be tested, and should say which parts cannot be.
 
 ## Revocation
 
-The owner revokes by editing this file. An orchestrator re-reads it at the
-start of every session and after any change to it, and a revoked or altered
-grant takes effect immediately rather than at the next run.
+The owner revokes by editing this file or recording revocation in coordinator
+control. Re-read at session start and after changes. Each outward start rereads
+canonical mandate bytes and fresh authority under START, serialized with
+recorded revocation and invalidation. A digest mismatch terminally invalidates
+the grant; restoring old
+bytes does not resurrect it. Expiry blocks new starts.
+
+D5-OD1 means no new outward-action admissions after recorded revocation or
+mandate change. Already-submitted effects may finish and must be recorded under
+completion-only authority, permitting no next effect. Unknown outcomes require
+reconciliation, never automatic replay. Revocation does not wait for DRAIN;
+DRAIN protects admitted effects and accounting against premature custody transfer.
+An unreceived owner message is not machine-observable revocation.
+
+## D5 cutover and accepted limits
+
+Only the OWNER merges U8 at quiescence: no live lease holder, merge in flight
+or outstanding merge child. Unknown liveness or remote outcomes block cutover.
+Inventory sessions, workers and queued writes with [the runbook](d5-cutover-runbook.md).
+Activation happens per state directory at the owner's `d5_install` publish,
+not at merge. U8 makes activation installation-derived: no installation evidence
+means inactive, valid evidence means READY, and partial or invalid evidence means
+BROKEN and refuses. Publication writes the durable state-local sentinel first;
+withdrawal keeps it. Repair with `d5_install`, never delete files to deactivate.
+Merging U8 alone changes no behavior for a never-installed state directory.
+Confirm the first bounded lease anew. Rollback: do not merge, or revert the merge;
+preserve unresolved records and do not replay uncertain effects.
+
+Activation enables prepared guards and authority APIs; `merge_launch_admitted()`
+stays False. No runtime bypass, broader grant or changed adjudication policy.
+Policy exceeds enforcement: linear_sync mutator refusals remain undelivered
+(ARC-3766-OD1a); activation is not a general tracker fence.
+
+P1 is a hard precondition: before running linear_sync drain or lifting any
+currently refusing row-75 route, a prior unit must deliver per-item lease authority (original U5 M1-M5) AND
+migration or disposition of pre-D5 queued items. Keep them unprovenanced and
+parked. Unguarded linear_sync routes confer no permission.
+
+- A same-UID operator invoking `unit.py` or `remote_verify.py` directly without
+  `--state-dir` is not D5-contained. Coordinator-mediated routes supply the state.
+- No process or same-UID isolation: stubs and descriptor options are not an OS
+  boundary. Interpreter effects, including bytecode suppression, are excluded.
+- No repository-wide quiet, noncanonical guard coverage, OD4 closure,
+  linear_sync mutator direct-root refusals, route-inventory drift guard or
+  source/path scanner.
+- No worker review, scoped writes, blocked submissions, linear_sync behavior
+  or context-compaction coverage.
+- No gh executable identity/integrity binding, hashing or path guard; same-UID
+  replacement remains possible. Merge admission therefore stays closed.
+- OD5 tracker lease authority is vacuous only while U6 refuses; tracker sends
+  lack per-item fencing. The merge caller must still hold the coordinator lease
+  throughout submit: prior-loss detection cannot fence later concurrent release.
+- No exactly-once remote execution, production death detection, deployed durability
+  or exhaustive interleavings. Counts describe stub histories; timeouts do not
+  detect death. Registration, readiness and verification are fixture inputs;
+  persisted identities are trusted-writer evidence.
 
 ## Why this is not the coordinator's business
 

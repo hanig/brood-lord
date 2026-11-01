@@ -34,6 +34,7 @@ import stat
 import d5_admission as admission
 import d5_locks as locks
 import d5_registry as registry
+import d5_readiness as readiness
 
 
 class EffectError(ValueError):
@@ -53,8 +54,24 @@ def _require(condition, message=INVALID):
         raise EffectError(message)
 
 
-def _active():
-    _require(registry.d5_active(), "D5 inactive")
+def _active(state_dir):
+    state_dir = readiness.refuse_broken(state_dir)
+    _require(registry.d5_active(state_dir), "D5 inactive")
+
+
+def _handle_active(handle):
+    _check_handle(handle)
+    # The handle locator permits the inactive check before any record IO.
+    # It is never authority: active use rechecks the verified installation.
+    _active(handle._state_dir)
+    _require(_installation_state(handle._directory) == handle._state_dir)
+
+
+def _installation_state(directory):
+    try:
+        return readiness.installation(directory)["state_dir"]
+    except registry.AuthorityError as exc:
+        raise EffectError(INVALID) from exc
 
 
 def _hex(value, width):
@@ -252,6 +269,7 @@ class Attempt:
     _directory: str = field(repr=False)
     _binding: bytes = field(repr=False)
     _secret: bytes = field(repr=False)
+    _state_dir: str = field(default=None, repr=False)
 
     @property
     def recording_authority(self):
@@ -269,13 +287,14 @@ def _verifier(effect_id, binding, secret):
 
 
 def prepare(checkout, plan_id, state_dir, *, record_id, custody, kind, scope, correlation):
-    _active()
+    _active(state_dir)
     # Refuse before opening/creating the ledger, even through this lower seam.
     selected = _recording_authority({"kind": kind})
     _require(selected == "ledger")
     registration = registry.lookup(checkout, plan_id, state_dir)
     _require(registration is not None)
     directory = registration["record_dir"]
+    bound_state = _installation_state(directory)
     with _access(directory, create=True) as (record, fd):
         binding = dict(record_id=record_id, registration_id=registration["registration_id"],
                        record_key=_key(record.fd), effects_key=_key(fd), custody=custody,
@@ -288,13 +307,14 @@ def prepare(checkout, plan_id, state_dir, *, record_id, custody, kind, scope, co
                      receipt_verifier=_verifier(effect_id, raw, secret),
                      state="attempting", outcome=None)
         _write(fd, effect_id + ".json", entry, create=True)
-    return Attempt(effect_id, directory, raw, secret)
+    return Attempt(effect_id, directory, raw, secret, bound_state)
 
 
 def _check_handle(handle):
     _require(type(handle) in (Attempt, Receipt) and _hex(handle.effect_id, 32) and
              type(handle._directory) is str and type(handle._binding) is bytes and
-             type(handle._secret) is bytes and len(handle._secret) == 32)
+             type(handle._secret) is bytes and len(handle._secret) == 32 and
+             type(handle._state_dir) is str)
     _binding(_decode(handle._binding))
 
 
@@ -311,7 +331,7 @@ def _checked(handle):
 
 def _classify(attempt, state):
     """Internal; exceptions mean unknown. Caller holds DRAIN."""
-    _active()
+    _handle_active(attempt)
     _require(type(attempt) is Attempt)
     if isinstance(state, BaseException):
         state = "unknown"
@@ -327,7 +347,7 @@ def _classify(attempt, state):
         else:
             _confirm(fd, name)
     if state == "submitted":
-        return Receipt(attempt.effect_id, attempt._directory, attempt._binding, attempt._secret)
+        return Receipt(attempt.effect_id, attempt._directory, attempt._binding, attempt._secret, attempt._state_dir)
     return None
 
 
@@ -339,7 +359,7 @@ def _confirm(fd, name):
 
 
 def complete(receipt, outcome):
-    _active()
+    _handle_active(receipt)
     _require(type(receipt) is not Attempt, NOT_SUBMITTED)
     _require(type(receipt) is Receipt)
     _outcome(outcome)
@@ -361,7 +381,7 @@ def unresolved(checkout, plan_id, state_dir):
     Submitted entries are included; terminal entries remain on disk. Unreadable
     entries produce file/error diagnostics requiring reconciliation; bytes stay put.
     """
-    _active()
+    _active(state_dir)
     registration = registry.lookup(checkout, plan_id, state_dir)
     _require(registration is not None)
     result = []

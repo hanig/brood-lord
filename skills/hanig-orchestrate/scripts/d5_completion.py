@@ -90,7 +90,7 @@ class _Completion:
         with _refusals():
             ledger._check_handle(handle)
         attempt = ledger.Attempt(handle.effect_id, handle._directory,
-                                 handle._binding, handle._secret)
+                                 handle._binding, handle._secret, handle._state_dir)
         with _refusals(), protocol.pin(handle._directory) as record:
             with record.drain():
                 return ledger._classify(attempt, "unknown")
@@ -102,11 +102,10 @@ def bind(handle):
     The merged ledger reauthenticates the stored binding on subsequent calls.
     Construction reads the existing entry; it never prepares or classifies it.
     """
-    ledger._active()
     if type(handle) not in (ledger.Attempt, ledger.Receipt) or type(handle._directory) is not str:
         raise ledger.EffectError(MISMATCH)
     with _refusals():
-        ledger._check_handle(handle)
+        ledger._handle_active(handle)
     with _refusals(), protocol.pin(handle._directory) as record:
         with record.drain(), ledger._checked(handle):
             return _Completion(handle)

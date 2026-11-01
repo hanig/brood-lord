@@ -1,4 +1,5 @@
 """U4.2-c provider dispatch, retain-on-unknown and unit-local M6 captures."""
+from contextlib import nullcontext
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 import hashlib
@@ -37,7 +38,7 @@ def ledger_capture():
             stack.enter_context(mock.patch.object(E.secrets, "token_hex", return_value="a" * 32))
             stack.enter_context(mock.patch.object(E.secrets, "token_bytes", return_value=b"s" * 32))
             if mode == "inactive":
-                c.active.return_value = False
+                c.installation.present = False
             elif mode == "not_submitted":
                 c.boundary.state = S.Initiation.NOT_SUBMITTED
             elif mode == "unknown":
@@ -347,7 +348,7 @@ class TestCompletionProvider(unittest.TestCase):
             C._PROVIDERS["journal"] = self.provider
         before = tree_bytes(self.c.root)
         with ExitStack() as stack:
-            stack.enter_context(mock.patch.object(t.registry, "d5_active", return_value=True))
+            stack.enter_context(nullcontext())
             probes = [stack.enter_context(mock.patch.object(target, name,
                 side_effect=AssertionError("unexpected side effect: " + name)))
                 for target, name in ((t.registry, "lookup"), (t.protocol, "pin"),

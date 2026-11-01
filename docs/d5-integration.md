@@ -4,7 +4,27 @@ Date: 2026-10-22
 Title: D5 integration preparation
 Purpose: Record inactive integration, registration, lease, custody and host contracts.
 
-**D5 is inactive; preparation only.** [Manifest](../tests/fixtures/d5/integration-manifest.json)
+**D5 activates per state directory at the owner's `d5_install` publish,
+not at merge.** U8 makes activation installation-derived. A directory without
+installation witnesses keeps its legacy behavior. READY and BROKEN installations
+are active; BROKEN refuses with `d5_install` repair guidance. Merge launch remains closed. Existing confirmations are
+not leases. See [the cutover runbook](d5-cutover-runbook.md) for the measured
+tracker gaps and [the mandate](orchestrator-mandate.md) for bounded authority.
+A same-UID operator invoking `unit.py` or `remote_verify.py` directly without
+`--state-dir` is not D5-contained. Coordinator-mediated calls supply that path;
+remote staging checks it on the originating host and carries it as audit data.
+
+For an implicit state path, the coordinator uses `coordinator_paths.resolve_paths`
+for the operated plan. Its read-only Git discovery queries (`rev-parse
+--show-toplevel` and `worktree list --porcelain`) may run before classification.
+READY and BROKEN are classified before any Git operation with effects, including
+fetch, checkout, worktree changes, commit, ref writes, merge and push. No separate
+parser reads Git worktree metadata to guess the state location.
+
+The preparation measurements below remain historical evidence, not a claim
+of complete enforcement.
+
+ [Manifest](../tests/fixtures/d5/integration-manifest.json)
 classes cite handlers: reads=read_only, files/state=local_mutation,
 dispatch/merge/tracker/spend=outward (strongest mode). Unresolved verifier
 internals block dependents.
@@ -72,11 +92,14 @@ locking, consent rules and predecessor archive. Two initial grants that both
 observe no record select `store.create`; one refuses. Grant mutations also
 hold a permanent `grant.lock` with a nonblocking exclusive lock, so a caller
 seeing a newly published record while its writer still holds the store lock
-refuses instead of waiting to replace it. Sequential replacement stays allowed.
+refuses instead of waiting to replace it. The public grant API requires a later
+confirmation timestamp for each replacement, including unchanged bounds;
+blank confirmation fields refuse. Exact nonblank receipt bytes are retained.
 Revocation requires registration and uses the store's terminal transition.
 
-`register`, `grant` and `revoke` refuse with "D5 is not active" until U8 changes
-`d5_registry.d5_active()`. Read-only `status` works while inactive and creates
+`register`, `grant` and `revoke` now reach their prepared checks through the
+shared active predicate. Explicit inactive fixtures still exercise their
+"D5 is not active" refusal. Read-only `status` works while inactive and creates
 nothing: no external base, authority root, registry, record directory or lock.
 It reads bytes, decodes and evaluates the record without the store's locking
 `read` or invalidation-persisting `check`. The returned activation state,
@@ -110,5 +133,6 @@ even while inactive. Its activation state, registration, custody, holder
 liveness and caller identity match are diagnostic, never authorization. A match
 can remain true for a relinquished holder or an invalidated or expired grant.
 
-Cryptographic owner authentication, enforcement, a CLI and activation remain
-later units. D5 stays inactive.
+Cryptographic owner authentication and a management CLI are not delivered.
+Confirmation contents remain trusted caller evidence, not authenticated owner
+identity. Activation does not supply those missing capabilities.

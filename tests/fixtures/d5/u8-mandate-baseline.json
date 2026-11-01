@@ -1,0 +1,46 @@
+{
+  "base": "c2556ad4039f72948a059ab5e6e2b776b0ab4d38",
+  "sections": {
+    "Granted, without asking": [
+      "- Dispatch and re-dispatch units within the plan.",
+      "- Run the review gate, and reproduce any finding before acting on it.",
+      "- Open pull requests from an anchored attempt ref.",
+      "- Merge pull requests that satisfy the adjudication policy below.",
+      "- Use orchestrator judgment under the policy below; consult Sol only when unsure.",
+      "- Defer a reproduced finding outside a task's declared supported envelope, without concurrence, under *Findings outside the supported envelope* below.",
+      "- Record merge receipts, advance the DAG, drain tracker intents.",
+      "- File, update and close issues in this project.",
+      "- Spend on review and committee models."
+    ],
+    "Bounded by": [
+      "- The non-overridable finding classes below. No relevance exception reaches them.",
+      "- No force-push and no history rewriting, ever.",
+      "- No edits to vendored skills (`paseo*`, `pi-fleet`, `agent-bus`,",
+      "  `start-a-sprint`).",
+      "- No weakening of a test, guard or assertion to make something pass. Fix the",
+      "  subject or report the failure.",
+      "- No action outside this repository and this project.",
+      "**There is no spend ceiling, and its absence is deliberate.** The owner removed",
+      "it on 2026-09-24: \"I'm okay with the spend being whatever it is.\" Do not treat",
+      "cost as a reason to stop, to narrow a review panel, to skip a committee, or to",
+      "prefer a cheaper reviewer over the right one. This is recorded rather than left",
+      "as a silent gap because a reader who finds no bound here would otherwise be",
+      "right to wonder whether one was lost, and might restore it.",
+      "It also was never enforced. ARC-691 measured that the previous `$50/day` line",
+      "was honoured by no program: `budget.gpu_hours` is the only ceiling any code",
+      "applies, and it is unaffected by this. What changed is the standing",
+      "instruction, not a control \u2014 so nothing that used to stop will now fail to."
+    ],
+    "Always stop and ask": [
+      "This list is complete. Nothing outside it is a reason to stop a confirmed run.",
+      "- Any decision that requires reinterpreting or changing the owner's goal.",
+      "- Anything exceeding approved scope, budget, risk or permissions.",
+      "- An outward action whose approval is missing \u2014 missing, not merely unrepeated.",
+      "  A power named in the grant has its approval already.",
+      "- Evidence that stays inconclusive after bounded investigation. Investigate",
+      "  first; an unread log is not inconclusive evidence.",
+      "- Any change to this file."
+    ]
+  },
+  "adjudication_sha256": "0d0fa0e5b1c475b25cd57681bd7076ee7ba11e7bde8fa6c94f02cc46c117c428"
+}

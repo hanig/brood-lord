@@ -110,7 +110,7 @@ ALLOWED = {
         "reads values from _dispatch_source_identity(u, target), which the "
         "coordinator computes live from the plan and the repository, not "
         "from any agent-writable record",
-    ("coordinator_paths.py", "operated_worktrees"):
+    ("coordinator_paths.py", "_plan_repositories"):
         "reads execution_workspace off the PLAN's units to build the path "
         "containment set; no record is involved",
     ("worktree.py", "judge_detail"):
@@ -566,7 +566,7 @@ class TestTheSealActuallyTravels(unittest.TestCase):
 
         self.S.U.run = spy
         try:
-            self.S._check(str(self.att), {"attempt_id": "att1"})
+            self.S._check(str(self.att), {"attempt_id": "att1"}, state_dir=self.tmp / "state")
         finally:
             self.S.U.run = real
         self.assertIn("--launch-facts", seen["argv"])
@@ -704,7 +704,7 @@ class TestReceiptProvenanceIsActuallyRecorded(unittest.TestCase):
         payload = _json.dumps({"task_id": "h", "attempt_id": "attempt-1",
                                "state": "DONE"})
 
-        def check(unit_dir, seal=None, artifact_basis=None):
+        def check(unit_dir, seal=None, artifact_basis=None, *, state_dir):
             # What the real check does: write the receipt, then report the
             # digest of the receipt it wrote.
             (Path(unit_dir) / "receipt.json").write_text(payload)
@@ -801,7 +801,7 @@ class TestOnlyAReceiptTheCheckReportedWritingIsAttested(unittest.TestCase):
         good = json.dumps({"task_id": "h", "attempt_id": "attempt-1",
                            "state": "FAILED"})
 
-        def check(unit_dir, seal=None, artifact_basis=None):
+        def check(unit_dir, seal=None, artifact_basis=None, *, state_dir):
             (Path(unit_dir) / "receipt.json").write_text(good)
             result = {"produced_head": None,
                       "receipt_sha256":

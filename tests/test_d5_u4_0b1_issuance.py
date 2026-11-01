@@ -1,4 +1,5 @@
 """Issuance barriers through public entries; D5 remains inactive in production."""
+from contextlib import nullcontext
 from contextlib import contextmanager, ExitStack
 import builtins
 import io
@@ -12,7 +13,7 @@ import unittest
 from unittest import mock
 
 from tests import test_d5_registry as fixtures
-from tests.fixtures.d5.ready import ready
+from tests.fixtures.d5.ready import ready, ready_installation
 from tests.test_d5_authority import grant, MANDATE
 import d5_authority_store as store
 import d5_control as control
@@ -104,13 +105,15 @@ class TestIssuance(unittest.TestCase):
     def test_readiness_before_registry_lookup_and_zero_effects(self):
         # Detects readiness-after-registry-lookup, even if lookup catches a
         # launch exception. Exercise both a cold and staged installation.
-        with mock.patch.object(registry, "d5_active", return_value=True):
+        with nullcontext():
             for staged in (False, True):
                 if staged:
-                    ready(self, *self.args, promote=False)
+                    ready(self, *self.args)
                 else:
                     self.assertEqual(state.acquire_lease(self.state, bump_epoch=False), (True, None))
                     self.addCleanup(state.release_lease, self.state)
+                    ready_installation(self.fixture.d, state_dir=self.state)
+                self.marker.unlink()
                 for module, name, kwargs in self.operations():
                     with self.subTest(staged=staged, entry=name), mock.patch.object(
                             registry, "lookup", side_effect=AssertionError("lookup")) as lookup:
@@ -121,7 +124,7 @@ class TestIssuance(unittest.TestCase):
     def test_grant_without_lease_and_lease_before_readiness(self):
         ready(self, *self.args)
         state.release_lease(self.state)
-        with mock.patch.object(registry, "d5_active", return_value=True), \
+        with nullcontext(), \
                 mock.patch.object(readiness, "_read", side_effect=AssertionError("readiness read")) as read:
             for module, name, kwargs in self.operations():
                 with self.subTest(entry=name):
@@ -129,8 +132,10 @@ class TestIssuance(unittest.TestCase):
             read.assert_not_called()
 
     def test_register_checks_lease_before_invalid_plan(self):
+        ready(self, *self.args)
+        state.release_lease(self.state)
         self.args = self.fixture.repo, "../bad-plan", self.state
-        with mock.patch.object(registry, "d5_active", return_value=True), \
+        with nullcontext(), \
                 mock.patch.object(readiness, "_read") as read, \
                 mock.patch.object(registry, "lookup") as lookup:
             self.refused(registry, "register", {}, "caller-held coordinator lease required")
@@ -146,25 +151,26 @@ class TestIssuance(unittest.TestCase):
                 self.marker.unlink()
             else:
                 self.marker.write_bytes(bad)
-            with self.subTest(marker=bad), mock.patch.object(registry, "d5_active", return_value=True):
+            with self.subTest(marker=bad), nullcontext():
                 self.refused(custody, "claim", dict(now=101, mandate_bytes=MANDATE), "D5 readiness:")
         self.marker.write_bytes(raw)
         installation.write_bytes(b"{}")
-        with mock.patch.object(registry, "d5_active", return_value=True):
+        with nullcontext():
             for module, name, kwargs in self.operations():
                 with self.subTest(entry=name):
                     self.refused(module, name, kwargs, "invalid installation fields")
 
     def test_register_cannot_provision_readiness(self):
-        ready(self, *self.args, promote=False)
-        with mock.patch.object(registry, "d5_active", return_value=True):
+        ready(self, *self.args)
+        self.marker.unlink()
+        with nullcontext():
             self.refused(registry, "register", {}, "missing or malformed installation state")
         self.assertFalse(self.marker.exists())
 
     def test_invalid_state_locators_refuse_with_authority_error_before_effects(self):
         for locator in (None, "~missing-d5-user/state"):
             with self.subTest(locator=locator), ExitStack() as patches:
-                patches.enter_context(mock.patch.object(registry, "d5_active", return_value=True))
+                patches.enter_context(nullcontext())
                 if locator is not None:
                     patches.enter_context(mock.patch.object(Path, "expanduser",
                         side_effect=RuntimeError("Could not determine home directory.")))
@@ -183,6 +189,9 @@ class TestIssuance(unittest.TestCase):
                 held.assert_not_called()
 
     def test_cold_register_refusal_has_no_import_cache_writes(self):
+        ready(self, *self.args)
+        self.marker.unlink()  # real publication followed by broken-state corruption
+        state.release_lease(self.state)
         # A fresh interpreter and cache root exercise the actual first call.
         # Audit hooks see importlib's native opens, which os.open mocks miss.
         code = """
@@ -207,7 +216,6 @@ def audit(event, args):
     if event.startswith(('subprocess.', 'os.exec', 'os.spawn', 'os.posix_spawn', 'os.fork')) or event == 'os.system':
         launches.append(event)
 sys.addaudithook(audit)
-registry.d5_active = lambda: True
 try:
     observing = True
     try:
@@ -230,7 +238,7 @@ print(json.dumps(dict(outcome=outcome, writes=writes, launches=launches)))
                 observed = json.loads(result.stdout)
                 reason = ("missing or malformed installation state" if held
                           else "caller-held coordinator lease required")
-                self.assertEqual(observed["outcome"], "D5 readiness: " + reason)
+                self.assertEqual(observed["outcome"], "D5 readiness: " + reason + "; repair with d5_install promote")
                 self.assertEqual(observed["writes"], [])
                 self.assertEqual(observed["launches"], [])
 
@@ -268,7 +276,7 @@ print(json.dumps(dict(outcome=outcome, writes=writes, launches=launches)))
         mandate.parent.mkdir()
         mandate.write_bytes(MANDATE)
         anchor = host.ProcessIdentity(42, 9000001)
-        with mock.patch.object(registry, "d5_active", return_value=True), \
+        with nullcontext(), \
                 mock.patch.object(host, "session_anchor", return_value=("native", anchor)), \
                 mock.patch.object(install.time, "time", return_value=101), \
                 mock.patch.object(state, "holds_lease", wraps=state.holds_lease) as held:
@@ -285,15 +293,149 @@ print(json.dumps(dict(outcome=outcome, writes=writes, launches=launches)))
                         return_value=dict(entry, registration_id="0" * 32)):
                     self.refused(module, name, kwargs, "registration binding mismatch")
 
-    def test_revoke_without_readiness_or_lease(self):
-        entry = ready(self, *self.args, promote=False)
+    def test_revoke_without_lease_preserves_published_readiness(self):
+        entry = ready(self, *self.args)
         state.release_lease(self.state)
         store.create(entry["record_dir"], grant())
-        with mock.patch.object(registry, "d5_active", return_value=True):
+        paths = [self.marker, Path(entry["record_dir"]) / "authority.drain.lock"]
+        def preserved(path):
+            info = path.stat()
+            # Classifier reads may update atime. Preserve all observable
+            # write metadata, including the filesystem's ctime precision.
+            metadata = (info.st_mode, info.st_ino, info.st_dev, info.st_nlink,
+                        info.st_uid, info.st_gid, info.st_size,
+                        info.st_mtime_ns, info.st_ctime_ns)
+            return metadata, path.read_bytes()
+        before = [preserved(p) for p in paths]
+        with mock.patch.object(os, "utime", wraps=os.utime) as timestamps:
             result = control.revoke(*self.args, 120, "stop")
+        timestamps.assert_not_called()
         self.assertEqual(result["invalidation"], dict(at=120, kind="revoked", reason="stop"))
-        self.assertFalse(self.marker.exists())
-        self.assertFalse((Path(entry["record_dir"]) / "authority.drain.lock").exists())
+        self.assertEqual([preserved(p) for p in paths], before)
+        self.marker.unlink()
+        with self.assertRaisesRegex(registry.AuthorityError, "d5_install"):
+            control.revoke(*self.args, 121, "must refuse broken installation")
+
+    def test_readiness_preservation_allows_only_read_access_time(self):
+        stat, read = Path.stat, Path.read_bytes
+        access = [1]
+        marker = self.marker
+
+        class AccessStat(tuple):
+            def __new__(cls, original):
+                fields = list(original)
+                fields[7] = access[0]
+                value = tuple.__new__(cls, fields)
+                value.original = original
+                return value
+
+            def __getattr__(self, name):
+                if name == 'st_atime':
+                    return self[7]
+                if name == 'st_atime_ns':
+                    return self[7] * 1000000000
+                return getattr(self.original, name)
+
+        def observed(path, *args, **kwargs):
+            value = stat(path, *args, **kwargs)
+            return AccessStat(value) if path == marker else value
+
+        def accessed(path, *args, **kwargs):
+            value = read(path, *args, **kwargs)
+            if path == marker:
+                access[0] += 1
+            return value
+
+        # Model strictatime only; all write-sensitive metadata and bytes remain
+        # real. This is deterministic on hosts whose mount defers access times.
+        with mock.patch.object(Path, 'stat', observed), \
+                mock.patch.object(Path, 'read_bytes', accessed):
+            self.test_revoke_without_lease_preserves_published_readiness()
+
+    def test_readiness_preservation_still_detects_metadata_writes(self):
+        revoke, stat = control.revoke, Path.stat
+        change = [0]
+        marker = self.marker
+
+        class WriteStat:
+            def __init__(self, value):
+                self.value = value
+            def __getattr__(self, name):
+                if name == 'st_ctime_ns':
+                    return self.value.st_ctime_ns + change[0]
+                return getattr(self.value, name)
+
+        def observed(path, *args, **kwargs):
+            value = stat(path, *args, **kwargs)
+            return WriteStat(value) if path == marker else value
+
+        def changed(*args, **kwargs):
+            result = revoke(*args, **kwargs)
+            prior = self.marker.stat()
+            os.chmod(self.marker, prior.st_mode)
+            # Exercise ctime observation separately from the direct utime spy.
+            # Model an observable tick independent of filesystem precision.
+            change[0] += 1000000000
+            return result
+
+        with mock.patch.object(control, 'revoke', changed), \
+                mock.patch.object(Path, 'stat', observed):
+            with self.assertRaises(AssertionError):
+                self.test_revoke_without_lease_preserves_published_readiness()
+
+    def test_readiness_preservation_detects_atime_write_with_coarse_ctime(self):
+        original_stat, original_revoke = Path.stat, control.revoke
+        marker = self.marker
+        writes = []
+
+        class CoarseStat:
+            def __init__(self, value):
+                self.value = value
+            def __getattr__(self, name):
+                if name == 'st_ctime_ns':
+                    return 1000000000
+                if name == 'st_ctime':
+                    return 1
+                return getattr(self.value, name)
+
+        def coarse(path, *args, **kwargs):
+            value = original_stat(path, *args, **kwargs)
+            return CoarseStat(value) if path == marker else value
+
+        def changed(*args, **kwargs):
+            value = original_revoke(*args, **kwargs)
+            prior = original_stat(marker)
+            os.utime(marker, ns=(prior.st_atime_ns + 1000000000, prior.st_mtime_ns))
+            after = original_stat(marker)
+            writes.append(after.st_atime_ns != prior.st_atime_ns)
+            self.assertEqual(after.st_mtime_ns, prior.st_mtime_ns)
+            return value
+
+        # Actual atime mutation, with only ctime precision modeled. Do not
+        # fabricate a ctime transition that the filesystem may not expose.
+        with mock.patch.object(Path, 'stat', coarse), \
+                mock.patch.object(control, 'revoke', changed):
+            with self.assertRaises(AssertionError):
+                self.test_revoke_without_lease_preserves_published_readiness()
+        self.assertEqual(writes, [True])
+
+    def test_metadata_write_probe_handles_coarse_timestamps(self):
+        original = Path.stat
+        class CoarseStat:
+            def __init__(self, value):
+                self.value = value
+            def __getattr__(self, name):
+                if name == 'st_ctime_ns':
+                    return 1000000000
+                if name == 'st_ctime':
+                    return 1
+                return getattr(self.value, name)
+        def coarse(path, *args, **kwargs):
+            return CoarseStat(original(path, *args, **kwargs))
+        # Safe equivalent of publication and mutation in one coarse clock tick.
+        # No mount, host configuration or production timestamp is changed.
+        with mock.patch.object(Path, 'stat', coarse):
+            self.test_readiness_preservation_still_detects_metadata_writes()
 
     def test_M6_inactive_capture_without_git_history(self):
         # A depth-one checkout has the sources, but no historical Git objects.
@@ -315,18 +457,11 @@ print(json.dumps(dict(outcome=outcome, writes=writes, launches=launches)))
                     outcome = (type(exc).__name__, str(exc))
             return outcome, launches, writes, before == self.fixture.tree()
 
-        self.assertFalse(registry.d5_active())
+        self.assertFalse(registry.d5_active(self.state))
         for module, name, kwargs in self.operations():
-            path = Path(module.__file__).relative_to(fixtures.ROOT)
-            source = baseline["modules"][module.__name__]["source"]
-            previous = ModuleType("_u4_0b1_base_" + module.__name__)
-            # Freeze the complete entry and every activation guard it executes;
-            # imported dependencies are shared, as in the original capture.
-            previous.__dict__.update(module.__dict__)
-            previous.__file__ = module.__file__
-            exec(compile(source, str(path), "exec"), previous.__dict__)
             with self.subTest(entry=name):
-                expected = capture(getattr(previous, name), kwargs)
+                outcomes = json.loads((fixtures.ROOT / "tests/fixtures/d5/historical-inactive-outcomes.json").read_text())
+                expected = (tuple(outcomes[baseline["base"]][module.__name__ + "." + name]), [], [], True)
                 actual = capture(getattr(module, name), kwargs)
                 self.assertEqual(actual, expected)
                 self.assertEqual(actual, (("AuthorityError", "D5 is not active" if name != "register"

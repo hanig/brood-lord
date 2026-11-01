@@ -5,6 +5,7 @@ START/DRAIN, authority records, submission, merge journal and receipt readback
 remain real. Temporary storage holds logical records across simulated death;
 no oracle depends on source text, path spelling or filesystem layout.
 """
+from contextlib import nullcontext
 from contextlib import ExitStack
 import copy
 import hashlib
@@ -40,6 +41,7 @@ import remote_verify
 import swarm_outbox as outbox
 import swarm_state as state
 import unit
+from tests.fixtures.d5.ready import ready_installation, missing_installation
 
 
 class World:
@@ -78,7 +80,8 @@ class World:
         self.ready = dict(registration_id='1' * 32, plan_id='p', state_dir=str(self.state),
             record_dir=str(self.directory), repo_key=[1, 2], state_key=[1, 3], record_key=key,
             schema_version=1, generation='2' * 32, profile=readiness.PROFILE)
-        self.patch(activation, 'd5_active', return_value=True)
+        self.ready.update(state_key=[self.state.stat().st_dev, self.state.stat().st_ino])
+        ready_installation(self.root, self.ready)
         self.patch(registry, 'lookup', return_value=dict(self.ready, checkout=str(self.root)))
         self.patch(readiness, 'require', side_effect=self.installed)
         self.patch(admission, '_mandate_bytes', return_value=self.mandate)
@@ -96,7 +99,7 @@ class World:
         store.create(self.directory, record)
         self.claim('A', self.anchor)
         # Park a real legacy outbox item; compare its exact contents at teardown.
-        with mock.patch.object(activation, 'd5_active', return_value=False):
+        with missing_installation(self.ready):
             outbox.emit_intent(self.state, 'p', 'u', 'SUBMITTED',
                                dict(attempt_dir='/fixture/attempt', job_id='1'))
         self.outbox_before = (self.state / outbox.OUTBOX).read_bytes()
@@ -375,7 +378,7 @@ class TestD5U7Races(unittest.TestCase):
                    (remote_verify.main, ['remote_verify', '--worker', str(w.root)]),
                    (remote_verify.main, ['remote_verify', '--supervise', str(w.root)])]
         for main, argv in entries:
-            with self.subTest(entry=argv[:2]), mock.patch.object(sys, 'argv', argv):
+            with self.subTest(entry=argv[:2]), mock.patch.object(sys, 'argv', argv + ['--state-dir', str(w.state)]):
                 with self.assertRaisesRegex(SystemExit, 'D5 active: .*refused before first effect'):
                     main()
         child.alive = False

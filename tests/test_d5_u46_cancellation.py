@@ -1,4 +1,6 @@
 """U4.6 same-lifetime release measured through the real operator and R6."""
+from contextlib import nullcontext
+from tests.fixtures.d5.ready import ready_installation
 from contextlib import ExitStack
 from datetime import datetime
 import json
@@ -31,7 +33,7 @@ def inactive_capture():
         tools.mkdir()
         stack.enter_context(mock.patch.dict(os.environ, {'PATH': str(tools)}))
         assert shutil.which('sinfo') is None
-        stack.enter_context(mock.patch.object(activation, 'd5_active', return_value=False))
+        stack.enter_context(nullcontext())
         launches = []
         def launch(*args, **kwargs):
             launches.append(True)
@@ -188,9 +190,10 @@ class TestInactiveAndPremature(unittest.TestCase):
     def test_premature_activation_zero_effects(self):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)
+            ready_installation(root, state_dir=root)
             path = root / 'merge-unit-fixture.json'
             before = tree_bytes(root)
-            with mock.patch.object(activation, 'd5_active', return_value=True), no_effects() as effects:
+            with nullcontext(), no_effects() as effects:
                 with self.assertRaisesRegex(M.Refusal, 'D5 active: cancel_before_request'):
                     M.cancel_before_request(path, {}, None, 'cancel')
                 self.assertEqual(effects, ([], []))

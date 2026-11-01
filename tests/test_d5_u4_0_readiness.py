@@ -1,4 +1,5 @@
 """Installation infrastructure, with operational enforcement deferred to U4.0b."""
+from contextlib import nullcontext
 from contextlib import ExitStack
 import json
 import os
@@ -11,10 +12,11 @@ import unittest
 from unittest import mock
 
 from tests import test_d5_registry as fixtures
-from tests.fixtures.d5.ready import ready
+from tests.fixtures.d5.ready import ready, ready_installation, missing_installation
 import d5_install as install
 import d5_readiness as R
 import swarm_state as SS
+import d5_effect_log as ledger
 
 
 class TestReadiness(unittest.TestCase):
@@ -40,9 +42,39 @@ class TestReadiness(unittest.TestCase):
         self.record = Path(self.entry["record_dir"])
         return R.require(self.state)
 
+    def test_missing_installation_targets_keep_consumer_error_types(self):
+        for missing in ('state', 'record'):
+            with self.subTest(missing=missing):
+                entry = ready_installation(self.fixture.d / ('missing-' + missing))
+                state, record = Path(entry['state_dir']), Path(entry['record_dir'])
+                original = state if missing == 'state' else record
+                moved = original.with_name(original.name + '-moved')
+                original.rename(moved)
+                selected = record if missing == 'state' else moved
+                try:
+                    with mock.patch.object(install, '_anchor', side_effect=AssertionError('anchor')):
+                        with self.assertRaises(R.registry.AuthorityError):
+                            R.installation(selected)
+                        with self.assertRaises(R.registry.AuthorityError):
+                            install.install_initial(selected, None)
+                        with self.assertRaisesRegex(ledger.EffectError, ledger.INVALID):
+                            ledger._installation_state(selected)
+                finally:
+                    moved.rename(original)
+
+    def test_invalid_installation_path_keeps_authority_error(self):
+        entry = ready_installation(self.fixture.d / 'invalid-binding')
+        value = R.installation(entry['record_dir'])
+        first, second = self.fixture.d / 'cycle-a', self.fixture.d / 'cycle-b'
+        first.symlink_to(second)
+        second.symlink_to(first)
+        value['state_dir'] = str(first)
+        with self.assertRaisesRegex(R.registry.AuthorityError, 'd5_install'):
+            R._validated(value)
+
     def test_staging_create_only_without_record_locks_or_authority(self):
         with mock.patch.object(R.protocol, "pin", side_effect=AssertionError("record lock")), \
-             mock.patch.object(R.registry, "d5_active", return_value=False):
+             nullcontext():
             entry = self.stage()
             before = self.fixture.tree(self.fixture.root)
             self.assertEqual(self.stage(), entry)
@@ -89,7 +121,7 @@ class TestReadiness(unittest.TestCase):
              mock.patch.object(R.store, "replace", side_effect=AssertionError("grant")):
             value = install.promote(*self.args)
         self.assertEqual(trace, [("lock", 0), ("lock", 1), ("withdraw",),
-                                 ("write", R.INSTALLATION), ("write", R.MARKER)])
+                                 ("write", R.SENTINEL), ("write", R.INSTALLATION), ("write", R.MARKER)])
         self.assertFalse((self.record / "authority.json").exists())
         self.assertFalse(SS.holds_lease(self.state))
         authority = self.record / "authority.json"
@@ -115,8 +147,8 @@ class TestReadiness(unittest.TestCase):
         self.promoted()
         original_fsync, original_replace, original_unlink = os.fsync, os.replace, Path.unlink
         # Withdrawal unlink/sync, installation file sync/rename/directory sync,
-        # readiness file sync/rename/directory sync, including both rename sides.
-        for point in range(8):
+        # sentinel and readiness sync/rename/directory sync, including rename sides.
+        for point in range(11):
             for after in (False, True):
                 install.promote(*self.args)
                 events = []
@@ -232,18 +264,16 @@ class TestReadiness(unittest.TestCase):
                  (install, "install_initial", (self.state, {}), {}),
                  (install, "replace_authority", (self.state, {}), {}),
                  (install, "claim_custody", (self.state,), dict(mandate_path=self.state / "m"))]
-        originals = {}
-        for module, _, _, _ in cases:
-            if module.__name__ in originals:
-                continue
-            path = Path(module.__file__).relative_to(fixtures.ROOT)
-            source = subprocess.check_output(["git", "show", base + ":" + str(path)],
-                                             cwd=str(fixtures.ROOT))
-            previous = ModuleType("_m6_" + module.__name__)
-            previous.__file__ = module.__file__
-            with mock.patch.dict(sys.modules, {previous.__name__: previous}):
-                exec(compile(source, str(path), "exec"), previous.__dict__)
-            originals[module.__name__] = previous
+        outcomes = json.loads((fixtures.ROOT / 'tests/fixtures/d5/historical-inactive-outcomes.json').read_text())[base]
+        # The historical modules are measured in a separate interpreter, with
+        # their own dependencies. Current entries use a real installed binding
+        # whose two local witnesses are absent for this inactive comparison.
+        self.promoted()
+        absent = missing_installation(self.entry)
+        absent.__enter__()
+        self.addCleanup(absent.__exit__, None, None, None)
+        cases = [(module, name, (self.record,) + args[1:] if module is install else args, kwargs)
+                 for module, name, args, kwargs in cases]
 
         def capture(call, args, kwargs):
             commands = []
@@ -270,7 +300,7 @@ class TestReadiness(unittest.TestCase):
 
         for module, name, args, kwargs in cases:
             with self.subTest(entry=module.__name__ + "." + name):
-                expected = capture(getattr(originals[module.__name__], name), args, kwargs)
+                expected = (True, [], [], tuple(outcomes[module.__name__ + "." + name]))
                 actual = capture(getattr(module, name), args, kwargs)
                 self.assertEqual(actual, expected)
                 self.assertEqual(actual[:3], (True, [], []))

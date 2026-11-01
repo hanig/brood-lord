@@ -1,4 +1,6 @@
 """U4.5 fresh-process crash recovery; the actual CLI never replays a merge."""
+from tests.fixtures.d5.ready import ready_installation
+from contextlib import nullcontext
 from contextlib import ExitStack
 from datetime import datetime
 import json
@@ -37,6 +39,10 @@ def inactive_script_capture(script=None):
             c.operator = script
         c.env['HANIG_ORCHESTRATE_DIR'] = str(legacy.OPERATOR.parent.parent)
         c.env['PYTHONPATH'] = str(legacy.OPERATOR.parent)
+        # Python may report a resolved launcher path in its child process.
+        child_python = subprocess.check_output(
+            [sys.executable, '-c', 'import sys; print(sys.executable)'],
+            env=c.env, text=True).strip()
         before = tree_bytes(c.state_dir)
         result = c.invoke()
         c.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -50,12 +56,13 @@ def inactive_script_capture(script=None):
             c.assertTrue(receipt['by'])
             receipt.update(at='<time>', by='<operator>')
         encoded = json.dumps(captured, sort_keys=True)
-        for old, new in ((str(c.directory), '<fixture>'), (c.head, '<head>'),
+        for old, new in ((str(c.directory), '<fixture>'),
+                         (child_python, '<python>'), (sys.executable, '<python>'), (c.head, '<head>'),
                          (c.merged, '<merge>'), (c.base, '<base>'),
                          (c.merged[:12], '<merge-short>'),
                          (c.intent()['operation_id'], '<operation>'),
                          (str(legacy.SCRIPTS), '<swarm-scripts>'),
-                         (str(legacy.SCRIPTS.parents[1]), '<skills>'), (sys.executable, '<python>')):
+                         (str(legacy.SCRIPTS.parents[1]), '<skills>')):
             encoded = encoded.replace(old, new)
         for line in (c.state_dir / legacy.S.OUTBOX).read_text().splitlines():
             encoded = encoded.replace(json.loads(line)['key'], '<outbox-key>')
@@ -72,9 +79,9 @@ class TestRecovery(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.stack.enter_context(mock.patch.dict(os.environ, c.env))
-        self.stack.enter_context(mock.patch.object(activation, 'd5_active', return_value=True))
+        self.stack.enter_context(nullcontext())
         self.stack.enter_context(mock.patch.object(M, 'merge_launch_admitted', return_value=True))
-        self.stack.enter_context(mock.patch.object(t.registry, 'd5_active', return_value=True))
+        self.stack.enter_context(nullcontext())
         self.stack.enter_context(mock.patch.object(t.registry.CP, '_external_base', return_value=c.directory / 'external'))
         self.stack.enter_context(mock.patch.object(t.host, 'session_anchor', return_value=('native', t.ANCHOR)))
         self.stack.enter_context(mock.patch.object(t.admission.time, 'time', return_value=150))
@@ -280,6 +287,21 @@ class TestRecovery(unittest.TestCase):
 
 
 class TestInactiveAndPremature(unittest.TestCase):
+    def test_inactive_capture_normalizes_interpreter_substrings_in_temp_roots(self):
+        with tempfile.TemporaryDirectory() as temp:
+            private = Path(temp).resolve()
+            nested = Path(str(private) + sys.executable + '-captures')
+            nested.mkdir(parents=True)
+            names = [
+                'tests.test_d5_u45_retry_recovery.TestInactiveAndPremature.test_inactive_actual_script_matches_recorded_base',
+                'tests.test_d5_u48_state_compat.TestInactive.test_inactive_operator_authority_and_reconciliation',
+            ]
+            result = subprocess.run([sys.executable, '-B', '-m', 'unittest', '-v'] + names,
+                cwd=Path(__file__).resolve().parents[1],
+                env=dict(os.environ, TMPDIR=str(nested), XDG_STATE_HOME=str(private / 'xdg')),
+                capture_output=True, text=True, timeout=180)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_inactive_actual_script_matches_recorded_base(self):
         data = json.loads((FIXTURES / 'u45-inactive-base.json').read_text())
         self.assertEqual(data['base'], BASE)
@@ -314,12 +336,13 @@ class TestInactiveAndPremature(unittest.TestCase):
                 for key in ('launches', 'writes', 'files_changed'):
                     self.assertEqual(observed[key], [])
                 self.assertIn('D5 active:', str(observed['outcome']) + str(observed['output']))
-        with tempfile.TemporaryDirectory() as root, \
-                mock.patch.object(t.registry, 'd5_active', return_value=True), no_effects() as effects:
-            with self.assertRaisesRegex(ValueError, 'coordinator lease required'):
-                with J.recovery_drain(root):
-                    self.fail('entered recovery without readiness')
-            self.assertEqual(effects, ([], []))
+        with tempfile.TemporaryDirectory() as root:
+            ready_installation(root, state_dir=root)
+            with no_effects() as effects:
+                with self.assertRaisesRegex(ValueError, 'coordinator lease required'):
+                    with J.recovery_drain(root):
+                        self.fail('entered recovery without readiness')
+                self.assertEqual(effects, ([], []))
 
 
 if __name__ == '__main__':

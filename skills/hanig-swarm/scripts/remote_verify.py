@@ -6,6 +6,7 @@ never candidate-selected programs. Same-UID writers and hostile tests are not
 an OS isolation boundary. No forge writes or credential provisioning occur.
 """
 import argparse
+import d5_installation as DI
 import base64
 from contextlib import contextmanager
 import fcntl
@@ -30,11 +31,23 @@ import child_environment as CE
 POLICY = "verification-execution.json"
 BUNDLE_REF = "refs/heads/verification-candidate"
 FILES = ("candidate.bundle", "request.json", "remote_verify.py", "verify.py",
-         "child_environment.py", "d5_activation.py")
+         "child_environment.py", "d5_activation.py", "d5_installation.py",
+         "repair_guidance.py")
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY",
             "NODE_FAIL", "PREEMPTED", "BOOT_FAIL", "DEADLINE", "REVOKED"}
 CLEANUP_RETRY_SECONDS = 20
 CLEANUP_MAX_RETRIES = 3
+
+# Only the fixed coordinator launchers use this private staged entry. Ordinary
+# direct CLI invocations retain their local --state-dir classification. The
+# originating run_remote check is the gate; the remote locator is audit data.
+STAGED_ENTRY = """import pathlib, runpy, sys
+script = sys.argv.pop(1)
+sys.argv[0] = script
+sys.path.insert(0, str(pathlib.Path(script).parent))
+namespace = runpy.run_path(script)
+raise SystemExit(namespace['_staged_main']())
+"""
 
 
 def absolute(value, label):
@@ -633,8 +646,8 @@ def supervise(stage):
         cfg = remote["slurm"]
         script = stage / "job.sh"
         script.write_text("#!/bin/sh\nexec " + shlex.join([
-            remote["python"], str(stage / "remote_verify.py"),
-            "--worker", str(stage)]) + "\n")
+            remote["python"], "-c", STAGED_ENTRY, str(stage / "remote_verify.py"),
+            "--worker", str(stage), "--state-dir", request.get("state_dir", "")]) + "\n")
         rc, out, err = _command([
             "sbatch", "--parsable", "--no-requeue", "--job-name=" + slurm_job_name(request),
             "--partition=" + cfg["partition"],
@@ -671,7 +684,7 @@ def supervise(stage):
 
 # The fixed bootstrap reads only this allowlist, never tar-supplied paths/modes.
 # It executes the coordinator harness outside the transferred candidate tree.
-BOOTSTRAP = """import os, pathlib, sys, tarfile
+BOOTSTRAP = """import json, os, pathlib, sys, tarfile
 stage = pathlib.Path(sys.argv[1])
 stage.mkdir(parents=False, exist_ok=False)
 with tarfile.open(fileobj=sys.stdin.buffer, mode='r|') as archive:
@@ -684,8 +697,10 @@ with tarfile.open(fileobj=sys.stdin.buffer, mode='r|') as archive:
             import shutil
             shutil.copyfileobj(source, dest)
     if seen != set(%r): raise SystemExit('incomplete verification transfer')
-os.execv(sys.executable, [sys.executable, str(stage / 'remote_verify.py'), '--supervise', str(stage)])
-""" % (FILES, FILES)
+request = json.loads((stage / 'request.json').read_text())
+os.execv(sys.executable, [sys.executable, '-c', %r, str(stage / 'remote_verify.py'), '--supervise', str(stage),
+                         '--state-dir', request.get('state_dir', '')])
+""" % (FILES, FILES, STAGED_ENTRY)
 
 
 def coordinator_program(name, roots, search_path=None):
@@ -1420,6 +1435,9 @@ def run_remote(runner, tree, basis, checks, remote, timeout, repo, state_dir, un
     """
     if state_dir is None:
         raise ValueError("remote verification requires coordinator evidence storage")
+    import d5_activation
+    if d5_activation.d5_active(Path(state_dir).absolute()):
+        raise ValueError(DI.refusal_message("D5 active: remote verification is refused before staging"))
     if journal_entries is None:
         raise ValueError("remote verification requires coordinator journal entries")
     with binding_lock(state_dir, unit, basis) as path:
@@ -1451,7 +1469,8 @@ def run_remote(runner, tree, basis, checks, remote, timeout, repo, state_dir, un
             launch_id = uuid.uuid4().hex
             stage = remote["workdir_root"].rstrip("/") + "/verify-" + launch_id
             request = {"basis": basis, "checks": checks, "verification_host": remote,
-                       "timeout": timeout, "launch_id": launch_id}
+                       "timeout": timeout, "launch_id": launch_id,
+                       "state_dir": str(state_dir)}
             run = {"launch_id": launch_id, "stage": stage, "verification_host": remote,
                    "request": request, "receipts": {}, "reconciled": False, "published": False,
                    "witness_required": True}
@@ -1728,23 +1747,44 @@ def run_remote(runner, tree, basis, checks, remote, timeout, repo, state_dir, un
         return outcomes, dict(execution)
 
 
-def main():
+def _entry_arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--worker")
     group.add_argument("--supervise")
-    args = parser.parse_args()
+    parser.add_argument("--state-dir", default=None, help="Originating coordinator state; audit-only on a remote host")
+    return parser.parse_args()
+
+
+def main():
+    args = _entry_arguments()
     previous_bytecode_setting = sys.dont_write_bytecode
     try:
         sys.dont_write_bytecode = True
         import d5_activation
-        active = d5_activation.d5_active()
+        active = args.state_dir is not None and d5_activation.d5_active(Path(args.state_dir).absolute())
     except Exception as exc:
         sys.exit("D5 activation unavailable: " + type(exc).__name__)
     finally:
         sys.dont_write_bytecode = previous_bytecode_setting
     if active:
-        sys.exit("D5 active: remote verification is refused before first effect")
+        sys.exit(DI.refusal_message("D5 active: remote verification is refused before first effect"))
+    return _execute_entry(args)
+
+
+def _staged_main():
+    """Enter coordinator-staged work after the originating host's check.
+
+    The fixed bootstrap owns this routing. Neither the request file nor the
+    remote filesystem decides the originating state's activation.
+    """
+    args = _entry_arguments()
+    if args.state_dir is None:
+        sys.exit("remote stage requires the originating --state-dir audit locator")
+    return _execute_entry(args)
+
+
+def _execute_entry(args):
     stage = Path(args.worker or args.supervise)
     if args.worker:
         return worker(stage)

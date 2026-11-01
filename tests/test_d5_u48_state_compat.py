@@ -1,4 +1,5 @@
 """U4.8: prepared state, unchanged legacy keys, and no active migration."""
+from contextlib import nullcontext
 import argparse
 from contextlib import ExitStack
 import copy
@@ -17,7 +18,7 @@ from tests.test_d5_u45_retry_recovery import inactive_script_capture
 from tests.test_d5_u4_0b1_issuance import no_effects
 from tests.test_d5_u4_1_active_surface import SurfaceFixture
 from tests.test_d5_u4_2_request_authority import tree_bytes
-from tests.fixtures.d5.ready import ready
+from tests.fixtures.d5.ready import ready, ready_installation
 import d5_activation as activation
 import d5_readiness as R
 import merge_unit as M
@@ -34,7 +35,7 @@ def migration_capture():
         tools = directory / 'tools'
         tools.mkdir()
         stack.enter_context(mock.patch.dict(os.environ, {'PATH': str(tools)}))
-        stack.enter_context(mock.patch.object(activation, 'd5_active', return_value=False))
+        stack.enter_context(nullcontext())
         stack.enter_context(mock.patch.object(S.CP, '_external_base', return_value=directory / 'external'))
         previous = os.getcwd()
         os.chdir(directory)
@@ -75,7 +76,7 @@ def installation_capture(module=R):
     try:
         with ExitStack() as stack:
             stack.enter_context(mock.patch.dict(os.environ, c.env))
-            stack.enter_context(mock.patch.object(activation, 'd5_active', return_value=False))
+            stack.enter_context(nullcontext())
             stack.enter_context(mock.patch.object(R.registry.CP, '_external_base',
                                                  return_value=c.directory / 'external'))
             entry = ready(c, c.repo, c.plan['name'], c.state_dir, promote=False)
@@ -129,7 +130,13 @@ class TestInactive(unittest.TestCase):
     def test_inactive_eligible_installer_effects(self):
         data = json.loads(FIXTURE.read_text())
         self.assertEqual(data['base'], BASE)
-        self.assertEqual(installation_capture(), data['installation'])
+        # OD-U8R-2 adds one durable write before the historical publication.
+        # Preserve the recorded oracle for every other effect and its order.
+        expected = copy.deepcopy(data['installation'])
+        marker, = [value for name, value in expected['writes'] if name == R.MARKER]
+        expected['writes'].insert(0, [R.SENTINEL, marker])
+        expected['changed'] = sorted(expected['changed'] + [R.SENTINEL])
+        self.assertEqual(installation_capture(), expected)
 
 
 class TestPreparedState(unittest.TestCase):
@@ -143,7 +150,7 @@ class TestPreparedState(unittest.TestCase):
         self.stack.enter_context(mock.patch.object(R.registry.CP, '_external_base',
                                                  return_value=self.c.directory / 'external'))
         self.entry = ready(self, self.c.repo, self.c.plan['name'], self.c.state_dir)
-        self.stack.enter_context(mock.patch.object(activation, 'd5_active', return_value=True))
+        self.stack.enter_context(nullcontext())
         self.stack.enter_context(mock.patch.object(M, 'merge_launch_admitted', return_value=True))
         self.args = argparse.Namespace(state_dir=str(self.c.state_dir), root=str(self.c.root),
             unit='u', pr=7, verify_integration=False, abandon_intent=None,
@@ -217,8 +224,15 @@ class TestPreparedState(unittest.TestCase):
             self.assertEqual(snapshot, before)
         self.args.state_dir = None
         self.args.root = None
-        self.refused_without_effects(lambda: S._prepare_command_paths(self.args,
-            self.c.plan, need_root=True), 'D5 active')
+        resolved = S.CP.resolve_paths(None, plan=self.c.plan, cwd=os.getcwd())
+        ready_installation(self.c.directory, state_dir=resolved[0])
+        # OD-U8R-11 permits the resolver's read-only Git discovery. Resolve the
+        # real fixture before the strict zero-launch/write migration guard.
+        # The activation module separately spies on the real discovery argv.
+        with mock.patch.object(S.CP, 'resolve_paths', return_value=resolved) as resolve:
+            self.refused_without_effects(lambda: S._prepare_command_paths(self.args,
+                self.c.plan, need_root=True), 'D5 active')
+        resolve.assert_called_once_with(plan=self.c.plan, extra_repos=())
 
     def test_premature_activation_authority_launches_and_writes_nothing(self):
         (self.c.state_dir / R.MARKER).unlink()
@@ -229,7 +243,7 @@ class TestPreparedState(unittest.TestCase):
                             ('merge', ('current_intent', 'reconcile', 'main'))):
             for name in names:
                 with tempfile.TemporaryDirectory() as temp:
-                    result = SurfaceFixture(temp).observe(tool, name, True)
+                    result = SurfaceFixture(temp).observe(tool, name, True, broken=True)
                     self.assertEqual(result['launches'], [])
                     self.assertEqual(result['writes'], [])
                     self.assertEqual(result['files_changed'], [])

@@ -1,4 +1,5 @@
 """R5 through a locked consumer, real registry/store, and explicit fixture boundary."""
+from contextlib import nullcontext
 from contextlib import ExitStack
 import copy
 import fcntl
@@ -24,7 +25,7 @@ import d5_host as host
 import d5_lease as lease
 import d5_protocol_locks as protocol
 import d5_registry as registry
-from tests.fixtures.d5.ready import ready
+from tests.fixtures.d5.ready import ready, ready_installation, missing_installation, classification_only
 from tests.test_d5_locks import isolate_pool
 
 MANDATE = b"fixture mandate\r\n\xff"
@@ -39,6 +40,7 @@ class TestAdmission(unittest.TestCase):
         self.root = Path(temporary.name).resolve()
         self.repo, self.state = self.root / "repo", self.root / "state"
         self.git("init", str(self.repo))
+        self.git("-C", str(self.repo), "symbolic-ref", "HEAD", "refs/heads/fixture-base")
         self.state.mkdir(mode=0o700)
         (self.repo / "docs").mkdir()
         self.mandate = self.repo / "docs/orchestrator-mandate.md"
@@ -47,7 +49,6 @@ class TestAdmission(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self.stack.enter_context(mock.patch.object(registry.CP, "_external_base",
                                                    return_value=self.root / "external"))
-        self.active = self.stack.enter_context(mock.patch.object(registry, "d5_active", return_value=True))
         self.anchor = self.stack.enter_context(mock.patch.object(host, "session_anchor",
                                              return_value=("native", ANCHOR)))
         self.clock = self.stack.enter_context(mock.patch.object(admission.time, "time", return_value=150))
@@ -109,12 +110,15 @@ class TestAdmission(unittest.TestCase):
         (self.directory / ".git").rmdir()
         self.state.rename(self.root / "old-state")
         self.state.mkdir()
+        for artifact in (self.root / "old-state").iterdir():
+            artifact.rename(self.state / artifact.name)
         self.refuse("state_key mismatch")
 
     def test_absent_registration(self):
         # R5-ABSENT-REGISTRATION: no authority read on absent registration.
         state = self.root / "other-state"
         state.mkdir()
+        ready_installation(self.root, state_dir=state)
         with mock.patch.object(store, "read", side_effect=AssertionError("authority read")):
             self.refuse("^not registered$", lambda: self.consume(args=(self.repo, "other", state)))
 
@@ -370,9 +374,10 @@ class TestAdmission(unittest.TestCase):
             with mock.patch.object(registry, "lookup", side_effect=AssertionError("lookup")):
                 self.refuse("^D5 admission requires START$", lambda: self.validate(pinned))
                 with pinned.start():
-                    self.active.return_value = False
-                    self.refuse("^D5 is inactive$", lambda: self.validate(pinned))
-                    self.active.return_value = True
+                    empty = self.root / "empty"
+                    empty.mkdir()
+                    with classification_only(empty):
+                        self.refuse("^D5 is inactive$", lambda: self.validate(pinned, (self.repo, "p", empty)))
         self.refuse("^D5 admission requires START$", lambda: self.validate(pinned))
         with protocol.pin(self.directory) as live, live.start():
             self.refuse("^D5 admission requires START$", lambda: self.validate(pinned))

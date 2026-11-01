@@ -1,4 +1,5 @@
 """U4.1 entry refusal, first-effect capture, aliases and installed packages."""
+from contextlib import nullcontext
 import argparse
 import ast
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
@@ -26,6 +27,8 @@ sys.path.insert(0, str(OPERATOR))
 import swarm as S
 import merge_unit as M
 import d5_activation as activation
+from d5_readiness import MARKER
+from tests.fixtures.d5.ready import ready_installation
 
 FIXTURE = ROOT / "tests/fixtures/d5/u41-inactive-effects.json"
 MANIFEST = ROOT / "tests/fixtures/d5/integration-manifest.json"
@@ -210,7 +213,7 @@ class SurfaceFixture:
             import linear_api
             patch(linear_api, "load_key", "synthetic-fixture-key")
         calls = {
-            "run": lambda: m.run(["gh", "pr", "merge", "7", "--squash"]),
+            "run": lambda: m.run(["gh", "pr", "merge", "7", "--squash"], state_dir=self.state_dir),
             "current_intent": lambda: m.current_intent(self.state_dir, self.binding, a.root),
             "abandon": lambda: m.abandon(a, self.state_dir / "intent.json", {}, {}, "op"),
             "reconcile": lambda: m.reconcile(a, self.plan),
@@ -221,7 +224,11 @@ class SurfaceFixture:
         }
         return calls[name]
 
-    def observe(self, tool, name, active):
+    def observe(self, tool, name, active, broken=False):
+        if active:
+            ready_installation(self.directory, state_dir=self.state_dir)
+            if broken:
+                (self.state_dir / MARKER).unlink()
         with ExitStack() as stack:
             # Replace PATH for every entry; inherited schedulers change even
             # the inactive first-effect prefix through executable discovery.
@@ -231,7 +238,7 @@ class SurfaceFixture:
             output = io.StringIO()
             stack.enter_context(redirect_stdout(output))
             stack.enter_context(redirect_stderr(output))
-            stack.enter_context(mock.patch.object(activation, "d5_active", return_value=active))
+            stack.enter_context(nullcontext())
             commands, tracker_intents = [], []
             emit = self.s.SO.emit_intent
             def track(*args, **kwargs):
@@ -385,6 +392,9 @@ class TestActiveSurface(unittest.TestCase):
         manifest = json.loads(MANIFEST.read_text())
         parser = parser_for(manifest["tools"]["swarm.py"])
         subs = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        state_dir = ready_installation(temporary.name)["state_dir"]
         for name, child in subs.choices.items():
             if name in ("schema", "status", "scope-check", "validate"):
                 continue
@@ -395,16 +405,18 @@ class TestActiveSurface(unittest.TestCase):
                 value = (list(action.choices)[0] if action.choices else
                          "1" if action.type is int else "fixture")
                 argv.extend(([action.option_strings[0]] if action.option_strings else []) + [value])
+            if "--state-dir" in child._option_string_actions:
+                argv += ["--state-dir", state_dir]
             # In particular both aliases reach their real shared handler.
             with self.subTest(command=name), mock.patch.object(sys, "argv", ["swarm.py"] + argv), \
-                    mock.patch.object(activation, "d5_active", return_value=True), no_effects() as effects:
+                    nullcontext(), no_effects() as effects:
                 with self.assertRaisesRegex(SystemExit, "D5 active:"):
                     S.main()
                 self.assertEqual(effects, ([], []))
         for name in ("new-command", "status", "advance-code-terminal"):
-            args = argparse.Namespace(command=name, fn=lambda _: self.fail("unguarded dispatch"))
+            args = argparse.Namespace(state_dir=state_dir, command=name, fn=lambda _: self.fail("unguarded dispatch"))
             with mock.patch.object(argparse.ArgumentParser, "parse_args", return_value=args), \
-                    mock.patch.object(activation, "d5_active", return_value=True), no_effects() as effects:
+                    nullcontext(), no_effects() as effects:
                 with self.assertRaisesRegex(SystemExit, "D5 active:"):
                     S.main()
                 self.assertEqual(effects, ([], []))
@@ -417,19 +429,21 @@ class TestActiveSurface(unittest.TestCase):
                  ["--abandon-intent", "op", "--reason", "test"])
         with tempfile.TemporaryDirectory() as tmp:
             fixture = SurfaceFixture(tmp)
+            ready_installation(tmp, state_dir=fixture.state_dir)
             for mode in modes:
-                with self.subTest(mode=mode), mock.patch.object(activation, "d5_active", return_value=True), \
+                with self.subTest(mode=mode), nullcontext(), \
                         redirect_stderr(io.StringIO()) as err, no_effects() as effects:
                     self.assertEqual(M.main(fixture.margv + mode), 1)
                     self.assertIn("D5 active:", err.getvalue())
                     self.assertEqual(effects, ([], []))
 
     def test_active_observation_dispatch_is_retained(self):
-        with mock.patch.object(activation, "d5_active", return_value=True):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = ready_installation(tmp)["state_dir"]
             for fn in (S.cmd_schema, S.cmd_status, S.cmd_scope_check, S.cmd_validate):
-                S._d5_dispatch(argparse.Namespace(fn=fn, check_seeds=False))
+                S._d5_dispatch(argparse.Namespace(fn=fn, check_seeds=False, state_dir=state_dir))
             with self.assertRaisesRegex(SystemExit, "D5 active:"):
-                S._d5_dispatch(argparse.Namespace(fn=S.cmd_validate, check_seeds=True))
+                S._d5_dispatch(argparse.Namespace(fn=S.cmd_validate, check_seeds=True, state_dir=state_dir))
 
     def test_named_route_ownership_and_callers(self):
         profile = json.loads(MANIFEST.read_text())["u41_active_surface"]
@@ -482,7 +496,7 @@ class TestActiveSurface(unittest.TestCase):
         with mock.patch.object(S, "_d5_dispatch", lambda args: None), \
                 mock.patch.object(argparse.ArgumentParser, "parse_args", return_value=argparse.Namespace(
                     fn=lambda args: 0, command="new-alias")), \
-                mock.patch.object(activation, "d5_active", return_value=True):
+                nullcontext():
             with self.assertRaises(AssertionError):
                 with self.assertRaisesRegex(SystemExit, "D5 active:"):
                     S.main()
@@ -491,6 +505,7 @@ class TestActiveSurface(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             destination = Path(tmp) / "installed"
             destination.mkdir()
+            installed_state = ready_installation(tmp)["state_dir"]
             # Real copy installation of swarm, then of the operator's declared closure.
             for skill in ("hanig-swarm", "hanig-orchestrate"):
                 names = (skill,) if skill == "hanig-swarm" else (
@@ -504,31 +519,31 @@ root = pathlib.Path(sys.argv[1]).resolve()
 sys.path.insert(0, str(root / 'hanig-swarm/scripts'))
 real_import = builtins.__import__
 def checked(name, *args, **kwargs):
-    if name.startswith('d5_') and name != 'd5_activation':
+    if name.startswith('d5_') and name not in ('d5_activation', 'd5_installation'):
         raise AssertionError('unexpected orchestrate helper: ' + name)
     return real_import(name, *args, **kwargs)
 builtins.__import__ = checked
 import d5_activation
-d5_activation.d5_active = lambda: True
 import swarm
 try:
-    swarm.cmd_continue(None)
+    from types import SimpleNamespace
+    swarm.cmd_continue(SimpleNamespace(state_dir=sys.argv[3]))
 except SystemExit as exc:
     assert 'D5 active:' in str(exc)
 else:
     raise AssertionError('entry not refused')
-assert not any(n.startswith('d5_') and n != 'd5_activation' for n in sys.modules)
+assert not any(n.startswith('d5_') and n not in ('d5_activation', 'd5_installation') for n in sys.modules)
 if sys.argv[2] == 'operator':
     sys.path.insert(0, str(root / 'hanig-orchestrate/scripts'))
     import merge_unit
     assert merge_unit.SWARM == str(root / 'hanig-swarm/scripts/swarm.py')
-    assert merge_unit.main(['unused', '--state-dir', 'unused', '--unit', 'u',
+    assert merge_unit.main(['unused', '--state-dir', sys.argv[3], '--unit', 'u',
                             '--pr', '1', '--approver', 'Operator']) == 1
 print('installed refusal: OK')
 '''
                 env = {k: v for k, v in os.environ.items() if not k.startswith("HANIG_")}
                 result = subprocess.run([sys.executable, "-I", "-S", "-B", "-c", probe,
-                                         str(destination), "swarm" if skill == "hanig-swarm" else "operator"],
+                                         str(destination), "swarm" if skill == "hanig-swarm" else "operator", installed_state],
                                         cwd=tmp, env=env, capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("installed refusal: OK", result.stdout)

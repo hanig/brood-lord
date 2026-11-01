@@ -1,4 +1,5 @@
 """R3 consumers: real stores/flocks; events and failed NB probes order waits."""
+from contextlib import nullcontext
 from contextlib import contextmanager, ExitStack
 import json
 import os
@@ -19,7 +20,7 @@ import d5_host as host
 import d5_locks as locks
 import d5_protocol_locks as protocol
 from tests.test_d5_authority import grant, MANDATE
-from tests.fixtures.d5.ready import ready
+from tests.fixtures.d5.ready import ready, ready_installation, InstallationWitnesses, missing_installation
 from tests.test_d5_locks import isolate_pool
 
 ANCHOR = host.ProcessIdentity(42, 9000001)
@@ -37,8 +38,6 @@ class TestInstall(unittest.TestCase):
         self.mandate.write_bytes(MANDATE)
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
-        self.active = self.stack.enter_context(mock.patch.object(
-            install.registry, "d5_active", return_value=True))
         self.anchor = self.stack.enter_context(mock.patch.object(
             host, "session_anchor", return_value=("native", ANCHOR)))
         self.live = self.stack.enter_context(mock.patch.object(
@@ -57,6 +56,8 @@ class TestInstall(unittest.TestCase):
             with mock.patch.object(install.registry.CP, "_external_base",
                                    return_value=directory / "external"):
                 directory = Path(ready(self, repo, "p", state)["record_dir"])
+        if kind != "replace":
+            ready_installation(self.root, state_dir=self.root / (name + "-state"), record_dir=directory)
         if kind != "initial":
             store.create(directory, grant())
         return directory
@@ -124,6 +125,17 @@ class TestInstall(unittest.TestCase):
                 if worker is not None:
                     worker.join(10)
                     self.assertFalse(worker.is_alive(), "installer watchdog")
+
+    def test_inactive_installers_refuse_before_coordinator_lease(self):
+        for kind in KINDS:
+            with self.subTest(kind=kind):
+                directory = self.directory('no-lease-' + kind, kind)
+                entry = install.readiness.installation(directory)
+                with missing_installation(entry), \
+                        mock.patch.object(install.readiness, 'installer_lease', side_effect=AssertionError('lease before inactive refusal')), \
+                        mock.patch.object(protocol, 'pin', side_effect=AssertionError('protocol before inactive refusal')):
+                    with self.assertRaisesRegex(store.AuthorityError, '^D5 is inactive$'):
+                        self.call(kind, directory)
 
     def test_installation_waits_for_shared_holders(self):
         # R3-OMIT-EXCLUSIVE: the consumer must see EX DRAIN, START, then STATE.
@@ -219,13 +231,15 @@ class TestInstall(unittest.TestCase):
         for kind in KINDS:
             with self.subTest(kind=kind):
                 directory = self.directory(kind, kind)
-                self.active.return_value = False
+                witnesses = InstallationWitnesses(install.readiness.installation(directory))
+                self.addCleanup(witnesses.close)
+                witnesses.present = False
                 with mock.patch.object(protocol, "pin", side_effect=AssertionError("inactive pin")):
                     with self.assertRaisesRegex(store.AuthorityError, "^D5 is inactive$"):
                         self.call(kind, directory)
-                self.active.return_value = True
+                witnesses.present = True
                 with self.waiter(lambda: self.call(kind, directory), directory) as (results, errors):
-                    self.active.return_value = False
+                    witnesses.present = False
                 self.assertEqual(results, [])
                 self.assertEqual([str(e) for e in errors], ["D5 is inactive"])
 
@@ -358,6 +372,7 @@ class TestInstall(unittest.TestCase):
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
         with mock.patch.object(install.registry.CP, "_external_base", return_value=self.root / "external"):
             entry = install.stage(repo, "p", state)
+            ready_installation(self.root, entry)
         directory = Path(entry["record_dir"])
         self.assertTrue(directory.is_dir())
         self.assertFalse((directory / store.RECORD_NAME).exists())
@@ -421,8 +436,9 @@ class TestInstall(unittest.TestCase):
         nested = self.root / "nested"
         nested.mkdir()
         (nested / "child").mkdir()
-        intended = self.directory("nested/record")
-        other = self.directory("record")
+        intended, other = nested / "record", self.root / "record"
+        intended.mkdir(mode=0o700)
+        other.mkdir(mode=0o700)
         (self.root / "link").symlink_to(nested / "child", target_is_directory=True)
         prior = Path.cwd()
         try:

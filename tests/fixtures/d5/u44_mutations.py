@@ -12,6 +12,8 @@ sys.path.insert(0, str(ROOT))
 from tests import test_d5_u44_result_consumption as tests
 
 
+import d5_activation as activation
+
 def replacement(module, name, old, new):
     tree = ast.parse(Path(module.__file__).read_text())
     node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
@@ -25,12 +27,12 @@ def replacement(module, name, old, new):
 
 def patches(name):
     if name == 'intent-label-completes':
-        return [replacement(tests.M, 'reconcile', 'if intent is not None:\n',
+        return [replacement(tests.M, 'reconcile', 'if intent is not None:\n            if pr["state"] != "MERGED":',
             'if intent is not None and intent.get("phase") in ("merged", "receipt_recorded"):\n'
-            '            return None\n        if intent is not None:\n')]
+            '            return None\n        if intent is not None:\n            if pr["state"] != "MERGED":')]
     if name == 'legacy-receipt-completes':
         return [replacement(tests.SE, 'admit_merge',
-            'if D5.d5_active():', 'if False:')]
+            ('if D5.' + activation.d5_active.__name__ + '(Path(state_dir).absolute()):'), 'if False:')]
     if name == 'report-before-readback':
         return [replacement(tests.M, '_d5_result_receipt',
             'J._readback(handle, expected)', 'return expected')]
@@ -50,8 +52,8 @@ def patches(name):
             '_require(type(intent.get("d5")) is dict, "legacy intent cannot authorize active recovery")',
             'if "d5" not in intent:\n        return outcome'),
             replacement(tests.M, '_d5_journal_binding',
-            'bound = intent["d5"]["binding"]',
-            'if "d5" not in intent:\n        return {}\n    bound = intent["d5"]["binding"]'),
+            'metadata = intent.get("d5")',
+            'if "d5" not in intent:\n        return {}\n    metadata = intent.get("d5")'),
             replacement(tests.M, '_d5_result_receipt',
             'if current != operation_id or not isinstance((intent or {}).get("d5"), dict):',
             'if "d5" not in intent:\n        return {}\n'

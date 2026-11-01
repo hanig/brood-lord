@@ -11,7 +11,7 @@ Trusted local participants, stable record/lock inodes, registered checkout at
 its original path, explicit fixture adapters, and managed exec children.
 Host identity, activation and time are synthetic in active scenarios; registry,
 store, ledger, admission, protocol locks and subprocess consumers are real.
-The default-inactive checks restore the unpatched activation function. R1 uses
+The inactive checks use an explicit fixture shared with their child. R1 uses
 authority.start.lock / authority.drain.lock and may repair owner modes to 0600;
 STATE remains store-owned authority.lock. Events/pipes establish ordering;
 nonblocking flock probes establish exclusion. Timeouts are watchdogs.
@@ -65,7 +65,7 @@ from tests import test_d5_process as p
 import d5_custody as custody
 import d5_install as install
 
-DEFAULT_ACTIVE = t.registry.d5_active
+from tests.fixtures.d5.ready import missing_installation
 PEER = str(Path(__file__).parent / 'fixtures/d5/r10_peer.py')
 
 
@@ -77,11 +77,11 @@ class TestAcceptance(unittest.TestCase):
     finish = p.TestProcess.finish
 
     def setUp(self):
-        self.assertIs(DEFAULT_ACTIVE(), False)
         self.eq(p.process.DESIGNATED_BOOTSTRAPS, frozenset())
         self.c = t.TestSubmission()
         self.addCleanup(self.c.doCleanups)
-        self.c.setUp()  # Includes a fresh pooled-lock map, restored by cleanup.
+        self.c.setUp()
+        self.assertIs(t.registry.d5_active(self.c.state_dir), True)  # Includes a fresh pooled-lock map, restored by cleanup.
         c = self.c
         self.data = dict(args=list(map(str, c.args)), directory=str(c.directory),
             request={k: v for k, v in c.request.items() if k != 'anchor'},
@@ -212,7 +212,7 @@ class TestAcceptance(unittest.TestCase):
         self.eq(returned['calls'], [])
         self.eq(c.rows(), [])
         # The successor owns the lease before waiting on the surviving DRAIN.
-        t.submission.readiness.state.release_lease(c.state_dir)
+        t.submission.readiness.coordinator_state.release_lease(c.state_dir)
         installer = self.worker('installer', self.data)
         self.assertTrue(self.event(installer, 'exclusive-probe')['blocked'])
         self.eq((c.directory / t.store.RECORD_NAME).read_bytes(), original)
@@ -348,12 +348,13 @@ class TestAcceptance(unittest.TestCase):
                 owner_response='fixture', displayed_bounds='fixture')]
         table = [(call, t.authority.AuthorityError, 'D5 is inactive') for call in ordinary]
         table += [(call, t.authority.AuthorityError, 'D5 is not active') for call in routed]
-        table += [(lambda: t.completion.bind(None), t.ledger.EffectError, 'D5 inactive'),
+        table += [(lambda: t.completion.bind(None), t.ledger.EffectError, t.completion.MISMATCH),
             (lambda: p.process.protected_spawn(c.directory, -1, p.BOOTSTRAP),
              t.authority.AuthorityError, 'D5 protected bootstrap is not designated')]
         before = self.snapshot()
-        with mock.patch.object(t.registry, 'd5_active', DEFAULT_ACTIVE):
-            self.assertIs(t.registry.d5_active(), False)
+        with missing_installation(c.entry):
+            inactive_before = self.snapshot()
+            self.assertIs(t.registry.d5_active(c.state_dir), False)
             self.eq(p.process.DESIGNATED_BOOTSTRAPS, frozenset())
             for index, (call, kind, message) in enumerate(table):
                 with self.subTest(entry=index), \
@@ -365,7 +366,7 @@ class TestAcceptance(unittest.TestCase):
                     pin.assert_not_called()
                     lookup.assert_not_called()
                     spawn.assert_not_called()
-                    self.eq(self.snapshot(), before)
+                    self.eq(self.snapshot(), inactive_before)
             with t.protocol.pin(c.directory) as record, record.drain() as fd:
                 result = subprocess.run([sys.executable, PEER, str(c.directory), str(fd)],
                     pass_fds=(fd,), close_fds=True, capture_output=True, timeout=20)
@@ -393,12 +394,13 @@ class TestAcceptance(unittest.TestCase):
         attempt = t.ledger.prepare(*c.args, **dict(request, correlation={'request_id': 'uncertain'}))
         cap, uncertain = t.completion.bind(receipt), t.completion.bind(attempt)
         before = self.snapshot()
-        with mock.patch.object(t.registry, 'd5_active', DEFAULT_ACTIVE), \
+        with missing_installation(c.entry), \
                 mock.patch.object(t.protocol, 'pin', wraps=t.protocol.pin) as pin:
+            inactive_before = self.snapshot()
             for call in (lambda: cap.complete(t.OK), uncertain.uncertain):
                 with self.assertRaisesRegex(t.ledger.EffectError, '^D5 inactive$'):
                     call()
-                self.eq(self.snapshot(), before)
+                self.eq(self.snapshot(), inactive_before)
             self.eq(pin.call_count, 2)
         self.eq(cap.complete(t.OK), t.OK)
         self.assertIsNone(uncertain.uncertain())

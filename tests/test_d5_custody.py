@@ -1,4 +1,5 @@
 """Custody transitions through the locked store and inactive public API."""
+from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import ExitStack
 import copy
@@ -22,7 +23,7 @@ import d5_install as install
 import d5_lease as lease
 import d5_registry as registry
 from tests.test_d5_authority import MANDATE, grant
-from tests.fixtures.d5.ready import ready
+from tests.fixtures.d5.ready import ready, missing_installation, classification_only
 from tests.test_d5_locks import isolate_pool
 
 ANCHOR = host.ProcessIdentity(42, 9000001)
@@ -214,7 +215,7 @@ class TestCustodyStore(unittest.TestCase):
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
         stack = ExitStack()
         self.addCleanup(stack.close)
-        stack.enter_context(mock.patch.object(registry, "d5_active", return_value=True))
+        stack.enter_context(nullcontext())
         stack.enter_context(mock.patch.object(registry.CP, "_external_base",
                                               return_value=self.directory / "external"))
         self.directory = Path(ready(self, repo, "p", state)["record_dir"])
@@ -224,9 +225,12 @@ class TestCustodyStore(unittest.TestCase):
         raw = self.path.read_bytes()
         args = {key: first[key] for key in ("issued_at", "confirmed_at", "expires_at", "scope")}
         args.update(first["confirmation"])
-        for fresh in (False, True):
-            with self.subTest(fresh=fresh):
-                if fresh:
+        for extend in (False, True):
+            with self.subTest(extended_bounds=extend):
+                # Each public replacement now needs its own confirmation,
+                # including when the bounds and response words are unchanged.
+                args["confirmed_at"] = first["confirmed_at"] + 1
+                if extend:
                     args["owner_response"] += " fresh"
                     args["expires_at"] += 1
                     args["issued_at"] += 1
@@ -269,10 +273,10 @@ class TestCustodyAPI(unittest.TestCase):
                                    return_value=self.directory / "installed-registry"):
                 ready(self, self.repo, "p", self.state)
 
-    def register(self, record=True):
-        with mock.patch.object(registry, "d5_active", return_value=True):
+    def register(self, record=True, promote=True):
+        with nullcontext():
             entry = ready(self, self.repo, "p", self.state,
-                          promote=getattr(self, "promote", True))
+                          promote=promote)
         if record:
             store.create(entry["record_dir"], grant())
         return entry
@@ -293,11 +297,11 @@ class TestCustodyAPI(unittest.TestCase):
                 for p in self.directory.rglob("*")}
 
     def test_inactive_refuses_without_changes(self):
-        self.register()
+        entry = self.register()
         before = self.tree()
-        self.assertFalse(registry.d5_active())
-        with mock.patch.object(registry, "d5_active", return_value=False), \
+        with missing_installation(entry), classification_only(self.state), \
                 mock.patch.object(registry, "lookup", side_effect=AssertionError("lookup")):
+            self.assertFalse(registry.d5_active(self.state))
             for operation in (self.claim, self.relinquish):
                 with self.assertRaisesRegex(authority.AuthorityError, "D5 is not active"):
                     operation()
@@ -306,7 +310,7 @@ class TestCustodyAPI(unittest.TestCase):
 
     def test_requires_registration_before_anchor(self):
         before = self.tree()
-        with mock.patch.object(registry, "d5_active", return_value=True):
+        with nullcontext():
             for operation in (self.claim, self.relinquish):
                 with self.assertRaisesRegex(authority.AuthorityError, "not registered"):
                     operation()
@@ -318,7 +322,7 @@ class TestCustodyAPI(unittest.TestCase):
         directory = Path(entry["record_dir"])
         before = self.tree()
         self.anchor.return_value = host.Unknown("no verified native anchor")
-        with mock.patch.object(registry, "d5_active", return_value=True), ExitStack() as stack:
+        with nullcontext(), ExitStack() as stack:
             # R9-UNKNOWN-FALLBACK: no authority-store operation may be entered.
             # Registry's strict byte reader remains available to resolve identity.
             for name in ("claim", "relinquish", "create", "replace", "revoke", "check", "read"):
@@ -348,7 +352,7 @@ class TestCustodyAPI(unittest.TestCase):
 
     def test_api_claim_and_relinquish_reinspect_identity(self):
         entry = self.register()
-        with mock.patch.object(registry, "d5_active", return_value=True):
+        with nullcontext():
             result = self.claim()
             self.assertEqual(result["custody"]["session_id"], "native")
             self.anchor.return_value = ("changed", ANCHOR)
@@ -362,7 +366,7 @@ class TestCustodyAPI(unittest.TestCase):
 
     def test_status_absent_and_ungranted_create_nothing(self):
         for registered in (False, True):
-            entry = self.register(record=False) if registered else None
+            entry = self.register(record=False, promote=False) if registered else None
             if entry:
                 (self.base / "hanig-authority/v1/registry.lock").unlink()
             before = self.tree()
@@ -381,7 +385,7 @@ class TestCustodyAPI(unittest.TestCase):
         for active in (False, True):
             for now in (102, 86501):
                 with self.subTest(active=active, now=now), \
-                        mock.patch.object(registry, "d5_active", return_value=active), \
+                        (nullcontext() if active else missing_installation(entry)), \
                         mock.patch.object(store, "read", side_effect=AssertionError("locking read")), \
                         mock.patch.object(store, "check", side_effect=AssertionError("persistent check")), \
                         mock.patch.object(authority, "evaluate", side_effect=AssertionError("evaluation")):

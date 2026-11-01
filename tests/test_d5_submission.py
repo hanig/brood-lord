@@ -1,4 +1,5 @@
 """R6 consumer tests: real registration/admission/ledger, ordered lock probes."""
+from contextlib import nullcontext
 from contextlib import contextmanager, ExitStack
 from dataclasses import FrozenInstanceError
 import ast
@@ -27,7 +28,7 @@ import d5_host as host
 import d5_lease as lease
 import d5_protocol_locks as protocol
 import d5_registry as registry
-from tests.fixtures.d5.ready import ready
+from tests.fixtures.d5.ready import ready, missing_installation, classification_only, InstallationWitnesses
 from tests.test_d5_locks import isolate_pool
 
 MANDATE = b"fixture mandate\r\n\xff"
@@ -73,11 +74,12 @@ class TestSubmission(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self.stack.enter_context(mock.patch.object(registry.CP, "_external_base",
                                                    return_value=self.root / "external"))
-        self.active = self.stack.enter_context(mock.patch.object(registry, "d5_active", return_value=True))
         self.stack.enter_context(mock.patch.object(host, "session_anchor", return_value=("native", ANCHOR)))
         self.clock = self.stack.enter_context(mock.patch.object(admission.time, "time", return_value=150))
         self.args = self.repo, "p", self.state_dir
         self.entry = ready(self, *self.args)
+        self.installation = InstallationWitnesses(self.entry)
+        self.addCleanup(self.installation.close)
         self.directory = Path(self.entry["record_dir"])
         self.scope = dict(plans=["p"], repositories=["r"], actions=["write"], trackers=["t"])
         lease.grant(*self.args, issued_at=100, confirmed_at=100, expires_at=200,
@@ -383,11 +385,12 @@ class TestSubmission(unittest.TestCase):
 
     def test_inactive_completion_refusal_is_unchanged(self):
         for uncertain in (False, True):
-            self.active.return_value = True
+            corruption = ExitStack()
+            self.addCleanup(corruption.close)
             self.boundary = DeterministicBoundary()
 
             def finish():
-                self.active.return_value = False
+                corruption.enter_context(missing_installation(self.entry))
                 if uncertain:
                     raise RuntimeError("lost response")
                 return dict(OK)
@@ -396,14 +399,13 @@ class TestSubmission(unittest.TestCase):
             with self.refuse(ledger.EffectError, "^D5 inactive$"):
                 self.submit()
             self.assertTrue(all(r["state"] == "submitted" for r in self.rows()))
-        self.active.return_value = True
+            corruption.close()
 
     def test_inactive_and_absent_registration_refuse_before_work(self):
-        self.active.return_value = False
-        with mock.patch.object(registry, "lookup", side_effect=AssertionError("inactive lookup")):
+        with missing_installation(self.entry), classification_only(self.state_dir), \
+                mock.patch.object(registry, "lookup", side_effect=AssertionError("inactive lookup")):
             with self.refuse(authority.AuthorityError, "^D5 is inactive$"):
                 self.submit()
-        self.active.return_value = True
         with mock.patch.object(registry, "lookup", return_value=None), \
                 mock.patch.object(protocol, "pin", side_effect=AssertionError("unregistered pin")):
             with self.refuse(authority.AuthorityError, "^not registered$"):
@@ -556,7 +558,7 @@ class TestSubmission(unittest.TestCase):
                     if name == "finish-invalid":
                         c.boundary.on_finish = lambda: None
                     if name == "inactive":
-                        c.boundary.on_finish = lambda: (setattr(c.active, "return_value", False), dict(OK))[1]
+                        c.boundary.on_finish = lambda: (setattr(c.installation, "present", False), dict(OK))[1]
                     with ExitStack() as stack:
                         stack.enter_context(mock.patch.object(ledger, "prepare", side_effect=prepared))
                         stack.enter_context(mock.patch.object(ledger, "_write", side_effect=writing))
@@ -604,7 +606,7 @@ class TestSubmission(unittest.TestCase):
                     self.eq([c[0] for c in c.boundary.calls], calls)
                     self.eq([r["state"] for r in c.rows()], [] if state is None else [state])
                     self.eq(c.probe("drain"), drain)
-                    c.active.return_value = True
+                    c.installation.present = True
                     if attempts:
                         if state in ("not_submitted", "completed"):
                             with self.refuse(ledger.EffectError, ledger.CONFLICT):

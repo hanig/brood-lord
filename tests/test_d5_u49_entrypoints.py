@@ -1,4 +1,5 @@
 """U4.9c named activation routes and advisory; no interpreter isolation claim."""
+from contextlib import nullcontext
 import argparse
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 import io
@@ -18,32 +19,52 @@ import d5_activation as activation
 import swarm as S
 import merge_unit as M
 from tests.fixtures.d5.u49c_capture import inactive_captures, MERGE_ARGV
+from tests.test_d5_u4_0b1_issuance import no_effects
+from tests.fixtures.d5.ready import ready_installation, missing_installation, classification_only
 
 BASE = '4a97999d999347cdc52a6496bbfa5392f0b22d88'
 FIXTURES = ROOT / 'tests/fixtures/d5'
 
 
-class TestRoutes(unittest.TestCase):
+class InstallationFixture(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        old = Path.cwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, old)
+        patch = mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(self.root / 'xdg')})
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.state = S.CP.resolve_paths()[0]
+        self.entry = ready_installation(self.root, state_dir=self.state)
+
+    def activation_state(self, active):
+        return nullcontext() if active else missing_installation(self.entry)
+
+
+class TestRoutes(InstallationFixture):
     def test_cmd_run(self):
         for active in (False, True):
             with self.subTest(active=active), \
-                    mock.patch.object(activation, 'd5_active', return_value=active), \
+                    self.activation_state(active), \
                     mock.patch.object(sys, 'dont_write_bytecode', True), \
                     mock.patch.object(S.SR, 'apply_agent_resolution',
                                       side_effect=SystemExit('legacy preparation')) as legacy:
                 with self.assertRaisesRegex(SystemExit, 'D5 active:.*cmd_run' if active else 'legacy preparation'):
-                    S.cmd_run(argparse.Namespace(plan='fixture-plan.json'))
+                    S.cmd_run(argparse.Namespace(plan='fixture-plan.json', state_dir=str(self.state)))
                 self.assertEqual(legacy.call_count, 0 if active else 1)
 
     def test_cmd_advance(self):
         for active in (False, True):
             with self.subTest(active=active), \
-                    mock.patch.object(activation, 'd5_active', return_value=active), \
+                    self.activation_state(active), \
                     mock.patch.object(sys, 'dont_write_bytecode', True), \
                     mock.patch.object(S.SR, 'apply_agent_resolution',
                                       side_effect=SystemExit('legacy preparation')) as legacy, \
                     mock.patch.object(S, 'cmd_run', wraps=S.cmd_run) as run:
-                args = argparse.Namespace(plan='fixture-plan.json')
+                args = argparse.Namespace(plan='fixture-plan.json', state_dir=str(self.state))
                 with self.assertRaisesRegex(SystemExit, 'D5 active:.*cmd_run' if active else 'legacy preparation'):
                     S.cmd_advance(args)
                 run.assert_called_once_with(args)
@@ -55,9 +76,9 @@ class TestRoutes(unittest.TestCase):
     def test_swarm_main(self):
         for active in (False, True):
             with self.subTest(active=active), \
-                    mock.patch.object(activation, 'd5_active', return_value=active), \
+                    self.activation_state(active), \
                     mock.patch.object(sys, 'dont_write_bytecode', True), \
-                    mock.patch.object(sys, 'argv', ['swarm.py', 'run', 'fixture-plan.json']), \
+                    mock.patch.object(sys, 'argv', ['swarm.py', 'run', 'fixture-plan.json', '--state-dir', str(self.state)]), \
                     mock.patch.object(S, 'cmd_run', return_value=19) as run:
                 with self.assertRaises(SystemExit) as stopped:
                     S.main()
@@ -73,12 +94,12 @@ class TestRoutes(unittest.TestCase):
         # The active lease's actual merge_launch_admitted refusal stays real.
         for active in (False, True):
             with self.subTest(active=active), ExitStack() as stack:
-                stack.enter_context(mock.patch.object(activation, 'd5_active', return_value=active))
+                stack.enter_context(self.activation_state(active))
                 guard = stack.enter_context(mock.patch.object(M, '_d5_merge_entry'))
                 read = stack.enter_context(mock.patch.object(M, 'read_object',
                     side_effect=M.Refusal('legacy preparation')))
                 out = stack.enter_context(redirect_stderr(io.StringIO()))
-                self.assertEqual(M.main(MERGE_ARGV), 1)
+                self.assertEqual(M.main(MERGE_ARGV[:2] + [str(self.state)] + MERGE_ARGV[3:]), 1)
                 self.assertIn('merge launch is not admitted' if active else 'legacy preparation', out.getvalue())
                 self.assertEqual(read.call_count, 0 if active else 1)
                 self.assertEqual(guard.call_count, 0 if active else 1)
@@ -92,14 +113,14 @@ class TestRoutes(unittest.TestCase):
         self.assertIs(S.D5, activation)
         self.assertIs(M.D5, activation)
         self.assertEqual(Path(activation.__file__).resolve(), ROOT / routes['activation'])
-        self.assertIs(activation.d5_active(), False)
+        self.assertIs(activation.d5_active(self.state), True)
         self.assertIs(M.merge_launch_admitted(), False)
 
 
-class TestAdvisory(unittest.TestCase):
+class TestAdvisory(InstallationFixture):
     def schema_output(self, stderr):
         output = io.StringIO()
-        with mock.patch.object(activation, 'd5_active', return_value=True), \
+        with nullcontext(), \
                 mock.patch.object(sys, 'dont_write_bytecode', False), \
                 mock.patch.object(sys, 'argv', ['swarm.py', 'schema']), \
                 redirect_stdout(output), redirect_stderr(stderr):
@@ -119,12 +140,32 @@ class TestAdvisory(unittest.TestCase):
                 stream = mock.Mock(write=mock.Mock(side_effect=error('synthetic stream failure')))
                 self.assertEqual(self.schema_output(stream), expected)
 
+    def test_bad_plan_keeps_observation_diagnostics_and_mutation_refusal(self):
+        plan = self.root / 'bad.json'
+        for active in (False, True):
+            for content in ('{', '[]'):
+                with self.subTest(active=active, content=content), self.activation_state(active):
+                    plan.write_text(content)
+                    args = argparse.Namespace(plan=str(plan), check_seeds=False, survey=None)
+                    with self.assertRaises(SystemExit) as expected:
+                        S.cmd_validate(args)
+                    self.assertTrue(str(expected.exception).startswith('error: '))
+                    with mock.patch.object(sys, 'argv', ['swarm.py', 'validate', str(plan)]):
+                        with self.assertRaises(SystemExit) as observed:
+                            S.main()
+                    self.assertEqual(str(observed.exception), str(expected.exception))
+                    with mock.patch.object(sys, 'argv', ['swarm.py', 'run', str(plan)]), \
+                            mock.patch.object(S, 'cmd_run', side_effect=AssertionError('mutation reached')) as run:
+                        with self.assertRaisesRegex(SystemExit, 'D5 cannot resolve operated state'):
+                            S.main()
+                        run.assert_not_called()
+
     def test_warning_truth_table_at_swarm_entries(self):
         for active in (False, True):
             for disabled in (False, True):
                 for entry in ('cmd_run', 'cmd_advance', 'main'):
                     with self.subTest(active=active, disabled=disabled, entry=entry), ExitStack() as stack:
-                        stack.enter_context(mock.patch.object(activation, 'd5_active', return_value=active))
+                        stack.enter_context(self.activation_state(active))
                         stack.enter_context(mock.patch.object(sys, 'dont_write_bytecode', disabled))
                         stack.enter_context(mock.patch.object(sys, 'argv', ['swarm.py', 'schema']))
                         # Direct effect entries still refuse when active; inactive
@@ -137,7 +178,7 @@ class TestAdvisory(unittest.TestCase):
                             if entry == 'main':
                                 S.main()
                             else:
-                                getattr(S, entry)(argparse.Namespace(plan='fixture-plan.json'))
+                                getattr(S, entry)(argparse.Namespace(plan='fixture-plan.json', state_dir=str(self.state)))
                         if entry == 'main':
                             self.assertEqual(stopped.exception.code, 0)
                         elif active:
@@ -155,18 +196,26 @@ class TestAdvisory(unittest.TestCase):
     def test_read_only_and_diagnostic_failure_never_blocks(self):
         for stream in (io.StringIO(), mock.Mock(write=mock.Mock(side_effect=OSError('unavailable'))),
                        mock.Mock(write=mock.Mock(side_effect=ValueError('closed')))):
+            # The active diagnostic must also swallow failed streams; the
+            # inactive guard below separately limits classification IO.
+            with mock.patch.object(sys, 'dont_write_bytecode', False), \
+                    redirect_stderr(stream), no_effects() as effects:
+                self.assertIsNone(S._d5_bytecode_advisory(self.state))
+                self.assertEqual(effects, ([], []))
             with self.subTest(stream=type(stream).__name__), ExitStack() as stack:
-                stack.enter_context(mock.patch.object(activation, 'd5_active', return_value=True))
+                stack.enter_context(missing_installation(self.entry))
+                stack.enter_context(classification_only(self.state))
+                stack.enter_context(mock.patch.object(argparse, "_", lambda text: text))
                 stack.enter_context(mock.patch.object(sys, 'dont_write_bytecode', False))
                 stack.enter_context(redirect_stderr(stream))
-                for owner, name in ((Path, 'open'), (Path, 'stat'), (Path, 'iterdir'),
+                for owner, name in ((Path, 'iterdir'),
                                     (os, 'scandir'), (os, 'listdir')):
                     stack.enter_context(mock.patch.object(owner, name, side_effect=AssertionError('filesystem access')))
-                stack.enter_context(mock.patch('builtins.open', side_effect=AssertionError('filesystem access')))
-                self.assertIsNone(S._d5_bytecode_advisory())
+                self.assertIsNone(S._d5_bytecode_advisory(self.state))
                 self.assertIs(sys.dont_write_bytecode, False)
                 # Exercise a real allowed consumer with a failing stderr too.
-                stack.enter_context(mock.patch.object(sys, 'argv', ['swarm.py', 'schema']))
+                stack.enter_context(mock.patch.object(argparse.ArgumentParser, 'parse_args',
+                    return_value=argparse.Namespace(fn=S.cmd_schema, state_dir=str(self.state), json=False)))
                 stack.enter_context(redirect_stdout(io.StringIO()))
                 with self.assertRaises(SystemExit) as stopped:
                     S.main()

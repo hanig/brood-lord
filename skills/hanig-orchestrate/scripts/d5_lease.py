@@ -1,4 +1,4 @@
-"""Inert D5 lease management; no production callers, CLI or authorization.
+"""D5 lease management; no production callers, CLI or authorization.
 
 Registration owns placement and identity; R3/R2 serialize active mutations,
 and the record store owns replacement rules. Status reads atomic snapshots without creating locks
@@ -18,8 +18,9 @@ import d5_registry
 import d5_readiness as readiness
 
 
-def _active():
-    if not d5_registry.d5_active():
+def _active(state_dir):
+    state_dir = readiness.refuse_broken(state_dir)
+    if not d5_registry.d5_active(state_dir):
         raise d5_registry.AuthorityError("D5 is not active")
 
 
@@ -56,7 +57,7 @@ def _grant_locked(directory):
 def grant(checkout, plan_id, state_dir, *, issued_at, confirmed_at, expires_at,
           mandate_bytes, scope, owner_response, displayed_bounds):
     """Create or replace a validated grant with exact owner confirmation."""
-    _active()
+    _active(state_dir)
     ready = readiness.require(state_dir)
     record = {"schema_version": 1, "grant_id": uuid.uuid4().hex,
               "issued_at": issued_at, "confirmed_at": confirmed_at,
@@ -66,18 +67,25 @@ def grant(checkout, plan_id, state_dir, *, issued_at, confirmed_at, expires_at,
                                                "displayed_bounds": displayed_bounds},
               "custody": None, "invalidation": None}
     authority.validate(record)
+    for key, value in record["confirmation"].items():
+        if not value or value.isspace():
+            raise authority.AuthorityError("confirmation." + key + ": fresh confirmation required")
     entry = readiness.bound(ready, _registered(checkout, plan_id, state_dir))
     directory = Path(entry["record_dir"])
     operation = (d5_install.replace_authority
                  if store.present(directory / store.RECORD_NAME, "record")
                  else d5_install.install_initial)
     with _grant_locked(directory):
+        if operation is d5_install.replace_authority:
+            previous = store.read(directory)
+            if confirmed_at <= previous["confirmed_at"]:
+                raise authority.AuthorityError("grant: fresh confirmation time required")
         return operation(directory, record)
 
 
 def revoke(checkout, plan_id, state_dir, now, reason):
     """Keep the inactive refusal; R2 resolves registration and serializes revoke."""
-    _active()
+    _active(state_dir)
     return d5_control.revoke(checkout, plan_id, state_dir, now, reason)
 
 
@@ -94,5 +102,5 @@ def status(checkout, plan_id, state_dir, *, now, mandate_bytes):
         if store.present(path, "record"):
             record = authority.decode(store.read_bytes(path))
             state = authority.evaluate(record, now, mandate_bytes)[0]
-    return {"state": "active" if d5_registry.d5_active() else "inactive",
+    return {"state": "active" if d5_registry.d5_active(readiness.activation_directory(state_dir)) else "inactive",
             "registration": entry, "record": record, "record_state": state}

@@ -106,8 +106,8 @@ def worktrees_of(repo):
     return sorted(found, key=str)
 
 
-def operated_worktrees(plan=None, cwd=None, extra_repos=()):
-    """Resolved worktrees the current command may operate on."""
+def _plan_repositories(plan=None, extra_repos=()):
+    """All declared workspace sources used by operated path resolution."""
     repos = list(extra_repos or [])
     for unit in ((plan or {}).get("units") or []):
         if not isinstance(unit, dict):
@@ -121,6 +121,12 @@ def operated_worktrees(plan=None, cwd=None, extra_repos=()):
         policy = unit.get("workspace_policy") or {}
         if isinstance(policy, dict) and policy.get("path"):
             repos.append(policy["path"])
+    return repos
+
+
+def operated_worktrees(plan=None, cwd=None, extra_repos=()):
+    """Resolved worktrees the current command may operate on."""
+    repos = _plan_repositories(plan, extra_repos)
     context = _resolved(cwd or os.getcwd())
     if git_top(context) is not None:
         repos.append(context)
@@ -153,7 +159,7 @@ def _external_base(worktrees):
 def default_paths(cwd=None, worktrees=()):
     """Stable per-project defaults shared by run, status, and outbox."""
     context = project_context(cwd)
-    digest = hashlib.sha256(str(context).encode()).hexdigest()[:12]
+    digest = hashlib.sha256(os.fsencode(context)).hexdigest()[:12]
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", context.name).strip("-.")
     slug = slug or "project"
     project = _external_base(worktrees) / "hanig-swarm" / "projects"
