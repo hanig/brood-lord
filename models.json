@@ -83,7 +83,7 @@
       ],
       "cost_tier": "unmeasured",
       "quota": "OpenAI API review; Codex/Paseo dispatch unmeasured",
-      "notes": "Owner decision 2026-10-28: standard/deep review at max; bench and family in reviewers.json. Price and dispatch unmeasured."
+      "notes": "Owner decision 2026-10-28: standard/deep review; reviewers.json is the effort authority and currently sets xhigh. Bench and family in reviewers.json. Price and dispatch unmeasured."
     }
   ]
 }
