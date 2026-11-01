@@ -29,6 +29,20 @@ class TestU8ExitRegressions(unittest.TestCase):
                 capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, (result.stdout, result.stderr))
 
+    def test_locale_tmpdir_fixture_accepts_ascii_filesystem_encoding(self):
+        # Recovery-only reproducer: the fixture chooses an unencodable name
+        # even when the incoming TMPDIR is unset. No fix is applied here.
+        mkdir = os.mkdir
+        def ascii_mkdir(path, *args, **kwargs):
+            value = os.fspath(path)
+            if isinstance(value, str):
+                value.encode('ascii', 'surrogateescape')
+            return mkdir(path, *args, **kwargs)
+        with mock.patch.dict(os.environ):
+            os.environ.pop('TMPDIR', None)
+            with mock.patch.object(os, 'mkdir', ascii_mkdir):
+                self.test_locale_regressions_accept_unicode_tmpdir()
+
     def test_explicit_tilde_state_is_contained(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
