@@ -136,6 +136,20 @@ class TestU8ExitRegressions(unittest.TestCase):
             self.assertEqual(state.parent.name, 'caf-' + legacy)
             self.assertEqual(runs, state.parent / 'runs')
 
+    def test_distinct_euc_jp_contexts_keep_separate_defaults(self):
+        # Round-3 counterexample retained for recovery; no filesystem writes.
+        parent = Path('/tmp/project-parent')
+        contexts = [parent / bytes.fromhex(value).decode('euc_jp', 'surrogateescape')
+                    for value in ('a1a1', 'e38080')]
+        self.assertNotEqual(*contexts)
+        native_os = types.SimpleNamespace(**vars(os))
+        native_os.fsencode = lambda value: os.fspath(value).encode('euc_jp', 'surrogateescape')
+        with mock.patch.object(paths, 'os', native_os), \
+                mock.patch.object(paths, '_external_base', return_value=Path('/tmp/project-state')), \
+                mock.patch.object(paths, 'project_context', side_effect=contexts):
+            first, second = paths.default_paths(), paths.default_paths()
+        self.assertNotEqual(first, second)
+
     def assert_witness_roundtrip(self, entry, fail_body):
         directory = Path(entry['state_dir'])
         names = (readiness.MARKER, readiness.SENTINEL)
