@@ -17,40 +17,14 @@ from tests.fixtures.d5.ready import ready_installation, missing_installation, re
 
 
 class TestU8ExitRegressions(unittest.TestCase):
-    def test_non_utf8_filesystem_keeps_legacy_default_key(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary).resolve()
-            context = root / 'caf\u00e9'
-            context.mkdir()
-            legacy = hashlib.sha256(str(context).encode('utf-8')).hexdigest()[:12]
-            native = hashlib.sha256(str(context).encode('gb18030', 'surrogateescape')).hexdigest()[:12]
-            self.assertNotEqual(legacy, native)
-            xdg = root / 'xdg'
-            old_project = xdg / 'hanig-swarm' / 'projects' / ('caf-' + legacy)
-            old_state, old_runs = old_project / 'state', old_project / 'runs'
-            old_state.mkdir(parents=True)
-            old_runs.mkdir()
-            history = old_state / 'swarm-state.json'
-            history.write_bytes(b'{"existing":"run"}\n')
-            # The Mac fixes filesystem encoding to UTF-8. Model only Linux's
-            # fsencode boundary; path discovery and default resolution stay real.
-            # GB18030 also accepts Unicode characters in the host's temp path.
-            native_os = types.SimpleNamespace(**vars(os))
-            native_os.fsencode = lambda value: os.fspath(value).encode('gb18030', 'surrogateescape')
-            with mock.patch.object(paths, 'os', native_os), mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(xdg)}):
-                state, runs, worktrees = paths.resolve_paths(cwd=context, need_root=True)
-            self.assertEqual(history.read_bytes(), b'{"existing":"run"}\n')
-            self.assertEqual(worktrees, [])
-            self.assertEqual((state, runs), (old_state, old_runs))
-
     def test_locale_regressions_accept_unicode_tmpdir(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary) / '\u4e2d'
             directory.mkdir()
             prefix = 'tests.test_d5_exit_regressions.TestU8ExitRegressions.'
             result = subprocess.run([sys.executable, '-B', '-m', 'unittest',
-                prefix + 'test_non_utf8_filesystem_keeps_legacy_default_key',
-                prefix + 'test_locale_decoded_context_keeps_its_legacy_key'],
+                prefix + 'test_surrogateescaped_cwd_keeps_default_paths_usable',
+                prefix + 'test_distinct_euc_jp_contexts_keep_separate_defaults'],
                 cwd=ROOT, env=dict(os.environ, TMPDIR=str(directory)),
                 capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, (result.stdout, result.stderr))
@@ -80,7 +54,7 @@ class TestU8ExitRegressions(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             context = root / 'raw-\udcff'
-            expected = hashlib.sha256(str(context).encode('utf-8', 'surrogateescape')).hexdigest()[:12]
+            expected = hashlib.sha256(os.fsencode(context)).hexdigest()[:12]
             with mock.patch.object(os, 'getcwd', return_value=str(context)), \
                     mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(root / 'xdg')}):
                 state, runs, worktrees = paths.resolve_paths(need_root=True)
@@ -120,24 +94,9 @@ class TestU8ExitRegressions(unittest.TestCase):
                         self.assertEqual({p.relative_to(home): p.read_bytes()
                             for p in home.rglob('*') if p.is_file()}, before)
 
-    def test_locale_decoded_context_keeps_its_legacy_key(self):
-        # A locale change can change the decoded name itself. Preserve the
-        # legacy key for that context too, rather than inventing a migration.
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary).resolve()
-            context = root / 'caf\u00c3\u00a9'
-            legacy = hashlib.sha256(str(context).encode('utf-8')).hexdigest()[:12]
-            native_os = types.SimpleNamespace(**vars(os))
-            native_os.getcwd = lambda: str(context)
-            native_os.fsencode = lambda value: os.fspath(value).encode('gb18030', 'surrogateescape')
-            with mock.patch.object(paths, 'os', native_os), \
-                    mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(root / 'xdg')}):
-                state, runs, _ = paths.resolve_paths(need_root=True)
-            self.assertEqual(state.parent.name, 'caf-' + legacy)
-            self.assertEqual(runs, state.parent / 'runs')
-
     def test_distinct_euc_jp_contexts_keep_separate_defaults(self):
-        # Round-3 counterexample retained for recovery; no filesystem writes.
+        # Synthetic EUC-JP boundary; distinct native names must not share defaults.
+        # No filesystem writes or dependence on the host filesystem encoding.
         parent = Path('/tmp/project-parent')
         contexts = [parent / bytes.fromhex(value).decode('euc_jp', 'surrogateescape')
                     for value in ('a1a1', 'e38080')]
@@ -148,7 +107,8 @@ class TestU8ExitRegressions(unittest.TestCase):
                 mock.patch.object(paths, '_external_base', return_value=Path('/tmp/project-state')), \
                 mock.patch.object(paths, 'project_context', side_effect=contexts):
             first, second = paths.default_paths(), paths.default_paths()
-        self.assertNotEqual(first, second)
+        self.assertNotEqual(first[0], second[0])
+        self.assertNotEqual(first[1], second[1])
 
     def assert_witness_roundtrip(self, entry, fail_body):
         directory = Path(entry['state_dir'])

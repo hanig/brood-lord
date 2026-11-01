@@ -16,6 +16,13 @@ READY and BROKEN are classified before any Git operation with effects, including
 fetch, checkout, worktree changes, commit, ref writes, merge and push. No separate
 parser reads Git worktree metadata to guess the state location.
 
+U8 derives the implicit default state and runs key from filesystem path bytes.
+On a non-UTF-8 filesystem encoding, that key can differ from the pre-U8 legacy
+key derived from the decoded context encoded as strict UTF-8; compatibility
+with the legacy key is not guaranteed. To keep using old state, pass explicit
+`--state-dir` and `--root` paths naming the existing state and runs directories.
+Retain those directories; this change performs no state migration or deletion.
+
 ## Quiescence and human inventory
 
 Quiescent means **no live session holds a lease, no merge is in flight, and
