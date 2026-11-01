@@ -26,7 +26,7 @@ This is the canonical ledger of reproduced findings deferred outside a task's de
 
 ### Scope-check subshell and GIT_CEILING_DIRECTORIES
 
-- Issue and unit: ARC-2208, `e3d-protocol-scope-check`, [PR #233](https://github.com/hanig/multi-agent-skills/pull/233).
+- Issue and unit: ARC-2208, `e3d-protocol-scope-check`, [PR #233](https://github.com/hanig/brood-lord/pull/233).
 - Original verdict and round: Found by the luna reviewer in a replay benchmark of e3d's round-1 review on 2026-10-17; the original round 1 passed.
 - Tested revision: main at `bfa2a5f`.
 - Reproduction: Measured on 2026-10-17 by the orchestrator: with `GIT_CEILING_DIRECTORIES` set to `<worktree>/skills`, `git rev-parse --verify HEAD^{commit}` resolves from the attempt worktree root and fails from `<worktree>/skills/x`.
@@ -43,7 +43,7 @@ This is the canonical ledger of reproduced findings deferred outside a task's de
 
 ### Named seams in the routing test
 
-- Issue and unit: ARC-2284, `r2b-default-local`, [PR #241](https://github.com/hanig/multi-agent-skills/pull/241).
+- Issue and unit: ARC-2284, `r2b-default-local`, [PR #241](https://github.com/hanig/brood-lord/pull/241).
 - Original verdict and round: `REVIEW_FAIL` at round 2 (`kimi-k2.7-code`); the other two reviewers upheld every claim. This was the first deferral under the envelope rule.
 - Tested revision: `71f4d57`, merged as `bfa2a5f`.
 - Reproduction: `tests/test_merge_verification_routing.py` patches production seam functions by exact name (for example `V._observe_execution`), so renaming one makes the suite error with `AttributeError`.
@@ -60,7 +60,7 @@ This is the canonical ledger of reproduced findings deferred outside a task's de
 
 ### Resolver: four-digit dated ids in hyphen families with an empty suffix
 
-- Issue and unit: ARC-2478, `m1d` and `m1e`, [PR #247](https://github.com/hanig/multi-agent-skills/pull/247).
+- Issue and unit: ARC-2478, `m1d` and `m1e`, [PR #247](https://github.com/hanig/brood-lord/pull/247).
 - Original verdict and round: Sol, m1d round 1, `REVIEW_FAIL`: a family member was simultaneously labelled a dated snapshot and adopted by `select()`. The point-release parse predates m1; PR #247 makes candidate reporting disjoint from family membership, without changing that parse.
 - Tested revision: m1e `60d13445d26707acca733749a88d937d28191911`, retaining the existing `version_of` and `select` behavior.
 - Reproduction: The m1e [plan](plan-model-resolution.md) and evidence at `$HOME/.local/state/hanig-swarm/projects/multi-agent-skills-82e3a975eef5/runs/m1e-resolver-candidates/5258a0f4d7f2f890/evidence.md` record the m1d scenario: `version_of` returned `(3, 1017)` and `select` chose `kimi-k3-1017`. With a hyphen separator and empty suffix, four digits after the major parse as a point release even when they denote a date. Since PR #247 a `CANDIDATE` row never names a family member.
@@ -77,7 +77,7 @@ This is the canonical ledger of reproduced findings deferred outside a task's de
 
 ### Flake triage: tests run with the operator's privileges
 
-- Issue and unit: ARC-2479, `p4` through `p4d`, [PR #248](https://github.com/hanig/multi-agent-skills/pull/248).
+- Issue and unit: ARC-2479, `p4` through `p4d`, [PR #248](https://github.com/hanig/brood-lord/pull/248).
 - Original verdict and round: Findings across p4 round 3, p4b and p4c; p4c's final round 1 returned `REVIEW_FAIL`. The owner accepted the residual on 2026-10-18; p4d records withdrawal of every isolation/path-hiding claim. Those decisions do not relabel the original verdicts as passes.
 - Tested revision: p4 `1c0995a08cc7ced1145b5426b4281518d015be9b` for detached-process survival; p4c `a27d0017c388052ed4becc9c16b56b8f45be688e` for environment and committed-content exposure.
 - Reproduction: Sources are `$HOME/.local/state/hanig-swarm/projects/multi-agent-skills-82e3a975eef5/runs/p4-flake-triage/879f762ad7f37dcd/reproduction-round-3.txt` and `runs/p4c-flake-triage/5e5b541f8462f593/evidence.md` under the same project directory. The detached-helper run recorded `timeout_seconds: 0.5`, `cli_elapsed_seconds: 1.1300773749826476`, `late_side_effect_seconds_after_return: 2.3932172500062734`, `helper_alive_after_return: true`, `side_effect_after_return: true`, `scratch_removed: true`, and `registry_unchanged: true`; the CLI returned `0` / `CONSISTENT_FAILURE`. Separately, `OPERATOR_REPO`, `REPO`, and committed `operator.txt` exposed a fixture operator path; tests changed its canary ref and triage returned `0` / `INCONCLUSIVE`. The cited p4c evidence describes "separate-session helper tests" and says its path-discovery fixture did not search process arguments. These probes do not measure process-argument discovery.
@@ -94,7 +94,7 @@ This is the canonical ledger of reproduced findings deferred outside a task's de
 
 ### Flake triage: bare repositories are refused
 
-- Issue and unit: ARC-2479, `p4d`, [PR #248](https://github.com/hanig/multi-agent-skills/pull/248).
+- Issue and unit: ARC-2479, `p4d`, [PR #248](https://github.com/hanig/brood-lord/pull/248).
 - Original verdict and round: Sonnet, p4d round 1, minor / low confidence, reproduced. The overall verdict was `REVIEW_FAIL`; the owner accepted this input-form refusal as a documented limit on 2026-10-18, not as a passing review.
 - Tested revision: p4d `0b78ad0724245c6a604059eb342f8ab499ee4f59`, compared with original p4 `1c0995a08cc7ced1145b5426b4281518d015be9b` and p4c `a27d0017c388052ed4becc9c16b56b8f45be688e`.
 - Reproduction: `$HOME/.local/state/hanig-swarm/projects/multi-agent-skills-82e3a975eef5/runs/p4d-flake-triage/f4b00ba9fcfecc7c/evidence.md` records otherwise passing pinned tests with `--repo` naming a bare repository, a full checkout's `.git`, or `.git/objects`: each returned exit `2` / `SETUP_ERROR`, with `fatal: this operation must be run in a work tree`. Original p4 returned exit `0` / `INCONCLUSIVE` for all three; p4c already returned the same refusal as p4d.

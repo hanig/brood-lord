@@ -1,4 +1,6 @@
-# multi-agent-skills
+# brood-lord
+
+An accountable swarm: agents' work is judged on evidence, under an owner's mandate.
 
 Browse the [documentation index](docs/README.md) for document status, dates, and purpose.
 
@@ -39,7 +41,7 @@ claim one layer up.
 ## Quick start
 
 ```bash
-git clone git@github.com:hanig/multi-agent-skills.git
+git clone git@github.com:hanig/brood-lord.git multi-agent-skills
 cd multi-agent-skills
 # Inspect automatic selection first; this changes nothing.
 ./install.sh --dry-run --json
