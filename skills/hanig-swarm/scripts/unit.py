@@ -1627,7 +1627,7 @@ def main():
         command_parser.add_argument("--state-dir", default=None)
     args = ap.parse_args()
     sys.exit(DI.refusal_message(f"D5 active: unit {args.cmd} is refused before first effect")
-             if args.state_dir is not None and D5.d5_active(Path(args.state_dir).expanduser().absolute()) else {"allocate": cmd_allocate, "bind": cmd_bind, "check": cmd_check}[args.cmd](args))
+             if args.state_dir is not None and D5.d5_active(Path(args.state_dir).absolute()) else {"allocate": cmd_allocate, "bind": cmd_bind, "check": cmd_check}[args.cmd](args))
 
 
 if __name__ == "__main__":

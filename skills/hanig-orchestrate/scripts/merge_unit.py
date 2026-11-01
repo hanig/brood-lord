@@ -1386,7 +1386,6 @@ def main(argv=None):
     if args.reason and not args.abandon_intent:
         parser.error("--reason requires --abandon-intent")
     try:
-        args.state_dir = str(Path(args.state_dir).expanduser().absolute())
         if D5.d5_active(Path(args.state_dir).absolute()):
             with _active_entry_lease(args):
                 plan = read_object(args.plan)
