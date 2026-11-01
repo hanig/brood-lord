@@ -1439,14 +1439,13 @@ def main():
     unknown_suffix = (" Unknown is not zero -- check Linear before assuming "
                       "it is current.")
 
-    repo = os.environ.get("HANIG_TRACKER_REPO") or ""
+    repo = (os.environ.get("HANIG_TRACKER_REPO")
+            or os.environ.get("CLAUDE_PROJECT_DIR") or "")
     if not repo:
-        home = os.environ.get("HOME") or ""
-        if not home:
-            emit(prefix + "Neither HANIG_TRACKER_REPO nor HOME is set, so the "
-                          "repository could not be located." + unknown_suffix)
-            return 0
-        repo = os.path.join(home, "multi-agent-skills")
+        # The hook ships at <checkout>/.claude/hooks/tracker_sync_check.py.
+        # Resolve the script itself so a symlink launch keeps that checkout.
+        repo = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.realpath(__file__))))
     if not os.path.isdir(repo):
         emit(prefix + "There is no repository at %s." % repo + unknown_suffix)
         return 0

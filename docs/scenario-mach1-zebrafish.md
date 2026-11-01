@@ -105,10 +105,10 @@ Step 5 is not built. Today one plan cannot submit locally to all three clusters.
 On each applicable login node, today he runs:
 
 ```bash
-python3 ~/multi-agent-skills/skills/hanig-swarm/scripts/swarm.py validate \
+python3 ~/brood-lord/skills/hanig-swarm/scripts/swarm.py validate \
   /shared/goodarzilab/projects/mach1-zfish/swarm-plan.json
 
-python3 ~/multi-agent-skills/skills/hanig-swarm/scripts/swarm.py run \
+python3 ~/brood-lord/skills/hanig-swarm/scripts/swarm.py run \
   /shared/goodarzilab/projects/mach1-zfish/swarm-plan.json \
   --state-dir /shared/goodarzilab/swarm-state/mach1-zfish/state \
   --root /shared/goodarzilab/swarm-state/mach1-zfish/runs
@@ -140,7 +140,7 @@ Target design: a deterministic timer invokes `advance` every 5–15 minutes, pro
 Step 4 is not built. Today nothing wakes it. Hani must run:
 
 ```bash
-python3 ~/multi-agent-skills/skills/hanig-swarm/scripts/swarm.py advance \
+python3 ~/brood-lord/skills/hanig-swarm/scripts/swarm.py advance \
   /shared/goodarzilab/projects/mach1-zfish/swarm-plan.json \
   --state-dir /shared/goodarzilab/swarm-state/mach1-zfish/state \
   --root /shared/goodarzilab/swarm-state/mach1-zfish/runs
@@ -153,7 +153,7 @@ Paseo 0.6.1 can create schedules and heartbeats, but no swarm schedule registrat
 Today, from a terminal:
 
 ```bash
-python3 ~/multi-agent-skills/skills/hanig-swarm/scripts/swarm.py status \
+python3 ~/brood-lord/skills/hanig-swarm/scripts/swarm.py status \
   /shared/goodarzilab/projects/mach1-zfish/swarm-plan.json \
   --state-dir /shared/goodarzilab/swarm-state/mach1-zfish/state
 ```
@@ -197,7 +197,7 @@ Ordinary dependency advancement and explicitly transient preemption retries shou
 > **CLOSED, ARC-234.** A unit may now declare a `converge` block in the plan and the coordinator applies it inside `advance`: a non-`CONVERGED` verdict makes the unit `NEEDS_HUMAN` rather than `DONE`, so the DAG stops on its own and dependents wait. The command below still works as the hand tool. The "multiple predicates per unit" generalisation below was NOT built; one declared convergence gate was.
 
 ```bash
-python3 ~/multi-agent-skills/skills/hanig-swarm/scripts/converge.py check \
+python3 ~/brood-lord/skills/hanig-swarm/scripts/converge.py check \
   /shared/goodarzilab/swarm-state/mach1-zfish/runs/train-seed-0/<attempt>/metrics.jsonl \
   --criterion '{"metric":"val_auroc","mode":"max","threshold":0.78,"min_steps":10000}' \
   --diverge '{"metric":"train_loss","above":1000}' \

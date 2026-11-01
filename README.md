@@ -41,8 +41,8 @@ claim one layer up.
 ## Quick start
 
 ```bash
-git clone git@github.com:hanig/brood-lord.git multi-agent-skills
-cd multi-agent-skills
+git clone https://github.com/hanig/brood-lord.git
+cd brood-lord
 # Inspect automatic selection first; this changes nothing.
 ./install.sh --dry-run --json
 # Name targets explicitly for a portable, auditable install.
@@ -50,6 +50,8 @@ cd multi-agent-skills
   --allow-org-shadow
 ./bin/doctor --json                # installed skills, provenance, and health
 ```
+
+Existing checkouts may keep their old folder until the host migration runs.
 
 Doctor keeps the complete agent diagnostics document in a private temporary
 file, bounded to 256 KiB, instead of passing it through the 64 KiB diagnostic
