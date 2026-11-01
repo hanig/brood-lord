@@ -19,6 +19,11 @@ import worktree as W
 from tests.test_attempt_worktrees import ENV, FakePaseo, code_unit, git, repo_at
 from tests.scheduler_fixture import codex_environment, state_environment
 
+SHIPPED_SKILLS = (
+    "hanig-orchestrate", "hanig-portable-handoff", "hanig-project",
+    "hanig-review-gate", "hanig-swarm", "hanig-verified-workflow",
+)
+
 
 class TestInstalledSkillDrift(unittest.TestCase):
     def setUp(self):
@@ -33,6 +38,12 @@ class TestInstalledSkillDrift(unittest.TestCase):
             **codex_environment(self.tmp / "codex-fixture"),
         }))
         self.repo = repo_at(self.tmp / "repo")
+        for name in SHIPPED_SKILLS:
+            source = self.repo / "skills" / name
+            source.mkdir(parents=True)
+            (source / "SKILL.md").write_text("shipped fixture skill\n")
+        git(self.repo, "add", "skills")
+        git(self.repo, "commit", "-qm", "ship authored skill fixtures")
         remote = self.tmp / "origin.git"
         subprocess.run(["git", "init", "-q", "--bare", str(remote)],
                        check=True, env=ENV)
@@ -174,11 +185,73 @@ class TestInstalledSkillDrift(unittest.TestCase):
         self.assertEqual(warning, "")
         self.assertEqual(len(facts["installed_skills"]["skills"]), 2)
 
+    def test_nonshipped_prefixed_skills_do_not_warn(self):
+        for store in (".agents", ".claude"):
+            self.install(store, "hanig-foo", self.base).unlink()
+        _attempt, facts, warning = self.dispatch()
+        self.assertEqual(warning, "")
+        self.assertEqual(facts["installed_skills"], {"skills": [], "errors": []})
+
+    def test_shipped_skill_missing_marker_retains_warning(self):
+        markers = [self.install(store, "hanig-swarm", self.base)
+                   for store in (".agents", ".claude")]
+        for marker in markers:
+            marker.unlink()
+        _attempt, facts, warning = self.dispatch()
+        self.assertEqual(warning.count("installed skill audit incomplete"), 2)
+        self.assertEqual(facts["installed_skills"]["errors"], [])
+        entries = facts["installed_skills"]["skills"]
+        self.assertEqual(len(entries), 2)
+        for marker, entry in zip(markers, entries):
+            self.assertEqual(entry["marker"], str(marker))
+            self.assertIsNone(entry["source_version"])
+            self.assertIn("FileNotFoundError", entry["error"])
+            self.assertIn(
+                f"WARNING: unit 'code': installed skill audit incomplete at "
+                f"{str(marker.parent)!r}: marker={str(marker)!r}; "
+                f"{entry['error']!r}.", warning)
+        self.assertIn("Advisory only; dispatch continues.", warning)
+
+    def test_shipped_names_come_from_pinned_base_not_live_checkout(self):
+        target, error = S._resolve_dispatch_target(self.unit)
+        self.assertIsNone(error)
+        source, error = S._dispatch_source_identity(self.unit, target)
+        self.assertIsNone(error)
+        self.install(".agents", "hanig-foo", self.base).unlink()
+        self.install(".agents", "hanig-swarm", self.base).unlink()
+        (self.repo / "skills" / "hanig-foo").mkdir()
+        (self.repo / "skills" / "hanig-foo" / "SKILL.md").write_text("later\n")
+        git(self.repo, "rm", "-r", "skills/hanig-swarm")
+        git(self.repo, "add", "skills")
+        git(self.repo, "commit", "-qm", "change skill catalog after pinning")
+        _attempt, facts, warning = self.dispatch(dispatch_source=source)
+        self.assertEqual([row["skill"] for row in facts["installed_skills"]["skills"]],
+                         ["hanig-swarm"])
+        self.assertEqual(warning.count("installed skill audit incomplete"), 1)
+        self.assertNotIn("hanig-foo", warning)
+
+    def test_shipped_catalog_failure_is_advisory(self):
+        self.install(".agents", "hanig-foo", self.base).unlink()
+        real_run = S.U.run
+
+        def unavailable(argv, **kwargs):
+            if argv[:4] == ["git", "-C", str(self.repo.resolve()), "ls-tree"]:
+                return 128, "", "fixture catalog unavailable"
+            return real_run(argv, **kwargs)
+
+        with mock.patch.object(S.U, "run", unavailable):
+            _attempt, facts, warning = self.dispatch()
+        self.assertEqual(facts["installed_skills"]["skills"], [])
+        self.assertEqual(len(facts["installed_skills"]["errors"]), 1)
+        self.assertIn("fixture catalog unavailable", warning)
+        self.assertIn("Advisory only; dispatch continues.", warning)
+        self.assertNotIn("hanig-foo", warning)
+
     def test_dangling_skill_entry_warns_and_persists_one_advisory_error(self):
         marker = self.install(".agents", "hanig-swarm", self.base)
         for store in (".agents", ".claude"):
             with self.subTest(store=store):
-                skill = self.home / store / "skills" / "hanig-x"
+                skill = self.home / store / "skills" / "hanig-project"
                 skill.parent.mkdir(parents=True, exist_ok=True)
                 skill.symlink_to(self.tmp / "missing-skill", target_is_directory=True)
                 skill.lstat()
@@ -206,7 +279,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
     def test_partial_skill_entries_warn_without_refusing_dispatch(self):
         for kind in ("missing", "directory", "dangling-document", "file-entry"):
             with self.subTest(kind=kind):
-                skill = self.home / ".agents" / "skills" / ("hanig-" + kind)
+                skill = self.home / ".agents" / "skills" / "hanig-project"
                 skill.parent.mkdir(parents=True, exist_ok=True)
                 if kind == "file-entry":
                     skill.write_text("incomplete install\n")
@@ -270,8 +343,8 @@ class TestInstalledSkillDrift(unittest.TestCase):
         length = max(len(short), next((i + 1 for i, c in enumerate(self.base)
                                       if c in "abcdef"), len(self.base)))
         versions = (self.base[:length].upper(), self.base.upper())
-        for name, version in zip(("short", "full"), versions):
-            self.install(".agents", "hanig-" + name, version)
+        for name, version in zip(("hanig-swarm", "hanig-project"), versions):
+            self.install(".agents", name, version)
         _attempt, facts, warning = self.dispatch()
         self.assertEqual(warning, "")
         entries = facts["installed_skills"]["skills"]
@@ -282,7 +355,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
 
     def test_broken_or_closed_warning_stream_does_not_abort_dispatch(self):
         self.install(".agents", "hanig-swarm", "f" * 40)
-        self.install(".agents", "hanig-unknown", self.base).unlink()
+        self.install(".agents", "hanig-verified-workflow", self.base).unlink()
         broken = mock.Mock()
         broken.write.side_effect = BrokenPipeError("fixture broken stderr")
         closed = io.StringIO()
@@ -395,11 +468,11 @@ class TestInstalledSkillDrift(unittest.TestCase):
                 self.assertNotIn("resolved_commit", entry)
 
     def test_bad_missing_and_nonregular_markers_remain_advisory(self):
-        for name, payload in (("invalid", b"\xff"), ("empty", b"source_version=\n"),
-                              ("duplicate", b"source_version=a\nsource_version=b\n"),
-                              ("large", b"x" * 65537), ("missing", None),
-                              ("fifo", None)):
-            marker = self.install(".agents", "hanig-" + name, self.base)
+        cases = (("invalid", b"\xff"), ("empty", b"source_version=\n"),
+                 ("duplicate", b"source_version=a\nsource_version=b\n"),
+                 ("large", b"x" * 65537), ("missing", None), ("fifo", None))
+        for skill, (name, payload) in zip(SHIPPED_SKILLS, cases):
+            marker = self.install(".agents", skill, self.base)
             if payload is None:
                 marker.unlink()
                 if name == "fifo":

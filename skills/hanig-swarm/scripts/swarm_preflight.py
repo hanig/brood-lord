@@ -720,8 +720,10 @@ def _installed_skill_source_version(marker):
 
 
 def _installed_skill_snapshot(repo, base):
-    """Best-effort audit of ~/.agents/skills and ~/.claude/skills only.
+    """Best-effort audit of shipped authored skills in the two home stores.
 
+    Names come from the coordinator-pinned base's skills/ tree, not the
+    live checkout or an installed store's use of our naming prefix.
     These are available candidates, not evidence of which skill a worker
     loads. Loader precedence, project/custom stores and later edits are not
     observed. Keep each path and raw marker claim, including duplicate names.
@@ -730,6 +732,20 @@ def _installed_skill_snapshot(repo, base):
     a version and report it at dispatch. This does not certify installed bytes.
     """
     snapshot = {"skills": [], "errors": []}
+    rc, paths, error = U.run(
+        ["git", "-C", str(repo), "ls-tree", "-d", "-z", "--name-only",
+         base, "--", "skills/"], timeout=5, preserve_newlines=True)
+    if rc != 0:
+        snapshot["errors"].append({
+            "path": str(repo),
+            "error": f"cannot list shipped skills at {base}: {error or rc}"})
+        return snapshot
+    # Match selected_sources' authored-directory classifier on the pinned
+    # repository tree. Prefix ownership is not inferred from installed names.
+    shipped = {path[len("skills/"):] for path in paths.split("\0")
+               if path.startswith("skills/hanig-") and ".bak" not in path}
+    if not shipped:
+        return snapshot
     resolved_versions = {}
     try:
         home = Path.home()
@@ -755,7 +771,7 @@ def _installed_skill_snapshot(repo, base):
             snapshot["errors"].append({"path": str(root), "error": str(exc)})
             continue
         for skill in candidates:
-            if not skill.name.startswith("hanig-"):
+            if skill.name not in shipped:
                 continue
             try:
                 if not (skill / "SKILL.md").is_file():
