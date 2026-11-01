@@ -41,7 +41,7 @@ prove that an installed directory is natively loaded by a vendor CLI.
 ### Current automated evidence (2026-09-05)
 
 Release-validation follow-ups are collected in draft
-[PR #6](https://github.com/hanig/multi-agent-skills/pull/6). Independent safety
+[PR #6](https://github.com/hanig/brood-lord/pull/6). Independent safety
 review and fix verification are recorded in
 [the review report](arc-274-independent-review.md) and
 [the verification report](arc-274-fix-verification.md).
@@ -119,7 +119,7 @@ record the following in the release artifact before approving the release:
 Exact commands, package provenance, OS versions, and the distinction between
 discovery, standalone capture, and model invocation are in
 [native-agent-validation.md](native-agent-validation.md). The first two-platform
-native pass is [CI run 33974800468](https://github.com/hanig/multi-agent-skills/actions/runs/33974800468),
+native pass is [CI run 33974800468](https://github.com/hanig/brood-lord/actions/runs/33974800468),
 on PR head `a1df089` (merge ref `459841f`). The later no-Claude fixture and
 installed handoff capture passed locally with pinned packages; their final CI
 checks remain distinct from that earlier run. Those historical observations did not prove
