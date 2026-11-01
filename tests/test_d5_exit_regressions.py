@@ -23,7 +23,7 @@ class TestU8ExitRegressions(unittest.TestCase):
             context = root / 'caf\u00e9'
             context.mkdir()
             legacy = hashlib.sha256(str(context).encode('utf-8')).hexdigest()[:12]
-            native = hashlib.sha256(str(context).encode('latin-1')).hexdigest()[:12]
+            native = hashlib.sha256(str(context).encode('gb18030', 'surrogateescape')).hexdigest()[:12]
             self.assertNotEqual(legacy, native)
             xdg = root / 'xdg'
             old_project = xdg / 'hanig-swarm' / 'projects' / ('caf-' + legacy)
@@ -34,13 +34,26 @@ class TestU8ExitRegressions(unittest.TestCase):
             history.write_bytes(b'{"existing":"run"}\n')
             # The Mac fixes filesystem encoding to UTF-8. Model only Linux's
             # fsencode boundary; path discovery and default resolution stay real.
+            # GB18030 also accepts Unicode characters in the host's temp path.
             native_os = types.SimpleNamespace(**vars(os))
-            native_os.fsencode = lambda value: os.fspath(value).encode('latin-1', 'surrogateescape')
+            native_os.fsencode = lambda value: os.fspath(value).encode('gb18030', 'surrogateescape')
             with mock.patch.object(paths, 'os', native_os), mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(xdg)}):
                 state, runs, worktrees = paths.resolve_paths(cwd=context, need_root=True)
             self.assertEqual(history.read_bytes(), b'{"existing":"run"}\n')
             self.assertEqual(worktrees, [])
             self.assertEqual((state, runs), (old_state, old_runs))
+
+    def test_locale_regressions_accept_unicode_tmpdir(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / '\u4e2d'
+            directory.mkdir()
+            prefix = 'tests.test_d5_exit_regressions.TestU8ExitRegressions.'
+            result = subprocess.run([sys.executable, '-B', '-m', 'unittest',
+                prefix + 'test_non_utf8_filesystem_keeps_legacy_default_key',
+                prefix + 'test_locale_decoded_context_keeps_its_legacy_key'],
+                cwd=ROOT, env=dict(os.environ, TMPDIR=str(directory)),
+                capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, (result.stdout, result.stderr))
 
     def test_explicit_tilde_state_is_contained(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -116,7 +129,7 @@ class TestU8ExitRegressions(unittest.TestCase):
             legacy = hashlib.sha256(str(context).encode('utf-8')).hexdigest()[:12]
             native_os = types.SimpleNamespace(**vars(os))
             native_os.getcwd = lambda: str(context)
-            native_os.fsencode = lambda value: os.fspath(value).encode('latin-1', 'surrogateescape')
+            native_os.fsencode = lambda value: os.fspath(value).encode('gb18030', 'surrogateescape')
             with mock.patch.object(paths, 'os', native_os), \
                     mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(root / 'xdg')}):
                 state, runs, _ = paths.resolve_paths(need_root=True)
