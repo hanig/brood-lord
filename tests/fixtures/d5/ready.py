@@ -69,7 +69,7 @@ def missing_installation(entry):
     """
     directory = Path(entry['state_dir'])
     original = directory.stat()
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(dir=directory.parent) as tmp:
         moved = []
         absent = original
         try:

@@ -1762,7 +1762,7 @@ def main():
     try:
         sys.dont_write_bytecode = True
         import d5_activation
-        active = args.state_dir is not None and d5_activation.d5_active(Path(args.state_dir).absolute())
+        active = args.state_dir is not None and d5_activation.d5_active(Path(args.state_dir).expanduser().absolute())
     except Exception as exc:
         sys.exit("D5 activation unavailable: " + type(exc).__name__)
     finally:
