@@ -5,7 +5,9 @@ import importlib
 import importlib.util
 import inspect
 import io
+import os
 import re
+import subprocess
 import sys
 import tempfile
 import tokenize
@@ -2604,6 +2606,40 @@ class TestCanonicalDocumentPointers(unittest.TestCase):
         self.assertTrue(
             (ROOT / "docs/orchestrator-mandate.md").exists(),
             "the orchestrator mandate is referenced but absent")
+
+
+class TestScenarioCheckoutCommands(unittest.TestCase):
+    def test_commands_run_from_existing_or_new_checkout(self):
+        document = (ROOT / "docs/scenario-mach1-zebrafish.md").read_text()
+        # The runbook's attempt placeholder is supplied by the operator;
+        # replace it before shell parsing so angle brackets are not redirects.
+        document = document.replace("<attempt>", "fixture-attempt")
+        commands = re.findall(r"^python3 .+$", document.replace("\\\n", ""), re.M)
+        self.assertEqual(len(commands), 5)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            executables = root / "bin"
+            executables.mkdir()
+            (executables / "python3").symlink_to(sys.executable)
+            for name in ("multi-agent-skills", "brood-lord", "another checkout"):
+                home = root / name / "home"
+                checkout = home / name
+                scripts = checkout / "skills/hanig-swarm/scripts"
+                scripts.mkdir(parents=True)
+                for script in ("swarm.py", "converge.py"):
+                    (scripts / script).write_text('print("fixture tool reached")\n')
+                env = dict(os.environ, HOME=str(home),
+                           PATH=str(executables) + os.pathsep + os.defpath,
+                           MULTI_AGENT_SKILLS_CHECKOUT=str(checkout))
+                for command in commands:
+                    with self.subTest(checkout=name, command=command):
+                        # Execute only against fixture tools; their plan/output
+                        # arguments are inert and no real workflow is launched.
+                        result = subprocess.run(
+                            ["/bin/sh", "-c", command], cwd=str(root), env=env,
+                            capture_output=True, text=True, timeout=10)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(result.stdout, "fixture tool reached\n")
 
 
 if __name__ == "__main__":

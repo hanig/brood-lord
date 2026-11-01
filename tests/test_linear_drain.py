@@ -175,7 +175,7 @@ class DrainCase(AuditCase):
 
 
 class TestDrain(DrainCase):
-    def test_repository_label_rename_keeps_repeat_drain_mutation_free(self):
+    def test_tracked_binding_keeps_repeat_drain_mutation_free(self):
         binding = json.loads(self.binding.read_text())
         binding['repository'] = 'hanig/multi-agent-skills'
         self.binding.write_text(json.dumps(binding))
@@ -186,7 +186,7 @@ class TestDrain(DrainCase):
         comments = copy.deepcopy(self.fake.comments)
         binding['repository'] = json.loads(
             (ROOT / '.hanig/linear-binding.json').read_text())['repository']
-        self.assertEqual(binding['repository'], 'hanig/brood-lord')
+        self.assertEqual(binding['repository'], 'hanig/multi-agent-skills')
         self.binding.write_text(json.dumps(binding))
         self.fake.mutations.clear()
         for full in (False, True):

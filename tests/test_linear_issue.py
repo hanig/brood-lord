@@ -353,6 +353,28 @@ runpy.run_path(str(script), run_name='__main__')
 
 
 class TestIssue(IssueCase):
+    def test_tracked_binding_replays_pending_old_label_operation(self):
+        binding = json.loads(self.binding.read_text())
+        binding['repository'] = 'hanig/multi-agent-skills'
+        self.binding.write_text(json.dumps(binding))
+        with mock.patch.object(LI, 'apply', side_effect=Crash()), self.assertRaises(Crash):
+            self.issue('new', '--independent', 'fixture')
+        self.assertEqual(self.fake.mutations, [])
+        self.assertEqual(len(self.records()), 1)
+        record = self.records()[0]
+        original = record.read_bytes()
+        self.assertFalse(LI.confirmed(record))
+        binding['repository'] = json.loads(
+            (ROOT / '.hanig/linear-binding.json').read_text())['repository']
+        self.binding.write_text(json.dumps(binding))
+        self.assertEqual(self.replay(), 0, self.stdout + self.stderr)
+        self.assertTrue(LI.confirmed(record))
+        self.assertEqual(record.read_bytes(), original)
+        self.assertEqual(sum('OperationCreate' in q for q, _ in self.fake.mutations), 1)
+        self.fake.mutations.clear()
+        self.assertEqual(self.replay(), 0, self.stdout + self.stderr)
+        self.assertEqual(self.fake.mutations, [])
+
     def test_archived_observed_sources_and_relation_lookups(self):
         for field, value in (('archivedAt', 'date'), ('trashed', True)):
             for incoming in (True, False):
