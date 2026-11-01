@@ -512,10 +512,12 @@ class TestD5Activation(unittest.TestCase):
         with missing_installation(self.entry):
             self.assertFalse(activation.d5_active(state))
         self.assertEqual(state.stat().st_mtime_ns, before)
+        past = 1234567890000000000
+        os.utime(state, ns=(past, past))
         with missing_installation(self.entry):
             (state / 'consumer-write').write_bytes(b'visible')
             os.utime(state, ns=(1, 1))
-        self.assertNotEqual(state.stat().st_mtime_ns, before)
+        self.assertNotEqual(state.stat().st_mtime_ns, past)
         self.assertEqual((state / 'consumer-write').read_bytes(), b'visible')
 
     def test_publish_interruption_order(self):
