@@ -175,6 +175,27 @@ class DrainCase(AuditCase):
 
 
 class TestDrain(DrainCase):
+    def test_tracked_binding_keeps_repeat_drain_mutation_free(self):
+        binding = json.loads(self.binding.read_text())
+        binding['repository'] = 'hanig/multi-agent-skills'
+        self.binding.write_text(json.dumps(binding))
+        self.intent()
+        self.assertEqual(self.drain(), 0, self.stdout + self.stderr)
+        self.assertEqual(len(self.fake.mutations), 2)  # comment and state
+        receipts = (self.state / DC.RECEIPTS).read_bytes()
+        comments = copy.deepcopy(self.fake.comments)
+        binding['repository'] = json.loads(
+            (ROOT / '.hanig/linear-binding.json').read_text())['repository']
+        self.assertEqual(binding['repository'], 'hanig/multi-agent-skills')
+        self.binding.write_text(json.dumps(binding))
+        self.fake.mutations.clear()
+        for full in (False, True):
+            with self.subTest(full=full):
+                self.assertEqual(self.drain(full=full), 0, self.stdout + self.stderr)
+                self.assertEqual(self.fake.mutations, [])
+                self.assertEqual(self.fake.comments, comments)
+                self.assertEqual((self.state / DC.RECEIPTS).read_bytes(), receipts)
+
     def test_comment_body_matches_trimmed_storage(self):
         self.intent(why='Explanation with interior  \nspacing \t\r\n')
         self.assertEqual(self.drain(), 0, self.stdout + self.stderr)

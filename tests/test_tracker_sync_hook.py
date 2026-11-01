@@ -5,12 +5,15 @@ shipped a defect that made it a no-op: it printed its reminder to stdout and
 exited 0, which the harness shows only in transcript mode, so nothing it ever
 produced reached the model. The logic was right and the guard was hollow.
 
-So these tests do not read the script. They run the command `settings.json`
+The delivery tests run the command `settings.json`
 configures, through a shell, the way the harness runs it -- JSON on stdin --
 and assert on what a consumer receives: a single JSON
 object carrying `hookSpecificOutput.additionalContext`, which is the only
 shape that is injected into the model's context. A reminder printed as plain
 text passes every test that inspects the script's logic and fails these.
+Repository-discovery tests also launch a copied hook directly: the configured
+command needs CLAUDE_PROJECT_DIR to launch, so it cannot exercise that variable
+being unset inside the hook. They inspect the same additionalContext output.
 """
 
 import importlib.util
@@ -29,8 +32,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SETTINGS = os.path.join(REPO_ROOT, ".claude", "settings.json")
 
 # Two of these cases reach INTO the hook: the clamp on the probe timeout
-# and the last-resort guard around main(). Everything else runs the wired
-# command through a shell, which is what this file is for -- but a guard
+# and the last-resort guard around main(). Delivery tests run the wired
+# command through a shell -- but a guard
 # that only fires when the hook itself is broken cannot be provoked from
 # outside, and leaving it untested is what kimi-k2.7-code and glm-5.3
 # both refused. A fresh module per test, so a patched main() never leaks.
@@ -221,7 +224,7 @@ class TrackerSyncHookDelivery(unittest.TestCase):
         """
         rc, out, err = run_hook(
             "git push origin HEAD",
-            {"HOME": None, "HANIG_TRACKER_REPO": None, "HANIG_TRACKER_STATE_DIR": None},
+            {"HOME": None, "HANIG_TRACKER_REPO": None},
         )
         self.assertNotIn("unbound variable", err)
         self.assertEqual(rc, 0)
@@ -403,6 +406,69 @@ PROBE_HANGS_WITH_CHILD = """
         "time.sleep(600)", %r])
     time.sleep(600)
 """
+
+
+class TrackerSyncHookRepositoryDiscovery(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="tracker-discovery-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.repo = fake_repo(PROBE_OK, os.path.join(self.tmp, "renamed checkout"))
+        hooks = os.path.join(self.repo, ".claude", "hooks")
+        os.makedirs(hooks)
+        self.script = os.path.join(hooks, "tracker_sync_check.py")
+        shutil.copyfile(HOOK_SPEC.origin, self.script)
+
+    def invoke(self, project=None, override=None, script=None, home=True):
+        # The configured command needs CLAUDE_PROJECT_DIR to launch. For its
+        # unset fallback, launch the same hook directly and inspect the same
+        # additionalContext consumer contract. Never read operator state.
+        env = dict(os.environ)
+        for key in ("HANIG_TRACKER_REPO", "CLAUDE_PROJECT_DIR", "HOME"):
+            env.pop(key, None)
+        if home:
+            env["HOME"] = self.tmp
+        if project is not None:
+            env["CLAUDE_PROJECT_DIR"] = project
+        if override is not None:
+            env["HANIG_TRACKER_REPO"] = override
+        env["HANIG_TRACKER_STATE_DIR"] = os.path.join(self.tmp, "state")
+        payload = {"tool_input": {"command": "git push origin HEAD"},
+                   "cwd": override or project or self.repo}
+        proc = subprocess.run(
+            [sys.executable, script or self.script], cwd=self.tmp, env=env,
+            input=json.dumps(payload), stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, universal_newlines=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        context = injected_context(proc.stdout)
+        self.assertIsNotNone(context, proc.stdout)
+        return context
+
+    def test_unset_locators_find_renamed_checkout_from_resolved_hook(self):
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "multi-agent-skills")))
+        alias = os.path.join(self.tmp, "hook-alias.py")
+        os.symlink(self.script, alias)
+        for home in (True, False):
+            with self.subTest(home=home):
+                context = self.invoke(script=alias, home=home)
+                self.assertIn("total 3", context)
+                self.assertNotIn("Unknown is not zero", context)
+
+    def test_project_directory_precedes_script_location(self):
+        project = fake_repo(PROBE_EMPTY, os.path.join(self.tmp, "launch project"))
+        context = self.invoke(project=project)
+        self.assertIn("total 0", context)
+        self.assertNotIn("Unknown is not zero", context)
+        context = self.invoke(project=project, override=self.repo)
+        self.assertIn("total 3", context)
+        self.assertNotIn("Unknown is not zero", context)
+
+    def test_missing_selected_repository_still_delivers_unknown(self):
+        missing = os.path.join(self.tmp, "missing")
+        for project, override in ((missing, None), (self.repo, missing)):
+            with self.subTest(project=project, override=override):
+                context = self.invoke(project=project, override=override)
+                self.assertIn("There is no repository at " + missing, context)
+                self.assertIn("Unknown is not zero", context)
 
 
 class TrackerSyncHookOutboxReporting(unittest.TestCase):
