@@ -23,10 +23,10 @@ def dossier():
     "adapter": {"name": "fixture", "version": "one"}, "status": "ok"}},
     "cohorts": {"C001": {"population": "attempts", "members": ["a", "b"], "qualifying": ["a"]}},
     "candidates": [{"catalog_entry": "DB001", "status": "selected", "basis": "reported",
-      "rationale": "Private assertion.", "evidence_refs": ["E001"], "counts": [{
-        "measure": "affected", "population": "attempts", "scope": S.COUNT_SCOPE,
-        "numerator": 1, "denominator": 2, "cohort_ref": "C001"}], "reproduction": None,
-      "coverage_disposition": "unknown"}],
+    "rationale": "Private assertion.", "evidence_refs": ["E001"], "counts": [{
+    "measure": "affected", "population": "attempts", "scope": S.COUNT_SCOPE,
+    "numerator": 1, "denominator": 2, "cohort_ref": "C001"}], "reproduction": None,
+    "coverage_disposition": "unknown"}],
     "omissions": [{"source_root": "fixture root", "locator": ".", "reason": "budget"}],
     "provenance": {"hanig-swarm": "private marker contents"}}
 
@@ -40,14 +40,14 @@ class TestDebriefPacket(unittest.TestCase):
     self.d = dossier()
     self.p = P.compile_packet(self.d, self.cat)
 
-  def reject(self, original, validator, changes):
-    for path, replacement in changes:
-      value = copy.deepcopy(original)
+  def reject(self, base, validator, changes):
+    for path, new in changes:
+      value = copy.deepcopy(base)
       node = value
       for key in path[:-1]:
         node = node[key]
-      node[path[-1]] = replacement
-      with self.subTest(path=path, value=replacement), self.assertRaises(S.SchemaError):
+      node[path[-1]] = new
+      with self.subTest(path=path, value=new), self.assertRaises(S.SchemaError):
         validator(value)
 
   def test_valid_round_trip_and_independent_containers(self):
@@ -61,48 +61,48 @@ class TestDebriefPacket(unittest.TestCase):
       self.p, sort_keys=True, indent=2, ensure_ascii=False) + "\n```")
     self.assertEqual(P.parse_body(body), self.p)
     self.assertNotEqual(P.compile_packet(self.d, self.cat)["packet_id"],
-              self.p["packet_id"])
+      self.p["packet_id"])
     self.p["learnings"][0]["counts"][0]["numerator"] = 0
     self.p["learnings"][0]["evidence_refs"].clear()
     self.assertEqual(self.d, before)
 
   def test_public_boundary_fixtures(self):
     sentinels = ["SYNTHETIC_PROJECT_SECRET", "/synthetic/private/fixture",
-          "Synthetic scientific result: marker Q increased.",
-          "sk-SYNTHETIC-NOT-A-CREDENTIAL-93841"]
-    for sentinel in sentinels:
+      "Synthetic scientific result: marker Q increased.",
+      "sk-SYNTHETIC-NOT-A-CREDENTIAL-93841"]
+    for secret in sentinels:
       d = dossier()
       e = d["evidence"]["E001"]
       for key in ("source_root", "unit_id", "attempt_id"):
-        e[key] = sentinel
-      e["locator"] = "relative/" + sentinel
-      e["location"] = {"json_pointer": "/" + sentinel}
-      e["adapter"] = {"name": sentinel, "version": sentinel}
-      d["cohorts"]["C001"].update(members=[sentinel + "a", sentinel + "b"],
-                    qualifying=[sentinel + "a"])
+        e[key] = secret
+      e["locator"] = "relative/" + secret
+      e["location"] = {"json_pointer": "/" + secret}
+      e["adapter"] = {"name": secret, "version": secret}
+      d["cohorts"]["C001"].update(members=[secret + "a", secret + "b"],
+        qualifying=[secret + "a"])
       c = d["candidates"][0]
-      c.update(rationale=sentinel, basis="reproduced", reproduction={
-        "receipt_ref": "E001", "tested_version": sentinel,
-        "probe": sentinel, "observed": sentinel})
-      d["omissions"] = [{"source_root": sentinel, "locator": "relative/" + sentinel,
-               "reason": sentinel}]
-      d["provenance"]["hanig-swarm"] = sentinel
-      packet = P.compile_packet(d, self.cat)
-      title, body = P.render(packet)
-      with self.subTest(sentinel=sentinel):
-        self.assertNotIn(sentinel, title + body)
-        self.assertEqual(packet["learnings"][0]["mechanism"],
-                self.cat["entries"][0]["mechanism"])
-        self.assertEqual(P.recount(d, packet), packet)
+      c.update(rationale=secret, basis="reproduced", reproduction={
+        "receipt_ref": "E001", "tested_version": secret,
+        "probe": secret, "observed": secret})
+      d["omissions"] = [{"source_root": secret, "locator": "relative/" + secret,
+        "reason": secret}]
+      d["provenance"]["hanig-swarm"] = secret
+      pkt = P.compile_packet(d, self.cat)
+      title, body = P.render(pkt)
+      with self.subTest(secret=secret):
+        self.assertNotIn(secret, title + body)
+        self.assertEqual(pkt["learnings"][0]["mechanism"],
+          self.cat["entries"][0]["mechanism"])
+        self.assertEqual(P.recount(d, pkt), pkt)
 
   def test_only_selected_and_sequential_learning_ids(self):
     for status in ("covered", "unrepresentable", "rejected"):
-      candidate = copy.deepcopy(self.d["candidates"][0])
-      candidate.update(status=status, catalog_entry=None, counts=[], evidence_refs=[])
-      self.d["candidates"].insert(0, candidate)
+      cand = copy.deepcopy(self.d["candidates"][0])
+      cand.update(status=status, catalog_entry=None, counts=[], evidence_refs=[])
+      self.d["candidates"].insert(0, cand)
     self.d["candidates"].append(copy.deepcopy(self.d["candidates"][-1]))
-    packet = P.compile_packet(self.d, self.cat)
-    self.assertEqual([x["id"] for x in packet["learnings"]], ["L01", "L02"])
+    pkt = P.compile_packet(self.d, self.cat)
+    self.assertEqual([x["id"] for x in pkt["learnings"]], ["L01", "L02"])
     self.d["candidates"] = []
     self.assertEqual(P.validate_dossier(self.d), self.d)
     with self.assertRaises(S.SchemaError):
@@ -117,17 +117,17 @@ class TestDebriefPacket(unittest.TestCase):
       elif type(value) is list:
         for index, child in enumerate(value):
           yield from object_paths(child, path + (index,))
-    for original, validate in ((self.d, P.validate_dossier),
-                 (self.p, P.validate_packet)):
-      for path in object_paths(original):
-        # Provenance is a map of existing skills, not an exact-key record.
+    for base, validate in ((self.d, P.validate_dossier),
+      (self.p, P.validate_packet)):
+      for path in object_paths(base):
+        # Provenance is a map of skill names, not an exact-key record.
         for extra in (True, False):
-          value = copy.deepcopy(original)
+          value = copy.deepcopy(base)
           node = value
           for key in path:
             node = node[key]
           if extra:
-            node["unexpected"] = "synthetic"
+            node[None if path == ("provenance",) else "unexpected"] = "synthetic"
           elif path not in (("provenance",), ("evidence",), ("cohorts",)):
             del node[next(iter(node))]
           else:
@@ -148,20 +148,20 @@ class TestDebriefPacket(unittest.TestCase):
       self.assertEqual(loader(path), value)
 
   def test_integer_types_and_bounds(self):
-    for original, prefix, validate in ((self.d, ("candidates", 0), P.validate_dossier),
-                     (self.p, ("learnings", 0), P.validate_packet)):
-      changes = [(prefix + ("counts", 0, key), value)
-           for key in ("numerator", "denominator")
-           for value in (True, False, 1.0, "1", None, -1, S.MAX_DENOMINATOR + 1)]
-      changes += [(prefix + ("counts", 0, "numerator"), 3),
-            (prefix + ("counts", 0, "denominator"), 0)]
-      self.reject(original, validate, changes)
+    for base, pre, validate in ((self.d, ("candidates", 0), P.validate_dossier),
+      (self.p, ("learnings", 0), P.validate_packet)):
+      changes = [(pre + ("counts", 0, key), value)
+        for key in ("numerator", "denominator")
+        for value in (True, False, 1.0, "1", None, -1, S.MAX_DENOMINATOR + 1)]
+      changes += [(pre + ("counts", 0, "numerator"), 3),
+        (pre + ("counts", 0, "denominator"), 0)]
+      self.reject(base, validate, changes)
     self.reject(self.p, P.validate_packet, [(('catalog_version',), True)])
     self.reject(self.d, P.validate_dossier,
-              [(('evidence', 'E001', 'location', 'line_range'), [True, 2])])
-    for numerator, denominator in ((0, 1), (1, 1), (0, S.MAX_DENOMINATOR),
-                   (S.MAX_DENOMINATOR, S.MAX_DENOMINATOR)):
-      self.p["learnings"][0]["counts"][0].update(numerator=numerator, denominator=denominator)
+      [(('evidence', 'E001', 'location', 'line_range'), [True, 2])])
+    for num, den in ((0, 1), (1, 1), (0, S.MAX_DENOMINATOR),
+      (S.MAX_DENOMINATOR, S.MAX_DENOMINATOR)):
+      self.p["learnings"][0]["counts"][0].update(numerator=num, denominator=den)
       P.validate_packet(self.p)
 
   def test_catalog_whole_tuple_exactness(self):
@@ -169,28 +169,28 @@ class TestDebriefPacket(unittest.TestCase):
     changes = [(learning + ("catalog_entry",), "DB999")]
     for key in ("skill", "what_broke", "mechanism", "proposed_change"):
       value = self.p["learnings"][0][key]
-      changes.extend((learning + (key,), variant) for variant in
-             (value.upper(), " " + value, value + " ", value.replace("a", "а")))
+      changes.extend((learning + (key,), alt) for alt in
+        (value.upper(), " " + value, value + " ", value.replace("a", "а")))
     self.reject(self.p, P.validate_packet, changes)
     mixed = copy.deepcopy(self.p)
     mixed["learnings"][0]["mechanism"] = self.cat["entries"][1]["mechanism"]
     with self.assertRaises(S.SchemaError):
       P.validate_packet(mixed)
     self.reject(self.d, P.validate_dossier,
-              [(("candidates", 0, "catalog_entry"), "DB999")])
+      [(("candidates", 0, "catalog_entry"), "DB999")])
 
   def test_count_pairs_and_duplicate_measures(self):
-    for original, prefix, validate in ((self.d, ("candidates", 0), P.validate_dossier),
-                     (self.p, ("learnings", 0), P.validate_packet)):
-      count = copy.deepcopy(original[prefix[0]][0]["counts"][0])
-      self.reject(original, validate, [
-        (prefix + ("counts",), [count, count]),
-        (prefix + ("counts", 0, "population"), "units"),
-        (prefix + ("counts", 0, "measure"), "unpermitted"),
-        (prefix + ("counts", 0, "scope"), "all")])
+    for base, pre, validate in ((self.d, ("candidates", 0), P.validate_dossier),
+      (self.p, ("learnings", 0), P.validate_packet)):
+      count = copy.deepcopy(base[pre[0]][0]["counts"][0])
+      self.reject(base, validate, [
+        (pre + ("counts",), [count, count]),
+        (pre + ("counts", 0, "population"), "units"),
+        (pre + ("counts", 0, "measure"), "unpermitted"),
+        (pre + ("counts", 0, "scope"), "all")])
     self.d["candidates"][0]["counts"] = []
-    packet = P.compile_packet(self.d, self.cat)
-    self.assertEqual(packet["learnings"][0]["counts"], [])
+    pkt = P.compile_packet(self.d, self.cat)
+    self.assertEqual(pkt["learnings"][0]["counts"], [])
 
   def test_private_reference_and_location_refusals(self):
     c = ("candidates", 0)
@@ -220,20 +220,20 @@ class TestDebriefPacket(unittest.TestCase):
   def test_reproduced_requires_complete_resolving_receipt(self):
     c = self.d["candidates"][0]
     c["basis"] = "reproduced"
-    reproduction = {"receipt_ref": "E001", "tested_version": "local synthetic modification",
-            "probe": "synthetic check", "observed": "synthetic result"}
-    for value in (None, {}, dict(reproduction, receipt_ref="E999")):
+    repro = {"receipt_ref": "E001", "tested_version": "local synthetic modification",
+      "probe": "synthetic check", "observed": "synthetic result"}
+    for value in (None, {}, dict(repro, receipt_ref="E999")):
       c["reproduction"] = value
       with self.subTest(value=value), self.assertRaises(S.SchemaError):
         P.validate_dossier(self.d)
-    for key in reproduction:
-      c["reproduction"] = dict(reproduction)
+    for key in repro:
+      c["reproduction"] = dict(repro)
       del c["reproduction"][key]
       with self.subTest(missing=key), self.assertRaises(S.SchemaError):
         P.validate_dossier(self.d)
-    c["reproduction"] = reproduction
-    packet = P.compile_packet(self.d, self.cat)
-    self.assertEqual(packet["learnings"][0]["mechanism_basis"], "reproduced")
+    c["reproduction"] = repro
+    pkt = P.compile_packet(self.d, self.cat)
+    self.assertEqual(pkt["learnings"][0]["mechanism_basis"], "reproduced")
     for basis in ("reported", "inferred"):
       c["basis"] = basis
       with self.assertRaises(S.SchemaError):
@@ -250,8 +250,8 @@ class TestDebriefPacket(unittest.TestCase):
       (l + ("evidence_refs",), []), (l + ("evidence_refs",), ["E000"]),
       (l + ("counts", 0, "cohort_ref"), "C000")])
     self.d["candidates"] *= S.MAX_LEARNINGS
-    packet = P.compile_packet(self.d, self.cat)
-    self.assertEqual(packet["learnings"][-1]["id"], "L50")
+    pkt = P.compile_packet(self.d, self.cat)
+    self.assertEqual(pkt["learnings"][-1]["id"], "L50")
     self.d["candidates"].append(copy.deepcopy(self.d["candidates"][0]))
     with self.assertRaises(S.SchemaError):
       P.compile_packet(self.d, self.cat)
@@ -260,7 +260,7 @@ class TestDebriefPacket(unittest.TestCase):
     title, _ = P.render(self.p)
     digest = P.approval_digest(self.p, title)
     envelope = {"packet": self.p, "title": title, "repository": S.REPOSITORY,
-          "label": S.LABEL, "renderer_version": S.RENDERER_VERSION}
+      "label": S.LABEL, "renderer_version": S.RENDERER_VERSION}
     self.assertEqual(digest, hashlib.sha256(json.dumps(envelope, sort_keys=True,
       separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest())
     def leaves(value, path=()):
@@ -289,30 +289,63 @@ class TestDebriefPacket(unittest.TestCase):
     _, body = P.render(self.p)
     reordered = dict(reversed(list(self.p.items())))
     variants = [body.replace("\n", "\r\n"), S.PREAMBLE + "\n\n```json\n" +
-          json.dumps(reordered, indent=4) + "\n```"]
-    for variant in variants:
-      self.assertEqual(P.parse_body(variant), self.p)
-    for variant in (body + "trailing", body + "\n", body + "\n```json\n{}\n```",
-            body + "\n" + body, "prefix" + body, body.replace("```json", "```JSON"),
-            body.replace(S.PREAMBLE, "Other preamble"), body.replace("\n", "\r"),
-            body.replace('"numerator":', '"numerator": 0, "numerator":'),
-            body.replace('"numerator": 1', '"numerator": NaN')):
-      with self.subTest(body=variant), self.assertRaises(S.SchemaError):
-        P.parse_body(variant)
+      json.dumps(reordered, indent=4) + "\n```"]
+    for alt in variants:
+      self.assertEqual(P.parse_body(alt), self.p)
+    for alt in (body + "trailing", body + "\n", body + "\n```json\n{}\n```",
+      body + "\n" + body, "prefix" + body, body.replace("```json", "```JSON"),
+      body.replace(S.PREAMBLE, "Other preamble"), body.replace("\n", "\r"),
+      body.replace('"numerator":', '"numerator": 0, "numerator":'),
+      body.replace('"numerator": 1', '"numerator": NaN')):
+      with self.subTest(body=alt), self.assertRaises(S.SchemaError):
+        P.parse_body(alt)
 
   def test_recount_rejects_both_directions(self):
-    for numerator, denominator in ((0, 2), (2, 2), (1, 1), (1, 3)):
-      packet = copy.deepcopy(self.p)
-      packet["learnings"][0]["counts"][0].update(numerator=numerator, denominator=denominator)
-      P.validate_packet(packet)
-      with self.subTest(n=numerator, d=denominator), self.assertRaisesRegex(
-          S.SchemaError, "cohort count mismatch"):
-        P.recount(self.d, packet)
+    for num, den in ((0, 2), (2, 2), (1, 1), (1, 3)):
+      pkt = copy.deepcopy(self.p)
+      pkt["learnings"][0]["counts"][0].update(numerator=num, denominator=den)
+      P.validate_packet(pkt)
+      with self.subTest(n=num, d=den), self.assertRaisesRegex(
+        S.SchemaError, "cohort count mismatch"):
+        P.recount(self.d, pkt)
     for key, value in (("numerator", 0), ("denominator", 3)):
       bad = copy.deepcopy(self.d)
       bad["candidates"][0]["counts"][0][key] = value
       with self.assertRaisesRegex(S.SchemaError, "cohort count mismatch"):
         P.validate_dossier(bad)
+
+  def test_private_provenance_is_not_an_install_inventory(self):
+    for marker in ("version 1", "", " \n"):
+      self.d["provenance"] = {"retired-analysis-skill": marker}
+      pkt = P.compile_packet(self.d, self.cat)
+      self.assertNotIn("retired-analysis-skill", P.render(pkt)[1])
+
+  def test_count_labels_come_from_catalog(self):
+    count = self.d["candidates"][0]["counts"][0]
+    pair = self.cat["entries"][0]["measures"][0]
+    for key in ("measure", "population"):
+      count[key] = "".join(list(pair[key]))
+      self.assertIsNot(count[key], pair[key])
+    public = P.compile_packet(self.d, self.cat)["learnings"][0]["counts"][0]
+    for key in ("measure", "population"):
+      self.assertIs(public[key], pair[key])
+
+  def test_parser_refuses_alternate_scalar_encodings(self):
+    self.p["learnings"][0]["counts"][0]["numerator"] = 0
+    _, body = P.render(self.p)
+    for before, after in (("debrief_packet.v1", r"debrief_packet.v\u0031"),
+      ("project A", r"project\u0020A"),
+      ('"id":', r'"\u0069d":'),
+      ('"numerator": 0', '"numerator": -0')):
+      with self.subTest(after=after), self.assertRaises(S.SchemaError):
+        P.parse_body(body.replace(before, after))
+    self.cat["entries"][0]["mechanism"] = 'Quoted "text", backslash \\, newline\n, café /'
+    pkt = P.compile_packet(self.d, self.cat)
+    _, body = P.render(pkt, self.cat)
+    self.assertEqual(P.parse_body(body, self.cat), pkt)
+    for changed in (body.replace("é", r"\u00e9"), body.replace(" /", r" \/")):
+      with self.assertRaises(S.SchemaError):
+        P.parse_body(changed, self.cat)
 
   def test_no_network_or_subprocess_imports(self):
     forbidden = {"socket", "ssl", "http", "urllib", "ftplib", "smtplib", "asyncio", "subprocess"}
