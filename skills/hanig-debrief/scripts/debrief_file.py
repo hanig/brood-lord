@@ -75,7 +75,7 @@ class GhTransport:
     def prepare(self):
         """Refuse missing authentication/label before D4 records a POST intent."""
         if not self.ready:
-            self._run(["auth", "status", "--hostname", "github.com"],
+            self._run(["auth", "status", "--active", "--hostname", "github.com"],
                       failure="GH_UNAUTHENTICATED")
             label = self._api("labels/" + LABEL, failure="GH_LABEL_UNAVAILABLE")
             if type(label) is not dict or label.get("name") != LABEL:

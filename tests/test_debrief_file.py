@@ -32,6 +32,8 @@ if not steps:
     sys.exit(91)
 step = steps.pop(0)
 (root / "steps").write_text(json.dumps(steps))
+if step.get("stale_inactive") and "--active" not in sys.argv:
+    sys.exit(1)
 sys.stdout.write(step.get("stdout", ""))
 sys.stderr.write(step.get("stderr", ""))
 sys.exit(step.get("code", 0))
@@ -159,6 +161,13 @@ class TestDebriefFile(unittest.TestCase):
         self.assertFalse(any("POST" in call["argv"] for call in self.calls()))
         self.assertEqual(json.loads((self.work / O.RECEIPT).read_text()),
                          {"exit_code": 1, "message_class": "GH_LABEL_UNAVAILABLE"})
+
+    def test_stale_inactive_account_does_not_block_active_credentials(self):
+        self.approve()
+        preflight = self.preflight()
+        preflight[0]["stale_inactive"] = True
+        self.steps(*preflight, reply({"number": 41}), reply(self.issue()))
+        self.assertEqual(self.cli("file")[0], O.EXIT_FILED)
 
     def test_gh_error_output_never_reaches_receipts_or_stdout(self):
         sentinel = "ghp_" + "syntheticSecret0123456789" * 2
