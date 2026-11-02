@@ -69,14 +69,14 @@ evidence = {E001..E999: {source_root: [label], locator: [relative locator],
  unit_id, attempt_id: [nonempty where applicable, otherwise null],
  adapter: {name, version: [nonempty strings]}, status: [ok|skipped|unsupported|unstable]}}
 location = {line_range: [start, end]} | {json_pointer: [RFC 6901 string]}
-cohorts = {C001..C999: {population: [population enum], members, qualifying: [sorted distinct ids]}}
+cohorts = {C001..C999: {population: [population enum], members, qualifying: [sorted distinct string ids]}}
 candidates = [{catalog_entry: [id or null], status: [selected|covered|unrepresentable|rejected],
- basis: [mechanism basis enum], rationale: [nonempty private string], evidence_refs, counts: [lists],
+ basis: [mechanism basis enum], rationale: [nonempty private string], evidence_refs: [E-refs], counts: [packet count objects],
  reproduction, coverage_disposition: [covered|extends|conflicts|not_found_in_snapshot|unknown]}]
 reproduction = null | {receipt_ref: [E-record citing reproduction receipt],
  tested_version: [brood-lord commit or local modification tested], probe, observed: [nonempty strings]}
 omissions = [{source_root, locator, reason: [nonempty strings]}]
-provenance = {installed_skill_name: [readable provenance marker contents]}
+provenance = {[skill name]: [readable provenance marker contents]}
 ```
 
 Line ranges: inclusive integers, end >= start >= 1. Locators are relative without parent traversal. Omissions include every skipped/over-budget input; `.` identifies uninspected remainder.
@@ -96,9 +96,9 @@ Offline validation checks mechanics; the orchestrator judges. Triage never marks
 
 ## Coverage: debrief_coverage.v1
 
-Keys: schema_version = debrief_coverage.v1, version = integer 1 (registry format revision), entries (list, initially empty). Entry keys: id (unique CV001 upward, three-digit padding without extra leading zeros), catalog_entry (existing id), applicability, references (nonempty list), note (nonempty). Applicability: exactly {"fixed_in": SHA} (full lowercase 40- or 64-hex commit SHA) or {"always": true}. <!-- declaration: purpose.scope -->
+Keys: schema_version = debrief_coverage.v1, version = integer 1 (registry format revision), entries (list, initially empty). Entry keys: id (unique CV001 upward, minimum three-digit padding without extra leading zeros), catalog_entry (existing id), applicability, references (nonempty list), note (nonempty). Applicability: exactly {"fixed_in": SHA} (full lowercase 40- or 64-hex commit SHA) or {"always": true}. <!-- declaration: purpose.scope -->
 
-References: public https://github.com/hanig/brood-lord/pull/N (N is a positive integer; optional slash-separated [A-Za-z0-9_-]+ route, query and fragment; no whitespace/backslash) or repository paths of slash-separated [A-Za-z0-9_.-]+ components excluding empty/./.., with no absolute paths. Applicability uses only Git ancestry against a local checkout, never commit ordering. <!-- declaration: purpose.scope -->
+References: public https://github.com/hanig/brood-lord/pull/N (N is a positive integer; optional slash-separated [A-Za-z0-9_-]+ route, query and fragment; no whitespace/backslash) or repository paths (Unicode, spaces allowed; no NUL, absolute path or empty/./.. component). Applicability uses only Git ancestry against a local checkout, never commit ordering. <!-- declaration: purpose.scope -->
 
 ## Budgets and constants
 

@@ -110,7 +110,7 @@ def validate_catalog(value, skills_root=None):
   root = Path(skills_root) if skills_root is not None else SKILL_DIR.parent
   for entry, at in _entries(value, CATALOG_SCHEMA, CATALOG_VERSION, "catalog",
       ("id", "skill", "what_broke", "mechanism", "proposed_change", "measures"), CATALOG_ID):
-    match(entry["skill"], r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", at + ".skill")
+    text(entry["skill"], at + ".skill")
     need(any(p.name == entry["skill"] and p.is_dir() and (p / "SKILL.md").is_file()
           for p in root.iterdir()), at + ".skill", "no such skill bundle")
     for key in ("what_broke", "mechanism", "proposed_change"):
@@ -135,8 +135,7 @@ def _reference(value, at):
   if re.fullmatch(r"https://github\.com/hanig/brood-lord/pull/[1-9][0-9]*(?:/[A-Za-z0-9_-]+)*(?:\?[^\\\s#]*)?(?:#[^\\\s]*)?", value):
     return
   parts = value.split("/")
-  need(all(part not in ("", ".", "..") and
-        re.fullmatch(r"[A-Za-z0-9_.-]+", part) for part in parts),
+  need("\x00" not in value and all(part not in ("", ".", "..") for part in parts),
       at, "expected public brood-lord PR URL or repository path")
 
 def validate_coverage(value, catalog):

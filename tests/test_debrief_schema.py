@@ -18,11 +18,11 @@ class TestDebriefSchema(unittest.TestCase):
     temp = tempfile.TemporaryDirectory()
     self.addCleanup(temp.cleanup)
     self.root = Path(temp.name)
-    bundle = self.root / "fixture-skill"
+    bundle = self.root / "fixture_skill"
     bundle.mkdir()
     (bundle / "SKILL.md").write_text("fixture", encoding="utf-8")
     self.cat = {"schema_version": S.CATALOG_SCHEMA, "version": 1, "entries": [{
-      "id": "DB001", "skill": "fixture-skill", "what_broke": "Observation.",
+      "id": "DB001", "skill": "fixture_skill", "what_broke": "Observation.",
       "mechanism": "Records reported an observation.", "proposed_change": "Check it.",
       "measures": [{"measure": "observed", "population": "units"}]}]}
     self.cov = {"schema_version": S.COVERAGE_SCHEMA, "version": 1, "entries": [{
@@ -41,6 +41,7 @@ class TestDebriefSchema(unittest.TestCase):
       self.load(value, coverage)
 
   def test_shipped_data(self):
+    self.assertEqual(self.load(self.cat), self.cat)
     catalog = S.load_catalog()
     self.assertEqual(len(catalog["entries"]), 16)
     self.assertEqual(S.load_coverage(catalog=catalog), {
@@ -48,6 +49,7 @@ class TestDebriefSchema(unittest.TestCase):
 
   def test_valid_coverage_variants(self):
     self.cov["entries"][0]["references"] += [
+      "docs/triage guide.md", "docs/café.md",
       "https://github.com/hanig/brood-lord/pull/123#issuecomment-456",
       "https://github.com/hanig/brood-lord/pull/123/files?diff=split#diff-abc"]
     for applicability in ({"always": True}, {"fixed_in": "a" * 40}, {"fixed_in": "b" * 64}):
@@ -63,8 +65,9 @@ class TestDebriefSchema(unittest.TestCase):
     with self.assertRaisesRegex(S.SchemaError, "JSON:"):
       S.load_json(path)
 
-  def test_triage_reference_contract(self):
+  def test_dossier_and_triage_contract(self):
     text = (SCRIPT.parent.parent / "references/contract.md").read_text()
+    self.assertIn("counts: [packet count objects]", text)
     self.assertIn("issues, PRs and commits", text.split("## Triage:")[1].split("## Coverage:")[0])
 
   def test_inclusive_budget_contract(self):
@@ -89,7 +92,7 @@ class TestDebriefSchema(unittest.TestCase):
     self.reject(self.cat, "skill: no such skill bundle")
 
   def test_bundle_requires_marker(self):
-    (self.root / "fixture-skill/SKILL.md").unlink()
+    (self.root / "fixture_skill/SKILL.md").unlink()
     self.reject(self.cat, "skill: no such skill bundle")
 
   def test_invalid_catalog_fields(self):
@@ -118,7 +121,7 @@ class TestDebriefSchema(unittest.TestCase):
   def test_values_are_not_normalized(self):
     for path, key, literal, variant in [
       ((), "schema_version", S.CATALOG_SCHEMA, "debrief_catal\u043eg.v1"),
-      (("entries", 0), "skill", "fixture-skill", "f\u0131xture-skill"),
+      (("entries", 0), "skill", "fixture_skill", "f\u0131xture_skill"),
       (("entries", 0), "id", "DB001", "DB\uff1001"),
       (("entries", 0, "measures", 0), "population", "units", "un\u0131ts"),
     ]:
