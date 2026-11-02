@@ -281,6 +281,53 @@ class TestExtract(unittest.TestCase):
     self.eq(self.collect()['omissions'], [dict(source_root='A',
   locator='link.md', reason='skipped: symlink')])
 
+  def test_round1_entry_budget(self):
+    self.put('CLAUDE.md', 'guidance\n')
+    for i in range(10001):
+      (self.root / str(i)).mkdir()
+    self.eq(len(self.collect()['evidence']), 1)
+
+  def test_round1_memory_pitfall(self):
+    self.put('network-pitfalls.md', '---\nname: lesson\ndescription: lesson\n'
+      'metadata:\n  type: feedback\n---\nBody.\n')
+    got = self.collect('memory')
+    self.eq({r['adapter']['name'] for r in got['evidence'].values()},
+      {'guidance', 'memory:name', 'memory:description', 'memory:metadata.type', 'memory:body'})
+
+  def test_round1_inline_metadata(self):
+    self.put('lesson.md', '---\nname: lesson\ndescription: lesson\n'
+      'metadata: {type: feedback}\n---\nBody.\n')
+    self.eq(len(self.collect('memory')['evidence']), 4)
+
+  def test_round1_indented_table(self):
+    self.put('PLAN.md', '| Decision | Text |\n| --- | --- |\n  | D-1 | choose |\n')
+    self.eq(self.locations(self.collect(), 'decision'), [span(3)])
+
+  def test_round1_incomplete_state(self):
+    self.put('swarm-state.json', json.dumps(dict(schema_version=1, halted=None,
+      units={'u': dict(state='DONE', attempts=[])})))
+    got = self.collect('state')
+    self.false(got['evidence'])
+    self.true(any(o['reason'].startswith('unsupported') for o in got['omissions']))
+
+  def test_round1_plus_bullet(self):
+    self.put('PLAN.md', '| D-1 | do X |\n## NEEDS YOU\n+ do Y\n- do Z\n')
+    self.eq(self.locations(self.collect(), 'decision'), [span(i) for i in (1, 3, 4)])
+
+  def test_round1_separate_guidance(self):
+    for name in ('CLAUDE.md', 'pkg/CLAUDE.md'):
+      self.put(name, 'same\n')
+    got = self.collect()
+    self.eq(len(self.members(got, 'evidence_documents')), 2)
+    self.false(self.records(got, 'guidance-alias'))
+
+  def test_round1_symlink_ancestor(self):
+    self.put('CLAUDE.md', 'guidance\n')
+    link = self.base / 'link'
+    link.symlink_to(self.base, target_is_directory=True)
+    got = X.collect([dict(label='A', role='project', path=link / 'project')])
+    self.eq(len(got['evidence']), 1)
+
   def test_required_mutations(self):
     source = (SCRIPTS / 'debrief_extract.py').read_text()
     mutations = [
