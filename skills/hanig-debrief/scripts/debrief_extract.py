@@ -1,8 +1,10 @@
 """Read-only dossier parts. Roots: [{label, role, path}]; budgets: per_file_bytes,
-files_per_root, total_bytes (positive integers <= contract caps).
+files_per_root, total_bytes (positive integers <= contract caps), max_depth
+(default/maximum 128 directory levels). Every depth hit is an omission.
 All symlinks are omitted. Roots/entries sort by exact label/name. Markers match
 untrimmed whole lines. Guidance-alias records share [root, 'guidance', digest]
-cohort ids; other ids use root/locator or root/unit/attempt, never source text.
+cohort ids; units use exact unit ids, attempts use unit/attempt ids.
+Lines split only on LF; CR is content, including in CRLF (no marker match).
 """
 import hashlib
 import json
@@ -102,7 +104,7 @@ def _structured(name, data):
   return [(adapter, _pointer(key), uid, aid) for key in sorted(data)]
 
 def _provenance(text, parts):
-  values = _pairs(line.split('=', 1) for line in text.splitlines() if line)
+  values = _pairs(line.split('=', 1) for line in _lines(text) if line)
   keys = {'schema', 'repo', 'origin', 'source_version', 'version', 'destination',
       'consumers', 'mode', 'installed_at', 'link_target', 'link_identity'}
   if (set(values) != keys or values['schema'] != '2'
@@ -127,16 +129,27 @@ def _provenance(text, parts):
       raise ValueError('unsupported provenance')
   return skill
 
+def _lines(text):
+  return text[:-1].split('\n') if text.endswith('\n') else text.split('\n')
+
 def _text_rows(name, role, text):
-  lines = text.splitlines()
+  lines = _lines(text)
   if name in ('CLAUDE.md', 'AGENTS.md') or 'pitfall' in name:
     return [('guidance', 1, max(1, len(lines)))]
   if name in ('evidence.md', 'SUMMARY.md'):
     return [('marker:' + line, i, i) for i, line in enumerate(lines, 1)
       if line in MARKERS]
   if name == 'PLAN.md':
-    rows, needs = [], False
+    rows, needs, fence = [], False, None
     for i, line in enumerate(lines, 1):
+      if fence:
+        if re.fullmatch(r' {0,3}' + fence[0] + '{' + str(len(fence)) + r',}[ \t]*', line):
+          fence = None
+        continue
+      opening = re.match(r' {0,3}(`{3,}|~{3,})(.*)$', line)
+      if opening and (opening[1][0] != '`' or '`' not in opening[2]):
+        fence = opening[1]
+        continue
       if re.fullmatch(r'#{1,6} NEEDS YOU', line):
         needs = True
       elif line.startswith('#'):
@@ -150,23 +163,31 @@ def _text_rows(name, role, text):
     if not lines or lines[0] != '---' or '---' not in lines[1:]:
       raise ValueError('unsupported memory frontmatter')
     end = lines.index('---', 1)
-    rows, seen, metadata = [], set(), False
+    rows, seen, metadata, indent = [], set(), False, None
     for i in range(1, end):
       line = lines[i]
       match = re.match(r'(name|description): \S', line)
       field = match.group(1) if match else None
       if line == 'metadata:':
-        metadata = True
+        metadata, indent = True, None
       elif line and not line.startswith(' '):
         metadata = False
-      if metadata and re.match(r'  type: \S', line):
-        field = 'metadata.type'
+      nested = re.match(r'( +)\S', line) if metadata else None
+      if nested:
+        width = len(nested[1])
+        if indent is None:
+          indent = width
+        if width < indent:
+          raise ValueError('inconsistent metadata indentation')
+        if width == indent and re.match(' ' * indent + r'type: \S', line):
+          field = 'metadata.type'
       if field:
         if field in seen:
           raise ValueError('duplicate frontmatter field')
         seen.add(field)
         last = i
-        while last + 1 < end and lines[last + 1].startswith('    '):
+        width = len(line) - len(line.lstrip(' '))
+        while last + 1 < end and lines[last + 1].startswith(' ' * (width + 1)):
           last += 1
         rows.append(('memory:' + field, i + 1, last + 1))
     if not {'name', 'description', 'metadata.type'} <= seen:
@@ -208,7 +229,7 @@ def _open_root(path):
 def collect(roots, budgets=None):
   """Return only evidence, cohorts, omissions and provenance; never write."""
   limits = {'per_file_bytes': PER_FILE_BYTES, 'files_per_root': PER_ROOT_FILES,
-      'total_bytes': TOTAL_BYTES}
+      'total_bytes': TOTAL_BYTES, 'max_depth': 128}
   for key, value in (budgets or {}).items():
     if key not in limits or type(value) is not int or not 0 < value <= limits[key]:
       raise ValueError('invalid budget')
@@ -241,7 +262,7 @@ def collect(roots, budgets=None):
         if skill in result['provenance'] and result['provenance'][skill] != text:
           raise ValueError('unsupported conflicting provenance')
         result['provenance'][skill] = text
-        rows = [('provenance', {'line_range': [1, len(text.splitlines())]}, None, None)]
+        rows = [('provenance', {'line_range': [1, len(_lines(text))]}, None, None)]
       elif role == 'state' and name in ('swarm-state.json', 'unit.json', 'receipt.json'):
         rows = [(a, {'json_pointer': p}, u, t) for a, p, u, t in _structured(name, _json(text))]
       elif name == 'plan.json' and role in ('project', 'state'):
@@ -270,9 +291,9 @@ def collect(roots, budgets=None):
       location=location, unit_id=unit, attempt_id=attempt,
       adapter={'name': adapter, 'version': '1'}, status='ok')
       if unit is not None:
-        members['units'].append(_identity(label, unit))
+        members['units'].append(unit)
       if attempt is not None:
-        members['attempts'].append(_identity(label, unit, attempt))
+        members['attempts'].append(_identity(unit, attempt))
       if adapter in ('state', 'attempt', 'receipt'):
         members['state_entries'].append(ref)
     members['helper_scripts' if role == 'helpers' else 'evidence_documents'].append(doc)
@@ -315,8 +336,8 @@ def collect(roots, budgets=None):
             omit(label, locator, 'skipped: symlink')
           elif stat.S_ISDIR(before.st_mode):
             directories += 1
-            if directories > PER_ROOT_FILES or len(parts) > 64:
-              omit(label, locator, 'over-budget: directories or depth')
+            if directories > PER_ROOT_FILES or len(parts) > limits['max_depth']:
+              omit(label, locator, 'over-budget: directories or max_depth')
               continue
             child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             try:
