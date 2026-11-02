@@ -121,6 +121,20 @@ def _provenance(text, parts):
 def _lines(text):
   return text[:-1].split('\n') if text.endswith('\n') else text.split('\n')
 
+def _memory_scalar(value):
+  # This is the bounded frontmatter grammar, not a YAML loader. Quotes must
+  # close on this line; unquoted YAML collection/property/block indicators
+  # cannot stand in for a scalar. Apply this to unobserved metadata keys too.
+  if '\r' in value:
+    return False
+  if value.startswith("'"):
+    return re.fullmatch(r"'(?:[^']|'')*'", value) is not None
+  if value.startswith('"'):
+    return re.fullmatch(r'"(?:[^"\\]|\\(?:[0abtnvfre /"\\N_LP]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}))*"', value) is not None
+  return (bool(value) and not value[0].isspace()
+    and value[0] not in '|>&*[]{}!#%@`'
+    and not re.search(r':(?:\s|$)|(?:^|\s)#|^[-?](?:\s|$)', value))
+
 def _text_rows(name, role, text):
   lines = _lines(text)
   guidance = name in ('CLAUDE.md', 'AGENTS.md') or 'pitfall' in name
@@ -155,28 +169,27 @@ def _text_rows(name, role, text):
     rows, seen, metadata, indent = [], set(), False, None
     for i in range(1, end):
       line = lines[i]
-      match = re.match(r'(name|description): \S', line)
-      field = match.group(1) if match else None
       if line == 'metadata:':
-        metadata, indent = True, None
-      elif line and not line.startswith(' '):
+        _need('metadata' not in seen)
+        seen.add('metadata')
+        metadata = True
+        continue
+      top = re.fullmatch(r'(name|description): (.+)', line)
+      nested = re.fullmatch(r'( +)([A-Za-z_][A-Za-z0-9_.-]*): (.+)', line)
+      _need(top is not None or metadata and nested is not None)
+      if top:
         metadata = False
-      nested = re.match(r'( +)[^ #]', line) if metadata else None
-      if nested:
+        field, value = top.groups()
+      else:
         width = len(nested[1])
         if indent is None:
           indent = width
-        _need(width >= indent)
-        if width == indent and re.match(' ' * indent + r'type: \S', line):
-          field = 'metadata.type'
-      if field:
-        _need(field not in seen)
-        seen.add(field)
-        last = i
-        width = re.match(' *', line).end()
-        while last + 1 < end and lines[last + 1].startswith(' ' * (width + 1)):
-          last += 1
-        rows.append(('memory:' + field, i + 1, last + 1))
+        _need(width == indent)
+        field, value = 'metadata.' + nested[2], nested[3]
+      _need(_memory_scalar(value) and field not in seen)
+      seen.add(field)
+      if field in ('name', 'description', 'metadata.type'):
+        rows.append(('memory:' + field, i + 1, i + 1))
     _need({'name', 'description', 'metadata.type'} <= seen)
     if end + 1 < len(lines):
       rows.append(('memory:body', end + 2, len(lines)))

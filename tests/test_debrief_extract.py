@@ -385,6 +385,9 @@ class TestExtract(unittest.TestCase):
   def test_required_mutations(self):
     source = (SCRIPTS / 'debrief_extract.py').read_text()
     mutations = [
+  ('memory scalar', [('_memory_scalar(value) and field not in seen', 'field not in seen')], 'test_d_multiline_memory'),
+  ('memory indent', [('_need(width == indent)', '_need(width >= indent)')], 'test_e_memory_line_shapes'),
+  ('memory ignored line', [("line = lines[i]\n      if line == 'metadata:':", "line = lines[i]\n      if line == 'unknown: value':\n        continue\n      if line == 'metadata:':")], 'test_e_memory_line_shapes'),
   ('relative', [("path = Path(os.path.realpath(root['path']))", "if not Path(root['path']).is_absolute():\n        omit(label, '.', 'skipped')\n        continue\n      path = Path(os.path.realpath(root['path']))")], 'test_d_relative_roots'),
   ('closing pipe', [(r'[ \t]*(?:\||$)', r'[ \t]*\|')], 'test_d_open_table_cell'),
   ('bullet spaces', [(r'[-*] [ \t]*\S', r'[-*] \S'),
@@ -448,6 +451,38 @@ class TestExtract(unittest.TestCase):
         got = self.collect('memory')
         self.false(got['evidence'])
         self.true(got['omissions'][0]['reason'].startswith('unsupported'))
+
+  def test_e_memory_line_shapes(self):
+    prefix = '---\nname: lesson\ndescription: desc\nmetadata:\n  type: feedback\n'
+    for line in ('unknown: value', '', '# comment', '  continuation',
+      '    extra: value', ' extra: value', '\textra: value', '  extra:',
+      'metadata:', 'description: duplicate', '  type: duplicate'):
+      with self.subTest(line=line):
+        self.put('lesson.md', prefix + line + '\n---\nbody\n')
+        got = self.collect('memory')
+        self.false(got['evidence'])
+        self.false(got['cohorts'])
+        self.eq(got['omissions'], [dict(source_root='A', locator='lesson.md',
+          reason='unsupported: format or encoding')])
+    for value in ('|', '>+', '&anchor value', '*alias', '[feedback]', '{a: b}',
+      '"unclosed', "'unclosed", '!tag value'):
+      for key in ('name', 'description', '  type', '  extra'):
+        with self.subTest(key=key, value=value):
+          fields = {'name': 'lesson', 'description': 'desc', 'metadata': '',
+            '  type': 'feedback', '  extra': 'value'}
+          fields[key] = value
+          self.put('lesson.md', '---\n' + ''.join(k + ':' + (' ' + v if v else '')
+            + '\n' for k, v in fields.items()) + '---\nbody\n')
+          got = self.collect('memory')
+          self.false(got['evidence'])
+          self.true(got['omissions'][0]['reason'].startswith('unsupported'))
+
+  def test_e_memory_single_line_citations(self):
+    self.put('lesson.md', '---\nname: "[literal]"\ndescription: \'it\'\'s literal\'\n'
+      'metadata:\n    type: feedback\n    extra: "&literal"\n---\nbody\n')
+    got = self.collect('memory')
+    self.eq(self.locations(got), [span(2), span(3), span(5), span(8)])
+    self.false(got['omissions'])
 
   def test_d_open_table_cell(self):
     self.put('PLAN.md', '| ID | Text |\n| --- | --- |\n| D-1\n| D-2  \n')
