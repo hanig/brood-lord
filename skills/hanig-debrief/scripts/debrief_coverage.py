@@ -108,7 +108,7 @@ def _commit(provenance, skill):
     commit = fields.get('source_version')
     if (fields.get('schema') != '2' or fields.get('repo') != 'multi-agent-skills'
             or fields.get('origin') != 'authored' or fields.get('version') != commit
-            or type(commit) is not str or re.fullmatch(S.COMMIT_SHA, commit) is None):
+            or type(commit) is not str or re.fullmatch(r'[0-9a-f]{4,64}', commit) is None):
         return None
     return commit
 
@@ -142,17 +142,18 @@ def classify(candidate, registry, checkout, *, provenance=None, catalog=None):
     env['GIT_NO_REPLACE_OBJECTS'] = '1'
     for mapping in mappings:
         applies = mapping['applicability']
-        if applies.get('always') is True:
-            return finish('covered', 'Exact registry mapping applies unconditionally.')
+        fixed = applies.get('fixed_in', commit)
         try:
             checked = subprocess.run(
-                ['git', '-C', str(checkout), 'merge-base', '--is-ancestor', applies['fixed_in'], commit],
+                ['git', '-C', str(checkout), 'merge-base', '--is-ancestor', fixed, commit],
                 env=env, timeout=10, stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         except (OSError, subprocess.TimeoutExpired):
             continue
         if checked.returncode == 0:
-            return finish('covered', 'Exact registry fix is an ancestor of the installed commit.')
+            return finish('covered', 'Exact registry mapping applies unconditionally.'
+                          if applies.get('always') is True else
+                          'Exact registry fix is an ancestor of the installed commit.')
     return finish('unknown', 'No exact mapping has established applicability at the installed commit.')
 
 
