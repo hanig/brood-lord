@@ -78,11 +78,24 @@ def _number(value):
     return type(value) is int and value > 0
 
 
-def _read(root):
+def _read_state(root):
     record = S.load_json(root / RECORD)
     S.obj(record, ("schema_version", "packet", "approval", "status", "number"),
           "filing")
     S.need(record["schema_version"] == RECORD_SCHEMA, "filing", "unknown schema")
+    status, number = record["status"], record["number"]
+    S.need(type(status) is str and status in S.FILING_TRANSITIONS,
+           "filing.status", "unknown state")
+    S.need(number is None or _number(number), "filing.number", "invalid issue number")
+    if status in ("DRAFT", "APPROVED"):
+        S.need(number is None, "filing.number", "unexpected issue number")
+    if status in ("READBACK_FAILED", "FILED"):
+        S.need(_number(number), "filing.number", "missing issue number")
+    return record
+
+
+def _read(root):
+    record = _read_state(root)
     packet = validate_packet(record["packet"])
     binding = _binding(packet)
     approval = record["approval"]
@@ -93,14 +106,6 @@ def _read(root):
     for key, value in binding.items():
         S.need(type(approval[key]) is type(value) and approval[key] == value,
                "approval." + key, "stale approval")
-    status, number = record["status"], record["number"]
-    S.need(type(status) is str and status in S.FILING_TRANSITIONS,
-           "filing.status", "unknown state")
-    S.need(number is None or _number(number), "filing.number", "invalid issue number")
-    if status in ("DRAFT", "APPROVED"):
-        S.need(number is None, "filing.number", "unexpected issue number")
-    if status in ("READBACK_FAILED", "FILED"):
-        S.need(_number(number), "filing.number", "missing issue number")
     return record
 
 
@@ -115,7 +120,9 @@ def approve(workdir, packet, digest, approver):
            "approval.digest", "digest does not match rendered packet")
     with _locked(workdir, create=True) as root:
         if (root / RECORD).exists():
-            old = _read(root)
+            # Fresh authorization may replace a stale UNUSED approval, but its
+            # transaction state must still rule out any possible delivery.
+            old = _read_state(root)
             S.need(old["status"] in ("DRAFT", "APPROVED"), "filing.status",
                    "cannot reapprove after possible delivery")
         binding.update(approver=approver, approved_at=datetime.now(timezone.utc).strftime(
@@ -162,7 +169,7 @@ def _reconcile(root, record, transport):
         return _save(root, record, "CONFLICT")
     if not matches:
         return _save(root, record, "DELIVERY_UNCERTAIN")
-    if len(matches) != 1 or (record["number"] is not None and
+    if any(n != matches[0] for n in matches[1:]) or (record["number"] is not None and
                             record["number"] != matches[0]):
         return _save(root, record, "CONFLICT")
     _save(root, record, record["status"], matches[0])
