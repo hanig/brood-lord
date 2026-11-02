@@ -98,6 +98,16 @@ class TestCoverage(unittest.TestCase):
         self.assertEqual(C.classify(self.c, registry(), empty,
                                    provenance=provenance(self.head)), 'unknown')
 
+    def test_review_hex_ref_cannot_redirect_installed_commit(self):
+        short = self.git('rev-parse', '--short', self.base)
+        self.git('branch', short, self.head)
+        self.assertEqual(C.classify(self.c, registry(applies={'fixed_in': self.head}),
+                                   self.root, provenance=provenance(short)), 'unknown')
+
+    def test_review_absent_mapping_overrides_stale_review(self):
+        C.record_review(self.d, 0, 'extends', 'Reviewed a previous snapshot.')
+        self.assertEqual(self.classify(registry('DB002')), 'not_found_in_snapshot')
+
     def test_explicit_checkout_ignores_ambient_overrides(self):
         with patch.dict(os.environ, {'GIT_DIR': str(self.root / 'absent'),
                                      'GIT_CONFIG_COUNT': 'broken'}):
@@ -195,6 +205,41 @@ class TestGroupingSelection(unittest.TestCase):
         second['basis'] = 'inferred'
         self.assertEqual(len(C.group([self.c, second])), 2)
         self.assertIsNone(C.group([self.c])[0]['reproduction'])
+
+    def test_review_rejected_duplicate_does_not_suppress_valid_learning(self):
+        self.d['evidence']['E002'] = copy.deepcopy(self.d['evidence']['E001'])
+        second = copy.deepcopy(self.c)
+        second.update(status='rejected', evidence_refs=['E002'],
+                      rationale='Caused by a local modification.')
+        self.d['candidates'].append(second)
+        self.assertEqual(len(P.compile_packet(self.d, S.load_catalog())['learnings']), 1)
+        grouped = copy.deepcopy(self.d)
+        grouped['candidates'] = C.group(self.d['candidates'], grouped['cohorts'])
+        self.assertEqual(len(P.compile_packet(grouped, S.load_catalog())['learnings']), 1)
+
+    def test_review_same_measure_populations_contract(self):
+        cat = S.load_catalog()
+        cat['entries'][0]['measures'].append(dict(measure='affected', population='units'))
+        second = copy.deepcopy(self.c)
+        second['counts'][0].update(population='units', cohort_ref='C002',
+                                  numerator=1, denominator=1)
+        self.d['cohorts']['C002'] = dict(population='units', members=['u'], qualifying=['u'])
+        self.d['candidates'].append(second)
+        P.validate_dossier(self.d, cat)
+        grouped = copy.deepcopy(self.d)
+        grouped['candidates'] = C.group(self.d['candidates'], grouped['cohorts'], cat)
+        self.assertEqual(len(grouped['candidates']), 1)
+        P.validate_dossier(grouped, cat)
+        # Both permitted counts must remain recountable without substituting populations.
+        self.assertEqual({(c['measure'], c['population'])
+                          for c in grouped['candidates'][0]['counts']},
+                         {('affected', 'units'), ('affected', 'attempts')})
+
+    def test_review_null_catalog_group_is_not_selected(self):
+        self.c.update(catalog_entry=None, counts=[], status='covered',
+                      coverage_disposition='unknown')
+        P.validate_dossier(self.d)
+        self.assertEqual(C.group([self.c])[0]['status'], 'unrepresentable')
 
     def test_missing_cohort_refuses_without_mutating(self):
         before = copy.deepcopy(self.d)
