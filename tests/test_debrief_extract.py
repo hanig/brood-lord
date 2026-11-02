@@ -291,14 +291,16 @@ class TestExtract(unittest.TestCase):
     self.false(got['omissions'])
 
   def test_round1_memory_pitfall(self):
-    self.put('network-pitfalls.md', '---\nname: lesson\ndescription: lesson\n'
-      'metadata:\n  type: feedback\n---\nBody.\n')
-    got = self.collect('memory')
-    self.eq({r['adapter']['name'] for r in got['evidence'].values()},
-      {'guidance', 'memory:name', 'memory:description', 'memory:metadata.type', 'memory:body'})
-    self.eq(self.locations(got, 'memory:body'), [span(7)])
-    self.eq(self.locations(got, 'guidance'), [span(1, 7)])
-    self.eq(len(self.members(got, 'evidence_documents')), 1)
+    for name in ('network-pitfalls.md', 'pitfall.txt', 'pitfall'):
+      path = self.put(name, '---\nname: lesson\ndescription: lesson\n'
+        'metadata:\n  type: feedback\n---\nBody.\n')
+      got = self.collect('memory')
+      self.eq({r['adapter']['name'] for r in got['evidence'].values()},
+        {'guidance', 'memory:name', 'memory:description', 'memory:metadata.type', 'memory:body'})
+      self.eq(self.locations(got, 'memory:body'), [span(7)])
+      self.eq(self.locations(got, 'guidance'), [span(1, 7)])
+      self.eq(len(self.members(got, 'evidence_documents')), 1)
+      path.unlink()
 
   def test_round1_inline_metadata(self):
     self.put('lesson.md', '---\nname: lesson\ndescription: lesson\n'
@@ -387,7 +389,8 @@ class TestExtract(unittest.TestCase):
   ('directories', [("count = 0", "count, dirs = 0, 0"),
     ('nonlocal count, used', 'nonlocal count, dirs, used'),
     ("if len(parts) > caps['max_depth']:", "dirs += 1\n            if dirs > PER_ROOT_FILES or len(parts) > caps['max_depth']:")], 'test_round1_entry_budget'),
-  ('memory selection', [("if guidance and not (role == 'memory' and name.endswith('.md')):", 'if guidance:')], 'test_round1_memory_pitfall'),
+  ('memory selection', [("if guidance and role != 'memory':", 'if guidance:')], 'test_round1_memory_pitfall'),
+  ('memory suffix', [("if guidance and role != 'memory':", "if guidance and not (role == 'memory' and name.endswith('.md')):")], 'test_round1_memory_pitfall'),
   ('state shape', [("  or not {'state', 'attempt_dir', 'attempts', 'gpu_hours'} <= item.keys()\n  or item['attempt_dir'] is not None and not _text(item['attempt_dir'])\n  or type(item['gpu_hours']) not in (int, float)\n", '')], 'test_round1_incomplete_state'),
   ('alias directory', [("_identity(label, parts[:-1], 'guidance', digest)", "_identity(label, 'guidance', digest)")], 'test_round1_separate_guidance'),
   ('alias memory', [("'guidance-alias' if tag == 'guidance' else tag", "'guidance-alias'")], 'test_memory_guidance_alias_keeps_memory'),
