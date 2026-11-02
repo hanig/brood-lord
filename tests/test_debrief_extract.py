@@ -251,7 +251,7 @@ class TestExtract(unittest.TestCase):
         case.setUp()
         try:
           with mock.patch.dict(globals(), {'X': mutant}):
-            with self.assertRaises(AssertionError):
+            with self.assertRaises((AssertionError, P.S.SchemaError)):
               getattr(case, test)()
         finally:
           case.doCleanups()
