@@ -55,6 +55,9 @@ def _closed_ids(value):
 
 
 CLOSED_DECLARATIONS = {
+    "hanig-debrief": _closed_ids("""
+        purpose.scope capability.programs paths.skill-directory approval.packet
+    """),
     "hanig-swarm": _closed_ids("""
         placement.behavior-deciding placement.reference-elaboration
         placement.reference-dialect capability.shell-filesystem

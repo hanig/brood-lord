@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "known_declarations": [
+    "purpose.scope",
+    "capability.programs",
+    "paths.skill-directory",
+    "approval.packet"
+  ],
+  "retired_declarations": [],
+  "replacement_declarations": [],
+  "declarations": [
+    {
+      "id": "purpose.scope",
+      "normative_text": "The purpose of hanig-debrief is to extract what another project learned about the brood-lord skills from that project's own records, for a private evidence dossier and a scrubbed public packet."
+    },
+    {
+      "id": "capability.programs",
+      "normative_text": "This bundle is a skeleton: debrief extraction, drafting and filing programs are not yet shipped. It provides no debrief command."
+    },
+    {
+      "id": "paths.skill-directory",
+      "normative_text": "Set HANIG_DEBRIEF_DIR to the directory containing the SKILL.md instance actually loaded. The bundled scripts/skill_paths.py resolves that directory and declared siblings from the loaded location, with HANIG_SKILL_DEP_ROOTS for explicit dependency parents; plan, state, input and output paths remain project-relative."
+    },
+    {
+      "id": "approval.packet",
+      "normative_text": "OD-2: Stop before filing until the owner has seen the exact scrubbed packet and approved it. The approved destination is one GitHub issue on hanig/brood-lord per packet, labeled debrief. No commits or pull requests from another project. The brood-lord orchestrator triages each learning into units or rejects it with a reason."
+    }
+  ]
+}

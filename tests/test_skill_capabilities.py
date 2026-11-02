@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "skills"
 COMPATIBILITY = ROOT / "docs" / "agent-compatibility.md"
 AUTHORED = {
+    "hanig-debrief",
     "hanig-orchestrate",
     "hanig-project",
     "hanig-swarm",
@@ -146,7 +147,7 @@ def _unique_object(pairs):
 
 
 class TestSkillCapabilities(unittest.TestCase):
-    def test_all_fourteen_bundles_have_portable_loader_metadata(self):
+    def test_all_fifteen_bundles_have_portable_loader_metadata(self):
         bundles = {path.parent.name for path in SKILLS.glob("*/SKILL.md")}
         self.assertEqual(bundles, AUTHORED | VENDORED)
         for name in sorted(bundles):
@@ -180,6 +181,18 @@ class TestSkillCapabilities(unittest.TestCase):
                 with self.subTest(bundle=name):
                     self.assertEqual(installed.read_text(), source.read_text())
                     self.assertIsNotNone(_frontmatter(installed))
+            doctor = subprocess.run(
+                ["sh", str(ROOT / "bin" / "doctor"), "--prefix", str(prefix), "--json"],
+                cwd=ROOT, env=env, text=True, capture_output=True,
+            )
+            self.assertEqual(doctor.returncode, 0, doctor.stderr)
+            roots = json.loads(doctor.stdout)["agents"]["claude"]["installation"]["roots"]
+            payloads = [item for location in roots for item in location["payloads"]]
+            debrief = [item for item in payloads if item["name"] == "hanig-debrief"]
+            self.assertEqual(len(debrief), 1, doctor.stdout)
+            # JSON calls authored installs "owned" and retains "vendored" separately.
+            self.assertEqual(debrief[0]["ownership"], "owned")
+            self.assertEqual(debrief[0]["state"], "present")
             for forbidden in (".agent-bus", ".paseo", ".config"):
                 with self.subTest(home_state=forbidden):
                     self.assertFalse(
@@ -204,6 +217,7 @@ class TestSkillCapabilities(unittest.TestCase):
 
     def test_authored_skills_state_their_host_safe_boundaries(self):
         expected = {
+            "hanig-debrief": "debrief extraction, drafting and filing programs are not yet shipped",
             "hanig-orchestrate": "Host capability boundary",
             "hanig-project": (
                 "Use linear_sync.py with the current session's authorized tracker access; "

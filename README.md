@@ -85,7 +85,7 @@ every issue title for approval, files them in Linear, and dispatches.
 
 ---
 
-## The six skills we wrote
+## The seven skills we wrote
 
 | Skill | One line |
 |---|---|
@@ -95,8 +95,9 @@ every issue title for approval, files them in Linear, and dispatches.
 | `hanig-verified-workflow` | Declare and verify what "done" means for one batch job. |
 | `hanig-review-gate` | Adversarial multi-model review of code and of the claims made about it. |
 | `hanig-portable-handoff` | Capture and resume run state across machines. |
+| `hanig-debrief` | Skeleton for project lessons, a private dossier and an owner-approved public packet; debrief programs are not yet shipped. |
 
-All six are prefixed `hanig-` so they can never collide with an Arc
+All seven are prefixed `hanig-` so they can never collide with an Arc
 org-managed skill name. That prefix is now load-bearing rather than tidy:
 `install.sh` reads it as the authorship namespace, and anything under
 `skills/` outside it is treated as vendored -- installed by us, written
@@ -1244,9 +1245,8 @@ prevents flag order from changing placement. Existing foreign paths and
 org-managed collisions remain hard failures, and separately edited copies can
 still drift later.
 
-**`--allow-org-shadow` is required here, and permanently.** A copy of these
-skills is maintained on Claude Science, so all six also arrive in the Arc org
-store through catalog sync. That is deliberate, not a mistake to clean up.
+**`--allow-org-shadow` is required here, and permanently.** Copies of authored skills are maintained on Claude Science and also arrive
+in the Arc org store through catalog sync. That is deliberate, not a mistake to clean up.
 
 The installer still refuses by default, because the hazard is real: which store
 the loader prefers is not guaranteed, so the copy that loads may not be the one
@@ -1507,6 +1507,7 @@ skills/hanig-swarm/         swarm.py, unit.py, converge.py, swarm-cron.sh
 skills/hanig-review-gate/   review.py, committee.py, reviewers.json, PROTOCOL.md
 skills/hanig-verified-workflow/  contract.py
 skills/hanig-portable-handoff/   handoff.py
+skills/hanig-debrief/        skeleton, declarations and bundled path resolver
 tests/                      stdlib unittest
 examples/                   reference config to copy elsewhere; nothing reads it here
 docs/probes/                measured environment data per cluster

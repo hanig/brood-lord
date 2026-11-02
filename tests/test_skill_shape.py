@@ -255,13 +255,18 @@ PROJECT_DECLARATIONS = (
     "adoption.remaining-work",
 )
 
+DEBRIEF_DECLARATIONS = ("purpose.scope", "capability.programs",
+                        "paths.skill-directory", "approval.packet")
+
 DECLARATION_INVENTORIES = {
+    "hanig-debrief": DEBRIEF_DECLARATIONS,
     "hanig-project": PROJECT_DECLARATIONS,
     "hanig-orchestrate": ORCHESTRATE_DECLARATIONS,
     "hanig-swarm": SWARM_DECLARATIONS,
 }
 
 REFERENCE_ELABORATION_INVENTORIES = {
+    "hanig-debrief": (),
     "hanig-project": (
         ('references/reporting-evidence.md', 'findings.bound', 3),
         ('references/reporting-evidence.md', 'findings.contract', 2),
@@ -661,6 +666,25 @@ def _local_reference_problems(doc):
 
 
 class TestAuthoredSkillShape(unittest.TestCase):
+    def test_debrief_registry_round_trip_and_closed_inventory(self):
+        with tempfile.TemporaryDirectory() as raw:
+            skill = Path(raw) / "hanig-debrief"
+            shutil.copytree(SKILLS / "hanig-debrief", skill)
+            before = (skill / "SKILL.md").read_bytes()
+            for action in ("write-body", "check-body", "check-references"):
+                result = subprocess.run(
+                    [sys.executable, str(DECLARATION_SCRIPT), action,
+                     "--skill-dir", str(skill)], text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((skill / "SKILL.md").read_bytes(), before)
+            registry = skill / "declarations.json"
+            data = json.loads(registry.read_text())
+            data["known_declarations"].append("undeclared.rule")
+            registry.write_text(json.dumps(data))
+            with self.assertRaisesRegex(DECLARATION_REGISTRY.RegistryError,
+                                        "unexpected known declaration"):
+                DECLARATION_REGISTRY.load_registry(skill)
+
     def test_every_authored_skill_body_is_within_its_line_budget(self):
         docs = _authored_skill_docs()
         self.assertTrue(docs, "the authored-skill sweep matched no files")
@@ -2003,7 +2027,10 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
     body.
     """
 
-    DECLARED = {"hanig-project": PROJECT_DECLARATIONS}
+    DECLARED = {
+        "hanig-project": PROJECT_DECLARATIONS,
+        "hanig-debrief": DEBRIEF_DECLARATIONS,
+    }
 
     @staticmethod
     def second_copies(named_sentences, topics):

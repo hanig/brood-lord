@@ -23,6 +23,17 @@ spec.loader.exec_module(installer)
 
 
 class TestSelectionBeforeWrites(unittest.TestCase):
+    def test_seven_authored_bundles_include_standalone_debrief(self):
+        authored = {name for name, _path, origin in installer.selected_sources(ROOT, ())
+                    if origin == "authored"}
+        self.assertEqual(authored, {
+            "hanig-debrief", "hanig-orchestrate", "hanig-project", "hanig-swarm",
+            "hanig-review-gate", "hanig-verified-workflow", "hanig-portable-handoff",
+        })
+        self.assertEqual(installer.selected_sources(ROOT, ("hanig-debrief",)), [
+            ("hanig-debrief", ROOT / "skills" / "hanig-debrief", "authored"),
+        ])
+
     def test_no_targets_diagnostic_lists_every_installer_target(self):
         with self.assertRaises(installer.InstallRequestError) as raised:
             installer.build_plan((), installer.parse_options([]))

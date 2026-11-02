@@ -12,7 +12,8 @@ class BundledSkillPaths(unittest.TestCase):
         copies = sorted(SKILLS.glob("hanig-*/scripts/skill_paths.py"))
         # Discovery includes future consumers; these current consumers must
         # not disappear and turn the byte comparison into a vacuous pass.
-        required = {CANONICAL, SKILLS / "hanig-project/scripts/skill_paths.py"}
+        required = {CANONICAL, SKILLS / "hanig-project/scripts/skill_paths.py",
+                    SKILLS / "hanig-debrief/scripts/skill_paths.py"}
         self.assertTrue(required.issubset(copies), "missing bundled resolver")
         canonical = CANONICAL.read_bytes()
         for copy in copies:

@@ -20,7 +20,7 @@ from tests.test_attempt_worktrees import ENV, FakePaseo, code_unit, git, repo_at
 from tests.scheduler_fixture import codex_environment, state_environment
 
 SHIPPED_SKILLS = (
-    "hanig-orchestrate", "hanig-portable-handoff", "hanig-project",
+    "hanig-debrief", "hanig-orchestrate", "hanig-portable-handoff", "hanig-project",
     "hanig-review-gate", "hanig-swarm", "hanig-verified-workflow",
 )
 
