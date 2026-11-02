@@ -226,6 +226,20 @@ class TestDebriefTriage(unittest.TestCase):
             with self.subTest(ref=ref):
                 self.refuses("references")
 
+    def test_reference_paths_refuse_percent_encoding_without_decoding(self):
+        row = self.record["dispositions"]["L03"]
+        for path in ("%2e%2e/%2e%2e/python/cpython", "%2E%2E/other",
+                     "docs%2Fguide.md", "docs/%252e%252e/guide.md", "docs/%41.md"):
+            for prefix in ("", "https://github.com/hanig/brood-lord/"):
+                with self.subTest(path=path, prefix=prefix):
+                    row["references"] = [prefix + path]
+                    self.refuses("references: percent-encoding is not permitted in reference paths")
+        # Literal percent signs and URL query/fragment escapes are not path encoding.
+        row["references"] = ["docs/100%.md", "docs/%zz.md",
+                             "https://github.com/hanig/brood-lord/issues/1?q=%20#%41"]
+        self.save()
+        self.assertEqual(self.run_cli(), (0, "triage valid\n", ""))
+
     def test_plan_shape_and_empty_plan(self):
         original = self.plan_paths[0].read_text()
         for plan in ([], {}, {"units": "unit-a"}, {"units": {}}, {"units": ["unit-a"]},

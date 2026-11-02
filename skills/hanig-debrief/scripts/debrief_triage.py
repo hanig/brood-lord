@@ -39,9 +39,12 @@ def _reference(value, at):
         S.need(bool(path) and all(p not in (".", "..") for p in path.split("/")),
                at, "expected link under brood-lord")
     else:
+        path = value
         S.need("\x00" not in value and
                all(p not in ("", ".", "..") for p in value.split("/")),
                at, "expected repository path")
+    S.need(re.search(r"%[0-9a-fA-F]{2}", path) is None,
+           at, "percent-encoding is not permitted in reference paths")
 
 
 def _unit_ids(plans):
