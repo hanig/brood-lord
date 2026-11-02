@@ -60,7 +60,7 @@ class TestExtract(unittest.TestCase):
     self.put('CLAUDE.md', 'guidance\n')
     self.put('AGENTS.md', 'guidance\n')
     self.put('old-pitfall.md', 'lesson\n')
-    self.put('PLAN.md', '|  D-1  | decision |\nD-2.x_a | decision |\n'
+    self.put('PLAN.md', '|  D-1  | decision |\n| D-2.x_a | decision |\n'
   '| d-3 | no |\n## NEEDS YOU\n- decide\n## Done\n- no\n')
     self.put('u/' + 'a' * 16 + '/evidence.md', 'STOP\nREVIEW_FAIL\n'
   'REVIEW_UNAVAILABLE\nPROPOSED DECISION\n')
@@ -274,7 +274,7 @@ class TestExtract(unittest.TestCase):
     got = self.collect(max_depth=2)
     self.false(got['evidence'])
     self.eq(got['omissions'], [dict(source_root='A', locator='d/d/d',
-  reason='over-budget: directories or max_depth')])
+  reason='over-budget: max_depth')])
 
   def test_single_symlink_omission(self):
     (self.root / 'link.md').symlink_to('missing')
@@ -285,7 +285,10 @@ class TestExtract(unittest.TestCase):
     self.put('CLAUDE.md', 'guidance\n')
     for i in range(10001):
       (self.root / str(i)).mkdir()
-    self.eq(len(self.collect()['evidence']), 1)
+    self.put('z/CLAUDE.md', 'late guidance\n')
+    got = self.collect()
+    self.eq(len(got['evidence']), 2)
+    self.false(got['omissions'])
 
   def test_round1_memory_pitfall(self):
     self.put('network-pitfalls.md', '---\nname: lesson\ndescription: lesson\n'
@@ -293,15 +296,32 @@ class TestExtract(unittest.TestCase):
     got = self.collect('memory')
     self.eq({r['adapter']['name'] for r in got['evidence'].values()},
       {'guidance', 'memory:name', 'memory:description', 'memory:metadata.type', 'memory:body'})
+    self.eq(self.locations(got, 'memory:body'), [span(7)])
+    self.eq(self.locations(got, 'guidance'), [span(1, 7)])
+    self.eq(len(self.members(got, 'evidence_documents')), 1)
 
   def test_round1_inline_metadata(self):
     self.put('lesson.md', '---\nname: lesson\ndescription: lesson\n'
       'metadata: {type: feedback}\n---\nBody.\n')
-    self.eq(len(self.collect('memory')['evidence']), 4)
+    got = self.collect('memory')
+    self.false(got['evidence'])
+    self.eq(len(got['omissions']), 1)
+    self.eq(got['omissions'][0]['locator'], 'lesson.md')
+    self.true(got['omissions'][0]['reason'].startswith('unsupported'))
+
+  def test_memory_guidance_alias_keeps_memory(self):
+    for name in ('CLAUDE.md', 'AGENTS.md'):
+      self.put(name, '---\nname: lesson\ndescription: lesson\n'
+        'metadata:\n  type: feedback\n---\nBody.\n')
+    got = self.collect('memory')
+    self.eq(len(self.records(got, 'memory:name')), 2)
+    self.eq(len(self.records(got, 'guidance-alias')), 1)
+    self.eq(len(self.members(got, 'evidence_documents')), 1)
 
   def test_round1_indented_table(self):
-    self.put('PLAN.md', '| Decision | Text |\n| --- | --- |\n  | D-1 | choose |\n')
-    self.eq(self.locations(self.collect(), 'decision'), [span(3)])
+    self.put('PLAN.md', '| Decision | Text |\n| --- | --- |\n  | D-1 | choose |\n'
+      'D-2 | no leading pipe |\n| D-3 | accepted |\n')
+    self.eq(self.locations(self.collect(), 'decision'), [span(5)])
 
   def test_round1_incomplete_state(self):
     self.put('swarm-state.json', json.dumps(dict(schema_version=1, halted=None,
@@ -309,10 +329,19 @@ class TestExtract(unittest.TestCase):
     got = self.collect('state')
     self.false(got['evidence'])
     self.true(any(o['reason'].startswith('unsupported') for o in got['omissions']))
+    complete = dict(state='DONE', attempt_dir=None, attempts=[], gpu_hours=0)
+    for key in complete:
+      item = dict(complete)
+      del item[key]
+      self.put('swarm-state.json', json.dumps(dict(schema_version=1, halted=None,
+        units={'a': complete, 'u': item})))
+      got = self.collect('state')
+      self.false(got['evidence'])
+      self.true(got['omissions'][0]['reason'].startswith('unsupported'))
 
   def test_round1_plus_bullet(self):
     self.put('PLAN.md', '| D-1 | do X |\n## NEEDS YOU\n+ do Y\n- do Z\n')
-    self.eq(self.locations(self.collect(), 'decision'), [span(i) for i in (1, 3, 4)])
+    self.eq(self.locations(self.collect(), 'decision'), [span(i) for i in (1, 4)])
 
   def test_round1_separate_guidance(self):
     for name in ('CLAUDE.md', 'pkg/CLAUDE.md'):
@@ -320,6 +349,10 @@ class TestExtract(unittest.TestCase):
     got = self.collect()
     self.eq(len(self.members(got, 'evidence_documents')), 2)
     self.false(self.records(got, 'guidance-alias'))
+    self.put('pkg/AGENTS.md', 'same\n')
+    got = self.collect()
+    self.eq(len(self.members(got, 'evidence_documents')), 2)
+    self.eq([r['locator'] for r in self.records(got, 'guidance-alias')], ['pkg/CLAUDE.md'])
 
   def test_round1_symlink_ancestor(self):
     self.put('CLAUDE.md', 'guidance\n')
@@ -327,10 +360,40 @@ class TestExtract(unittest.TestCase):
     link.symlink_to(self.base, target_is_directory=True)
     got = X.collect([dict(label='A', role='project', path=link / 'project')])
     self.eq(len(got['evidence']), 1)
+    self.eq(next(iter(got['evidence'].values()))['source_root'], 'A')
+    self.put('outside/CLAUDE.md', 'outside', self.base)
+    (self.root / 'escape').symlink_to(self.base / 'outside', target_is_directory=True)
+    got = X.collect([dict(label='A', role='project', path=link / 'project')])
+    self.eq(len(got['evidence']), 1)
+    self.eq(got['omissions'], [dict(source_root='A', locator='escape', reason='skipped: symlink')])
+
+  def test_resolved_excluded_roots(self):
+    self.put('.git/CLAUDE.md', 'excluded')
+    for target in (self.root / '.git', self.root):
+      link = self.base / 'alias'
+      if link.is_symlink():
+        link.unlink()
+      link.symlink_to(target, target_is_directory=True)
+      with mock.patch.dict(os.environ, {'HOME': str(self.root)}):
+        with mock.patch.object(X, '_open_root', side_effect=AssertionError('excluded read')):
+          got = X.collect([dict(label='A', role='project', path=link)])
+      self.false(got['evidence'])
+      self.eq(got['omissions'][0]['reason'], 'skipped: forbidden root')
 
   def test_required_mutations(self):
     source = (SCRIPTS / 'debrief_extract.py').read_text()
     mutations = [
+  ('entries', [("names.append(entry.name)", "names.append(entry.name)\n          if len(names) > PER_ROOT_FILES:\n            omit(label, '.', 'over-budget: directory entries')\n            return")], 'test_round1_entry_budget'),
+  ('directories', [("count = 0", "count, dirs = 0, 0"),
+    ('nonlocal count, used', 'nonlocal count, dirs, used'),
+    ("if len(parts) > caps['max_depth']:", "dirs += 1\n            if dirs > PER_ROOT_FILES or len(parts) > caps['max_depth']:")], 'test_round1_entry_budget'),
+  ('memory selection', [("if guidance and not (role == 'memory' and name.endswith('.md')):", 'if guidance:')], 'test_round1_memory_pitfall'),
+  ('state shape', [("  or not {'state', 'attempt_dir', 'attempts', 'gpu_hours'} <= item.keys()\n  or item['attempt_dir'] is not None and not _text(item['attempt_dir'])\n  or type(item['gpu_hours']) not in (int, float)\n", '')], 'test_round1_incomplete_state'),
+  ('alias directory', [("_identity(label, parts[:-1], 'guidance', digest)", "_identity(label, 'guidance', digest)")], 'test_round1_separate_guidance'),
+  ('alias memory', [("'guidance-alias' if tag == 'guidance' else tag", "'guidance-alias'")], 'test_memory_guidance_alias_keeps_memory'),
+  ('root resolution', [("path = Path(os.path.realpath(path))", 'pass')], 'test_round1_symlink_ancestor'),
+  ('resolved exclusions', [("if '.git' in path.parts or path == Path(os.path.realpath(os.path.expanduser('~'))) or path == Path('/'):", 'if False:')], 'test_resolved_excluded_roots'),
+  ('table grammar', [(r'\|[ \t]*D-[A-Za-z0-9._-]+[ \t]*\|', r'(?:\|[ \t]*)?D-[A-Za-z0-9._-]+[ \t]*\|')], 'test_round1_indented_table'),
   ('symlink', [('if stat.S_ISLNK(st.st_mode):', 'if False:'),
   ('follow_symlinks=False', 'follow_symlinks=True'),
   (' | os.O_NOFOLLOW', '')], 'test_boundary_symlink'),
@@ -338,7 +401,7 @@ class TestExtract(unittest.TestCase):
   'test_boundary_caps'),
   ('receipts', [('ids = sorted(set(members))', 'ids = sorted(members)')], 'test_cohort_recount'),
   ('dry', [("aid = None", "raise ValueError('unsupported')")], 'test_state_source_coverage'),
-  ('table', [(r'(?:\|[ \t]*)?D-[A-Za-z0-9._-]+[ \t]*\|', r'\| ?D-[A-Za-z0-9._-]+ ?\|')], 'test_source_coverage'),
+  ('table', [(r'\|[ \t]*D-[A-Za-z0-9._-]+[ \t]*\|', r'\| ?D-[A-Za-z0-9._-]+ ?\|')], 'test_source_coverage'),
   ('unsupported', [('if not known:', 'if False:')], 'test_exclusions'),
   ('strip', [('if line in MARKERS', 'if line.strip() in MARKERS')], 'test_marker_exact_untrimmed')]
     for name, replacements, test in mutations:

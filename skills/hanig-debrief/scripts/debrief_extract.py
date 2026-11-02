@@ -1,6 +1,6 @@
 """collect([{label, role, path}], budgets).
 Caps: per_file_bytes, files_per_root, total_bytes; max_depth defaults/caps at
-128 levels; every hit omitted. Symlinks are omitted.
+128 levels; every hit omitted. Roots resolve once; descendant symlinks are omitted.
 Only LF delimits lines; CR, including CRLF, is content (no marker match).
 """
 import hashlib
@@ -63,6 +63,9 @@ def _structured(name, data):
     _need(not (type(data.get('units')) is not dict or 'halted' not in data))
     for uid, item in sorted(data['units'].items()):
       _need(not (not _text(uid) or type(item) is not dict
+  or not {'state', 'attempt_dir', 'attempts', 'gpu_hours'} <= item.keys()
+  or item['attempt_dir'] is not None and not _text(item['attempt_dir'])
+  or type(item['gpu_hours']) not in (int, float)
   or item.get('state') not in (None, 'ALLOCATED', 'ABANDONED', 'SUPERSEDED') + STATES
   or 'state' not in item or type(item.get('attempts')) is not list))
       rows.append(('state', _pointer('units', uid, 'state'), uid, None))
@@ -120,7 +123,8 @@ def _lines(text):
 
 def _text_rows(name, role, text):
   lines = _lines(text)
-  if name in ('CLAUDE.md', 'AGENTS.md') or 'pitfall' in name:
+  guidance = name in ('CLAUDE.md', 'AGENTS.md') or 'pitfall' in name
+  if guidance and not (role == 'memory' and name.endswith('.md')):
     return [('guidance', 1, max(1, len(lines)))]
   if name in ('evidence.md', 'SUMMARY.md'):
     return [('marker:' + line, i, i) for i, line in enumerate(lines, 1)
@@ -140,7 +144,7 @@ def _text_rows(name, role, text):
         needs = True
       elif line.startswith('#'):
         needs = False
-      if (re.match(r'(?:\|[ \t]*)?D-[A-Za-z0-9._-]+[ \t]*\|', line)
+      if (re.match(r'\|[ \t]*D-[A-Za-z0-9._-]+[ \t]*\|', line)
   or re.match(r'[-*] NEEDS YOU(?:$|: )', line)
   or needs and re.match(r'[-*] \S', line)):
         rows.append(('decision', i, i))
@@ -176,6 +180,8 @@ def _text_rows(name, role, text):
     _need({'name', 'description', 'metadata.type'} <= seen)
     if end + 1 < len(lines):
       rows.append(('memory:body', end + 2, len(lines)))
+    if guidance:
+      rows.append(('guidance', 1, max(1, len(lines))))
     return rows
   raise ValueError('unsupported format')
 
@@ -257,9 +263,10 @@ def collect(roots, budgets=None):
       return
     doc = _identity(label, loc)
     if name in ('CLAUDE.md', 'AGENTS.md') and role != 'helpers':
-      doc = _identity(label, 'guidance', digest)
+      doc = _identity(label, parts[:-1], 'guidance', digest)
       if doc in aliases:
-        rows = [('guidance-alias', loc, u, a) for _, loc, u, a in rows]
+        rows = [('guidance-alias' if tag == 'guidance' else tag, loc, u, a)
+  for tag, loc, u, a in rows]
       aliases.add(doc)
     for tag, location, unit, attempt in rows:
       ref = 'E%03d' % (len(out['evidence']) + 1)
@@ -282,21 +289,22 @@ def collect(roots, budgets=None):
       omit(label, '.', 'skipped: forbidden root')
       continue
     try:
+      path = Path(os.path.realpath(path))
+      if '.git' in path.parts or path == Path(os.path.realpath(os.path.expanduser('~'))) or path == Path('/'):
+        omit(label, '.', 'skipped: forbidden root')
+        continue
       root_fd = _open_root(path)
     except OSError:
       omit(label, '.', 'skipped: unreadable or symlink root')
       continue
-    count, dirs = 0, 0
+    count = 0
 
     def walk(fd, prefix):
-      nonlocal count, dirs, used
+      nonlocal count, used
       names = []
       with os.scandir(fd) as entries:
         for entry in entries:
           names.append(entry.name)
-          if len(names) > PER_ROOT_FILES:
-            omit(label, '/'.join(prefix) or '.', 'over-budget: directory entries')
-            return
       for name in sorted(names):
         parts = prefix + [name]
         loc = '/'.join(parts)
@@ -311,9 +319,8 @@ def collect(roots, budgets=None):
           if stat.S_ISLNK(st.st_mode):
             omit(label, loc, 'skipped: symlink')
           elif stat.S_ISDIR(st.st_mode):
-            dirs += 1
-            if dirs > PER_ROOT_FILES or len(parts) > caps['max_depth']:
-              omit(label, loc, 'over-budget: directories or max_depth')
+            if len(parts) > caps['max_depth']:
+              omit(label, loc, 'over-budget: max_depth')
               continue
             child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             try:
