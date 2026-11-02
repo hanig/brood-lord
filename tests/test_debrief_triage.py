@@ -263,6 +263,14 @@ class TestDebriefTriage(unittest.TestCase):
         row["references"] = ["https://example.invalid/other"]
         self.refuses("references: expected public brood-lord HTTPS link")
 
+    def test_repository_root_links_with_query_or_fragment(self):
+        row = self.record["dispositions"]["L03"]
+        for suffix in ("#readme", "?tab=readme-ov-file", "?tab=readme-ov-file#readme", ""):
+            with self.subTest(suffix=suffix):
+                row["references"] = ["https://github.com/hanig/brood-lord/" + suffix]
+                self.save()
+                self.assertEqual(self.run_cli(), (0, "triage valid\n", ""))
+
     def test_plan_shape_and_empty_plan(self):
         original = self.plan_paths[0].read_text()
         for plan in ([], {}, {"units": "unit-a"}, {"units": {}}, {"units": ["unit-a"]},

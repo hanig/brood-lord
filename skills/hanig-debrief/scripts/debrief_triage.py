@@ -36,7 +36,7 @@ def _reference(value, at):
                not any(c.isspace() or ord(c) < 32 or c == "\\" for c in value),
                at, "expected public brood-lord HTTPS link")
         path = re.split(r"[?#]", value[len(prefix):], maxsplit=1)[0]
-        S.need(bool(path) and all(p not in (".", "..") for p in path.split("/")),
+        S.need(all(p not in (".", "..") for p in path.split("/")),
                at, "expected link under brood-lord")
     else:
         path = value
