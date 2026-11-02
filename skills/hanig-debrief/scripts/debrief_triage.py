@@ -40,8 +40,10 @@ def _reference(value, at):
                at, "expected link under brood-lord")
     else:
         path = value
+        parts = value.split("/")
         S.need("\x00" not in value and
-               all(p not in ("", ".", "..") for p in value.split("/")),
+               all(p not in (".", "..") and (p != "" or i == len(parts) - 1)
+                   for i, p in enumerate(parts)),
                at, "expected repository path")
     S.need(re.search(r"%[0-9a-fA-F]{2}", path) is None,
            at, "percent-encoding is not permitted in reference paths")

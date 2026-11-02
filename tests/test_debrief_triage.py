@@ -240,6 +240,16 @@ class TestDebriefTriage(unittest.TestCase):
         self.save()
         self.assertEqual(self.run_cli(), (0, "triage valid\n", ""))
 
+    def test_repository_directory_reference_with_trailing_slash(self):
+        row = self.record["dispositions"]["L02"]
+        row["references"] = ["skills/hanig-debrief/", "docs/", "docs/café guide/"]
+        self.save()
+        self.assertEqual(self.run_cli(), (0, "triage valid\n", ""))
+        for ref in ("/", "/docs/", "docs//", "docs//guide/", "docs/./", "docs/../"):
+            with self.subTest(ref=ref):
+                row["references"] = [ref]
+                self.refuses("references: expected repository path")
+
     def test_plan_shape_and_empty_plan(self):
         original = self.plan_paths[0].read_text()
         for plan in ([], {}, {"units": "unit-a"}, {"units": {}}, {"units": ["unit-a"]},
