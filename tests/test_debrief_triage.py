@@ -250,6 +250,19 @@ class TestDebriefTriage(unittest.TestCase):
                 row["references"] = [ref]
                 self.refuses("references: expected repository path")
 
+    def test_only_exact_https_prefix_classifies_reference_as_link(self):
+        row = self.record["dispositions"]["L02"]
+        # Embedded scheme text takes the path branch; an interior empty
+        # component remains invalid, without normalizing the supplied path.
+        for ref in ("notes/http://proxy.md", "docs/https://github.com/hanig/brood-lord/issues/1.md",
+                    "http://github.com/hanig/brood-lord/issues/1",
+                    "HTTPS://github.com/hanig/brood-lord/issues/1"):
+            with self.subTest(ref=ref):
+                row["references"] = [ref]
+                self.refuses("references: expected repository path")
+        row["references"] = ["https://example.invalid/other"]
+        self.refuses("references: expected public brood-lord HTTPS link")
+
     def test_plan_shape_and_empty_plan(self):
         original = self.plan_paths[0].read_text()
         for plan in ([], {}, {"units": "unit-a"}, {"units": {}}, {"units": ["unit-a"]},

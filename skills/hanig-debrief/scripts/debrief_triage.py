@@ -30,7 +30,7 @@ def _fields(value, keys, at):
 
 def _reference(value, at):
     S.text(value, at)
-    if "://" in value:
+    if value.startswith("https://"):
         prefix = "https://github.com/hanig/brood-lord/"
         S.need(value.startswith(prefix) and
                not any(c.isspace() or ord(c) < 32 or c == "\\" for c in value),
