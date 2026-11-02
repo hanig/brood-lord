@@ -103,6 +103,38 @@ class TestCoverage(unittest.TestCase):
       changed = registry(applies={'fixed_in': self.head})
       self.assertEqual(self.classify(changed), 'covered')
       self.c = self.d['candidates'][0]
+  def test_group_review_bindings_survive_order_and_disagreement(self):
+    for disposition in ('extends', 'conflicts'):
+      for reverse in (False, True):
+        d = copy.deepcopy(self.d)
+        d['candidates'].append(copy.deepcopy(d['candidates'][0]))
+        old = registry()
+        if disposition == 'extends': old['entries'][0]['note'] = 'Old mapping.'
+        C.record_review(d, 0, 'extends', 'Current', registry=registry())
+        C.record_review(d, 1, disposition, 'Other', registry=old)
+        if reverse: d['candidates'].reverse()
+        d['candidates'] = C.group(d['candidates'], d['cohorts'])
+        c = d['candidates'][0]
+        expected = 'extends' if disposition == 'extends' else 'unknown'
+        self.assertEqual(C.classify(c, registry(), self.root,
+          provenance=provenance(self.head)), expected)
+        C.select(d)
+        self.assertEqual(len(P.compile_packet(d, S.load_catalog())['learnings']), 1)
+        C.record_review(d, 0, 'conflicts', 'Resolving review', registry=registry())
+        self.assertEqual(C.classify(c, registry(), self.root,
+          provenance=provenance(self.head)), 'conflicts')
+
+  def test_bound_review_requires_provenance_and_checkout(self):
+    for disposition in ('extends', 'conflicts'):
+      for prov, checkout in ((False, True), (True, False)):
+        C.record_review(self.d, 0, disposition, 'Review', registry=registry())
+        self.assertEqual(self.classify(prov=prov, checkout=checkout), 'unknown')
+
+  def test_unknown_catalog_is_rejected_by_shared_schema(self):
+    self.c.update(status='rejected', catalog_entry='DB999')
+    with self.assertRaises(S.SchemaError): P.validate_dossier(self.d)
+    with self.assertRaises(S.SchemaError): C.group([self.c], self.d['cohorts'])
+
   def test_fixed_operand_requires_full_sha(self):
     for fixed in (self.base[:7], 'f' * 64):
       self.assertEqual(self.classify(registry(applies={'fixed_in': fixed})), 'unknown')
@@ -114,7 +146,8 @@ class TestCoverage(unittest.TestCase):
     self.c.update(catalog_entry='DB014', counts=[])
     self.assertEqual(self.classify(registry('DB013')), 'not_found_in_snapshot')
     C.record_review(self.d, 0, 'conflicts', 'Observed failure contradicts the documented feature.', registry=registry('DB014'))
-    self.assertEqual(self.classify(registry('DB014')), 'conflicts')
+    self.assertEqual(C.classify(self.c, registry('DB014'), self.root,
+      provenance={'hanig-review-gate': provenance(self.head)['hanig-swarm']}), 'conflicts')
     cat = S.load_catalog()
     residual = copy.deepcopy(next(e for e in cat['entries'] if e['id'] == 'DB014'))
     residual.update(id='DB017', what_broke='Existing debris remained.')
