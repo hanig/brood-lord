@@ -11,7 +11,10 @@
   "declarations": [
     {
       "id": "purpose.scope",
-      "normative_text": "The purpose of hanig-debrief is to extract what another project learned about the brood-lord skills from that project's own records, for a private evidence dossier and a scrubbed public packet."
+      "normative_text": "The purpose of hanig-debrief is to extract what another project learned about the brood-lord skills from that project's own records, for a private evidence dossier and a scrubbed public packet.",
+      "references": [
+        "references/contract.md"
+      ]
     },
     {
       "id": "capability.programs",
