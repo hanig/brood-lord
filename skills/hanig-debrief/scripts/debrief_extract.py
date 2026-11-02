@@ -67,15 +67,17 @@ def _structured(name, data):
       raise ValueError('unsupported')
     for uid, item in sorted(data['units'].items()):
       if (not _text(uid) or type(item) is not dict
-          or item.get('state') not in (None, 'ALLOCATED', 'ABANDONED', 'SUPERSEDED') + STATES
-          or 'state' not in item or type(item.get('attempts')) is not list):
+      or item.get('state') not in (None, 'ALLOCATED', 'ABANDONED', 'SUPERSEDED') + STATES
+      or 'state' not in item or type(item.get('attempts')) is not list):
         raise ValueError('unsupported')
       rows.append(('state', _pointer('units', uid, 'state'), uid, None))
       for i, attempt in enumerate(item['attempts']):
         if not _text(attempt):
           raise ValueError('unsupported')
         aid = attempt.split('/')[-1]
-        if attempt.startswith('dry-attempt-') or not ATTEMPT.fullmatch(aid):
+        if attempt.startswith('dry-attempt-'):
+          aid = None
+        elif not ATTEMPT.fullmatch(aid):
           raise ValueError('unsupported')
         rows.append(('attempt', _pointer('units', uid, 'attempts', i), uid, aid))
     return rows
@@ -86,15 +88,15 @@ def _structured(name, data):
   if name == 'receipt.json':
     required = {'checked_at': str, 'notes': list, 'outputs': dict, 'basis': dict}
     if (data.get('state') not in STATES or type(data.get('exit_code')) is not int
-        or data['exit_code'] != STATES.index(data['state'])
-        or 'job_id' not in data
-        or any(type(data.get(k)) is not t for k, t in required.items())):
+      or data['exit_code'] != STATES.index(data['state'])
+      or 'job_id' not in data
+      or any(type(data.get(k)) is not t for k, t in required.items())):
       raise ValueError('unsupported')
     adapter = 'receipt'
   else:
     if (type(data.get('declared_outputs')) is not list
-        or type(data.get('pinned_inputs')) is not dict
-        or type(data.get('budget')) is not dict or 'command' not in data):
+      or type(data.get('pinned_inputs')) is not dict
+      or type(data.get('budget')) is not dict or 'command' not in data):
       raise ValueError('unsupported')
     adapter = 'attempt'
   return [(adapter, _pointer(key), uid, aid) for key in sorted(data)]
@@ -115,13 +117,13 @@ def _provenance(text, parts):
   skill = dest.name
   if parts[-1] == COPY_MARKER:
     if (len(parts) < 2 or parts[-2] != skill or values['mode'] != 'copy'
-        or values['link_target'] or values['link_identity']):
+      or values['link_target'] or values['link_identity']):
       raise ValueError('unsupported provenance')
   else:
     digest = hashlib.sha256(os.fsencode(str(dest))).hexdigest()[:24]
     if (parts[-1] != skill + '-' + digest + '.provenance'
-        or values['mode'] != 'link' or not os.path.isabs(values['link_target'])
-        or not values['link_identity']):
+      or values['mode'] != 'link' or not os.path.isabs(values['link_target'])
+      or not values['link_identity']):
       raise ValueError('unsupported provenance')
   return skill
 
@@ -131,7 +133,7 @@ def _text_rows(name, role, text):
     return [('guidance', 1, max(1, len(lines)))]
   if name in ('evidence.md', 'SUMMARY.md'):
     return [('marker:' + line, i, i) for i, line in enumerate(lines, 1)
-        if line in MARKERS]
+      if line in MARKERS]
   if name == 'PLAN.md':
     rows, needs = [], False
     for i, line in enumerate(lines, 1):
@@ -139,9 +141,9 @@ def _text_rows(name, role, text):
         needs = True
       elif line.startswith('#'):
         needs = False
-      if (re.match(r'\| ?D-[A-Za-z0-9._-]+ ?\|', line)
-          or re.match(r'[-*] NEEDS YOU(?:$|: )', line)
-          or needs and re.match(r'[-*] \S', line)):
+      if (re.match(r'(?:\|[ \t]*)?D-[A-Za-z0-9._-]+[ \t]*\|', line)
+      or re.match(r'[-*] NEEDS YOU(?:$|: )', line)
+      or needs and re.match(r'[-*] \S', line)):
         rows.append(('decision', i, i))
     return rows
   if role == 'memory' and name.endswith('.md'):
@@ -206,7 +208,7 @@ def _open_root(path):
 def collect(roots, budgets=None):
   """Return only evidence, cohorts, omissions and provenance; never write."""
   limits = {'per_file_bytes': PER_FILE_BYTES, 'files_per_root': PER_ROOT_FILES,
-       'total_bytes': TOTAL_BYTES}
+      'total_bytes': TOTAL_BYTES}
   for key, value in (budgets or {}).items():
     if key not in limits or type(value) is not int or not 0 < value <= limits[key]:
       raise ValueError('invalid budget')
@@ -214,8 +216,8 @@ def collect(roots, budgets=None):
   labels = set()
   for root in roots:
     if (set(root) != {'label', 'role', 'path'} or not _text(root['label'])
-        or root['label'] in labels
-        or root['role'] not in ('project', 'memory', 'state', 'helpers')):
+      or root['label'] in labels
+      or root['role'] not in ('project', 'memory', 'state', 'helpers')):
       raise ValueError('invalid root')
     labels.add(root['label'])
   result = {'evidence': {}, 'cohorts': {}, 'omissions': [], 'provenance': {}}
@@ -249,7 +251,7 @@ def collect(roots, budgets=None):
         rows = [('plan', {'json_pointer': '/units'}, None, None)]
       else:
         rows = [(a, {'line_range': [s, e]}, uid, aid)
-            for a, s, e in _text_rows(name, role, text)]
+      for a, s, e in _text_rows(name, role, text)]
     if not rows:
       omit(label, locator, 'skipped: no matching observations')
       return
@@ -265,8 +267,8 @@ def collect(roots, budgets=None):
     for adapter, location, unit, attempt in rows:
       ref = 'E%03d' % (len(result['evidence']) + 1)
       result['evidence'][ref] = dict(source_root=label, locator=locator, sha256=digest,
-        location=location, unit_id=unit, attempt_id=attempt,
-        adapter={'name': adapter, 'version': '1'}, status='ok')
+      location=location, unit_id=unit, attempt_id=attempt,
+      adapter={'name': adapter, 'version': '1'}, status='ok')
       if unit is not None:
         members['units'].append(_identity(label, unit))
       if attempt is not None:
@@ -279,7 +281,7 @@ def collect(roots, budgets=None):
     label, role = root['label'], root['role']
     path = Path(root['path'])
     if (not path.is_absolute() or '..' in path.parts or '.git' in path.parts
-        or path == Path(os.path.expanduser('~')) or path == Path('/')):
+      or path == Path(os.path.expanduser('~')) or path == Path('/')):
       omit(label, '.', 'skipped: forbidden root')
       continue
     try:
@@ -332,12 +334,12 @@ def collect(roots, budgets=None):
               omit(label, locator, 'over-budget: total bytes')
               continue
             known = (name in ('CLAUDE.md', 'AGENTS.md', 'PLAN.md', 'evidence.md',
-                      'SUMMARY.md', COPY_MARKER) or 'pitfall' in name
-                      or len(parts) > 1 and parts[-2] == SIDECARS
-                      or role == 'memory' and name.endswith('.md')
-                      or role == 'state' and name in ('swarm-state.json', 'unit.json', 'receipt.json')
-                      or role in ('project', 'state') and name == 'plan.json'
-                      or role == 'helpers' and not name.endswith('.json'))
+      'SUMMARY.md', COPY_MARKER) or 'pitfall' in name
+      or len(parts) > 1 and parts[-2] == SIDECARS
+      or role == 'memory' and name.endswith('.md')
+      or role == 'state' and name in ('swarm-state.json', 'unit.json', 'receipt.json')
+      or role in ('project', 'state') and name == 'plan.json'
+      or role == 'helpers' and not name.endswith('.json'))
             if not known:
               omit(label, locator, 'unsupported: format')
               continue
