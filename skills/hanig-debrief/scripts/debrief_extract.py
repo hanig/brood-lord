@@ -1,10 +1,7 @@
-"""Read-only dossier parts. Roots: [{label, role, path}]; budgets: per_file_bytes,
-files_per_root, total_bytes (positive integers <= contract caps), max_depth
-(default/maximum 128 directory levels). Every depth hit is an omission.
-All symlinks are omitted. Roots/entries sort by exact label/name. Markers match
-untrimmed whole lines. Guidance-alias records share [root, 'guidance', digest]
-cohort ids; units use exact unit ids, attempts use unit/attempt ids.
-Lines split only on LF; CR is content, including in CRLF (no marker match).
+"""collect([{label, role, path}], budgets).
+Caps: per_file_bytes, files_per_root, total_bytes; max_depth defaults/caps at
+128 levels; every hit omitted. Symlinks are omitted.
+Only LF delimits lines; CR, including CRLF, is content (no marker match).
 """
 import hashlib
 import json
@@ -21,17 +18,19 @@ COPY_MARKER = '.installed-by-multi-agent-skills'
 SIDECARS = '.multi-agent-skills-provenance'
 ATTEMPT = re.compile(r'[0-9a-f]{16}')
 
+def _need(ok):
+  if not ok:
+    raise ValueError('unsupported')
+
 def build_cohort(population, members):
-  """Members are identities, not receipt occurrences or content digests."""
   members = list(members)
-  if population not in POPULATIONS or any(not _text(x) for x in members):
-    raise ValueError('invalid cohort')
+  _need(not (population not in POPULATIONS or any(not _text(x) for x in members)))
   ids = sorted(set(members))
   return {'population': population, 'members': ids, 'qualifying': ids[:]}
 
 def _text(value):
   return (type(value) is str and bool(value) and not value.isspace()
-      and not any(0xD800 <= ord(c) <= 0xDFFF for c in value))
+  and not any(0xD800 <= ord(c) <= 0xDFFF for c in value))
 
 def _identity(*parts):
   return json.dumps(parts, ensure_ascii=True, separators=(',', ':'))
@@ -42,8 +41,7 @@ def _pointer(*parts):
 def _pairs(pairs):
   out = {}
   for key, value in pairs:
-    if key in out:
-      raise ValueError('duplicate key')
+    _need(key not in out)
     out[key] = value
   return out
 
@@ -58,75 +56,63 @@ def _owner(parts):
   return None, None
 
 def _structured(name, data):
-  """Spines from swarm_state._unit_state and unit.cmd_allocate/cmd_check."""
-  if type(data) is not dict or type(data.get('schema_version')) is not int:
-    raise ValueError('unsupported')
-  if data['schema_version'] != 1:
-    raise ValueError('unsupported')
+  _need(not (type(data) is not dict or type(data.get('schema_version')) is not int))
+  _need(data['schema_version'] == 1)
   rows = []
   if name == 'swarm-state.json':
-    if type(data.get('units')) is not dict or 'halted' not in data:
-      raise ValueError('unsupported')
+    _need(not (type(data.get('units')) is not dict or 'halted' not in data))
     for uid, item in sorted(data['units'].items()):
-      if (not _text(uid) or type(item) is not dict
-      or item.get('state') not in (None, 'ALLOCATED', 'ABANDONED', 'SUPERSEDED') + STATES
-      or 'state' not in item or type(item.get('attempts')) is not list):
-        raise ValueError('unsupported')
+      _need(not (not _text(uid) or type(item) is not dict
+  or item.get('state') not in (None, 'ALLOCATED', 'ABANDONED', 'SUPERSEDED') + STATES
+  or 'state' not in item or type(item.get('attempts')) is not list))
       rows.append(('state', _pointer('units', uid, 'state'), uid, None))
       for i, attempt in enumerate(item['attempts']):
-        if not _text(attempt):
-          raise ValueError('unsupported')
+        _need(_text(attempt))
         aid = attempt.split('/')[-1]
         if attempt.startswith('dry-attempt-'):
           aid = None
-        elif not ATTEMPT.fullmatch(aid):
-          raise ValueError('unsupported')
+        else:
+          _need(ATTEMPT.fullmatch(aid))
         rows.append(('attempt', _pointer('units', uid, 'attempts', i), uid, aid))
     return rows
   uid, aid = data.get('task_id'), data.get('attempt_id')
-  if (not _text(uid) or not _text(aid) or not ATTEMPT.fullmatch(aid)
-      or data.get('kind') not in ('code', 'slurm', 'pipeline')):
-    raise ValueError('unsupported')
+  _need(not (not _text(uid) or not _text(aid) or not ATTEMPT.fullmatch(aid)
+  or data.get('kind') not in ('code', 'slurm', 'pipeline')))
   if name == 'receipt.json':
     required = {'checked_at': str, 'notes': list, 'outputs': dict, 'basis': dict}
-    if (data.get('state') not in STATES or type(data.get('exit_code')) is not int
-      or data['exit_code'] != STATES.index(data['state'])
-      or 'job_id' not in data
-      or any(type(data.get(k)) is not t for k, t in required.items())):
-      raise ValueError('unsupported')
-    adapter = 'receipt'
+    _need(not (data.get('state') not in STATES or type(data.get('exit_code')) is not int
+  or data['exit_code'] != STATES.index(data['state'])
+  or 'job_id' not in data
+  or any(type(data.get(k)) is not t for k, t in required.items())))
+    tag = 'receipt'
   else:
-    if (type(data.get('declared_outputs')) is not list
-      or type(data.get('pinned_inputs')) is not dict
-      or type(data.get('budget')) is not dict or 'command' not in data):
-      raise ValueError('unsupported')
-    adapter = 'attempt'
-  return [(adapter, _pointer(key), uid, aid) for key in sorted(data)]
+    _need(not (type(data.get('declared_outputs')) is not list
+  or type(data.get('pinned_inputs')) is not dict
+  or type(data.get('budget')) is not dict or 'command' not in data))
+    tag = 'attempt'
+  return [(tag, _pointer(key), uid, aid) for key in sorted(data)]
 
 def _provenance(text, parts):
-  values = _pairs(line.split('=', 1) for line in _lines(text) if line)
+  v = _pairs(line.split('=', 1) for line in _lines(text) if line)
   keys = {'schema', 'repo', 'origin', 'source_version', 'version', 'destination',
-      'consumers', 'mode', 'installed_at', 'link_target', 'link_identity'}
-  if (set(values) != keys or values['schema'] != '2'
-      or values['repo'] != 'multi-agent-skills'
-      or values['origin'] not in ('authored', 'vendored')
-      or values['mode'] not in ('copy', 'link')
-      or not values['source_version'] or values['version'] != values['source_version']
-      or not os.path.isabs(values['destination']) or not values['installed_at']
-      or values['consumers'] and any(not c for c in values['consumers'].split(','))):
-    raise ValueError('unsupported provenance')
-  dest = Path(values['destination'])
+  'consumers', 'mode', 'installed_at', 'link_target', 'link_identity'}
+  _need(not (set(v) != keys or v['schema'] != '2'
+  or v['repo'] != 'multi-agent-skills'
+  or v['origin'] not in ('authored', 'vendored')
+  or v['mode'] not in ('copy', 'link')
+  or not v['source_version'] or v['version'] != v['source_version']
+  or not os.path.isabs(v['destination']) or not v['installed_at']
+  or v['consumers'] and any(not c for c in v['consumers'].split(','))))
+  dest = Path(v['destination'])
   skill = dest.name
   if parts[-1] == COPY_MARKER:
-    if (len(parts) < 2 or parts[-2] != skill or values['mode'] != 'copy'
-      or values['link_target'] or values['link_identity']):
-      raise ValueError('unsupported provenance')
+    _need(not (len(parts) < 2 or parts[-2] != skill or v['mode'] != 'copy'
+  or v['link_target'] or v['link_identity']))
   else:
     digest = hashlib.sha256(os.fsencode(str(dest))).hexdigest()[:24]
-    if (parts[-1] != skill + '-' + digest + '.provenance'
-      or values['mode'] != 'link' or not os.path.isabs(values['link_target'])
-      or not values['link_identity']):
-      raise ValueError('unsupported provenance')
+    _need(not (parts[-1] != skill + '-' + digest + '.provenance'
+  or v['mode'] != 'link' or not os.path.isabs(v['link_target'])
+  or not v['link_identity']))
   return skill
 
 def _lines(text):
@@ -138,7 +124,7 @@ def _text_rows(name, role, text):
     return [('guidance', 1, max(1, len(lines)))]
   if name in ('evidence.md', 'SUMMARY.md'):
     return [('marker:' + line, i, i) for i, line in enumerate(lines, 1)
-      if line in MARKERS]
+  if line in MARKERS]
   if name == 'PLAN.md':
     rows, needs, fence = [], False, None
     for i, line in enumerate(lines, 1):
@@ -155,13 +141,12 @@ def _text_rows(name, role, text):
       elif line.startswith('#'):
         needs = False
       if (re.match(r'(?:\|[ \t]*)?D-[A-Za-z0-9._-]+[ \t]*\|', line)
-      or re.match(r'[-*] NEEDS YOU(?:$|: )', line)
-      or needs and re.match(r'[-*] \S', line)):
+  or re.match(r'[-*] NEEDS YOU(?:$|: )', line)
+  or needs and re.match(r'[-*] \S', line)):
         rows.append(('decision', i, i))
     return rows
   if role == 'memory' and name.endswith('.md'):
-    if not lines or lines[0] != '---' or '---' not in lines[1:]:
-      raise ValueError('unsupported memory frontmatter')
+    _need(not (not lines or lines[0] != '---' or '---' not in lines[1:]))
     end = lines.index('---', 1)
     rows, seen, metadata, indent = [], set(), False, None
     for i in range(1, end):
@@ -172,49 +157,45 @@ def _text_rows(name, role, text):
         metadata, indent = True, None
       elif line and not line.startswith(' '):
         metadata = False
-      nested = re.match(r'( +)\S', line) if metadata else None
+      nested = re.match(r'( +)[^ #]', line) if metadata else None
       if nested:
         width = len(nested[1])
         if indent is None:
           indent = width
-        if width < indent:
-          raise ValueError('inconsistent metadata indentation')
+        _need(width >= indent)
         if width == indent and re.match(' ' * indent + r'type: \S', line):
           field = 'metadata.type'
       if field:
-        if field in seen:
-          raise ValueError('duplicate frontmatter field')
+        _need(field not in seen)
         seen.add(field)
         last = i
-        width = len(line) - len(line.lstrip(' '))
+        width = re.match(' *', line).end()
         while last + 1 < end and lines[last + 1].startswith(' ' * (width + 1)):
           last += 1
         rows.append(('memory:' + field, i + 1, last + 1))
-    if not {'name', 'description', 'metadata.type'} <= seen:
-      raise ValueError('unsupported memory frontmatter')
+    _need({'name', 'description', 'metadata.type'} <= seen)
     if end + 1 < len(lines):
       rows.append(('memory:body', end + 2, len(lines)))
     return rows
   raise ValueError('unsupported format')
 
-def _fingerprint(st):
+def _stamp(st):
   return (st.st_dev, st.st_ino, st.st_mode, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
-def _read_file(parent, name, before, cap):
+def _read_file(parent, name, st, cap):
   fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
   with os.fdopen(fd, 'rb') as stream:
-    if _fingerprint(os.fstat(stream.fileno())) != _fingerprint(before):
+    if _stamp(os.fstat(stream.fileno())) != _stamp(st):
       return None
     data = stream.read(cap)
     after = os.fstat(stream.fileno())
   current = os.stat(name, dir_fd=parent, follow_symlinks=False)
-  if (_fingerprint(before) != _fingerprint(after)
-      or _fingerprint(before) != _fingerprint(current) or len(data) != before.st_size):
+  if (_stamp(st) != _stamp(after)
+  or _stamp(st) != _stamp(current) or len(data) != st.st_size):
     return None
   return data
 
 def _open_root(path):
-  """Open every component without following links, including ancestors."""
   fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
   try:
     for part in path.parts[1:]:
@@ -227,30 +208,27 @@ def _open_root(path):
     raise
 
 def collect(roots, budgets=None):
-  """Return only evidence, cohorts, omissions and provenance; never write."""
-  limits = {'per_file_bytes': PER_FILE_BYTES, 'files_per_root': PER_ROOT_FILES,
-      'total_bytes': TOTAL_BYTES, 'max_depth': 128}
+  caps = {'per_file_bytes': PER_FILE_BYTES, 'files_per_root': PER_ROOT_FILES,
+  'total_bytes': TOTAL_BYTES, 'max_depth': 128}
   for key, value in (budgets or {}).items():
-    if key not in limits or type(value) is not int or not 0 < value <= limits[key]:
-      raise ValueError('invalid budget')
-    limits[key] = value
+    _need(not (key not in caps or type(value) is not int or not 0 < value <= caps[key]))
+    caps[key] = value
   labels = set()
   for root in roots:
-    if (set(root) != {'label', 'role', 'path'} or not _text(root['label'])
-      or root['label'] in labels
-      or root['role'] not in ('project', 'memory', 'state', 'helpers')):
-      raise ValueError('invalid root')
+    _need(not (set(root) != {'label', 'role', 'path'} or not _text(root['label'])
+  or root['label'] in labels
+  or root['role'] not in ('project', 'memory', 'state', 'helpers')))
     labels.add(root['label'])
-  result = {'evidence': {}, 'cohorts': {}, 'omissions': [], 'provenance': {}}
+  out = {'evidence': {}, 'cohorts': {}, 'omissions': [], 'provenance': {}}
   members = {p: [] for p in POPULATIONS}
-  consumed = 0
+  used = 0
   aliases = set()
 
-  def omit(label, locator, reason):
-    result['omissions'].append(dict(source_root=label, locator=locator, reason=reason))
+  def omit(label, loc, reason):
+    out['omissions'].append(dict(source_root=label, locator=loc, reason=reason))
 
   def adapt(label, role, parts, data):
-    locator, name = '/'.join(parts), parts[-1]
+    loc, name = '/'.join(parts), parts[-1]
     digest = hashlib.sha256(data).hexdigest()
     uid, aid = _owner(parts)
     if role == 'helpers':
@@ -259,42 +237,40 @@ def collect(roots, budgets=None):
       text = data.decode('utf-8')
       if name == COPY_MARKER or len(parts) > 1 and parts[-2] == SIDECARS:
         skill = _provenance(text, parts)
-        if skill in result['provenance'] and result['provenance'][skill] != text:
-          raise ValueError('unsupported conflicting provenance')
-        result['provenance'][skill] = text
+        _need(not (skill in out['provenance'] and out['provenance'][skill] != text))
+        out['provenance'][skill] = text
         rows = [('provenance', {'line_range': [1, len(_lines(text))]}, None, None)]
       elif role == 'state' and name in ('swarm-state.json', 'unit.json', 'receipt.json'):
         rows = [(a, {'json_pointer': p}, u, t) for a, p, u, t in _structured(name, _json(text))]
       elif name == 'plan.json' and role in ('project', 'state'):
         plan = _json(text)
-        if type(plan) is not dict or type(plan.get('units')) is not list:
-          raise ValueError('unsupported plan')
+        _need(not (type(plan) is not dict or type(plan.get('units')) is not list))
         rows = [('plan', {'json_pointer': '/units'}, None, None)]
       else:
         rows = [(a, {'line_range': [s, e]}, uid, aid)
-      for a, s, e in _text_rows(name, role, text)]
+  for a, s, e in _text_rows(name, role, text)]
     if not rows:
-      omit(label, locator, 'skipped: no matching observations')
+      omit(label, loc, 'skipped: no matching observations')
       return
-    if len(result['evidence']) + len(rows) > 999:
-      omit(label, locator, 'over-budget: evidence ids')
+    if len(out['evidence']) + len(rows) > 999:
+      omit(label, loc, 'over-budget: evidence ids')
       return
-    doc = _identity(label, locator)
+    doc = _identity(label, loc)
     if name in ('CLAUDE.md', 'AGENTS.md') and role != 'helpers':
       doc = _identity(label, 'guidance', digest)
       if doc in aliases:
         rows = [('guidance-alias', loc, u, a) for _, loc, u, a in rows]
       aliases.add(doc)
-    for adapter, location, unit, attempt in rows:
-      ref = 'E%03d' % (len(result['evidence']) + 1)
-      result['evidence'][ref] = dict(source_root=label, locator=locator, sha256=digest,
-      location=location, unit_id=unit, attempt_id=attempt,
-      adapter={'name': adapter, 'version': '1'}, status='ok')
+    for tag, location, unit, attempt in rows:
+      ref = 'E%03d' % (len(out['evidence']) + 1)
+      out['evidence'][ref] = dict(source_root=label, locator=loc, sha256=digest,
+  location=location, unit_id=unit, attempt_id=attempt,
+  adapter={'name': tag, 'version': '1'}, status='ok')
       if unit is not None:
         members['units'].append(unit)
       if attempt is not None:
         members['attempts'].append(_identity(unit, attempt))
-      if adapter in ('state', 'attempt', 'receipt'):
+      if tag in ('state', 'attempt', 'receipt'):
         members['state_entries'].append(ref)
     members['helper_scripts' if role == 'helpers' else 'evidence_documents'].append(doc)
 
@@ -302,7 +278,7 @@ def collect(roots, budgets=None):
     label, role = root['label'], root['role']
     path = Path(root['path'])
     if (not path.is_absolute() or '..' in path.parts or '.git' in path.parts
-      or path == Path(os.path.expanduser('~')) or path == Path('/')):
+  or path == Path(os.path.expanduser('~')) or path == Path('/')):
       omit(label, '.', 'skipped: forbidden root')
       continue
     try:
@@ -310,10 +286,10 @@ def collect(roots, budgets=None):
     except OSError:
       omit(label, '.', 'skipped: unreadable or symlink root')
       continue
-    count, directories = 0, 0
+    count, dirs = 0, 0
 
     def walk(fd, prefix):
-      nonlocal count, directories, consumed
+      nonlocal count, dirs, used
       names = []
       with os.scandir(fd) as entries:
         for entry in entries:
@@ -323,69 +299,69 @@ def collect(roots, budgets=None):
             return
       for name in sorted(names):
         parts = prefix + [name]
-        locator = '/'.join(parts)
-        if count >= limits['files_per_root'] or consumed >= limits['total_bytes']:
+        loc = '/'.join(parts)
+        if count >= caps['files_per_root'] or used >= caps['total_bytes']:
           omit(label, '.', 'over-budget: uninspected remainder')
           return
         if name == '.git' or name.endswith('.jsonl'):
-          omit(label, locator, 'skipped: excluded input')
+          omit(label, loc, 'skipped: excluded input')
           continue
         try:
-          before = os.stat(name, dir_fd=fd, follow_symlinks=False)
-          if stat.S_ISLNK(before.st_mode):
-            omit(label, locator, 'skipped: symlink')
-          elif stat.S_ISDIR(before.st_mode):
-            directories += 1
-            if directories > PER_ROOT_FILES or len(parts) > limits['max_depth']:
-              omit(label, locator, 'over-budget: directories or max_depth')
+          st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+          if stat.S_ISLNK(st.st_mode):
+            omit(label, loc, 'skipped: symlink')
+          elif stat.S_ISDIR(st.st_mode):
+            dirs += 1
+            if dirs > PER_ROOT_FILES or len(parts) > caps['max_depth']:
+              omit(label, loc, 'over-budget: directories or max_depth')
               continue
             child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             try:
               walk(child, parts)
             finally:
               os.close(child)
-          elif not stat.S_ISREG(before.st_mode):
-            omit(label, locator, 'unsupported: file type')
+          elif not stat.S_ISREG(st.st_mode):
+            omit(label, loc, 'unsupported: file type')
           else:
             count += 1
-            if before.st_size > limits['per_file_bytes']:
-              omit(label, locator, 'over-budget: per-file bytes')
+            if st.st_size > caps['per_file_bytes']:
+              omit(label, loc, 'over-budget: per-file bytes')
               continue
-            if before.st_size > limits['total_bytes'] - consumed:
-              omit(label, locator, 'over-budget: total bytes')
+            if st.st_size > caps['total_bytes'] - used:
+              omit(label, loc, 'over-budget: total bytes')
               continue
             known = (name in ('CLAUDE.md', 'AGENTS.md', 'PLAN.md', 'evidence.md',
-      'SUMMARY.md', COPY_MARKER) or 'pitfall' in name
-      or len(parts) > 1 and parts[-2] == SIDECARS
-      or role == 'memory' and name.endswith('.md')
-      or role == 'state' and name in ('swarm-state.json', 'unit.json', 'receipt.json')
-      or role in ('project', 'state') and name == 'plan.json'
-      or role == 'helpers' and not name.endswith('.json'))
+  'SUMMARY.md', COPY_MARKER) or 'pitfall' in name
+  or len(parts) > 1 and parts[-2] == SIDECARS
+  or role == 'memory' and name.endswith('.md')
+  or role == 'state' and name in ('swarm-state.json', 'unit.json', 'receipt.json')
+  or role in ('project', 'state') and name == 'plan.json'
+  or role == 'helpers' and not name.endswith('.json'))
             if not known:
-              omit(label, locator, 'unsupported: format')
+              omit(label, loc, 'unsupported: format')
               continue
-            consumed += before.st_size
-            data = _read_file(fd, name, before, before.st_size)
+            used += st.st_size
+            data = _read_file(fd, name, st, st.st_size)
             if data is None:
-              omit(label, locator, 'unstable: changed during read')
+              omit(label, loc, 'unstable: changed during read')
             else:
               try:
                 adapt(label, role, parts, data)
               except (ValueError, UnicodeError, RecursionError):
-                omit(label, locator, 'unsupported: format or encoding')
-            if before.st_size == limits['per_file_bytes']:
-              omit(label, locator, 'limit reached: per-file bytes (retained if stable)')
+                omit(label, loc, 'unsupported: format or encoding')
+            if st.st_size == caps['per_file_bytes']:
+              omit(label, loc, 'limit reached: per-file bytes (retained if stable)')
         except OSError:
-          omit(label, locator, 'skipped: unreadable or changed path')
+          omit(label, loc, 'skipped: unreadable or changed path')
     try:
       walk(root_fd, [])
     except OSError:
       omit(label, '.', 'skipped: unreadable directory')
     finally:
       os.close(root_fd)
-    if count == limits['files_per_root'] or consumed == limits['total_bytes']:
+    if count == caps['files_per_root'] or used == caps['total_bytes']:
       omit(label, '.', 'limit reached: files or total bytes')
   for population, ids in members.items():
     if ids:
-      result['cohorts']['C%03d' % (len(result['cohorts']) + 1)] = build_cohort(population, ids)
-  return result
+      out['cohorts']['C%03d' % (len(out['cohorts']) + 1)] = build_cohort(population, ids)
+  return out
