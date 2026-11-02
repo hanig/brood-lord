@@ -385,6 +385,11 @@ class TestExtract(unittest.TestCase):
   def test_required_mutations(self):
     source = (SCRIPTS / 'debrief_extract.py').read_text()
     mutations = [
+  ('relative', [("path = Path(os.path.realpath(root['path']))", "if not Path(root['path']).is_absolute():\n        omit(label, '.', 'skipped')\n        continue\n      path = Path(os.path.realpath(root['path']))")], 'test_d_relative_roots'),
+  ('closing pipe', [(r'[ \t]*(?:\||$)', r'[ \t]*\|')], 'test_d_open_table_cell'),
+  ('bullet spaces', [(r'[-*] [ \t]*\S', r'[-*] \S'),
+    (r'[-*] [ \t]*NEEDS YOU', r'[-*] NEEDS YOU')], 'test_d_bullet_spacing'),
+  ('helper selection', [('_need(Path(name).suffix in', '_need(True or Path(name).suffix in')], 'test_d_helpers'),
   ('entries', [("names.append(entry.name)", "names.append(entry.name)\n          if len(names) > PER_ROOT_FILES:\n            omit(label, '.', 'over-budget: directory entries')\n            return")], 'test_round1_entry_budget'),
   ('directories', [("count = 0", "count, dirs = 0, 0"),
     ('nonlocal count, used', 'nonlocal count, dirs, used'),
@@ -394,9 +399,9 @@ class TestExtract(unittest.TestCase):
   ('state shape', [("  or not {'state', 'attempt_dir', 'attempts', 'gpu_hours'} <= item.keys()\n  or item['attempt_dir'] is not None and not _text(item['attempt_dir'])\n  or type(item['gpu_hours']) not in (int, float)\n", '')], 'test_round1_incomplete_state'),
   ('alias directory', [("_identity(label, parts[:-1], 'guidance', digest)", "_identity(label, 'guidance', digest)")], 'test_round1_separate_guidance'),
   ('alias memory', [("'guidance-alias' if tag == 'guidance' else tag", "'guidance-alias'")], 'test_memory_guidance_alias_keeps_memory'),
-  ('root resolution', [("path = Path(os.path.realpath(path))", 'pass')], 'test_round1_symlink_ancestor'),
+  ('root resolution', [("path = Path(os.path.realpath(root['path']))", "path = Path(root['path'])")], 'test_round1_symlink_ancestor'),
   ('resolved exclusions', [("if '.git' in path.parts or path == Path(os.path.realpath(os.path.expanduser('~'))) or path == Path('/'):", 'if False:')], 'test_resolved_excluded_roots'),
-  ('table grammar', [(r'\|[ \t]*D-[A-Za-z0-9._-]+[ \t]*\|', r'(?:\|[ \t]*)?D-[A-Za-z0-9._-]+[ \t]*\|')], 'test_round1_indented_table'),
+  ('table grammar', [(r'\|[ \t]*D-[A-Za-z0-9._-]+[ \t]*(?:\||$)', r'(?:\|[ \t]*)?D-[A-Za-z0-9._-]+[ \t]*\|')], 'test_round1_indented_table'),
   ('symlink', [('if stat.S_ISLNK(st.st_mode):', 'if False:'),
   ('follow_symlinks=False', 'follow_symlinks=True'),
   (' | os.O_NOFOLLOW', '')], 'test_boundary_symlink'),
@@ -404,7 +409,7 @@ class TestExtract(unittest.TestCase):
   'test_boundary_caps'),
   ('receipts', [('ids = sorted(set(members))', 'ids = sorted(members)')], 'test_cohort_recount'),
   ('dry', [("aid = None", "raise ValueError('unsupported')")], 'test_state_source_coverage'),
-  ('table', [(r'\|[ \t]*D-[A-Za-z0-9._-]+[ \t]*\|', r'\| ?D-[A-Za-z0-9._-]+ ?\|')], 'test_source_coverage'),
+  ('table', [(r'\|[ \t]*D-[A-Za-z0-9._-]+[ \t]*(?:\||$)', r'\| ?D-[A-Za-z0-9._-]+ ?\|')], 'test_source_coverage'),
   ('unsupported', [('if not known:', 'if False:')], 'test_exclusions'),
   ('strip', [('if line in MARKERS', 'if line.strip() in MARKERS')], 'test_marker_exact_untrimmed')]
     for name, replacements, test in mutations:
@@ -423,6 +428,45 @@ class TestExtract(unittest.TestCase):
               getattr(case, test)()
         finally:
           case.doCleanups()
+
+  def test_d_relative_roots(self):
+    self.put('CLAUDE.md', 'guidance')
+    cwd = os.getcwd()
+    try:
+      os.chdir(self.base)
+      for path in ('project', './project', 'project/../project'):
+        self.eq(len(X.collect([dict(label='A', role='project', path=path)])['evidence']), 1)
+    finally:
+      os.chdir(cwd)
+
+  def test_d_multiline_memory(self):
+    for fields in ('name: |\n  title\ndescription: desc',
+      'name: lesson\ndescription: desc\n  continuation',
+      'name: &a lesson\ndescription: desc', 'name: [lesson]\ndescription: desc'):
+      with self.subTest(fields=fields):
+        self.put('lesson.md', '---\n' + fields + '\nmetadata:\n  type: feedback\n---\nbody\n')
+        got = self.collect('memory')
+        self.false(got['evidence'])
+        self.true(got['omissions'][0]['reason'].startswith('unsupported'))
+
+  def test_d_open_table_cell(self):
+    self.put('PLAN.md', '| ID | Text |\n| --- | --- |\n| D-1\n| D-2  \n')
+    self.eq(self.locations(self.collect(), 'decision'), [span(3), span(4)])
+
+  def test_d_bullet_spacing(self):
+    self.put('PLAN.md', '*  NEEDS YOU: decide\n## NEEDS YOU\n-  approve\n* \tdecide\n')
+    self.eq(self.locations(self.collect(), 'decision'), [span(i) for i in (1, 3, 4)])
+
+  def test_d_helpers(self):
+    for name in ('README.md', 'data.csv', 'NOTES', 'state.json'):
+      self.put(name, 'documentation')
+    self.put('run.sh', 'echo hello')
+    self.put('run', '#!/bin/sh\necho hello')
+    got = self.collect('helpers')
+    self.eq([r['locator'] for r in self.records(got, 'helper')], ['run', 'run.sh'])
+    self.eq(len(self.members(got, 'helper_scripts')), 2)
+    self.eq({o['locator'] for o in got['omissions']}, {'README.md', 'data.csv', 'NOTES', 'state.json'})
+    self.true(all(o['reason'].startswith('unsupported') for o in got['omissions']))
 
 if __name__ == '__main__':
   unittest.main()

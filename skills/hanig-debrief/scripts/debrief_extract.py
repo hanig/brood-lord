@@ -144,9 +144,9 @@ def _text_rows(name, role, text):
         needs = True
       elif line.startswith('#'):
         needs = False
-      if (re.match(r'\|[ \t]*D-[A-Za-z0-9._-]+[ \t]*\|', line)
-  or re.match(r'[-*] NEEDS YOU(?:$|: )', line)
-  or needs and re.match(r'[-*] \S', line)):
+      if (re.match(r'\|[ \t]*D-[A-Za-z0-9._-]+[ \t]*(?:\||$)', line)
+  or re.match(r'[-*] [ \t]*NEEDS YOU(?:$|: )', line)
+  or needs and re.match(r'[-*] [ \t]*\S', line)):
         rows.append(('decision', i, i))
     return rows
   if role == 'memory' and (name.endswith('.md') or guidance):
@@ -238,6 +238,9 @@ def collect(roots, budgets=None):
     digest = hashlib.sha256(data).hexdigest()
     uid, aid = _owner(parts)
     if role == 'helpers':
+      _need(Path(name).suffix in ('.py', '.sh', '.bash', '.zsh', '.fish', '.csh',
+        '.ksh', '.pl', '.rb', '.js', '.mjs', '.cjs', '.ts', '.lua', '.awk', '.r', '.R', '.ps1')
+        or data.startswith(b'#!'))
       rows = [('helper', {'line_range': [1, 1]}, None, None)]
     else:
       text = data.decode('utf-8')
@@ -283,13 +286,8 @@ def collect(roots, budgets=None):
 
   for root in sorted(roots, key=lambda r: r['label']):
     label, role = root['label'], root['role']
-    path = Path(root['path'])
-    if (not path.is_absolute() or '..' in path.parts or '.git' in path.parts
-  or path == Path(os.path.expanduser('~')) or path == Path('/')):
-      omit(label, '.', 'skipped: forbidden root')
-      continue
     try:
-      path = Path(os.path.realpath(path))
+      path = Path(os.path.realpath(root['path']))
       if '.git' in path.parts or path == Path(os.path.realpath(os.path.expanduser('~'))) or path == Path('/'):
         omit(label, '.', 'skipped: forbidden root')
         continue
@@ -343,7 +341,7 @@ def collect(roots, budgets=None):
   or role == 'memory' and name.endswith('.md')
   or role == 'state' and name in ('swarm-state.json', 'unit.json', 'receipt.json')
   or role in ('project', 'state') and name == 'plan.json'
-  or role == 'helpers' and not name.endswith('.json'))
+  or role == 'helpers')
             if not known:
               omit(label, loc, 'unsupported: format')
               continue
