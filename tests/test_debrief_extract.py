@@ -42,34 +42,34 @@ class TestExtract(unittest.TestCase):
 
   def receipt(self, unit='u', attempt='a' * 16):
     return dict(schema_version=1, task_id=unit, attempt_id=attempt,
-          kind='code', checked_at='time', job_id=None, state='DONE',
-          exit_code=0, notes=[], outputs={}, basis={})
+      kind='code', checked_at='time', job_id=None, state='DONE',
+      exit_code=0, notes=[], outputs={}, basis={})
 
   def test_source_coverage(self):
     self.put('CLAUDE.md', 'guidance\n')
     self.put('AGENTS.md', 'guidance\n')
     self.put('old-pitfall.md', 'lesson\n')
-    self.put('PLAN.md', '| D-1 | decision |\n| D-2.x_a | decision |\n'
-        '| d-3 | no |\n## NEEDS YOU\n- decide\n## Done\n- no\n')
+    self.put('PLAN.md', '|  D-1  | decision |\nD-2.x_a | decision |\n'
+      '| d-3 | no |\n## NEEDS YOU\n- decide\n## Done\n- no\n')
     self.put('u/' + 'a' * 16 + '/evidence.md', 'STOP\nREVIEW_FAIL\n'
-        'REVIEW_UNAVAILABLE\nPROPOSED DECISION\n')
+      'REVIEW_UNAVAILABLE\nPROPOSED DECISION\n')
     self.put('u/' + 'a' * 16 + '/SUMMARY.md', 'STOP\n')
     got = self.collect()
     alias = self.records(got, 'guidance-alias')
     self.assertEqual(len(alias), 1)
     self.assertEqual(alias[0]['locator'], 'CLAUDE.md')
     self.assertEqual([r['location'] for r in self.records(got, 'decision')],
-            [{'line_range': [i, i]} for i in (1, 2, 5)])
+      [{'line_range': [i, i]} for i in (1, 2, 5)])
     stop = self.records(got, 'marker:STOP')
     self.assertEqual(len(stop), 2)
     self.assertTrue(all(r['unit_id'] == 'u' and r['attempt_id'] == 'a' * 16 for r in stop))
     self.assertEqual(len(self.cohort(got, 'evidence_documents')['members']), 5)
     expected = {'source_root', 'locator', 'sha256', 'location', 'unit_id',
-          'attempt_id', 'adapter', 'status'}
+      'attempt_id', 'adapter', 'status'}
     for record in got['evidence'].values():
       self.assertEqual(set(record), expected)
       self.assertEqual(record['sha256'], hashlib.sha256(
-        (self.root / record['locator']).read_bytes()).hexdigest())
+      (self.root / record['locator']).read_bytes()).hexdigest())
       self.assertEqual(record['adapter']['version'], '1')
     self.assertEqual(got, self.collect())
     self.assertNotIn('mechanism_basis', json.dumps(got))
@@ -78,36 +78,38 @@ class TestExtract(unittest.TestCase):
     aid = 'a' * 16
     state = dict(schema_version=1, halted=None, units={
       'u/~': dict(state='RUNNING', attempt_dir='/synthetic/u/' + aid,
-            attempts=['/synthetic/u/' + aid], gpu_hours=0)})
+      attempts=['/synthetic/u/' + aid, 'dry-attempt-/synthetic/u/' + aid], gpu_hours=0)})
     self.put('swarm-state.json', json.dumps(state))
     self.put('receipt.json', json.dumps(self.receipt('u/~')))
     self.put('unit.json', json.dumps(dict(schema_version=1, task_id='u/~',
-        attempt_id=aid, kind='code', command='never execute',
-        declared_outputs=['x'], pinned_inputs={}, budget={})))
+      attempt_id=aid, kind='code', command='never execute',
+      declared_outputs=['x'], pinned_inputs={}, budget={})))
     got = self.collect('state')
+    self.assertTrue(self.records(got, 'state'))
+    self.assertEqual(len(self.cohort(got, 'attempts')['members']), 1)
     self.assertEqual(self.records(got, 'state')[0]['location'],
-            {'json_pointer': '/units/u~1~0/state'})
+      {'json_pointer': '/units/u~1~0/state'})
     self.assertIn({'json_pointer': '/units/u~1~0/attempts/0'},
-           [r['location'] for r in self.records(got, 'attempt')])
+      [r['location'] for r in self.records(got, 'attempt')])
     self.assertEqual({r['location']['json_pointer'] for r in self.records(got, 'receipt')},
-            {'/' + k for k in self.receipt()})
+      {'/' + k for k in self.receipt()})
     self.assertEqual(len(self.cohort(got, 'units')['members']), 1)
     # Wrong version, duplicate keys and malformed known fields are unsupported.
     for value in ('{"schema_version":2}', '{"schema_version":1,"schema_version":1}',
-           json.dumps(dict(self.receipt(), notes='wrong'))):
+      json.dumps(dict(self.receipt(), notes='wrong'))):
       self.put('receipt.json', value)
       self.assertTrue(any(o['locator'] == 'receipt.json' and
-              o['reason'].startswith('unsupported') for o in self.collect('state')['omissions']))
+      o['reason'].startswith('unsupported') for o in self.collect('state')['omissions']))
 
   def test_memory_and_helper_source_coverage(self):
     self.put('lesson.md', '---\nname: lesson\ndescription: description\n'
-        'metadata:\n  type: feedback\n---\nbody\nsecond line\n')
+      'metadata:\n  type: feedback\n---\nbody\nsecond line\n')
     got = self.collect('memory')
     self.assertEqual([(r['adapter']['name'], r['location']) for r in got['evidence'].values()],
-            [('memory:name', {'line_range': [2, 2]}),
-             ('memory:description', {'line_range': [3, 3]}),
-             ('memory:metadata.type', {'line_range': [5, 5]}),
-             ('memory:body', {'line_range': [7, 8]})])
+      [('memory:name', {'line_range': [2, 2]}),
+      ('memory:description', {'line_range': [3, 3]}),
+      ('memory:metadata.type', {'line_range': [5, 5]}),
+      ('memory:body', {'line_range': [7, 8]})])
     self.put('bad.py', b'raise RuntimeError("MUST NEVER EXECUTE")\n\xff')
     got = self.collect('helpers')
     helper = next(r for r in got['evidence'].values() if r['locator'] == 'bad.py')
@@ -119,10 +121,10 @@ class TestExtract(unittest.TestCase):
     def marker(skill, mode):
       dest = self.root / skill
       data = dict(schema='2', repo='multi-agent-skills', origin='authored',
-            source_version='version', version='version', destination=str(dest),
-            consumers='claude', mode=mode, installed_at='time',
-            link_target='/not-opened' if mode == 'link' else '',
-            link_identity='1:2' if mode == 'link' else '')
+      source_version='version', version='version', destination=str(dest),
+      consumers='claude', mode=mode, installed_at='time',
+      link_target='/not-opened' if mode == 'link' else '',
+      link_identity='1:2' if mode == 'link' else '')
       return ''.join(k + '=' + v + '\n' for k, v in data.items())
     copy = marker('hanig-one', 'copy')
     link = marker('hanig-two', 'link')
@@ -152,7 +154,7 @@ class TestExtract(unittest.TestCase):
     got = self.collect(per_file_bytes=4)
     self.assertFalse(got['evidence'])
     self.assertTrue(any(o['locator'] == 'CLAUDE.md' and 'per-file' in o['reason']
-              for o in got['omissions']))
+      for o in got['omissions']))
     self.put('AGENTS.md', 'tiny')
     got = self.collect(files_per_root=1)
     self.assertEqual(len(got['evidence']), 1)
@@ -212,10 +214,10 @@ class TestExtract(unittest.TestCase):
 
   def test_marker_exact_untrimmed(self):
     self.put('evidence.md', 'STOP\n STOP\nSTOP \nREVIEW_FAIL\n REVIEW_FAIL\n'
-        'REVIEW_UNAVAILABLE\nPROPOSED DECISION\nPROPOSED DECISION \n')
+      'REVIEW_UNAVAILABLE\nPROPOSED DECISION\nPROPOSED DECISION \n')
     got = self.collect()
     self.assertEqual([r['location'] for r in got['evidence'].values()],
-            [{'line_range': [i, i]} for i in (1, 4, 6, 7)])
+      [{'line_range': [i, i]} for i in (1, 4, 6, 7)])
 
   def test_no_network_or_execution_imports(self):
     tree = ast.parse((SCRIPTS / 'debrief_extract.py').read_text())
@@ -226,19 +228,21 @@ class TestExtract(unittest.TestCase):
       elif isinstance(node, ast.ImportFrom):
         imports.add(node.module.split('.')[0])
     self.assertFalse(imports & {'socket', 'ssl', 'http', 'urllib', 'ftplib',
-                 'smtplib', 'asyncio', 'subprocess', 'importlib', 'runpy'})
+      'smtplib', 'asyncio', 'subprocess', 'importlib', 'runpy'})
     self.assertFalse(any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-              and n.func.id in ('exec', 'eval', '__import__') for n in ast.walk(tree)))
+      and n.func.id in ('exec', 'eval', '__import__') for n in ast.walk(tree)))
 
   def test_required_mutations(self):
     source = (SCRIPTS / 'debrief_extract.py').read_text()
     mutations = [
       ('symlink', [('if stat.S_ISLNK(before.st_mode):', 'if False:'),
-            ('follow_symlinks=False', 'follow_symlinks=True'),
-            (' | os.O_NOFOLLOW', '')], 'test_collection_boundary_symlink'),
+      ('follow_symlinks=False', 'follow_symlinks=True'),
+      (' | os.O_NOFOLLOW', '')], 'test_collection_boundary_symlink'),
       ('omission', [("omit(label, locator, 'over-budget: per-file bytes')", 'pass')],
       'test_collection_boundary_caps'),
       ('receipts', [('ids = sorted(set(members))', 'ids = sorted(members)')], 'test_cohort_recount'),
+      ('dry', [("aid = None", "raise ValueError('unsupported')")], 'test_state_and_receipt_source_coverage'),
+      ('table', [(r'(?:\|[ \t]*)?D-[A-Za-z0-9._-]+[ \t]*\|', r'\| ?D-[A-Za-z0-9._-]+ ?\|')], 'test_source_coverage'),
       ('unsupported', [('if not known:', 'if False:')], 'test_exclusions_and_invalid_roots'),
       ('strip', [('if line in MARKERS', 'if line.strip() in MARKERS')], 'test_marker_exact_untrimmed')]
     for name, replacements, test in mutations:
