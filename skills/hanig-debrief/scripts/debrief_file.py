@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 import debrief_filing as F
@@ -38,7 +39,7 @@ class GhTransport:
         self.ready = False
         self.receipt = {"exit_code": 0, "message_class": "GH_OK"}
 
-    def _fail(self, message_class, exit_code=None):
+    def _fail(self, message_class, exit_code=EXIT_REFUSED):
         self.receipt = {"exit_code": exit_code, "message_class": message_class}
         raise GhError(message_class)
 
@@ -50,11 +51,11 @@ class GhTransport:
                 text=True, encoding="utf-8", stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, timeout=60, check=False, shell=False)
         except FileNotFoundError:
-            self._fail("GH_MISSING")
+            self._fail("GH_MISSING", 127)
         except subprocess.TimeoutExpired:
-            self._fail("GH_TIMEOUT")
+            self._fail("GH_TIMEOUT", 124)
         except (OSError, UnicodeError):
-            self._fail("GH_EXEC_FAILED")
+            self._fail("GH_EXEC_FAILED", 126)
         if result.returncode != 0:
             self._fail(failure, result.returncode)
         return result.stdout
@@ -75,7 +76,9 @@ class GhTransport:
     def prepare(self):
         """Refuse missing authentication/label before D4 records a POST intent."""
         if not self.ready:
-            self._run(["auth", "status", "--active", "--hostname", "github.com"],
+            # Probe the active credentials without version-specific auth flags
+            # or checking unrelated stored accounts. /user requires authentication.
+            self._run(["api", "--hostname", "github.com", "--method", "GET", "user"],
                       failure="GH_UNAUTHENTICATED")
             label = self._api("labels/" + LABEL, failure="GH_LABEL_UNAVAILABLE")
             if type(label) is not dict or label.get("name") != LABEL:
@@ -129,7 +132,11 @@ class GhTransport:
 
 
 def _receipt(workdir, receipt):
-    """Atomically replace private diagnostics; never append captured output."""
+    """Private diagnostics: child exit, or wrapper 124 timeout/126 exec/127 absent.
+
+    Local request refusal uses 2; invalid responses from successful children use
+    0. These codes describe diagnostics, never the filing transaction's outcome.
+    """
     root = Path(workdir)
     fd, name = tempfile.mkstemp(prefix=".gh-receipt-", dir=str(root))
     try:
@@ -168,6 +175,8 @@ def main(argv=None):
             record = F._read_state(root) if args.command == "status" else F._read(root)
         if args.command == "status":
             return _summary(record)
+        if record["status"] in ("FILED", "CONFLICT"):
+            return _summary(F.file(args.workdir, GhTransport()))
         # Validate approval before preflight; D4 revalidates under its own lock.
         transport = GhTransport()
         transport.prepare()
@@ -186,7 +195,7 @@ def main(argv=None):
                 _receipt(args.workdir, transport.receipt)
             except OSError:
                 # Filing state is already durable; diagnostic failure is not a retry instruction.
-                print(json.dumps({"message_class": "GH_RECEIPT_WRITE_FAILED"}))
+                print(json.dumps({"message_class": "GH_RECEIPT_WRITE_FAILED"}), file=sys.stderr)
 
 
 if __name__ == "__main__":

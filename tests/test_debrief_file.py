@@ -32,7 +32,10 @@ if not steps:
     sys.exit(91)
 step = steps.pop(0)
 (root / "steps").write_text(json.dumps(steps))
-if step.get("stale_inactive") and "--active" not in sys.argv:
+if (step.get("stale_inactive") and sys.argv[1:3] == ["auth", "status"]
+        and "--active" not in sys.argv):
+    sys.exit(1)
+if step.get("legacy_flags") and "--active" in sys.argv:
     sys.exit(1)
 sys.stdout.write(step.get("stdout", ""))
 sys.stderr.write(step.get("stderr", ""))
@@ -120,11 +123,15 @@ class TestDebriefFile(unittest.TestCase):
         calls = self.calls()
         self.assertEqual(O.REPOSITORY, "hanig/brood-lord")
         self.assertEqual(O.LABEL, "debrief")
-        for call in calls:
+        for index, call in enumerate(calls):
             self.assertNotIn(self.body, " ".join(call["argv"]))
             self.assertNotIn("fixture owner", json.dumps(call))
             self.assertEqual(call["argv"][call["argv"].index("--hostname") + 1], "github.com")
-            if call["argv"][0] == "api":
+            if index == 0:
+                self.assertEqual(call["argv"],
+                                 ["api", "--hostname", "github.com", "--method", "GET", "user"])
+            else:
+                self.assertEqual(call["argv"][0], "api")
                 endpoints = [v for v in call["argv"] if v.startswith("repos/")]
                 self.assertEqual(len(endpoints), 1)
                 self.assertTrue(endpoints[0].startswith("repos/hanig/brood-lord/"))
@@ -168,6 +175,62 @@ class TestDebriefFile(unittest.TestCase):
         preflight[0]["stale_inactive"] = True
         self.steps(*preflight, reply({"number": 41}), reply(self.issue()))
         self.assertEqual(self.cli("file")[0], O.EXIT_FILED)
+
+    def test_legacy_gh_needs_no_active_flag(self):
+        self.approve()
+        preflight = self.preflight()
+        preflight[0]["legacy_flags"] = True
+        self.steps(*preflight, reply({"number": 41}), reply(self.issue()))
+        self.assertEqual(self.cli("file")[0], O.EXIT_FILED)
+
+    def test_terminal_states_never_preflight_or_rewrite_receipt(self):
+        self.approve()
+        self.steps(*self.preflight(), reply({"number": 41}), reply(self.issue()))
+        self.assertEqual(self.cli("file")[0], 0)
+        receipt = (self.work / O.RECEIPT).read_bytes()
+        calls = self.calls()
+        for status, code in (("FILED", 0), ("CONFLICT", 5)):
+            for failure in ("503", "rate limit", "unauthenticated", "missing"):
+                with self.subTest(status=status, failure=failure):
+                    self.status(status, 41)
+                    self.steps(*([] if failure == "unauthenticated" else [{}]),
+                               {"code": 1, "stderr": failure})
+                    if failure == "missing":
+                        (self.bin / "gh").rename(self.bin / "absent")
+                    try:
+                        result, output = self.cli("file")
+                        self.assertEqual(result, code)
+                        self.assertEqual(json.loads(output), {"status": status, "number": 41})
+                        self.assertEqual(self.calls(), calls)
+                        self.assertEqual((self.work / O.RECEIPT).read_bytes(), receipt)
+                    finally:
+                        if failure == "missing":
+                            (self.bin / "absent").rename(self.bin / "gh")
+
+    def test_launch_and_timeout_receipts_have_numeric_wrapper_codes(self):
+        self.approve()
+        sentinel = "synthetic private child output"
+        errors = [(FileNotFoundError(sentinel), 127, "GH_MISSING"),
+                  (PermissionError(sentinel), 126, "GH_EXEC_FAILED"),
+                  (subprocess.TimeoutExpired(["gh"], 60, output=sentinel, stderr=sentinel),
+                   124, "GH_TIMEOUT")]
+        for error, code, name in errors:
+            with self.subTest(name=name), patch.object(O.subprocess, "run", side_effect=error):
+                self.assertNotEqual(self.cli("file")[0], 0)
+                self.assertEqual(json.loads((self.work / O.RECEIPT).read_text()),
+                                 {"exit_code": code, "message_class": name})
+
+    def test_receipt_write_failure_keeps_single_json_stdout(self):
+        self.approve()
+        self.steps(*self.preflight(), reply({"number": 41}), reply(self.issue()))
+        error_output = io.StringIO()
+        with patch.object(O, "_receipt", side_effect=PermissionError("private path")), \
+                patch("sys.stderr", error_output):
+            code, output = self.cli("file")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output), {"status": "FILED", "number": 41})
+        self.assertEqual(json.loads(error_output.getvalue()),
+                         {"message_class": "GH_RECEIPT_WRITE_FAILED"})
 
     def test_gh_error_output_never_reaches_receipts_or_stdout(self):
         sentinel = "ghp_" + "syntheticSecret0123456789" * 2
