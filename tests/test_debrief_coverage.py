@@ -359,5 +359,39 @@ class TestGroupingSelection(unittest.TestCase):
     self.assertEqual(writes, [('debrief_coverage.py', 'record_reproduction')])
 
 
+class TestRoundOneRegressions(unittest.TestCase):
+  def test_explicit_catalog_survives_selection_and_edits(self):
+    cat = S.load_catalog()
+    cat['entries'][0]['measures'].append(dict(measure='affected', population='units'))
+    d = dossier()
+    d['cohorts']['C001']['population'] = 'units'
+    d['candidates'][0]['counts'][0]['population'] = 'units'
+    P.validate_dossier(d, cat)
+    d['candidates'] = C.group(d['candidates'], d['cohorts'], cat)
+    for operation in (lambda: C.select(d),
+                      lambda: C.record_review(d, 0, 'extends', 'private'),
+                      lambda: C.record_reproduction(d, 0, 'E001', 'v', 'p', 'r')):
+      with self.subTest(operation=operation):
+        operation()
+
+  def test_group_retains_all_reproduction_details(self):
+    d = dossier()
+    d['evidence']['E002'] = copy.deepcopy(d['evidence']['E001'])
+    d['candidates'].append(copy.deepcopy(d['candidates'][0]))
+    for i in range(2):
+      C.record_reproduction(d, i, 'E00%d' % (i+1),
+                           'version-%d' % i, 'probe-%d' % i, 'result-%d' % i)
+    d['candidates'] = C.group(d['candidates'], d['cohorts'])
+    rendered = json.dumps(d)
+    for value in ('version-1', 'probe-1', 'result-1'):
+      self.assertIn(value, rendered)
+
+  def test_classify_refuses_unknown_catalog(self):
+    c = dossier()['candidates'][0]
+    c['catalog_entry'] = 'DB999'
+    with self.assertRaises(S.SchemaError):
+      C.classify(c, registry(), None)
+
+
 if __name__ == '__main__':
   unittest.main()
