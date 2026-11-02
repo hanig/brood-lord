@@ -255,13 +255,18 @@ PROJECT_DECLARATIONS = (
     "adoption.remaining-work",
 )
 
+DEBRIEF_DECLARATIONS = ("purpose.scope", "capability.programs",
+                        "paths.skill-directory", "approval.packet")
+
 DECLARATION_INVENTORIES = {
+    "hanig-debrief": DEBRIEF_DECLARATIONS,
     "hanig-project": PROJECT_DECLARATIONS,
     "hanig-orchestrate": ORCHESTRATE_DECLARATIONS,
     "hanig-swarm": SWARM_DECLARATIONS,
 }
 
 REFERENCE_ELABORATION_INVENTORIES = {
+    "hanig-debrief": (),
     "hanig-project": (
         ('references/reporting-evidence.md', 'findings.bound', 3),
         ('references/reporting-evidence.md', 'findings.contract', 2),
@@ -2024,8 +2029,7 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
 
     DECLARED = {
         "hanig-project": PROJECT_DECLARATIONS,
-        "hanig-debrief": ("purpose.scope", "capability.programs",
-                          "paths.skill-directory", "approval.packet"),
+        "hanig-debrief": DEBRIEF_DECLARATIONS,
     }
 
     @staticmethod
