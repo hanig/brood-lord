@@ -85,6 +85,19 @@ class TestCoverage(unittest.TestCase):
         self.assertEqual(self.classify(registry(applies={'fixed_in': other})), 'unknown')
         self.assertEqual(self.classify(registry(applies={'fixed_in': 'f' * 40})), 'unknown')
 
+    def test_installer_abbreviated_commit(self):
+        short = self.git('rev-parse', '--short', 'HEAD')
+        self.assertEqual(C.classify(self.c, registry(applies={'fixed_in': self.base}),
+                                   self.root, provenance=provenance(short)), 'covered')
+
+    def test_always_requires_a_resolvable_commit_in_checkout(self):
+        empty = self.root / 'empty'
+        empty.mkdir()
+        # A separate empty repository cannot resolve the provenance commit.
+        subprocess.check_call(['git', '-C', str(empty), 'init', '-q'], env=self.env)
+        self.assertEqual(C.classify(self.c, registry(), empty,
+                                   provenance=provenance(self.head)), 'unknown')
+
     def test_explicit_checkout_ignores_ambient_overrides(self):
         with patch.dict(os.environ, {'GIT_DIR': str(self.root / 'absent'),
                                      'GIT_CONFIG_COUNT': 'broken'}):
