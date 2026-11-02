@@ -232,6 +232,53 @@ class TestExtract(unittest.TestCase):
     self.assertFalse(any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
       and n.func.id in ('exec', 'eval', '__import__') for n in ast.walk(tree)))
 
+  def test_review_moved_directory(self):
+    inside = self.root / 'inside'
+    inside.mkdir()
+    outside = self.base / 'outside'
+    outside.mkdir()
+    scan, calls = os.scandir, []
+    def moved(fd):
+      calls.append(fd)
+      if len(calls) == 2:
+        inside.rename(outside / 'moved')
+        (outside / 'moved' / 'CLAUDE.md').write_text('outside data\n')
+      return scan(fd)
+    with mock.patch.object(X.os, 'scandir', side_effect=moved):
+      got = self.collect()
+    self.assertFalse(got['evidence'])
+
+  def test_review_duplicate_root_receipts(self):
+    self.put('receipt.json', json.dumps(self.receipt()))
+    got = X.collect([dict(label=l, role='state', path=self.root) for l in ('A', 'B')])
+    self.assertEqual(len(self.cohort(got, 'units')['members']), 1)
+
+  def test_review_fenced_rows(self):
+    self.put('PLAN.md', '```text\n| D-123 | example |\n```\n')
+    self.assertFalse(self.collect()['evidence'])
+
+  def test_review_memory_indent(self):
+    self.put('lesson.md', '---\nname: lesson\ndescription: desc\nmetadata:\n'
+      '    type: feedback\n---\nbody\n')
+    self.assertEqual(len(self.collect('memory')['evidence']), 4)
+
+  def test_review_physical_lines(self):
+    for value, expected in [('prefix\vSTOP\n', []),
+      ('a\fb\nSTOP\n', [{'line_range': [2, 2]}])]:
+      with self.subTest(value=value):
+        self.put('evidence.md', value)
+        got = self.collect()
+        self.assertEqual([r['location'] for r in got['evidence'].values()], expected)
+
+  def test_review_deep_evidence(self):
+    self.put('/'.join(['d'] * 65) + '/CLAUDE.md', 'guidance\n')
+    self.assertEqual(len(self.collect()['evidence']), 1)
+
+  def test_review_symlink_one_omission(self):
+    (self.root / 'link.md').symlink_to('missing')
+    self.assertEqual(self.collect()['omissions'], [dict(source_root='A',
+      locator='link.md', reason='skipped: symlink')])
+
   def test_required_mutations(self):
     source = (SCRIPTS / 'debrief_extract.py').read_text()
     mutations = [
