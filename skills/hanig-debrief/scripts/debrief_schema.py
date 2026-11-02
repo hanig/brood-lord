@@ -68,7 +68,9 @@ def load_json(path):
   try:
     return json.loads(Path(path).read_text(encoding="utf-8"),
              object_pairs_hook=_pairs, parse_constant=_constant)
-  except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+  except SchemaError:
+    raise
+  except (OSError, UnicodeError, ValueError) as exc:
     raise SchemaError("JSON: unreadable or invalid document") from exc
 
 def obj(value, keys, at):
@@ -130,7 +132,7 @@ def validate_catalog(value, skills_root=None):
 
 def _reference(value, at):
   text(value, at)
-  if re.fullmatch(r"https://github\.com/hanig/brood-lord/pull/[1-9][0-9]*", value):
+  if re.fullmatch(r"https://github\.com/hanig/brood-lord/pull/[1-9][0-9]*(?:/[A-Za-z0-9_-]+)*(?:\?[^\\\s#]*)?(?:#[^\\\s]*)?", value):
     return
   parts = value.split("/")
   need(all(part not in ("", ".", "..") and

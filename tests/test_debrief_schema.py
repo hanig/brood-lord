@@ -47,9 +47,29 @@ class TestDebriefSchema(unittest.TestCase):
       "schema_version": "debrief_coverage.v1", "version": 1, "entries": []})
 
   def test_valid_coverage_variants(self):
+    self.cov["entries"][0]["references"] += [
+      "https://github.com/hanig/brood-lord/pull/123#issuecomment-456",
+      "https://github.com/hanig/brood-lord/pull/123/files?diff=split#diff-abc"]
     for applicability in ({"always": True}, {"fixed_in": "a" * 40}, {"fixed_in": "b" * 64}):
       self.cov["entries"][0]["applicability"] = applicability
       self.assertEqual(self.load(self.cov, True), self.cov)
+
+  def test_large_integer_error(self):
+    limit = getattr(sys, "get_int_max_str_digits", lambda: 0)()
+    if not limit:
+      self.skipTest("interpreter has no integer-string limit")
+    path = self.root / "large.json"
+    path.write_text('{"version":' + '1' * (limit + 1) + '}')
+    with self.assertRaisesRegex(S.SchemaError, "JSON:"):
+      S.load_json(path)
+
+  def test_triage_reference_contract(self):
+    text = (SCRIPT.parent.parent / "references/contract.md").read_text()
+    self.assertIn("issues, PRs and commits", text.split("## Triage:")[1].split("## Coverage:")[0])
+
+  def test_inclusive_budget_contract(self):
+    text = (SCRIPT.parent.parent / "references/contract.md").read_text()
+    self.assertIn("retain a fully read item at a cap", text.split("## Budgets")[1])
 
   def test_duplicate_keys_rejected(self):
     for value, coverage, key in ((self.cat, False, "version"),

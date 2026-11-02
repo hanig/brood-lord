@@ -90,7 +90,7 @@ Reproduction is null unless basis is reproduced, when complete fields are requir
 At debrief/triage/ + packet_id + .json. Keys: schema_version = debrief_triage.v1, packet_id (packet UUID), packet_digest (SHA-256 of compact canonical packet JSON, UTF-8), issue (exactly repository = hanig/brood-lord, number = positive integer), dispositions (object keyed by learning id, exactly every packet learning). Each disposition:
 
 - Accept keys: disposition = accept, unit_refs (nonempty list of nonempty unit ids).
-- Reject keys: disposition = reject, reason_code (already_addressed, local_modification, unsupported_mechanism, insufficient_evidence, out_of_scope), rationale (nonempty), references (public brood-lord references below; nonempty required only for already_addressed). <!-- declaration: purpose.scope -->
+- Reject keys: disposition = reject, reason_code (already_addressed, local_modification, unsupported_mechanism, insufficient_evidence, out_of_scope), rationale (nonempty), references (public brood-lord repository paths or HTTPS links under https://github.com/hanig/brood-lord/, including issues, PRs and commits; nonempty required only for already_addressed). <!-- declaration: purpose.scope -->
 
 Offline validation checks mechanics; the orchestrator judges. Triage never marks coverage. <!-- declaration: purpose.scope -->
 
@@ -98,8 +98,8 @@ Offline validation checks mechanics; the orchestrator judges. Triage never marks
 
 Keys: schema_version = debrief_coverage.v1, version = integer 1 (registry format revision), entries (list, initially empty). Entry keys: id (unique CV001 upward, three-digit padding without extra leading zeros), catalog_entry (existing id), applicability, references (nonempty list), note (nonempty). Applicability: exactly {"fixed_in": SHA} (full lowercase 40- or 64-hex commit SHA) or {"always": true}. <!-- declaration: purpose.scope -->
 
-References: public https://github.com/hanig/brood-lord/pull/N (N is a positive integer) or repository paths of slash-separated [A-Za-z0-9_.-]+ components excluding empty/./.., with no absolute paths. Applicability uses only Git ancestry against a local checkout, never commit ordering. <!-- declaration: purpose.scope -->
+References: public https://github.com/hanig/brood-lord/pull/N (N is a positive integer; optional slash-separated [A-Za-z0-9_-]+ route, query and fragment; no whitespace/backslash) or repository paths of slash-separated [A-Za-z0-9_.-]+ components excluding empty/./.., with no absolute paths. Applicability uses only Git ancestry against a local checkout, never commit ordering. <!-- declaration: purpose.scope -->
 
 ## Budgets and constants
 
-Caps: 8 MiB/file, 10,000 files/root, 256 MiB total. The 5 MB plan/1.2 MB ledger fit. Limits are inclusive; reaching any records the limit/skipped remainder in omissions and stops reads at that boundary. No silent truncation. <!-- declaration: purpose.scope -->
+Caps: 8 MiB/file, 10,000 files/root, 256 MiB total. The 5 MB plan/1.2 MB ledger fit. Limits are inclusive: retain a fully read item at a cap; record the reached limit and any skipped remainder in omissions, then stop before the next read. No silent truncation. <!-- declaration: purpose.scope -->
