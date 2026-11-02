@@ -300,6 +300,42 @@ class TestDebriefFiling(unittest.TestCase):
         self.assertEqual(F.file(self.work, self.transport)["status"], "FILED")
         self.assertEqual(self.creates(), 1)
 
+    def test_fresh_approval_replaces_stale_unused_receipt(self):
+        for name, value in (("RENDERER_VERSION", 2), ("PACKET_SCHEMA", "debrief_packet.v2")):
+            with self.subTest(version=name):
+                self.work = self.root / name
+                original = self.approve()
+                updated = copy.deepcopy(self.packet)
+                if name == "PACKET_SCHEMA":
+                    updated["schema_version"] = value
+                with patch.object(S, name, value):
+                    digest = P.approval_digest(updated, P.render(updated)[0])
+                    with self.assertRaises(S.SchemaError):
+                        F.file(self.work, self.transport)
+                    try:
+                        record = F.approve(self.work, updated, digest, "new approver")
+                    except S.SchemaError as exc:
+                        self.fail("fresh approval was refused: " + str(exc))
+                    self.assertEqual(record["approval"]["digest"], digest)
+                    self.assertEqual(record["approval"]["approver"], "new approver")
+                    self.assertEqual(self.transport.calls, [])
+                    for status in ("POST_IN_FLIGHT", "DELIVERY_UNCERTAIN", "READBACK_FAILED", "FILED", "CONFLICT"):
+                        stale = copy.deepcopy(original)
+                        stale.update(status=status, number=1)
+                        self.put(stale)
+                        with self.assertRaises(S.SchemaError):
+                            F.approve(self.work, updated, digest, "new approver")
+                        self.assertEqual(self.state(), stale)
+
+    def test_repeated_references_to_one_issue_are_unique(self):
+        self.uncertain()
+        self.transport.create(*P.render(self.packet), S.LABEL)
+        self.transport.calls.clear()
+        with patch.object(self.transport, "find", return_value=[1, 1]):
+            result = F.file(self.work, self.transport)
+        self.assertEqual((result["status"], result["number"]), ("FILED", 1))
+        self.assertEqual(self.transport.calls, [("get", 1)])
+
     def test_concurrent_processes_create_once(self):
         self.approve()
         remote = self.root / "remote"
@@ -344,6 +380,10 @@ class TestDebriefFiling(unittest.TestCase):
              "test_reconcile_closed_and_conflicts"),
             ("skip readback", 'return _readback(root, record, transport, "READBACK_FAILED")',
              'return _save(root, record, "FILED")', "test_readback_equivalence"),
+            ("require old approval freshness", 'old = _read_state(root)', 'old = _read(root)',
+             "test_fresh_approval_replaces_stale_unused_receipt"),
+            ("count references as identities", 'any(n != matches[0] for n in matches[1:])',
+             'len(matches) != 1', "test_repeated_references_to_one_issue_are_unique"),
         ]
         for name, old, new, test in cases:
             with self.subTest(mutation=name):
