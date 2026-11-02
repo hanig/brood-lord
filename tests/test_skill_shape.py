@@ -266,7 +266,9 @@ DECLARATION_INVENTORIES = {
 }
 
 REFERENCE_ELABORATION_INVENTORIES = {
-    "hanig-debrief": (),
+    "hanig-debrief": (
+        ('references/contract.md', 'purpose.scope', 15),
+    ),
     "hanig-project": (
         ('references/reporting-evidence.md', 'findings.bound', 3),
         ('references/reporting-evidence.md', 'findings.contract', 2),
