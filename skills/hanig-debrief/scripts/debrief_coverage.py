@@ -1,16 +1,10 @@
-"""Private review operations; no project code is loaded or executed.
-
-Candidates use debrief_dossier.v1. Skill comes from the installed catalog.
-Candidate IDs are zero-based list positions, stable while the dossier retains its
-observations. group returns copies, leaving those observations intact; pass the
-run's cohorts to recount counts. New union cohorts are added without overwriting
-existing cohorts. classify records its reason and returns a disposition; pass
-provenance=dossier['provenance'] to provide installed marker contents.
-
-The authorized session calls record_review/record_reproduction explicitly. These
-are local editing APIs, not authentication of the caller or of a receipt's claims.
+"""Private dossier v1 edits. IDs are zero-based candidate positions.
+group returns copies and adds union cohorts. classify takes installed marker
+contents via provenance=dossier['provenance']. Review and reproduction records
+are explicit operator edits, not authentication.
 """
 import copy
+import json
 import os
 from pathlib import Path
 import re
@@ -21,10 +15,10 @@ import debrief_schema as S
 
 
 def group(candidates, cohorts=None, catalog=None):
-    """Group one run by exact catalog, skill and basis; recount distinct members.
+    """Group by catalog, skill, basis and count pairs; recount distinct members.
 
-    Conflicting review decisions remain unknown pending review; any rejected
-    observation keeps its group rejected. Original rationales and receipt refs
+    Conflicting review decisions remain unknown pending review. Rejected and
+    null-entry observations remain separate with their original status. Original rationales and receipt refs
     survive in the source dossier. Never infer a reproduction from a signature.
     """
     catalog, entries = P._cat(catalog)
@@ -39,14 +33,21 @@ def group(candidates, cohorts=None, catalog=None):
         entry_id = candidate['catalog_entry']
         S.need(entry_id is None or entry_id in entries, 'candidate', 'unknown entry')
         key = (entry_id, entries[entry_id]['skill'] if entry_id else None,
-               candidate['basis'])
-        if entry_id is None or key not in index:
+               candidate['basis'],
+               frozenset((c['measure'], c['population']) for c in candidate['counts']))
+        if entry_id is None or candidate['status'] == 'rejected':
+            groups.append([candidate])
+            continue
+        if key not in index:
             index[key] = len(groups)
             groups.append([])
         groups[index[key]].append(candidate)
     result = []
     for observations in groups:
         merged = copy.deepcopy(observations[0])
+        if merged['catalog_entry'] is None or merged['status'] == 'rejected':
+            result.append(merged)
+            continue
         merged['evidence_refs'] = sorted({ref for c in observations for ref in c['evidence_refs']})
         merged['rationale'] = '\n\n'.join(dict.fromkeys(c['rationale'] for c in observations))
         dispositions = {c['coverage_disposition'] for c in observations}
@@ -108,32 +109,49 @@ def _commit(provenance, skill):
     commit = fields.get('source_version')
     if (fields.get('schema') != '2' or fields.get('repo') != 'multi-agent-skills'
             or fields.get('origin') != 'authored' or fields.get('version') != commit
-            or type(commit) is not str or re.fullmatch(r'[0-9a-f]{4,64}', commit) is None):
+            or type(commit) is not str or re.fullmatch(r'[0-9a-f]{40}', commit) is None):
         return None
     return commit
 
 
 def classify(candidate, registry, checkout, *, provenance=None, catalog=None):
-    """Classify an exact mapping; explicit extends/conflicts decisions take priority.
+    """Classify an exact mapping; review decisions require their original mapping.
 
     Missing provenance/checkout is unknown even for an always mapping. A known
     non-ancestor is unknown (the snapshot maps it, but applicability is unproved).
     Documentation and registry notes are never searched for similarity.
     """
     catalog, entries = P._cat(catalog)
-    S.validate_coverage(registry, catalog)
+    # Validate the registry shape; non-full fixed_in operands stay unknown.
+    checked_registry = copy.deepcopy(registry)
+    for mapping in checked_registry.get('entries', []):
+        applies = mapping.get('applicability', {})
+        if set(applies) == {'fixed_in'}:
+            applies['fixed_in'] = '0' * 40
+    S.validate_coverage(checked_registry, catalog)
 
     def finish(disposition, reason):
         candidate['coverage_disposition'] = disposition
         candidate['rationale'] += '\n\n' + reason
         return disposition
 
-    if candidate['coverage_disposition'] in ('extends', 'conflicts'):
-        return candidate['coverage_disposition']
     entry = entries.get(candidate['catalog_entry'])
     mappings = [r for r in registry['entries'] if entry and r['catalog_entry'] == entry['id']]
     if not mappings:
         return finish('not_found_in_snapshot', 'No exact catalog mapping in the installed snapshot.')
+    if candidate['coverage_disposition'] in ('extends', 'conflicts'):
+        for line in reversed(candidate['rationale'].splitlines()):
+            if line.startswith('DEBRIEF_REVIEW='):
+                try:
+                    decision = json.loads(line[len('DEBRIEF_REVIEW='):])
+                except ValueError:
+                    break
+                if (type(decision) is dict
+                        and decision.get('disposition') == candidate['coverage_disposition']
+                        and type(decision.get('mappings')) is list
+                        and any(m in mappings for m in decision['mappings'])):
+                    return candidate['coverage_disposition']
+                break
     commit = _commit(provenance, entry['skill'])
     if commit is None or checkout is None or not Path(checkout).is_dir():
         return finish('unknown', 'Installed commit or explicit checkout is unavailable.')
@@ -143,9 +161,11 @@ def classify(candidate, registry, checkout, *, provenance=None, catalog=None):
     for mapping in mappings:
         applies = mapping['applicability']
         fixed = applies.get('fixed_in', commit)
+        if type(fixed) is not str or re.fullmatch(r'[0-9a-f]{40}', fixed) is None:
+            continue
         try:
             checked = subprocess.run(
-                ['git', '-C', str(checkout), 'merge-base', '--is-ancestor', fixed, commit],
+                ['git', '-C', str(checkout), 'merge-base', '--is-ancestor', fixed + '^{commit}', commit + '^{commit}'],
                 env=env, timeout=10, stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         except (OSError, subprocess.TimeoutExpired):
@@ -164,13 +184,21 @@ def _candidate(dossier, candidate_id):
     return dossier['candidates'][candidate_id]
 
 
-def record_review(dossier, candidate_id, disposition, rationale):
-    """Record the authorized session's explicit extension/conflict judgment."""
+def record_review(dossier, candidate_id, disposition, rationale, *, registry=None):
+    """Record a judgment bound to exact mappings in the supplied/installed snapshot.
+
+    The binding is private rationale text to retain the strict dossier v1 shape.
+    It is an editing record, not authentication; legacy unbound decisions expire.
+    """
     candidate = _candidate(dossier, candidate_id)
     S.need(disposition in ('extends', 'conflicts'), 'disposition', 'expected explicit review decision')
     S.text(rationale, 'rationale')
+    registry = S.load_coverage() if registry is None else registry
+    S.validate_coverage(registry, S.load_catalog())
+    binding = dict(disposition=disposition, mappings=[
+        m for m in registry['entries'] if m['catalog_entry'] == candidate['catalog_entry']])
     candidate['coverage_disposition'] = disposition
-    candidate['rationale'] += '\n\n' + rationale
+    candidate['rationale'] += '\n\n' + rationale + '\nDEBRIEF_REVIEW=' + json.dumps(binding, sort_keys=True)
     return candidate
 
 
