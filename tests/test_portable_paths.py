@@ -21,7 +21,7 @@ from scheduler_fixture import closed_bin  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SKILLS = REPO / "skills"
-AUTHORED = ("hanig-orchestrate", "hanig-portable-handoff", "hanig-project",
+AUTHORED = ("hanig-debrief", "hanig-orchestrate", "hanig-portable-handoff", "hanig-project",
             "hanig-review-gate", "hanig-swarm", "hanig-verified-workflow")
 
 
@@ -63,6 +63,16 @@ class InstalledSnapshot(unittest.TestCase):
             self.assertNotIn("python3 scripts/", text, name)
         project = (SKILLS / "hanig-project" / "SKILL.md").read_text()
         self.assertNotIn("../hanig-swarm/scripts", project)
+
+    def test_debrief_resolver_uses_loaded_copy_from_another_project(self):
+        loaded = self.prefix / "hanig-debrief"
+        self.env["HANIG_DEBRIEF_DIR"] = str(loaded)
+        result = subprocess.run(
+            ["sh", "-c", 'exec "$1" "$HANIG_DEBRIEF_DIR/scripts/skill_paths.py" '
+             'self "$HANIG_DEBRIEF_DIR" hanig-debrief', "resolver", sys.executable],
+            cwd=str(self.project), env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), str(loaded.resolve()))
 
     def test_contract_handoff_survey_and_validation_use_copy_not_checkout(self):
         contract = self.invoke("hanig-verified-workflow/scripts/contract.py", "init",
