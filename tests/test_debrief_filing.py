@@ -212,6 +212,18 @@ class TestDebriefFiling(unittest.TestCase):
         self.assertEqual(F.file(self.work, self.transport)["status"], "FILED")
         self.assertEqual(self.creates(), 1)
 
+    def test_create_observes_persisted_intent(self):
+        self.approve()
+        observed = []
+        create = self.transport.create
+        def observe(title, body, label):
+            observed.append(self.state()["status"])
+            return create(title, body, label)
+        with patch.object(self.transport, "create", observe):
+            result = F.file(self.work, self.transport)
+        self.assertEqual(observed, ["POST_IN_FLIGHT"])
+        self.assertEqual(result["status"], "FILED")
+
     def uncertain(self):
         self.approve()
         with patch.object(self.transport, "create", side_effect=TimeoutError):
@@ -319,7 +331,7 @@ class TestDebriefFiling(unittest.TestCase):
         source = SCRIPT.read_text()
         cases = [
             ("skip intent persistence", '        _save(root, record, "POST_IN_FLIGHT")\n', '',
-             "test_intent_is_durable_at_create_and_ambiguous_timeout"),
+             "test_create_observes_persisted_intent"),
             ("retry create in flight", '        if status in ("POST_IN_FLIGHT", "DELIVERY_UNCERTAIN"):',
              '        if status == "DELIVERY_UNCERTAIN":', "test_filing_crash_matrix"),
             ("drop approval digest", 'digest == binding["digest"]', 'True',
