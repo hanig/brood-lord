@@ -116,7 +116,6 @@ def validate_catalog(value, skills_root=None):
         need(entry["id"] not in ids, at + ".id", "duplicate entry id")
         ids.add(entry["id"])
         match(entry["skill"], r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", at + ".skill")
-        # Compare names exactly, even on case-insensitive filesystems.
         need(any(p.name == entry["skill"] and p.is_dir() and (p / "SKILL.md").is_file()
                      for p in root.iterdir()), at + ".skill", "no such skill bundle")
         for key in ("what_broke", "mechanism", "proposed_change"):
