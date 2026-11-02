@@ -124,7 +124,7 @@ def _lines(text):
 def _text_rows(name, role, text):
   lines = _lines(text)
   guidance = name in ('CLAUDE.md', 'AGENTS.md') or 'pitfall' in name
-  if guidance and not (role == 'memory' and name.endswith('.md')):
+  if guidance and role != 'memory':
     return [('guidance', 1, max(1, len(lines)))]
   if name in ('evidence.md', 'SUMMARY.md'):
     return [('marker:' + line, i, i) for i, line in enumerate(lines, 1)
@@ -149,7 +149,7 @@ def _text_rows(name, role, text):
   or needs and re.match(r'[-*] \S', line)):
         rows.append(('decision', i, i))
     return rows
-  if role == 'memory' and name.endswith('.md'):
+  if role == 'memory' and (name.endswith('.md') or guidance):
     _need(not (not lines or lines[0] != '---' or '---' not in lines[1:]))
     end = lines.index('---', 1)
     rows, seen, metadata, indent = [], set(), False, None
