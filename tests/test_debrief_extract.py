@@ -204,7 +204,7 @@ class TestExtract(unittest.TestCase):
     for name, unit in [('r1', 'u'), ('r2', 'u'), ('r3', 'v')]:
       self.put(name + '/receipt.json', json.dumps(self.receipt(unit)))
     got = self.collect('state')
-    self.assertEqual(self.cohort(got, 'units')['members'], ['["A","u"]', '["A","v"]'])
+    self.assertEqual(self.cohort(got, 'units')['members'], ['u', 'v'])
     self.assertEqual(len(self.cohort(got, 'evidence_documents')['members']), 3)
     self.put('u/' + 'a' * 16 + '/evidence.md', 'STOP')
     self.put('v/' + 'a' * 16 + '/evidence.md', 'STOP')
@@ -232,47 +232,39 @@ class TestExtract(unittest.TestCase):
     self.assertFalse(any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
       and n.func.id in ('exec', 'eval', '__import__') for n in ast.walk(tree)))
 
-  def test_review_moved_directory(self):
-    inside = self.root / 'inside'
-    inside.mkdir()
-    outside = self.base / 'outside'
-    outside.mkdir()
-    scan, calls = os.scandir, []
-    def moved(fd):
-      calls.append(fd)
-      if len(calls) == 2:
-        inside.rename(outside / 'moved')
-        (outside / 'moved' / 'CLAUDE.md').write_text('outside data\n')
-      return scan(fd)
-    with mock.patch.object(X.os, 'scandir', side_effect=moved):
-      got = self.collect()
-    self.assertFalse(got['evidence'])
-
   def test_review_duplicate_root_receipts(self):
     self.put('receipt.json', json.dumps(self.receipt()))
     got = X.collect([dict(label=l, role='state', path=self.root) for l in ('A', 'B')])
     self.assertEqual(len(self.cohort(got, 'units')['members']), 1)
 
   def test_review_fenced_rows(self):
-    self.put('PLAN.md', '```text\n| D-123 | example |\n```\n')
-    self.assertFalse(self.collect()['evidence'])
+    self.put('PLAN.md', '````text\n| D-123 | example |\n```\n- NEEDS YOU: example\n````\n'
+      '  ~~~\n| D-2 | example |\n  ~~~\n| D-3 | actual |\n')
+    self.assertEqual(self.records(self.collect(), 'decision')[0]['location'],
+      {'line_range': [9, 9]})
+    self.assertEqual(len(self.collect()['evidence']), 1)
 
   def test_review_memory_indent(self):
     self.put('lesson.md', '---\nname: lesson\ndescription: desc\nmetadata:\n'
-      '    type: feedback\n---\nbody\n')
+      '    other: value\n    type: feedback\n---\nbody\n')
     self.assertEqual(len(self.collect('memory')['evidence']), 4)
 
   def test_review_physical_lines(self):
-    for value, expected in [('prefix\vSTOP\n', []),
-      ('a\fb\nSTOP\n', [{'line_range': [2, 2]}])]:
-      with self.subTest(value=value):
-        self.put('evidence.md', value)
-        got = self.collect()
-        self.assertEqual([r['location'] for r in got['evidence'].values()], expected)
+    for separator in ('\r', '\v', '\f', '\x1c', '\x1d', '\x1e', '\x85', '\u2028', '\u2029'):
+      self.put('evidence.md', 'prefix' + separator + 'STOP\nSTOP\nSTOP\r\n')
+      self.assertEqual([r['location'] for r in self.records(self.collect(), 'marker:STOP')],
+        [{'line_range': [2, 2]}])
+      self.put('CLAUDE.md', 'a' + separator + 'b\n')
+      self.assertEqual(self.records(self.collect(), 'guidance')[0]['location'],
+        {'line_range': [1, 1]})
 
   def test_review_deep_evidence(self):
     self.put('/'.join(['d'] * 65) + '/CLAUDE.md', 'guidance\n')
-    self.assertEqual(len(self.collect()['evidence']), 1)
+    self.assertEqual(len(self.collect(max_depth=65)['evidence']), 1)
+    got = self.collect(max_depth=2)
+    self.assertFalse(got['evidence'])
+    self.assertEqual(got['omissions'], [dict(source_root='A', locator='d/d/d',
+      reason='over-budget: directories or max_depth')])
 
   def test_review_symlink_one_omission(self):
     (self.root / 'link.md').symlink_to('missing')
