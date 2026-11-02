@@ -1,5 +1,6 @@
 import ast
 import copy
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -52,17 +53,43 @@ class TestCoverage(unittest.TestCase):
     return C.classify(self.c, registry() if reg is None else reg,
              self.root if checkout else None,
              provenance=provenance(self.head) if prov else {})
-  def test_five_dispositions_and_persisted_reasons(self):
+  def test_five_dispositions_and_private_review(self):
     self.assertEqual(self.classify(), 'covered')
-    self.assertIn('unconditionally', self.c['rationale'])
-    for disposition in ('extends', 'conflicts'):
-      C.record_review(self.d, 0, disposition, 'Explicit private review.', registry=registry())
-      self.assertEqual(self.classify(), disposition)
-      self.assertIn('Explicit private review.', self.c['rationale'])
-    self.c['coverage_disposition'] = 'unknown'
     self.assertEqual(self.classify(registry('DB002')), 'not_found_in_snapshot')
     self.assertEqual(self.classify(prov=False), 'unknown')
+    for disposition in ('extends', 'conflicts'):
+      C.record_review(self.d, 0, disposition, 'Explicit private review.')
+      self.assertEqual(self.c['coverage_disposition'], disposition)
+      self.assertIn('Explicit private review.', self.c['rationale'])
     P.validate_dossier(self.d)
+
+  def test_classify_is_pure_and_ignores_review_shaped_rationale(self):
+    for disposition in ('unknown', 'extends', 'conflicts'):
+      self.c['coverage_disposition'] = disposition
+      self.c['rationale'] = 'Observation\nDEBRIEF_REVIEW=' + json.dumps([
+        dict(disposition='conflicts', mappings=registry()['entries'])])
+      before = copy.deepcopy(self.d)
+      reg = registry()
+      original_registry = copy.deepcopy(reg)
+      self.assertEqual(self.classify(reg), 'covered')
+      self.assertEqual(self.classify(registry('DB002')), 'not_found_in_snapshot')
+      self.assertEqual(self.classify(prov=False), 'unknown')
+      self.assertEqual(self.d, before)
+      self.assertEqual(reg, original_registry)
+
+  def test_raw_fixed_in_is_validated_before_use(self):
+    for fixed in (42, True, None, [], {}, ' ' + self.base, self.base + ' '):
+      reg = registry(applies={'fixed_in': fixed})
+      valid = copy.deepcopy(registry()['entries'][0])
+      valid['id'] = 'CV002'
+      reg['entries'].append(valid)
+      before = copy.deepcopy((self.d, reg))
+      with patch.object(C.subprocess, 'run') as run:
+        with self.assertRaises(S.SchemaError):
+          self.classify(reg)
+        run.assert_not_called()
+      self.assertEqual((self.d, reg), before)
+
   def test_missing_provenance_never_covered(self):
     self.assertEqual(self.classify(registry(applies={'fixed_in': self.base}), prov=False), 'unknown')
     self.assertEqual(self.classify(prov=False), 'unknown')
@@ -92,43 +119,16 @@ class TestCoverage(unittest.TestCase):
     self.git('branch', short, self.head)
     self.assertEqual(C.classify(self.c, registry(applies={'fixed_in': self.head}),
                  self.root, provenance=provenance(short)), 'unknown')
-  def test_review_absent_mapping_overrides_stale_review(self):
-    C.record_review(self.d, 0, 'extends', 'Reviewed a previous snapshot.', registry=registry())
-    self.assertEqual(self.classify(registry('DB002')), 'not_found_in_snapshot')
-  def test_review_changed_mapping_expires_after_json_reload(self):
-    import json
+  def test_review_persists_without_snapshot_binding(self):
     for disposition in ('extends', 'conflicts'):
-      C.record_review(self.d, 0, disposition, 'review', registry=registry())
-      self.c = json.loads(json.dumps(self.d))['candidates'][0]
-      changed = registry(applies={'fixed_in': self.head})
-      self.assertEqual(self.classify(changed), 'covered')
-      self.c = self.d['candidates'][0]
-  def test_group_review_bindings_survive_order_and_disagreement(self):
-    for disposition in ('extends', 'conflicts'):
-      for reverse in (False, True):
-        d = copy.deepcopy(self.d)
-        d['candidates'].append(copy.deepcopy(d['candidates'][0]))
-        old = registry()
-        if disposition == 'extends': old['entries'][0]['note'] = 'Old mapping.'
-        C.record_review(d, 0, 'extends', 'Current', registry=registry())
-        C.record_review(d, 1, disposition, 'Other', registry=old)
-        if reverse: d['candidates'].reverse()
-        d['candidates'] = C.group(d['candidates'], d['cohorts'])
-        c = d['candidates'][0]
-        expected = 'extends' if disposition == 'extends' else 'unknown'
-        self.assertEqual(C.classify(c, registry(), self.root,
-          provenance=provenance(self.head)), expected)
-        C.select(d)
-        self.assertEqual(len(P.compile_packet(d, S.load_catalog())['learnings']), 1)
-        C.record_review(d, 0, 'conflicts', 'Resolving review', registry=registry())
-        self.assertEqual(C.classify(c, registry(), self.root,
-          provenance=provenance(self.head)), 'conflicts')
-
-  def test_bound_review_requires_provenance_and_checkout(self):
-    for disposition in ('extends', 'conflicts'):
-      for prov, checkout in ((False, True), (True, False)):
-        C.record_review(self.d, 0, disposition, 'Review', registry=registry())
-        self.assertEqual(self.classify(prov=prov, checkout=checkout), 'unknown')
+      C.record_review(self.d, 0, disposition, 'Private reason')
+      reloaded = json.loads(json.dumps(self.d))
+      c = reloaded['candidates'][0]
+      for reg in (registry(), registry('DB002'), registry(applies={'fixed_in': self.head})):
+        C.classify(c, reg, None)
+        self.assertEqual(c['coverage_disposition'], disposition)
+      self.assertNotIn('DEBRIEF_REVIEW=', c['rationale'])
+      self.assertTrue(c['rationale'].endswith('Private reason'))
 
   def test_unknown_catalog_is_rejected_by_shared_schema(self):
     self.c.update(status='rejected', catalog_entry='DB999')
@@ -136,8 +136,9 @@ class TestCoverage(unittest.TestCase):
     with self.assertRaises(S.SchemaError): C.group([self.c], self.d['cohorts'])
 
   def test_fixed_operand_requires_full_sha(self):
-    for fixed in (self.base[:7], 'f' * 64):
-      self.assertEqual(self.classify(registry(applies={'fixed_in': fixed})), 'unknown')
+    with self.assertRaises(S.SchemaError):
+      self.classify(registry(applies={'fixed_in': self.base[:7]}))
+    self.assertEqual(self.classify(registry(applies={'fixed_in': 'f' * 64})), 'unknown')
   def test_explicit_checkout_ignores_ambient_overrides(self):
     with patch.dict(os.environ, {'GIT_DIR': str(self.root / 'absent'),
                   'GIT_CONFIG_COUNT': 'broken'}):
@@ -145,9 +146,10 @@ class TestCoverage(unittest.TestCase):
   def test_documentation_alone_and_separate_residual(self):
     self.c.update(catalog_entry='DB014', counts=[])
     self.assertEqual(self.classify(registry('DB013')), 'not_found_in_snapshot')
-    C.record_review(self.d, 0, 'conflicts', 'Observed failure contradicts the documented feature.', registry=registry('DB014'))
+    C.record_review(self.d, 0, 'conflicts', 'Observed failure contradicts the documented feature.')
     self.assertEqual(C.classify(self.c, registry('DB014'), self.root,
-      provenance={'hanig-review-gate': provenance(self.head)['hanig-swarm']}), 'conflicts')
+      provenance={'hanig-review-gate': provenance(self.head)['hanig-swarm']}), 'covered')
+    self.assertEqual(self.c['coverage_disposition'], 'conflicts')
     cat = S.load_catalog()
     residual = copy.deepcopy(next(e for e in cat['entries'] if e['id'] == 'DB014'))
     residual.update(id='DB017', what_broke='Existing debris remained.')
@@ -273,15 +275,37 @@ class TestGroupingSelection(unittest.TestCase):
     before = copy.deepcopy(self.d['cohorts'])
     self.assertEqual(C.group([self.c, second], self.d['cohorts'], cat), [self.c, second])
     self.assertEqual(self.d['cohorts'], before)
-  def test_group_preserves_rejection_and_review_disagreement(self):
+  def test_group_keeps_explicit_reviews_and_unrepresentable_separate(self):
+    for status, decision in (('unrepresentable', 'unknown'),
+                             ('selected', 'extends'), ('selected', 'conflicts'),
+                             ('rejected', 'unknown')):
+      for reverse in (False, True):
+        second = copy.deepcopy(self.c)
+        second.update(status=status, coverage_disposition=decision,
+                      rationale='Separate private reason.')
+        candidates = [self.c, second]
+        if reverse:
+          candidates.reverse()
+        grouped = C.group(candidates, self.d['cohorts'])
+        self.assertEqual(grouped, candidates)
+        self.assertIsNot(grouped[0], candidates[0])
+        d = copy.deepcopy(self.d)
+        d['candidates'] = grouped
+        C.select(d)
+        expected = 2 if decision in ('extends', 'conflicts') else 1
+        self.assertEqual(len(P.compile_packet(d, S.load_catalog())['learnings']), expected)
+
+  def test_review_after_grouping_does_not_parse_rationale(self):
     second = copy.deepcopy(self.c)
-    second.update(status='rejected', coverage_disposition='conflicts', rationale='Review reason.')
-    self.assertEqual(C.group([self.c, second], self.d['cohorts']), [self.c, second])
-    second['status'] = 'selected'
-    merged = C.group([self.c, second], self.d['cohorts'])[0]
-    self.assertEqual(merged['status'], 'selected')
-    self.assertEqual(merged['coverage_disposition'], 'unknown')
-    self.assertIn('Review reason.', merged['rationale'])
+    second['rationale'] = 'DEBRIEF_REVIEW=[]'
+    self.d['candidates'] = C.group([self.c, second], self.d['cohorts'])
+    self.assertEqual(len(self.d['candidates']), 1)
+    self.assertEqual(self.d['candidates'][0]['rationale'],
+                     self.c['rationale'] + '\n\nDEBRIEF_REVIEW=[]')
+    C.record_review(self.d, 0, 'conflicts', 'Grouped observation reviewed.')
+    reviewed = copy.deepcopy(self.d['candidates'][0])
+    self.assertEqual(C.group([reviewed, second], self.d['cohorts']), [reviewed, second])
+
   def test_select_keeps_covered_and_unrepresentable(self):
     self.c['coverage_disposition'] = 'covered'
     unknown = copy.deepcopy(self.c)
