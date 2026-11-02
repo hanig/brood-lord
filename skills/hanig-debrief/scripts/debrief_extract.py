@@ -74,7 +74,6 @@ def _structured(name, data):
       for i, attempt in enumerate(item['attempts']):
         if not _text(attempt):
           raise ValueError('unsupported')
-        # Dry-run paths are explicitly tagged by swarm_preflight.DRY_PREFIX.
         aid = attempt.split('/')[-1]
         if attempt.startswith('dry-attempt-') or not ATTEMPT.fullmatch(aid):
           raise ValueError('unsupported')
@@ -101,7 +100,6 @@ def _structured(name, data):
   return [(adapter, _pointer(key), uid, aid) for key in sorted(data)]
 
 def _provenance(text, parts):
-  # schema 2 serialized by lib/skill_lifecycle._serialize. No path lookup.
   values = _pairs(line.split('=', 1) for line in text.splitlines() if line)
   keys = {'schema', 'repo', 'origin', 'source_version', 'version', 'destination',
       'consumers', 'mode', 'installed_at', 'link_target', 'link_identity'}
@@ -280,7 +278,6 @@ def collect(roots, budgets=None):
   for root in sorted(roots, key=lambda r: r['label']):
     label, role = root['label'], root['role']
     path = Path(root['path'])
-    # Reject forbidden roots before any traversal, without resolving aliases.
     if (not path.is_absolute() or '..' in path.parts or '.git' in path.parts
         or path == Path(os.path.expanduser('~')) or path == Path('/')):
       omit(label, '.', 'skipped: forbidden root')
@@ -294,8 +291,6 @@ def collect(roots, budgets=None):
 
     def walk(fd, prefix):
       nonlocal count, directories, consumed
-      # Bounded listing, sorted only after collecting the entire directory.
-      # Oversized directories are omitted atomically, never an arbitrary prefix.
       names = []
       with os.scandir(fd) as entries:
         for entry in entries:
@@ -335,6 +330,16 @@ def collect(roots, budgets=None):
               continue
             if before.st_size > limits['total_bytes'] - consumed:
               omit(label, locator, 'over-budget: total bytes')
+              continue
+            known = (name in ('CLAUDE.md', 'AGENTS.md', 'PLAN.md', 'evidence.md',
+                      'SUMMARY.md', COPY_MARKER) or 'pitfall' in name
+                      or len(parts) > 1 and parts[-2] == SIDECARS
+                      or role == 'memory' and name.endswith('.md')
+                      or role == 'state' and name in ('swarm-state.json', 'unit.json', 'receipt.json')
+                      or role in ('project', 'state') and name == 'plan.json'
+                      or role == 'helpers' and not name.endswith('.json'))
+            if not known:
+              omit(label, locator, 'unsupported: format')
               continue
             consumed += before.st_size
             data = _read_file(fd, name, before, before.st_size)

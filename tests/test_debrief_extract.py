@@ -188,7 +188,8 @@ class TestExtract(unittest.TestCase):
     self.put('.git/CLAUDE.md', 'never read')
     self.put('transcript.jsonl', 'never read')
     self.put('unknown.bin', b'\xff')
-    got = self.collect()
+    with mock.patch.object(X, '_read_file', side_effect=AssertionError('excluded read')):
+      got = self.collect()
     self.assertFalse(got['evidence'])
     self.assertEqual({o['locator'] for o in got['omissions']}, {'.git', 'transcript.jsonl', 'unknown.bin'})
     with mock.patch.dict(os.environ, {'HOME': str(self.root)}):
@@ -238,6 +239,7 @@ class TestExtract(unittest.TestCase):
       ('omission', [("omit(label, locator, 'over-budget: per-file bytes')", 'pass')],
       'test_collection_boundary_caps'),
       ('receipts', [('ids = sorted(set(members))', 'ids = sorted(members)')], 'test_cohort_recount'),
+      ('unsupported', [('if not known:', 'if False:')], 'test_exclusions_and_invalid_roots'),
       ('strip', [('if line in MARKERS', 'if line.strip() in MARKERS')], 'test_marker_exact_untrimmed')]
     for name, replacements, test in mutations:
       with self.subTest(mutation=name):
