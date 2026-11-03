@@ -397,20 +397,20 @@ class TestContinuationTickets(unittest.TestCase):
         d["issues"][-1].pop("continuation_of")
         self.assertTrue(T.check(p, d))
 
-    def test_cycle_is_refused_without_looping(self):
+    def test_cycle_refused(self):
         p = {"units": [{"id": uid, "outputs": ["x"]} for uid in ("a", "b")]}
         i = {"unit_digest": "x"}
         d = {"issues": [dict(i, unit="a", continuation_of="b"),
             dict(i, unit="b", continuation_of="a")]}
         self.assertTrue(any("cyclic" in p for p in T.check(p, d)))
 
-    def test_malformed_lineage_reports_a_problem(self):
+    def test_bad_lineage(self):
         p = {"units": [{"id": "v", "outputs": ["x"]}]}
         for parent in ([], {}, ["u"]):
             d = {"issues": [{"unit": "v", "continuation_of": parent}]}
             self.assertTrue(any("invalid continuation" in p for p in T.check(p, d)))
 
-    def test_malformed_dependency_reports_drift(self):
+    def test_bad_dependency(self):
         p = {"units": [{"id": "a", "outputs": ["x"]},
             {"id": "d", "outputs": ["x"], "needs": ["a"]}]}
         d = T.draft(p)

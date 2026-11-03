@@ -274,7 +274,7 @@ class ContinueCommandTests(unittest.TestCase):
             dict(self.unit, id="d2", needs=["old", "d1"])])
         self.save()
 
-    def test_repoints_all_and_chained_dependents(self):
+    def test_chained_repoints(self):
         self.dependents()
         d = self.mapped_draft()
         flags = ("--write", "--repoint-dependents", "--tickets", str(self.draft_file))
@@ -301,7 +301,7 @@ class ContinueCommandTests(unittest.TestCase):
             unit="last", continuation_of="new"))
         self.assertEqual(T.check(p, got), [])
 
-    def test_started_dependents_refuse_before_any_write(self):
+    def test_started_dependents_refuse(self):
         self.dependents()
         self.mapped_draft()
         for record in ({"attempts": ["past"]}, {"attempt_dir": "past"},
@@ -312,13 +312,13 @@ class ContinueCommandTests(unittest.TestCase):
                 self.assert_refusal("d2", "--repoint-dependents", "--tickets",
             str(self.draft_file))
 
-    def test_no_repoint_flag_preserves_needs(self):
+    def test_repoint_is_opt_in(self):
         self.dependents()
         self.result_unit(self.continuation("--write"))
         self.assertEqual(self.plan_now()["units"][:3],
             self.plan["units"])
 
-    def test_ticket_refusals_precede_plan_write(self):
+    def test_ticket_refusals_precede_write(self):
         d = self.mapped_draft()
         self.draft_file.write_text(json.dumps(dict(d, issues=[])))
         self.assert_refusal("old", "--tickets", str(self.draft_file))
@@ -391,27 +391,29 @@ class ContinueCommandTests(unittest.TestCase):
     def test_exact_draft_copy(self):
         d = self.mapped_draft()
         i = d["issues"][0]
-        i["precise"] = "NUMBER"
+        i.update(precise="NUMBER", huge="BIG")
         d["issues"].append(dict(i, unit="new", continuation_of="old", precise="DIFFERENT"))
         raw = json.dumps(d).replace('"NUMBER"', '0.12345678901234567891')
         self.draft_file.write_text(raw.replace('"DIFFERENT"', '0.12345678901234567892'))
         self.assert_refusal("new", "--tickets", str(self.draft_file))
         d["issues"].pop()
-        value = 0
+        value = "z"
         for _ in range(600):
             value = [value]
         d["nested_metadata"] = i["nested"] = value
         raw = json.dumps(d, ensure_ascii=False).replace("café", "café\\/")
+        raw = raw.replace('"BIG"', "1" * 5000)
         self.draft_file.write_text(raw.replace('"NUMBER"', '0.12345678901234567891'))
         self.apply_tickets()
         after = self.draft_file.read_text()
-        self.assertEqual([i["precise"] for i in json.loads(after, parse_float=str)["issues"]],
+        self.assertEqual([i["precise"] for i in json.loads(after, parse_float=str, parse_int=str)["issues"]],
             ["0.12345678901234567891"] * 2)
+        self.assertEqual(after.count("1" * 5000), 2)
         self.assertIn('café\\/', after)
         self.assertEqual(after.count('café\\/'), 2)
-        self.assertEqual(json.loads(after)["nested_metadata"], value)
+        self.assertEqual(json.loads(after, parse_int=str)["nested_metadata"], value)
         import tickets as T
-        self.assertEqual(T.check(self.plan_now(), json.loads(after)), [])
+        self.assertEqual(T.check(self.plan_now(), json.loads(after, parse_int=str)), [])
         before = self.draft_file.read_bytes()
         self.apply_tickets()
         self.assertEqual(before, self.draft_file.read_bytes())
@@ -419,7 +421,7 @@ class ContinueCommandTests(unittest.TestCase):
     def test_recovery_after_ref_advances(self):
         self.crash_recovery(advance_refs=True)
 
-    def test_malformed_draft_shapes_are_caught_without_writes(self):
+    def test_bad_drafts_refuse_without_writes(self):
         self.mapped_draft()
         for malformed in ([], {"issues": [[]]}):
             self.draft_file.write_text(json.dumps(malformed))

@@ -112,12 +112,9 @@ RECONCILE_UNKNOWN = 4
 TERMINAL_ISSUE_STATES = frozenset(("done", "completed", "cancelled", "canceled"))
 
 
-class _Number:
-    def __init__(self, text):
-        self.text = text
-
-    def __str__(self):
-        return self.text
+class _Number(tuple):
+    def __new__(cls, text):
+        return tuple.__new__(cls, (text,))
 
 
 def _exact_json(value):
@@ -132,7 +129,7 @@ def _exact_json(value):
             tokens.append(("array", len(item)))
             pending.extend(reversed(item))
         else:
-            tokens.append((type(item).__name__, str(item) if isinstance(item, _Number)
+            tokens.append((type(item).__name__, item[0] if isinstance(item, _Number)
                            else json.dumps(item, ensure_ascii=True)))
     return tokens
 
@@ -516,7 +513,7 @@ def draft(plan, brief=None, existing=None, autopilot=False, readback=None, repos
     return out
 
 
-def _continuation_lineage(plan, issues):
+def _lineage(plan, issues):
     units = {u["id"]: u for u in plan.get("units", [])}
     parents, problems = {}, []
     for uid, issue in issues.items():
@@ -574,7 +571,7 @@ def check(plan, tickets):
         problems.append(f"unit {d!r} has more than one issue")
 
     by_unit = {i.get("unit"): i for i in (tickets.get("issues") or [])}
-    parents, lineage_problems = _continuation_lineage(plan, by_unit)
+    parents, lineage_problems = _lineage(plan, by_unit)
     problems.extend(lineage_problems)
     units = {u["id"]: u for u in plan.get("units", [])}
     for u in (plan.get("units") or []):

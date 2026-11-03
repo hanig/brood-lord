@@ -161,7 +161,7 @@ def _repoint(plan, state, old, new):
 
 
 def _parts(text):
-    decoder = json.JSONDecoder()
+    decoder = json.JSONDecoder(parse_int=lambda n: (n,))
     value = decoder.decode(text)
     if not isinstance(value, (dict, list)):
         raise PlanError("tickets entries must be objects; issues must be a list")
@@ -188,7 +188,7 @@ def _parts(text):
             pos += 1
 
 
-def _ticket_bytes(before, old_id, new_id):
+def _ticket_bytes(before, old, new):
     encoding = json.detect_encoding(before)
     prefix = b""
     if encoding in ("utf-16", "utf-32"):
@@ -198,28 +198,28 @@ def _ticket_bytes(before, old_id, new_id):
     text = before.decode(encoding)
     root, _ = _parts(text)
     if "issues" not in root:
-        raise PlanError(f"tickets predecessor {old_id!r} has no entry")
+        raise PlanError(f"tickets predecessor {old!r} has no entry")
     start, end = root["issues"]
     entries, close = _parts(text[start:end])
     if not isinstance(entries, list):
         raise PlanError("tickets issues must be a JSON list")
     entries = [text[start+a:start+b] for a, b in entries]
-    old = [e for e in entries if json.loads(e).get("unit") == old_id]
-    if len(old) != 1:
-        raise PlanError(f"tickets predecessor {old_id!r} must have one entry")
-    entry = old[0]
+    prior = [e for e in entries if json.loads(e, parse_int=lambda n: (n,)).get("unit") == old]
+    if len(prior) != 1:
+        raise PlanError(f"tickets predecessor {old!r} must have one entry")
+    entry = prior[0]
     fields, end = _parts(entry)
-    changes = [(fields["unit"], json.dumps(new_id))]
+    changes = [(fields["unit"], json.dumps(new))]
     if "continuation_of" in fields:
-        changes.append((fields["continuation_of"], json.dumps(old_id)))
+        changes.append((fields["continuation_of"], json.dumps(old)))
     else:
-        changes.append(((end, end), ', "continuation_of": ' + json.dumps(old_id)))
+        changes.append(((end, end), ', "continuation_of": ' + json.dumps(old)))
     for (a, b), value in sorted(changes, reverse=True):
         entry = entry[:a] + value + entry[b:]
-    existing = [e for e in entries if json.loads(e).get("unit") == new_id]
+    existing = [e for e in entries if json.loads(e, parse_int=lambda n: (n,)).get("unit") == new]
     if existing:
         if existing != [entry]:
-            raise PlanError(f"tickets successor {new_id!r} differs from expected entry")
+            raise PlanError(f"tickets successor {new!r} differs from expected entry")
         return prefix + before
     pos = start + close
     return prefix + (text[:pos] + "," + entry + text[pos:]).encode(encoding)
