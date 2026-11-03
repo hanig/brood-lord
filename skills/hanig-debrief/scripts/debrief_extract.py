@@ -122,14 +122,16 @@ def _lines(text):
   return text[:-1].split('\n') if text.endswith('\n') else text.split('\n')
 
 def _memory_scalar(value):
-  # This is the bounded frontmatter grammar, not a YAML loader. Quotes must
-  # close on this line; unquoted YAML collection/property/block indicators
-  # cannot stand in for a scalar. Apply this to unobserved metadata keys too.
+  # Bounded scalar grammar, also applied to unobserved metadata keys.
   if '\r' in value:
     return False
   if value.startswith("'"):
     return re.fullmatch(r"'(?:[^']|'')*'", value) is not None
   if value.startswith('"'):
+    for escape in re.finditer(r'\\(?:U([0-9a-fA-F]{8})|u([0-9a-fA-F]{4})|.)', value):
+      code = int(escape[1] or escape[2] or '0', 16)
+      if code > 0x10FFFF or 0xD800 <= code <= 0xDFFF:
+        return False
     return re.fullmatch(r'"(?:[^"\\]|\\(?:[0abtnvfre /"\\N_LP]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}))*"', value) is not None
   return (bool(value) and not value[0].isspace()
     and value[0] not in '|>&*[]{}!#%@`'
@@ -140,10 +142,10 @@ def _text_rows(name, role, text):
   guidance = name in ('CLAUDE.md', 'AGENTS.md') or 'pitfall' in name
   if guidance and role != 'memory':
     return [('guidance', 1, max(1, len(lines)))]
-  if name in ('evidence.md', 'SUMMARY.md'):
+  if role != 'memory' and name in ('evidence.md', 'SUMMARY.md'):
     return [('marker:' + line, i, i) for i, line in enumerate(lines, 1)
   if line in MARKERS]
-  if name == 'PLAN.md':
+  if role != 'memory' and name == 'PLAN.md':
     rows, needs, fence = [], False, None
     for i, line in enumerate(lines, 1):
       if fence:
@@ -156,7 +158,7 @@ def _text_rows(name, role, text):
         continue
       if re.fullmatch(r'#{1,6} NEEDS YOU', line):
         needs = True
-      elif line.startswith('#'):
+      elif re.match(r'#{1,6}(?:[ \t]|$)', line):
         needs = False
       if (re.match(r'\|[ \t]*D-[A-Za-z0-9._-]+[ \t]*(?:\||$)', line)
   or re.match(r'[-*] [ \t]*NEEDS YOU(?:$|: )', line)
@@ -195,6 +197,8 @@ def _text_rows(name, role, text):
       rows.append(('memory:body', end + 2, len(lines)))
     if guidance:
       rows.append(('guidance', 1, max(1, len(lines))))
+    if name in ('PLAN.md', 'evidence.md', 'SUMMARY.md'):
+      rows.extend(_text_rows(name, 'project', text))
     return rows
   raise ValueError('unsupported format')
 
@@ -269,8 +273,17 @@ def collect(roots, budgets=None):
         _need(not (type(plan) is not dict or type(plan.get('units')) is not list))
         rows = [('plan', {'json_pointer': '/units'}, None, None)]
       else:
+        try:
+          observations = _text_rows(name, role, text)
+        except ValueError:
+          if role != 'memory' or name not in ('evidence.md', 'SUMMARY.md', 'PLAN.md'):
+            raise
+          # Refuse the entire memory observation, while retaining the independent
+          # filename adapter's observations from the same already-read bytes.
+          omit(label, loc, 'unsupported: memory format')
+          observations = _text_rows(name, 'project', text)
         rows = [(a, {'line_range': [s, e]}, uid, aid)
-  for a, s, e in _text_rows(name, role, text)]
+  for a, s, e in observations]
     if not rows:
       omit(label, loc, 'skipped: no matching observations')
       return
@@ -322,6 +335,9 @@ def collect(roots, budgets=None):
         if count >= caps['files_per_root'] or used >= caps['total_bytes']:
           omit(label, '.', 'over-budget: uninspected remainder')
           return
+        if not _text(name):
+          omit(label, '/'.join(prefix) or '.', 'unsupported: filename')
+          continue
         if name == '.git' or name.endswith('.jsonl'):
           omit(label, loc, 'skipped: excluded input')
           continue
@@ -338,6 +354,8 @@ def collect(roots, budgets=None):
               walk(child, parts)
             finally:
               os.close(child)
+            if len(parts) == caps['max_depth']:
+              omit(label, loc, 'limit reached: max_depth')
           elif not stat.S_ISREG(st.st_mode):
             omit(label, loc, 'unsupported: file type')
           else:

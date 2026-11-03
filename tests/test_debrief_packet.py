@@ -46,6 +46,27 @@ class TestDebriefPacket(unittest.TestCase):
       with self.subTest(path=path, v=new), self.refuses():
         validator(v)
 
+  def test_nonselected_duplicate_measures(self):
+    for status in ('rejected', 'covered', 'unrepresentable'):
+      d = dossier()
+      candidate = d['candidates'][0]
+      candidate['status'] = status
+      candidate['counts'] *= 2
+      with self.subTest(status=status):
+        self.assertEqual(P.validate_dossier(d), d)
+        # Recount/type guards remain active even for nonselected evidence.
+        candidate['counts'][1] = dict(candidate['counts'][1], numerator=True)
+        with self.refuses():
+          P.validate_dossier(d)
+
+  def test_selected_duplicate_measures_refused(self):
+    self.d['candidates'][0]['counts'] *= 2
+    with self.assertRaisesRegex(S.SchemaError, 'duplicate measure'):
+      P.validate_dossier(self.d)
+    self.p['learnings'][0]['counts'] *= 2
+    with self.assertRaisesRegex(S.SchemaError, 'duplicate measure'):
+      P.validate_packet(self.p)
+
   def test_round_trip_and_fresh_containers(self):
     old = copy.deepcopy(self.d)
     self.assertEqual(P.validate_dossier(self.d), self.d)

@@ -70,7 +70,7 @@ def load_json(path):
              object_pairs_hook=_pairs, parse_constant=_constant)
   except SchemaError:
     raise
-  except (OSError, UnicodeError, ValueError) as exc:
+  except (OSError, UnicodeError, ValueError, RecursionError) as exc:
     raise SchemaError("JSON: unreadable or invalid document") from exc
 
 def obj(value, keys, at):
@@ -111,8 +111,12 @@ def validate_catalog(value, skills_root=None):
   for entry, at in _entries(value, CATALOG_SCHEMA, CATALOG_VERSION, "catalog",
       ("id", "skill", "what_broke", "mechanism", "proposed_change", "measures"), CATALOG_ID):
     text(entry["skill"], at + ".skill")
-    need(any(p.name == entry["skill"] and p.is_dir() and (p / "SKILL.md").is_file()
-          for p in root.iterdir()), at + ".skill", "no such skill bundle")
+    try:
+      present = any(p.name == entry["skill"] and p.is_dir() and (p / "SKILL.md").is_file()
+          for p in root.iterdir())
+    except OSError as exc:
+      raise SchemaError("catalog: unreadable skills root") from exc
+    need(present, at + ".skill", "no such skill bundle")
     for key in ("what_broke", "mechanism", "proposed_change"):
       text(entry[key], at + "." + key)
     need(type(entry["measures"]) is list and bool(entry["measures"]),
@@ -132,7 +136,9 @@ def validate_catalog(value, skills_root=None):
 
 def _reference(value, at):
   text(value, at)
-  if re.fullmatch(r"https://github\.com/hanig/brood-lord/pull/[1-9][0-9]*(?:/[A-Za-z0-9_-]+)*(?:\?[^\\\s#]*)?(?:#[^\\\s]*)?", value):
+  need(not any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in value),
+      at, "control character in reference")
+  if re.fullmatch(r"https://github\.com/hanig/brood-lord/pull/[1-9][0-9]*(?:/[A-Za-z0-9_-]+)*/?(?:\?[^\\\s#]*)?(?:#[^\\\s]*)?", value):
     return
   parts = value.split("/")
   need("\x00" not in value and all(part not in ("", ".", "..") for part in parts),

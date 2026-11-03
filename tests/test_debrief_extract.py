@@ -274,7 +274,8 @@ class TestExtract(unittest.TestCase):
     got = self.collect(max_depth=2)
     self.false(got['evidence'])
     self.eq(got['omissions'], [dict(source_root='A', locator='d/d/d',
-  reason='over-budget: max_depth')])
+  reason='over-budget: max_depth'), dict(source_root='A', locator='d/d',
+  reason='limit reached: max_depth')])
 
   def test_single_symlink_omission(self):
     (self.root / 'link.md').symlink_to('missing')
@@ -487,6 +488,70 @@ class TestExtract(unittest.TestCase):
   def test_d_open_table_cell(self):
     self.put('PLAN.md', '| ID | Text |\n| --- | --- |\n| D-1\n| D-2  \n')
     self.eq(self.locations(self.collect(), 'decision'), [span(3), span(4)])
+
+  def test_e_review_memory_names(self):
+    for name in ('evidence.md', 'SUMMARY.md', 'PLAN.md'):
+      path = self.put(name, '---\nname: lesson\ndescription: desc\nmetadata:\n  type: feedback\n---\nSTOP\n| D-1\n')
+      got = self.collect('memory')
+      self.eq(len(self.records(got, 'memory:name')), 1)
+      self.eq(self.locations(got, 'memory:body'), [span(7, 8)])
+      self.true(self.records(got, 'decision' if name == 'PLAN.md' else 'marker:STOP'))
+      path.unlink()
+
+  def test_e_review_owner(self):
+    self.put('CLAUDE.md', 'guidance')
+    self.put(' /' + 'a' * 16 + '/evidence.md', 'STOP\n')
+    try:
+      got = self.collect()
+    except ValueError as e:
+      self.fail(str(e))
+    self.eq(len(got['evidence']), 1)
+    self.true(got['omissions'][0]['reason'].startswith('unsupported'))
+    with mock.patch.object(X.os, 'scandir') as scan:
+      scan.return_value.__enter__.return_value = [types.SimpleNamespace(name='\udcff')]
+      self.eq(self.collect()['omissions'][0]['locator'], '.')
+
+  def test_reserved_memory_keeps_independent_project_observations(self):
+    for name in ('evidence.md', 'SUMMARY.md', 'PLAN.md'):
+      for prefix in ('', '---\nname: "\\uD800"\n---\n',
+                     '---\nname: valid\nunknown: invalid\n---\n'):
+        with self.subTest(name=name, prefix=prefix):
+          raw = prefix + 'STOP\n| D-1 | decide |\n'
+          path = self.put(name, raw)
+          got = self.collect('memory')
+          adapter = 'decision' if name == 'PLAN.md' else 'marker:STOP'
+          self.eq(len(self.records(got, adapter)), 1)
+          self.false(any(r['adapter']['name'].startswith('memory:')
+                         for r in got['evidence'].values()))
+          self.true(any('unsupported' in o['reason'] for o in got['omissions']))
+          self.eq(path.read_text(), raw)
+          path.unlink()
+
+  def test_e_review_surrogate_owner(self):
+    # Synthetic directory entry: portable even on filesystems refusing these bytes.
+    with mock.patch.object(X.os, 'scandir') as scan:
+      scan.return_value.__enter__.return_value = [types.SimpleNamespace(name='\udcff')]
+      got = self.collect()
+    self.false(got['evidence'])
+    self.eq(got['omissions'][0]['locator'], '.')
+    self.true(got['omissions'][0]['reason'].startswith('unsupported'))
+
+  def test_e_review_unicode(self):
+    for value in (r'"\U00110000"', r'"\uD800"', r'"\U0000DFFF"'):
+      self.put('lesson.md', '---\nname: ' + value + '\ndescription: desc\nmetadata:\n  type: feedback\n---\nbody')
+      got = self.collect('memory')
+      self.false(got['evidence'])
+      self.true(got['omissions'][0]['reason'].startswith('unsupported'))
+
+  def test_e_review_nonheading(self):
+    self.put('PLAN.md', '## NEEDS YOU\n#not-a-heading\n- approve\n## Done\n- no\n')
+    self.eq(self.locations(self.collect(), 'decision'), [span(3)])
+
+  def test_e_review_depth(self):
+    self.put('d/CLAUDE.md', 'guidance')
+    got = self.collect(max_depth=1)
+    self.eq(len(got['evidence']), 1)
+    self.true(any('max_depth' in o['reason'] for o in got['omissions']))
 
   def test_d_bullet_spacing(self):
     self.put('PLAN.md', '*  NEEDS YOU: decide\n## NEEDS YOU\n-  approve\n* \tdecide\n')
