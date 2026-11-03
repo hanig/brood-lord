@@ -5166,6 +5166,9 @@ def main():
     c.add_argument("--head-ref", help="exact remote refs/heads/... override")
     c.add_argument("--write", action="store_true",
                    help="atomically append the validated unit to the plan")
+    c.add_argument("--repoint-dependents", action="store_true",
+                   help="repoint only never-allocated dependents to the successor")
+    c.add_argument("--tickets", help="append the successor mapping to this tickets draft")
     c.set_defaults(fn=cmd_continue)
 
     r = sub.add_parser("run", help="dispatch what is ready, then exit")

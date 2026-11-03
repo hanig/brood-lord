@@ -8,7 +8,7 @@ import os
 import stat
 import sys
 import tempfile
-from contextlib import contextmanager, redirect_stdout
+from contextlib import ExitStack, contextmanager, redirect_stdout
 from pathlib import Path
 
 import coordinator_paths as CP
@@ -130,22 +130,92 @@ def _append(path, before, plan, mode):
             os.unlink(temp)
 
 
+def _repoint(plan, state, predecessor, successor):
+    dependents = []
+    for unit in plan["units"]:
+        needs = unit.get("needs", [])
+        if not isinstance(needs, list):
+            raise PlanError(f"unit {unit['id']!r} needs must be a JSON list")
+        if predecessor in needs:
+            dependents.append(unit)
+    started = []
+    for unit in dependents:
+        us = (state.get("units") or {}).get(unit["id"]) or {}
+        if (us.get("attempts") or us.get("attempt_dir")
+                or us.get("attempt_launch_intents")):
+            started.append(unit["id"])
+    if started:
+        raise PlanError("dependents have recorded attempts: " + ", ".join(started))
+    for unit in dependents:
+        unit["needs"] = [successor if need == predecessor else need
+                         for need in unit["needs"]]
+
+
+def _ticket_entry(draft, predecessor, successor):
+    issues = draft.get("issues")
+    if not isinstance(issues, list):
+        raise PlanError("tickets issues must be a JSON list")
+    old = [i for i in issues if i.get("unit") == predecessor]
+    if len(old) != 1:
+        raise PlanError(f"tickets predecessor {predecessor!r} must have one entry")
+    entry = copy.deepcopy(old[0])
+    entry.update(unit=successor, continuation_of=predecessor)
+    existing = [i for i in issues if i.get("unit") == successor]
+    # Compare serialized values, preserving JSON type distinctions (True != 1).
+    if existing and (len(existing) != 1 or json.dumps(existing[0], sort_keys=True)
+                     != json.dumps(entry, sort_keys=True)):
+        raise PlanError(f"tickets successor {successor!r} differs from expected entry")
+    if not existing:
+        issues.append(entry)
+    return not existing
+
+
 def continue_plan(args, validate):
     try:
         path = Path(args.plan).resolve()
-        with _plan_file(path, args.write) as stream:
+        tickets = getattr(args, "tickets", None)
+        repoint = getattr(args, "repoint_dependents", False)
+        with ExitStack() as stack:
+            stream = stack.enter_context(_plan_file(path, args.write))
             before = stream.read()
             plan = json.loads(before)
+            draft_path = Path(tickets).resolve() if tickets else None
+            if draft_path is not None and (draft_path == path
+                                          or os.path.samefile(path, draft_path)):
+                raise PlanError("plan and tickets must be different files")
+            draft_changed = False
+            if draft_path is not None:
+                draft_stream = stack.enter_context(_plan_file(draft_path, args.write))
+                draft_before = draft_stream.read()
+                draft = json.loads(draft_before)
+                draft_changed = _ticket_entry(draft, args.unit, args.new_id)
             state_dir, _, _ = CP.resolve_paths(args.state_dir, plan=plan)
             state, error = U.read_json(state_dir / SS.STATE_FILE)
             if error or not isinstance(state, dict):
                 raise PlanError(f"no readable coordinator state: {error}")
-            new = _continuation(plan, state, args)
-            plan["units"].append(new)
+            existing = [u for u in plan["units"] if u.get("id") == args.new_id]
+            # Legacy callers retain duplicate refusal. Opt-in retries compare
+            # the complete derived unit before publishing either file.
+            source = copy.deepcopy(plan)
+            if tickets or repoint:
+                source["units"] = [u for u in source["units"]
+                                   if u.get("id") != args.new_id]
+            new = _continuation(source, state, args)
+            if existing:
+                if len(existing) != 1 or existing[0] != new:
+                    raise PlanError(f"unit {args.new_id!r} already exists and differs")
+            else:
+                plan["units"].append(new)
+            if repoint:
+                _repoint(plan, state, args.unit, args.new_id)
             with redirect_stdout(io.StringIO()):
                 validate(plan)
             if args.write:
-                _append(path, before, plan, os.fstat(stream.fileno()).st_mode)
+                if plan != json.loads(before):
+                    _append(path, before, plan, os.fstat(stream.fileno()).st_mode)
+                if draft_changed:
+                    _append(draft_path, draft_before, draft,
+                            os.fstat(draft_stream.fileno()).st_mode)
         print(json.dumps(new, indent=2, ensure_ascii=True))
         return 0
     except (PlanError, CP.PathPolicyError, OSError, ValueError,

@@ -341,5 +341,63 @@ class TestTicketsReconcile(unittest.TestCase):
             self.assertIn(phrase, text)
 
 
+class TestContinuationTickets(unittest.TestCase):
+    def test_check_and_stubbed_drain_consume_generated_mapping(self):
+        from tests import test_continue_command as CC
+        from tests import test_linear_drain as LD
+        fixture = CC.ContinueCommandTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.unit["tracker"] = "ARC-1"
+        fixture.save()
+        draft = fixture.mapped_draft()
+        draft["project"].update(linear_id="project", slug="sample", team="ARC")
+        draft["issues"][0].update(identifier="ARC-1", linear_id="1")
+        T.sync_blocked_by(draft, {"schema_version": 1, "read_at": "fixture",
+                                 "source": "synthetic", "edges": {"old": []}})
+        fixture.draft_path.write_text(json.dumps(draft))
+        fixture.result_unit(fixture.continuation("--write", "--tickets", str(fixture.draft_path)))
+        result = subprocess.run([sys.executable, str(SCRIPTS / "tickets.py"), "check",
+                                 str(fixture.plan_path), str(fixture.draft_path)],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        drain = LD.DrainCase()
+        drain.setUp()
+        self.addCleanup(drain.doCleanups)
+        drain.draft.write_bytes(fixture.draft_path.read_bytes())
+        drain.intent(project="sample", unit="new")
+        self.assertEqual(drain.drain(draft=True), 0, drain.stdout)
+        self.assertEqual(len(drain.receipts()), 1)
+
+    def test_alias_does_not_hide_predicate_or_root_drift(self):
+        old = {"id": "u", "kind": "code", "prompt": "original", "outputs": ["x"]}
+        new = dict(old, id="v", prompt="continue")
+        dependent = dict(old, id="d", needs=["u"])
+        plan = {"name": "fixture", "units": [old, dependent]}
+        draft = T.draft(plan)
+        draft["issues"].append(dict(draft["issues"][0], unit="v", continuation_of="u"))
+        plan["units"].append(new)
+        dependent["needs"] = ["v"]
+        self.assertEqual(T.check(plan, draft), [])
+        for target, field, value in ((old, "prompt", "drift"), (new, "outputs", ["wrong"]),
+                                     (dependent, "prompt", "drift"),
+                                     (dependent, "needs", ["u", "v"])):
+            previous = target[field]
+            target[field] = value
+            self.assertTrue(T.check(plan, draft), (target, field))
+            target[field] = previous
+        draft["issues"][-1]["identifier"] = "changed"
+        self.assertTrue(T.check(plan, draft))
+        draft["issues"][-1].pop("continuation_of")
+        self.assertTrue(T.check(plan, draft))
+
+    def test_cycle_is_refused_without_looping(self):
+        plan = {"units": [{"id": uid, "outputs": ["x"]} for uid in ("a", "b")]}
+        issue = {"unit_digest": "x"}
+        draft = {"issues": [dict(issue, unit="a", continuation_of="b"),
+                            dict(issue, unit="b", continuation_of="a")]}
+        self.assertTrue(any("cyclic" in p for p in T.check(plan, draft)))
+
+
 if __name__ == "__main__":
     unittest.main()

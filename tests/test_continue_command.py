@@ -246,6 +246,124 @@ class ContinueCommandTests(unittest.TestCase):
         self.save()
         self.assert_refusal("inputs")
 
+    def mapped_draft(self):
+        sys.path.insert(0, str(ROOT / "skills/hanig-project/scripts"))
+        import tickets as T
+        self.draft_path = self.tmp / "tickets.json"
+        draft = T.draft(self.plan)
+        draft["approval"] = {"state": "granted", "content_digest": "keep-exact"}
+        for issue in draft["issues"]:
+            issue.update(identifier="ARC-2189", linear_id="issue-id",
+                         extra={"text": "café\r\n", "number": 1})
+        self.draft_path.write_text(json.dumps(draft))
+        return draft
+
+    def dependents(self):
+        self.plan["units"].extend([
+            dict(self.unit, id="d1", needs=["old"]),
+            dict(self.unit, id="d2", needs=["old", "d1"])])
+        self.save()
+
+    def test_repoints_all_and_chained_dependents(self):
+        self.dependents()
+        draft = self.mapped_draft()
+        flags = ("--write", "--repoint-dependents", "--tickets", str(self.draft_path))
+        self.result_unit(self.continuation(*flags))
+        plan = json.loads(self.plan_path.read_text())
+        self.assertEqual([u.get("needs") for u in plan["units"][:3]],
+                         [None, ["new"], ["new", "d1"]])
+        got = json.loads(self.draft_path.read_text())
+        self.assertEqual(got, dict(draft, issues=draft["issues"] + [
+            dict(draft["issues"][0], unit="new", continuation_of="old")]))
+        before = (self.plan_path.read_bytes(), self.draft_path.read_bytes(),
+                  self.plan_path.stat().st_ino, self.draft_path.stat().st_ino)
+        self.result_unit(self.continuation(*flags))
+        self.assertEqual(before, (self.plan_path.read_bytes(), self.draft_path.read_bytes(),
+                                 self.plan_path.stat().st_ino, self.draft_path.stat().st_ino))
+        self.state["units"]["new"] = dict(self.us, attempt_launch_intents={
+            "a1": dict(self.intent, unit_id="new")})
+        (self.state_dir / "swarm-state.json").write_text(json.dumps(self.state))
+        self.result_unit(self.continuation(*flags, "--unit", "new", "--new-id", "last"))
+        plan = json.loads(self.plan_path.read_text())
+        self.assertEqual([u.get("needs") for u in plan["units"][:3]],
+                         [None, ["last"], ["last", "d1"]])
+        import tickets as T
+        got = json.loads(self.draft_path.read_text())
+        self.assertEqual(got["issues"][-1], dict(got["issues"][-2],
+                         unit="last", continuation_of="new"))
+        self.assertEqual(T.check(plan, got), [])
+
+    def test_started_dependents_refuse_before_any_write(self):
+        self.dependents()
+        self.mapped_draft()
+        for record in ({"attempts": ["past"]}, {"attempt_dir": "past"},
+                       {"attempt_launch_intents": {"past": {}}}):
+            with self.subTest(record=record):
+                self.state["units"]["d2"] = record
+                self.save()
+                self.assert_refusal("d2", "--repoint-dependents", "--tickets",
+                                    str(self.draft_path))
+
+    def test_no_repoint_flag_preserves_needs(self):
+        self.dependents()
+        self.result_unit(self.continuation("--write"))
+        self.assertEqual(json.loads(self.plan_path.read_text())["units"][:3],
+                         self.plan["units"])
+
+    def test_ticket_refusals_precede_plan_write(self):
+        draft = self.mapped_draft()
+        self.draft_path.write_text(json.dumps(dict(draft, issues=[])))
+        self.assert_refusal("old", "--tickets", str(self.draft_path))
+        for extra in ({"unit_digest": "different"}, {"extra": {"text": "café\r\n", "number": True}}):
+            conflict = dict(draft["issues"][0], unit="new", continuation_of="old", **extra)
+            self.draft_path.write_text(json.dumps(dict(draft, issues=draft["issues"] + [conflict])))
+            self.assert_refusal("new", "--tickets", str(self.draft_path))
+
+    def test_crash_between_writes_recovers_and_fsync_precedes_rename(self):
+        sys.path.insert(0, str(SWARM.parent))
+        import swarm_continue as SC
+        self.dependents()
+        self.mapped_draft()
+        draft_before = self.draft_path.read_bytes()
+        args = SimpleNamespace(plan=str(self.plan_path), state_dir=str(self.state_dir),
+                               unit="old", new_id="new", prompt_file=str(self.prompt),
+                               head_ref=None, write=True, repoint_dependents=True,
+                               tickets=str(self.draft_path))
+        original = SC._append
+        writes, events = [], []
+        real_sync, real_replace = SC.os.fsync, SC.os.replace
+
+        def sync(fd):
+            events.append("fsync")
+            return real_sync(fd)
+
+        def replace(src, dst):
+            self.assertEqual(events[-1], "fsync")
+            events.append("rename")
+            return real_replace(src, dst)
+
+        def crash(path, *rest):
+            writes.append(path.name)
+            original(path, *rest)
+            raise OSError("injected crash after first publication")
+
+        with mock.patch.object(SC, "_append", side_effect=crash), \
+                mock.patch.object(SC.os, "fsync", side_effect=sync), \
+                mock.patch.object(SC.os, "replace", side_effect=replace):
+            self.assertEqual(SC.continue_plan(args, lambda p: None), 1)
+        self.assertEqual(writes, ["plan.json"])
+        self.assertEqual(self.draft_path.read_bytes(), draft_before)
+        self.assertEqual(json.loads(self.plan_path.read_text())["units"][1]["needs"], ["new"])
+        with mock.patch.object(SC, "_append", wraps=original) as append, \
+                mock.patch.object(SC.os, "fsync", side_effect=sync), \
+                mock.patch.object(SC.os, "replace", side_effect=replace):
+            self.assertEqual(SC.continue_plan(args, lambda p: None), 0)
+            self.assertEqual([c.args[0].name for c in append.call_args_list], ["tickets.json"])
+            append.reset_mock()
+            self.assertEqual(SC.continue_plan(args, lambda p: None), 0)
+            append.assert_not_called()
+        self.assertEqual(events, ["fsync", "rename", "fsync", "rename"])
+
 
 if __name__ == "__main__":
     unittest.main()

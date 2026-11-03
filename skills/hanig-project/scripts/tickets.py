@@ -490,6 +490,46 @@ def draft(plan, brief=None, existing=None, autopilot=False, readback=None, repos
     return out
 
 
+def _continuation_lineage(plan, issues):
+    """Return only exact copied mappings with an acyclic, in-plan lineage."""
+    units = {u["id"]: u for u in plan.get("units", [])}
+    parents, problems = {}, []
+    for uid, issue in issues.items():
+        if "continuation_of" not in issue:
+            continue
+        parent = issue["continuation_of"]
+        prior = issues.get(parent) if isinstance(parent, str) else None
+        expected = dict(prior, unit=uid, continuation_of=parent) if prior else None
+        if (uid not in units or parent not in units or expected is None
+                or json.dumps(issue, sort_keys=True) != json.dumps(expected, sort_keys=True)):
+            problems.append(f"invalid continuation mapping for {uid!r}")
+        else:
+            parents[uid] = parent
+    for uid in parents:
+        seen, cursor = set(), uid
+        while cursor in parents:
+            if cursor in seen:
+                problems.append(f"cyclic continuation mapping for {uid!r}")
+                break
+            seen.add(cursor)
+            cursor = parents[cursor]
+    return ({} if problems else parents), problems
+
+
+def _repointed_needs(current, recorded, parents):
+    """Compare each exact dependency to its explicitly declared ancestors."""
+    if not isinstance(current, list) or not isinstance(recorded, list):
+        return False
+    if len(current) != len(recorded):
+        return False
+    for now, before in zip(current, recorded):
+        while now != before and now in parents:
+            now = parents[now]
+        if now != before:
+            return False
+    return True
+
+
 def check(plan, tickets):
     """Both directions. A unit with no issue is work nobody can see; an issue
     with no unit is a promise nothing will ever verify."""
@@ -507,6 +547,9 @@ def check(plan, tickets):
         problems.append(f"unit {d!r} has more than one issue")
 
     by_unit = {i.get("unit"): i for i in (tickets.get("issues") or [])}
+    parents, lineage_problems = _continuation_lineage(plan, by_unit)
+    problems.extend(lineage_problems)
+    units = {u["id"]: u for u in plan.get("units", [])}
     for u in (plan.get("units") or []):
         if not (u.get("outputs") or []):
             problems.append(f"unit {u['id']!r} declares no outputs, so its "
@@ -515,6 +558,24 @@ def check(plan, tickets):
         if issue is None:
             continue
         recorded = issue.get("unit_digest")
+        # A continuation deliberately keeps the predecessor's issue body and
+        # digest. Check its inherited predicate fields; the root's digest is
+        # still checked below, so aliases cannot hide original-unit drift.
+        parent = parents.get(u["id"])
+        if parent is not None:
+            prior = units[parent]
+            if (any(u.get(k) != prior.get(k) for k in BODY_FIELDS
+                    if k not in ("prompt", "description", "needs"))
+                    or not _repointed_needs(u.get("needs", []),
+                                           prior.get("needs", []), parents)):
+                problems.append(f"continuation {u['id']!r} changed inherited predicate fields")
+            continue
+        digest_unit = u
+        if (u.get("needs") != issue.get("blocked_by")
+                and _repointed_needs(u.get("needs"), issue.get("blocked_by"), parents)):
+            # Reconstruct the issue's declared dependency spelling only after
+            # checking every edge against the explicit continuation relation.
+            digest_unit = dict(u, needs=issue["blocked_by"])
         if not recorded:
             # A missing digest is NOT a pass. An issue written before digests
             # existed, or hand-edited, would otherwise be accepted however
@@ -525,7 +586,7 @@ def check(plan, tickets):
                 f"the issue for {u['id']!r} carries no unit digest, so "
                 f"whether it still describes this unit cannot be told. "
                 f"Re-run `draft` to refresh it; tracker ids are kept.")
-        elif recorded != unit_digest(u):
+        elif recorded != unit_digest(digest_unit):
             problems.append(
                 f"unit {u['id']!r} has changed since its issue was written "
                 f"({recorded} -> {unit_digest(u)}), so the issue now "
