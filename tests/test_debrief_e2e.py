@@ -24,7 +24,7 @@ class TestDebriefE2E(unittest.TestCase):
             project.mkdir()
             binary.mkdir()
             sentinel = 'SYNTHETIC_PRIVATE_PROJECT_SENTINEL'
-            (project / 'evidence.md').write_text('STOP\n' + sentinel + '\n')
+            (project / 'evidence.md').write_text('STOP\n' * 1001 + sentinel + '\n')
             gh = binary / 'gh'
             gh.write_text('#!' + sys.executable + '\n' + FAKE_GH)
             gh.chmod(0o700)
@@ -41,8 +41,10 @@ class TestDebriefE2E(unittest.TestCase):
                 '--root', 'project=' + str(project))
             path = work / 'dossier.json'
             dossier = P.load_dossier(path)
-            self.assertEqual(len(dossier['evidence']), 1)
-            evidence = next(iter(dossier['evidence']))
+            self.assertEqual(dossier['schema_version'], 'debrief_dossier.v2')
+            self.assertEqual(list(dossier['evidence']), ['E' + str(i).zfill(3) for i in range(1, 1002)])
+            self.assertFalse(any(o['reason'] == 'over-budget: evidence ids' for o in dossier['omissions']))
+            evidence = 'E1001'
             self.assertEqual(dossier['evidence'][evidence]['adapter']['name'], 'marker:STOP')
             # Catalog assignment is the private operator step, not inferred by collect.
             dossier['candidates'] = [dict(catalog_entry='DB001', status='selected',
@@ -53,6 +55,10 @@ class TestDebriefE2E(unittest.TestCase):
             cli('debrief.py', 'compile', '--workdir', str(work))
             packet = P.load_packet(work / 'packet.json')
             self.assertEqual(len(packet['learnings']), 1)
+            self.assertEqual(packet['schema_version'], 'debrief_packet.v2')
+            self.assertEqual(packet['learnings'][0]['evidence_refs'], ['E1001'])
+            shown = cli('debrief.py', 'show', '--workdir', str(work))
+            self.assertIn('E1001', shown)
             title, body = P.render(packet)
             # Exit 1 means APPROVED/pending; only confirmed FILED returns 0.
             approved = cli('debrief_file.py', 'approve', '--workdir', str(work),

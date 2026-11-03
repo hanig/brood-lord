@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 import stat
 
+import debrief_schema as S
+
 from debrief_schema import PER_FILE_BYTES, PER_ROOT_FILES, TOTAL_BYTES, POPULATIONS
 
 MARKERS = ('STOP', 'REVIEW_FAIL', 'REVIEW_UNAVAILABLE', 'PROPOSED DECISION')
@@ -287,7 +289,7 @@ def collect(roots, budgets=None):
     if not rows:
       omit(label, loc, 'skipped: no matching observations')
       return
-    if len(out['evidence']) + len(rows) > 999:
+    if len(out['evidence']) + len(rows) > S.MAX_IDENTIFIERS:
       omit(label, loc, 'over-budget: evidence ids')
       return
     doc = _identity(label, loc)

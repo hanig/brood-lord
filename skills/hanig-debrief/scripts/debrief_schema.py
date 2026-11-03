@@ -4,8 +4,10 @@ import re
 
 
 CATALOG_SCHEMA = "debrief_catalog.v1"
-DOSSIER_SCHEMA = "debrief_dossier.v1"
-PACKET_SCHEMA = "debrief_packet.v1"
+DOSSIER_V1 = "debrief_dossier.v1"
+DOSSIER_SCHEMA = "debrief_dossier.v2"
+PACKET_V1 = "debrief_packet.v1"
+PACKET_SCHEMA = "debrief_packet.v2"
 TRIAGE_SCHEMA = "debrief_triage.v1"
 COVERAGE_SCHEMA = "debrief_coverage.v1"
 CATALOG_VERSION = 1
@@ -30,8 +32,11 @@ PER_FILE_BYTES = 8 * 1024 * 1024
 PER_ROOT_FILES = 10000
 TOTAL_BYTES = 256 * 1024 * 1024
 LEARNING_ID = r"L(?:0[1-9]|[1-4][0-9]|50)"
-EVIDENCE_ID = r"E(?!000)[0-9]{3}"
-COHORT_ID = r"C(?!000)[0-9]{3}"
+EVIDENCE_ID_V1 = r"E(?!000)[0-9]{3}"
+COHORT_ID_V1 = r"C(?!000)[0-9]{3}"
+EVIDENCE_ID = r"E(?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,5})"
+COHORT_ID = r"C(?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,5})"
+MAX_IDENTIFIERS = 999999
 CATALOG_ID = r"DB[0-9]{3}"
 COVERAGE_ID = r"CV(?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})"
 COMMIT_SHA = r"(?:[0-9a-f]{40}|[0-9a-f]{64})"
@@ -171,3 +176,15 @@ def load_coverage(path=None, catalog=None):
   if catalog is None:
     catalog = load_catalog()
   return validate_coverage(load_json(SKILL_DIR / "coverage.json" if path is None else path), catalog)
+
+
+def identifier_grammar(schema, kind):
+  """Select one exact grammar by artifact header, without normalizing IDs."""
+  versions = {"dossier": (DOSSIER_V1, DOSSIER_SCHEMA),
+              "packet": (PACKET_V1, PACKET_SCHEMA)}
+  old, current = versions[kind]
+  need(type(schema) is str and schema in (old, current),
+       kind + ".schema_version", "unsupported version")
+  if schema == old:
+    return EVIDENCE_ID_V1, COHORT_ID_V1, 999
+  return EVIDENCE_ID, COHORT_ID, MAX_IDENTIFIERS

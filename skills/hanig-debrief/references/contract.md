@@ -109,3 +109,25 @@ Caps: 8 MiB/file, 10,000 files/root, 256 MiB total. The 5 MB plan/1.2 MB ledger 
 
 
 The synthetic example uses a single accepted learning and a synthetic plan unit. <!-- declaration: workflow.triage -->
+
+## Versioned extension: dossier and packet v2 (v1 remains frozen)
+
+`debrief_dossier.v2` and `debrief_packet.v2` retain all v1 fields and rules above,
+except the schema label and the E/C identifier grammar. Each v2 evidence ID is
+`E` + `str(n).zfill(3)` and each cohort ID is `C` + `str(n).zfill(3)` for
+1 <= n <= 999999. Extra leading zeros are forbidden: E001, E999, E1000 and
+E123456 are valid; E0001, E000, E01 and E1000000 are invalid. The same rule
+applies to every reference, including reproduction receipts. v1 keeps its
+E001..E999 and C001..C999 grammar. IDs are compared as exact strings in both
+versions. <!-- declaration: purpose.scope -->
+
+`collect` writes v2; `compile` writes v2 and refuses a v1 dossier by name as
+mixed-version until `debrief.py upgrade --workdir DIR` changes only its
+schema_version to v2. Repeating upgrade is harmless. `downgrade --workdir DIR`
+is refused by name. Upgrade leaves existing packets and approval/filing state
+untouched; retain a copy of the v1 workdir to recount its old packet, or compile
+and approve a new packet in a separate draft workdir. Recount/show refuse a
+mixed-version dossier/packet pair. Readers still accept v1, including previously
+filed packets and their triage records. Renderer version and approval digest
+rules are unchanged. The evidence capacity guard uses the v2 bound, recording
+`over-budget: evidence ids` for an input that would exceed it. <!-- declaration: purpose.scope -->
