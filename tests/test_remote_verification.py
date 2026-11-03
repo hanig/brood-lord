@@ -2013,7 +2013,8 @@ class TestRemoteVerification(unittest.TestCase):
         self.assert_failed(self.verify())
         self.assertEqual(self.rows()[-1]['result'], 'fail')
         self.f.assert_refused(self.admitted())
-        self.assertIn('failed for this exact binding', self.verify().stderr)
+        self.assertIn('candidate merge verifier failed; repair the candidate', self.verify().stderr)
+        self.assertEqual(len(self.rows()), 2)
 
     def test_absent_ssh_client_does_not_create_an_unresolved_launch(self):
         self.program()
