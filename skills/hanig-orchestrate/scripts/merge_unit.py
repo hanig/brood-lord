@@ -1266,7 +1266,8 @@ def _verify_integration(args, repo, snapshot):
             # published for this launch and exact claim binding. A distinct
             # launch still publishes its own result; admission binds all FAILs.
             if identity and any(
-                    r.get("execution", {}).get("launch_id") == identity
+                    isinstance(r.get("execution"), dict)
+                    and r["execution"].get("launch_id") == identity
                     and V.merge_failure_problem([r], evidence) for r in previous):
                 evidence["result"] = "fail"
                 evidence.pop("incomplete_reason", None)
