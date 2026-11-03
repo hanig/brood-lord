@@ -73,6 +73,43 @@ class TestLoadSensitiveReadiness(unittest.TestCase):
                     fixtures.wait_pid(Path(directory) / 'missing')
             self.assertEqual(clock[0], 3)
 
+    def test_pending_pid_waits_for_content_and_remains_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'leader.pid'
+            pending = Path(str(path) + '.tmp')
+            pending.touch()
+            clock = [0.0]
+            def finish_write(seconds):
+                clock[0] += seconds
+                pending.write_text('123')
+            with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
+                    fixtures, '_pause', side_effect=finish_write):
+                self.assertEqual(fixtures.wait_pid(path, include_temporary=True), 123)
+            self.assertGreater(clock[0], 0)
+            self.assertLess(clock[0], 3)
+            self.assertIsNone(fixtures.read_pid(path))
+            for content in (None, '', 'partial', '0', '-1'):
+                with self.subTest(content=content):
+                    if content is None:
+                        pending.unlink()
+                    else:
+                        pending.write_text(content)
+                    clock[0] = 0.0
+                    def advance(seconds):
+                        clock[0] += seconds
+                    with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
+                            fixtures, '_pause', side_effect=advance):
+                        with self.assertRaisesRegex(AssertionError, 'PID file did not become ready'):
+                            fixtures.wait_pid(path, include_temporary=True)
+                    self.assertEqual(clock[0], 3)
+            pending.write_text('123')
+            clock[0] = 0.0
+            with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
+                    fixtures, '_pause', side_effect=advance):
+                with self.assertRaisesRegex(AssertionError, 'PID file did not become ready'):
+                    fixtures.wait_pid(path)
+            self.assertEqual(clock[0], 3)
+
     def test_pid_publication_hides_creation_before_write(self):
         with tempfile.TemporaryDirectory() as directory:
             scope = FixtureProcesses(self, directory)
@@ -96,7 +133,7 @@ class TestLoadSensitiveReadiness(unittest.TestCase):
 
 
 class TestInterruptedPidPublication(unittest.TestCase):
-    """Open round-1 regressions preserved for recovery, NOT READY to merge."""
+    """Exercise consumers when a single writer stops before its final rename."""
 
     def test_correct_group_cleanup_survives_interrupted_publication(self):
         import test_project as project

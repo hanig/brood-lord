@@ -3950,9 +3950,7 @@ $noisy_started = $started;
                         publish_pid(pidfile, "$!"))
             r = self._doctor(
                 d, claude=False, overrides={"bash": bash})
-            self.assertTrue(pidfile.exists(),
-                            "the descendant-producing profile did not run")
-            pid = wait_pid(pidfile)
+            pid = wait_pid(pidfile, include_temporary=True)
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 try:
@@ -3980,9 +3978,7 @@ $noisy_started = $started;
             r = self._doctor(
                 d, claude=False, overrides={"bash": bash})
             elapsed = time.monotonic() - start
-            self.assertTrue(pidfile.exists(),
-                            "the TERM-ignoring group child did not run")
-            pid = wait_pid(pidfile)
+            pid = wait_pid(pidfile, include_temporary=True)
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 try:
@@ -4250,13 +4246,12 @@ $noisy_started = $started;
             # boundary. Register its independent teardown before launch, so
             # even a failed product assertion or PID read cannot leave it.
             def contain_escape():
-                if pidfile.exists():
-                    pid = wait_pid(pidfile)
-                    try:
-                        if os.getsid(pid) == pid:
-                            os.kill(pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+                pid = wait_pid(pidfile, include_temporary=True)
+                try:
+                    if os.getsid(pid) == pid:
+                        os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             self.addCleanup(contain_escape)
             code = ("use POSIX qw(setsid); setsid(); "
                     "open(my $f, q(>), q(%s.tmp)) or die $!; "
@@ -4271,8 +4266,7 @@ $noisy_started = $started;
             r = self._doctor(
                 d, claude=False, overrides={"bash": bash})
             elapsed = time.monotonic() - start
-            self.assertTrue(pidfile.exists(), "the setsid child did not run")
-            pid = wait_pid(pidfile)
+            pid = wait_pid(pidfile, include_temporary=True)
             try:
                 os.kill(pid, 0)
             except ProcessLookupError:

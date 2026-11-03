@@ -225,10 +225,19 @@ def read_pid(path):
     return pid if pid > 0 else None
 
 
-def wait_pid(path, timeout=3):
+def wait_pid(path, timeout=3, include_temporary=False):
+    """Wait for positive PID evidence, including an interrupted writer if asked.
+
+    The optional temporary name belongs to the same single writer in a private
+    fixture directory. Post-termination checks and independent escape teardown
+    must retain its PID even when termination prevents the final rename.
+    Ordinary readiness still requires the atomically published final name.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         pid = read_pid(path)
+        if pid is None and include_temporary:
+            pid = read_pid(str(path) + '.tmp')
         if pid is not None:
             return pid
         _pause(min(0.02, max(0, deadline - time.monotonic())))
