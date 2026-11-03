@@ -216,7 +216,34 @@ def _ps_command():
     return command
 
 
-def _session_rows(sid, groups, timeout=5):
+def read_pid(path):
+    """Read a published positive PID, or report that it is not ready yet."""
+    try:
+        pid = int(Path(path).read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
+def wait_pid(path, timeout=3):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        pid = read_pid(path)
+        if pid is not None:
+            return pid
+        _pause(min(0.02, max(0, deadline - time.monotonic())))
+    raise AssertionError('PID file did not become ready: %s' % path)
+
+
+def publish_pid(path, value):
+    """Shell fragment for one writer in a private fixture directory."""
+    temporary = shlex.quote(str(path) + '.tmp')
+    final = shlex.quote(str(path))
+    return ("printf '%s\\n' \"" + value + '" >' + temporary +
+            ' && mv ' + temporary + ' ' + final + ' || exit 1\n')
+
+
+def _session_rows(sid, groups, timeout=5, deadline=None):
     """Census membership, retaining only the session or its ledger groups.
 
     macOS ps has no numeric sid column, so getsid supplies that field. ESRCH
@@ -228,9 +255,24 @@ def _session_rows(sid, groups, timeout=5):
     Every other denial propagates, including unknown groups and the anchor.
     No command, environment, directory, uid or birth field is requested.
     """
-    output = subprocess.check_output(
-        [_ps_command(), '-U', str(os.geteuid()), '-o', 'pid=,pgid='],
-        text=True, timeout=timeout)
+    # A timeout is unconfirmed membership, never an empty census. Retry
+    # under one budget, capped by a consumer's earlier readiness deadline.
+    retry_deadline = time.monotonic() + 30
+    if deadline is not None:
+        retry_deadline = min(retry_deadline, deadline)
+    command = [_ps_command(), '-U', str(os.geteuid()), '-o', 'pid=,pgid=']
+    while True:
+        remaining = retry_deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired('fixture session census: ' + repr(command), 30)
+        try:
+            output = subprocess.check_output(
+                command, text=True, timeout=min(timeout, remaining))
+            break
+        except subprocess.TimeoutExpired:
+            if time.monotonic() >= retry_deadline:
+                raise subprocess.TimeoutExpired(
+                    'fixture session census: ' + repr(command), 30)
     rows, seen = {}, set()
     for line in output.splitlines():
         parts = line.split()
@@ -546,7 +588,7 @@ class FixtureProcess:
             if remaining <= 0:
                 raise subprocess.TimeoutExpired('fixture session census', 0)
             rows = _session_rows(self.supervisor_pid, self._groups,
-                                 timeout=min(5, remaining))
+                                 timeout=min(5, remaining), deadline=deadline)
         targets = {pid: row for pid, row in rows.items()
                    if row.sid == self.supervisor_pid}
         if not self._reaped:

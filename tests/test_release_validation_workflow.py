@@ -120,6 +120,13 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
     def test_regression_timeout_allows_full_suite_to_finish(self):
         self.assert_regression_timeout(self.workflow)
 
+    def test_regression_has_90_minutes_and_native_timeout_is_unchanged(self):
+        jobs = mapping_block(self.workflow, "jobs", 0)
+        self.assertEqual(yaml_scalar(mapping_block(jobs, "regression", 2),
+                                     "timeout-minutes", 4), 90)
+        self.assertEqual(yaml_scalar(mapping_block(jobs, "native-discovery", 2),
+                                     "timeout-minutes", 4), 15)
+
     def test_timeout_policy_requires_plain_integer_at_least_40(self):
         workflow = "jobs:\n  regression:\n    timeout-minutes: "
         for value in ("40", "45", "45 # headroom"):

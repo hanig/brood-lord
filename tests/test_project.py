@@ -31,7 +31,7 @@ sys.path.insert(0, str(SCRIPTS))
 import tickets as T  # noqa: E402
 sys.path.insert(0, str(ROOT / "tests"))
 from fixture_processes import (FixtureProcesses, FixtureSpec, JoinState, QuiescenceState,
-                               wait_readable)  # noqa: E402
+                               wait_readable, read_pid, wait_pid, publish_pid)  # noqa: E402
 
 PLAN = {"name": "p", "units": [
     {"id": "a", "kind": "slurm", "runtime": "none", "command": "true", "outputs": ["o.txt"],
@@ -3943,16 +3943,16 @@ $noisy_started = $started;
             pidfile = Path(d) / "profile-child.pid"
             bash = ("#!/bin/sh\n"
                     "%s 600 &\n"
-                    "printf '%s\\n' \"$!\" >%s\n"
+                    "%s"
                     "trap '' TERM\n"
                     "while :; do :; done\n") % (
                         shlex.quote(str(self._fixture_scope(d).sleep_command())),
-                        "%s", pidfile)
+                        publish_pid(pidfile, "$!"))
             r = self._doctor(
                 d, claude=False, overrides={"bash": bash})
             self.assertTrue(pidfile.exists(),
                             "the descendant-producing profile did not run")
-            pid = int(pidfile.read_text())
+            pid = wait_pid(pidfile)
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 try:
@@ -3973,16 +3973,16 @@ $noisy_started = $started;
             pidfile = Path(d) / "term-ignoring-child.pid"
             bash = ("#!/bin/sh\n"
                     "(trap '' TERM; while :; do :; done) &\n"
-                    "printf '%s\\n' \"$!\" >%s\n"
+                    "%s"
                     "trap 'exit 0' TERM\n"
-                    "while :; do :; done\n") % ("%s", pidfile)
+                    "while :; do :; done\n") % publish_pid(pidfile, "$!")
             start = time.monotonic()
             r = self._doctor(
                 d, claude=False, overrides={"bash": bash})
             elapsed = time.monotonic() - start
             self.assertTrue(pidfile.exists(),
                             "the TERM-ignoring group child did not run")
-            pid = int(pidfile.read_text())
+            pid = wait_pid(pidfile)
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 try:
@@ -4009,8 +4009,8 @@ $noisy_started = $started;
             script.write_text(
                 "#!/bin/sh\n"
                 "(trap '' HUP INT TERM; while :; do :; done) &\n"
-                "printf '%s' \"$!\" >" + str(child_file) + "\n"
-                "printf '%s' \"$$\" >" + str(leader_file) + "\n"
+                + publish_pid(child_file, "$!")
+                + publish_pid(leader_file, "$$") +
                 "trap 'exit 0' TERM\n"
                 "while :; do :; done\n")
             script.write_text(self._fixture_scope(d).shell_script(
@@ -4022,9 +4022,8 @@ $noisy_started = $started;
             leader = child = None
             deadline = started + 3
             while time.monotonic() < deadline:
-                if leader_file.exists() and child_file.exists():
-                    leader = int(leader_file.read_text())
-                    child = int(child_file.read_text())
+                leader, child = read_pid(leader_file), read_pid(child_file)
+                if leader is not None and child is not None:
                     state = subprocess.run(
                         ["ps", "-o", "stat=", "-p", str(leader)],
                         capture_output=True, text=True).stdout.strip()
@@ -4064,8 +4063,8 @@ $noisy_started = $started;
                     "#!/bin/sh\n"
                     "trap '' HUP INT TERM\n"
                     "(trap '' HUP INT TERM; while :; do :; done) &\n"
-                    "printf '%s' \"$!\" >" + str(child_file) + "\n"
-                    "printf '%s' \"$$\" >" + str(leader_file) + "\n"
+                    + publish_pid(child_file, "$!")
+                    + publish_pid(leader_file, "$$") +
                     "while :; do :; done\n")
                 script.write_text(self._fixture_scope(d).shell_script(
                     script.read_text()))
@@ -4075,9 +4074,8 @@ $noisy_started = $started;
                 leader = child = None
                 deadline = time.monotonic() + 3
                 while time.monotonic() < deadline:
-                    if leader_file.exists() and child_file.exists():
-                        leader = int(leader_file.read_text())
-                        child = int(child_file.read_text())
+                    leader, child = read_pid(leader_file), read_pid(child_file)
+                    if leader is not None and child is not None:
                         break
                     time.sleep(0.02)
                 else:
@@ -4253,7 +4251,7 @@ $noisy_started = $started;
             # even a failed product assertion or PID read cannot leave it.
             def contain_escape():
                 if pidfile.exists():
-                    pid = int(pidfile.read_text())
+                    pid = wait_pid(pidfile)
                     try:
                         if os.getsid(pid) == pid:
                             os.kill(pid, signal.SIGKILL)
@@ -4261,8 +4259,10 @@ $noisy_started = $started;
                         pass
             self.addCleanup(contain_escape)
             code = ("use POSIX qw(setsid); setsid(); "
-                    "open(my $f, q(>), q(%s)) or die $!; "
-                    "print $f $$; close $f; sleep 600") % pidfile
+                    "open(my $f, q(>), q(%s.tmp)) or die $!; "
+                    "print $f $$; close $f or die $!; "
+                    "rename(q(%s.tmp), q(%s)) or die $!; sleep 600") % (
+                        pidfile, pidfile, pidfile)
             bash = ("#!/bin/sh\n"
                     "perl -e '%s' &\n"
                     "trap 'exit 0' TERM\n"
@@ -4272,7 +4272,7 @@ $noisy_started = $started;
                 d, claude=False, overrides={"bash": bash})
             elapsed = time.monotonic() - start
             self.assertTrue(pidfile.exists(), "the setsid child did not run")
-            pid = int(pidfile.read_text())
+            pid = wait_pid(pidfile)
             try:
                 os.kill(pid, 0)
             except ProcessLookupError:
