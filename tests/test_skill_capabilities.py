@@ -217,7 +217,10 @@ class TestSkillCapabilities(unittest.TestCase):
 
     def test_authored_skills_state_their_host_safe_boundaries(self):
         expected = {
-            "hanig-debrief": "debrief extraction, drafting and filing programs are not yet shipped",
+            "hanig-debrief": (
+                "Drafting is offline; only debrief_file.py reaches the network, "
+                "after one named approval of the exact packet."
+            ),
             "hanig-orchestrate": "Host capability boundary",
             "hanig-project": (
                 "Use linear_sync.py with the current session's authorized tracker access; "
