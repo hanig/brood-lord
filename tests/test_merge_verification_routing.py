@@ -104,6 +104,20 @@ class TestMergeVerificationRouting(unittest.TestCase):
         with self.subTest(evidence="ledger"):
             self.assertEqual(list((self.f.state_dir / "remote-verifications").glob("*.json")), [])
 
+    def test_local_loss_retry_uses_fresh_workdir(self):
+        directories = []
+        def observe(*args, **kwargs):
+            directories.append(kwargs.get("cwd", args[2] if len(args) > 2 else None))
+            return RV.incomplete("coordinator launcher unavailable")
+        with mock.patch.object(V, "_observe_execution", side_effect=observe):
+            self.assertEqual(self.invoke(), 1)
+            self.assertEqual(self.invoke(), 1)
+            self.assertEqual(self.invoke(), 1)
+        self.assertEqual(len(directories), 2)
+        self.assertNotEqual(*directories)
+        self.assertTrue(all(not Path(p).exists() for p in directories))
+        self.assertIn("INCONCLUSIVE retry exhausted", self.diagnostic)
+
     def test_absent_policy_uses_local_seams(self):
         self.assertEqual(self.invoke(), 0, self.diagnostic)
         self.assert_local_seams()
