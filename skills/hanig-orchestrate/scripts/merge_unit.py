@@ -1130,7 +1130,7 @@ def verification_retry_guard(args, repo, snapshot):
     """
     binding, target = snapshot["binding"], snapshot["target"]
     runner = execution_runner(args.state_dir, repo)
-    basis, error = V.integration_basis(runner, repo, binding["head"], target)
+    basis, error = V.candidate_merge_basis(runner, repo, binding["head"], target)
     if error:
         raise Refusal(error)
     policies = {}
