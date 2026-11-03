@@ -511,6 +511,22 @@ class TestExtract(unittest.TestCase):
       scan.return_value.__enter__.return_value = [types.SimpleNamespace(name='\udcff')]
       self.eq(self.collect()['omissions'][0]['locator'], '.')
 
+  def test_reserved_memory_keeps_independent_project_observations(self):
+    for name in ('evidence.md', 'SUMMARY.md', 'PLAN.md'):
+      for prefix in ('', '---\nname: "\\uD800"\n---\n',
+                     '---\nname: valid\nunknown: invalid\n---\n'):
+        with self.subTest(name=name, prefix=prefix):
+          raw = prefix + 'STOP\n| D-1 | decide |\n'
+          path = self.put(name, raw)
+          got = self.collect('memory')
+          adapter = 'decision' if name == 'PLAN.md' else 'marker:STOP'
+          self.eq(len(self.records(got, adapter)), 1)
+          self.false(any(r['adapter']['name'].startswith('memory:')
+                         for r in got['evidence'].values()))
+          self.true(any('unsupported' in o['reason'] for o in got['omissions']))
+          self.eq(path.read_text(), raw)
+          path.unlink()
+
   def test_e_review_surrogate_owner(self):
     # Synthetic directory entry: portable even on filesystems refusing these bytes.
     with mock.patch.object(X.os, 'scandir') as scan:

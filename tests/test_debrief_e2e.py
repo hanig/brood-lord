@@ -54,8 +54,16 @@ class TestDebriefE2E(unittest.TestCase):
             packet = P.load_packet(work / 'packet.json')
             self.assertEqual(len(packet['learnings']), 1)
             title, body = P.render(packet)
-            cli('debrief_file.py', 'approve', '--workdir', str(work),
+            # Exit 1 means APPROVED/pending; only confirmed FILED returns 0.
+            approved = cli('debrief_file.py', 'approve', '--workdir', str(work),
                 '--digest', P.approval_digest(packet, title), '--approver', 'fixture owner', code=1)
+            self.assertEqual(json.loads(approved), dict(status='APPROVED', number=None))
+            frozen = json.loads((work / 'filing.json').read_text())
+            self.assertEqual(frozen['status'], 'APPROVED')
+            self.assertEqual(frozen['packet'], packet)
+            self.assertEqual(frozen['approval']['digest'], P.approval_digest(packet, title))
+            self.assertEqual(frozen['approval']['approver'], 'fixture owner')
+            self.assertFalse((binary / 'calls').exists())
             issue = dict(number=41, title=title, body=body,
                          labels=[{'name': 'debrief'}], state='open')
             (binary / 'steps').write_text(json.dumps([

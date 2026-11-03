@@ -273,8 +273,17 @@ def collect(roots, budgets=None):
         _need(not (type(plan) is not dict or type(plan.get('units')) is not list))
         rows = [('plan', {'json_pointer': '/units'}, None, None)]
       else:
+        try:
+          observations = _text_rows(name, role, text)
+        except ValueError:
+          if role != 'memory' or name not in ('evidence.md', 'SUMMARY.md', 'PLAN.md'):
+            raise
+          # Refuse the entire memory observation, while retaining the independent
+          # filename adapter's observations from the same already-read bytes.
+          omit(label, loc, 'unsupported: memory format')
+          observations = _text_rows(name, 'project', text)
         rows = [(a, {'line_range': [s, e]}, uid, aid)
-  for a, s, e in _text_rows(name, role, text)]
+  for a, s, e in observations]
     if not rows:
       omit(label, loc, 'skipped: no matching observations')
       return
