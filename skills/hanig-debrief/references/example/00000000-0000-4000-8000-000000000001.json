@@ -1,0 +1,17 @@
+{
+  "schema_version": "debrief_triage.v1",
+  "packet_id": "00000000-0000-4000-8000-000000000001",
+  "packet_digest": "2359333723dd4b6139333ef110514ef0b59825d50c6fb161aa3be65c703bebdc",
+  "issue": {
+    "repository": "hanig/brood-lord",
+    "number": 1
+  },
+  "dispositions": {
+    "L01": {
+      "disposition": "accept",
+      "unit_refs": [
+        "synthetic-repair"
+      ]
+    }
+  }
+}
