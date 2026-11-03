@@ -51,7 +51,7 @@ def write_json(path, value):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ('collect', 'review', 'reproduce', 'classify', 'compile', 'show', 'recount'):
+    for name in ('collect', 'review', 'reproduce', 'classify', 'compile', 'show', 'recount', 'upgrade', 'downgrade'):
         cmd = sub.add_parser(name)
         cmd.add_argument('--workdir', required=True)
         if name == 'collect':
@@ -86,6 +86,10 @@ def main(argv=None):
             dossier.update(schema_version=S.DOSSIER_SCHEMA, candidates=[])
         else:
             dossier = P.load_dossier(dossier_path, catalog)
+        if args.command == 'downgrade':
+            raise S.SchemaError('downgrade: refused; v1 is frozen')
+        if args.command == 'upgrade':
+            dossier['schema_version'] = S.DOSSIER_SCHEMA
         if args.command == 'review':
             C.record_review(dossier, args.candidate, args.disposition,
                             Path(args.rationale_file).read_text(encoding='utf-8'), catalog)
@@ -95,7 +99,8 @@ def main(argv=None):
                                   Path(args.probe_file).read_text(encoding='utf-8'),
                                   Path(args.observed_file).read_text(encoding='utf-8'), catalog)
         elif args.command == 'classify':
-            dossier['candidates'] = C.group(dossier['candidates'], dossier['cohorts'], catalog)
+            dossier['candidates'] = C.group(dossier['candidates'], dossier['cohorts'], catalog,
+                                             schema=dossier['schema_version'])
             registry = S.load_json(BUNDLE / 'coverage.json')
             for candidate in dossier['candidates']:
                 if candidate['coverage_disposition'] not in ('extends', 'conflicts'):
@@ -119,7 +124,7 @@ def main(argv=None):
                 ]), ensure_ascii=True, indent=2))
             else:
                 print('recount valid')
-        if args.command in ('collect', 'review', 'reproduce', 'classify'):
+        if args.command in ('collect', 'review', 'reproduce', 'classify', 'upgrade'):
             P.validate_dossier(dossier, catalog)
             write_json(dossier_path, dossier)
     except (OSError, ValueError, RecursionError) as exc:

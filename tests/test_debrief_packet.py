@@ -213,7 +213,7 @@ class TestDebriefPacket(unittest.TestCase):
     e = ("evidence", "E001")
     h = ("cohorts", "C001")
     self.bad(self.d, P.validate_dossier, [
-      (("schema_version",), "debrief_dossier.v2"), (c + ("status",), "SELECTED"),
+      (("schema_version",), "debrief_dossier.v3"), (c + ("status",), "SELECTED"),
       (c + ("basis",), "approved"), (c + ("coverage_disposition",), "maybe"),
       (c + ("catalog_entry",), None), (c + ("evidence_refs",), [None]),
       (c + ("evidence_refs",), ["E999"]), (c + ("evidence_refs",), "E001"),
@@ -258,7 +258,7 @@ class TestDebriefPacket(unittest.TestCase):
   def test_packet_grammar(self):
     l = ("learnings", 0)
     self.bad(self.p, P.validate_packet, [
-      (("schema_version",), "debrief_packet.v2"), (("project",), "private"),
+      (("schema_version",), "debrief_packet.v3"), (("project",), "private"),
       (("catalog_version",), 2), (("packet_id",), "00000000-0000-1000-8000-000000000000"),
       (("packet_id",), self.p["packet_id"].upper()),
       (("learnings",), []), (("learnings",), {}),
@@ -349,7 +349,7 @@ class TestDebriefPacket(unittest.TestCase):
   def test_parser_refuses_alternate_scalar_encodings(self):
     self.p["learnings"][0]["counts"][0]["numerator"] = 0
     _, body = P.render(self.p)
-    for old, new in (("debrief_packet.v1", r"debrief_packet.v\u0031"),
+    for old, new in (("debrief_packet.v2", r"debrief_packet.v\u0032"),
       ("project A", r"project\u0020A"),
       ('"id":', r'"\u0069d":'),
       ('"numerator": 0', '"numerator": -0')):

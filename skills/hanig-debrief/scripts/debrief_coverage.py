@@ -1,4 +1,4 @@
-"""Private dossier v1 edits. IDs are zero-based candidate positions.
+"""Private versioned dossier edits. IDs are zero-based candidate positions.
 group returns copies and adds union cohorts. classify takes installed marker
 contents via provenance=dossier['provenance']. Review and reproduction records
 are explicit operator edits, not authentication.
@@ -13,13 +13,14 @@ import debrief_packet as P
 import debrief_schema as S
 
 
-def group(candidates, cohorts=None, catalog=None):
+def group(candidates, cohorts=None, catalog=None, *, schema=S.DOSSIER_SCHEMA):
   """Group exact count pairs; preserve excluded observations and recount."""
   catalog, entries = P._cat(catalog)
   S.need(type(candidates) is list, 'candidates', 'expected list')
+  _, cid, limit = S.identifier_grammar(schema, "dossier")
   source = {} if cohorts is None else cohorts
   # Validate cohort membership independently of possibly stale count totals.
-  P.validate_dossier(dict(schema_version=S.DOSSIER_SCHEMA, evidence={},
+  P.validate_dossier(dict(schema_version=schema, evidence={},
     cohorts=source, candidates=[], omissions=[], provenance={}), catalog)
   pending = copy.deepcopy(source)
   groups, index = [], {}
@@ -75,12 +76,12 @@ def group(candidates, cohorts=None, catalog=None):
       cohort = dict(population=population, members=sorted(members), qualifying=sorted(qualifying))
       ref = next((r for r, v in pending.items() if v == cohort), None)
       if ref is None:
-        ref = next(('C%03d' % i for i in range(1, 1000) if 'C%03d' % i not in pending), None)
+        ref = next(('C%03d' % i for i in range(1, limit + 1) if 'C%03d' % i not in pending), None)
         S.need(ref is not None, 'cohorts', 'cohort ids exhausted')
         pending[ref] = cohort
       merged['counts'].append(dict(measure=measure, population=population,
         scope=S.COUNT_SCOPE, numerator=len(qualifying), denominator=len(members), cohort_ref=ref))
-    P._counts(merged['counts'], entries.get(merged['catalog_entry']), 'counts', pending)
+    P._counts(merged['counts'], entries.get(merged['catalog_entry']), 'counts', pending, pattern=cid)
     result.append(merged)
   if cohorts is not None:
     cohorts.update(pending)
@@ -183,7 +184,8 @@ def select(dossier, catalog=None):
 def record_reproduction(dossier, candidate_id, receipt_ref, tested_version, probe, observed, catalog=None):
   """Attach a cited receipt; recording is explicit, never an extraction side effect."""
   candidate = _candidate(dossier, candidate_id, catalog)
-  S.match(receipt_ref, S.EVIDENCE_ID, 'receipt_ref')
+  eid, _, _ = S.identifier_grammar(dossier['schema_version'], 'dossier')
+  S.match(receipt_ref, eid, 'receipt_ref')
   S.need(receipt_ref in dossier['evidence'], 'receipt_ref', 'unresolved evidence record')
   for key, value in (('tested_version', tested_version), ('probe', probe), ('observed', observed)):
     S.text(value, key)

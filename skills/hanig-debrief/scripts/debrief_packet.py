@@ -21,15 +21,15 @@ def _cat(catalog):
   catalog = S.load_catalog() if catalog is None else S.validate_catalog(catalog)
   return catalog, {entry["id"]: entry for entry in catalog["entries"]}
 
-def _refs(refs, at, evidence=None, nonempty=False):
+def _refs(refs, at, evidence=None, nonempty=False, pattern=S.EVIDENCE_ID):
   _list(refs, at)
   S.need(not nonempty or bool(refs), at, "expected evidence references")
   for ref in refs:
-    S.match(ref, S.EVIDENCE_ID, at)
+    S.match(ref, pattern, at)
     if evidence is not None:
       S.need(ref in evidence, at, "dangling evidence reference")
 
-def _counts(counts, entry, at, cohorts=None, unique_measures=True):
+def _counts(counts, entry, at, cohorts=None, unique_measures=True, pattern=S.COHORT_ID):
   _list(counts, at)
   measures = set()
   for c in counts:
@@ -48,7 +48,7 @@ def _counts(counts, entry, at, cohorts=None, unique_measures=True):
       _int(c[key], at + "." + key)
     S.need(0 <= c["numerator"] <= c["denominator"] <= S.MAX_DENOMINATOR
       and c["denominator"] >= 1, at, "invalid count bounds")
-    S.match(c["cohort_ref"], S.COHORT_ID, at + ".cohort_ref")
+    S.match(c["cohort_ref"], pattern, at + ".cohort_ref")
     if cohorts is not None:
       S.need(c["cohort_ref"] in cohorts, at, "dangling cohort reference")
       group = cohorts[c["cohort_ref"]]
@@ -68,11 +68,11 @@ def validate_dossier(v, catalog=None):
   _, entries = _cat(catalog)
   S.obj(v, ("schema_version", "evidence", "cohorts", "candidates",
     "omissions", "provenance"), "dossier")
-  _enum(v["schema_version"], (S.DOSSIER_SCHEMA,), "dossier.schema_version")
+  eid, cid, _ = S.identifier_grammar(v["schema_version"], "dossier")
   evidence, cohorts = v["evidence"], v["cohorts"]
   S.need(type(evidence) is dict, "evidence", "expected object")
   for ref, rec in evidence.items():
-    S.match(ref, S.EVIDENCE_ID, "evidence")
+    S.match(ref, eid, "evidence")
     S.obj(rec, ("source_root", "locator", "sha256", "location", "unit_id",
       "attempt_id", "adapter", "status"), ref)
     S.text(rec["source_root"], ref + ".source_root")
@@ -102,7 +102,7 @@ def validate_dossier(v, catalog=None):
         ref, "invalid JSON pointer")
   S.need(type(cohorts) is dict, "cohorts", "expected object")
   for ref, group in cohorts.items():
-    S.match(ref, S.COHORT_ID, "cohorts")
+    S.match(ref, cid, "cohorts")
     S.obj(group, ("population", "members", "qualifying"), ref)
     _enum(group["population"], S.POPULATIONS, ref + ".population")
     for key in ("members", "qualifying"):
@@ -126,14 +126,14 @@ def validate_dossier(v, catalog=None):
     if entry_id is not None:
       S.match(entry_id, S.CATALOG_ID, "candidate.catalog_entry")
       S.need(entry_id in entries, "candidate.catalog_entry", "unknown catalog entry")
-    _refs(cand["evidence_refs"], "candidate.evidence_refs", evidence)
+    _refs(cand["evidence_refs"], "candidate.evidence_refs", evidence, pattern=eid)
     _counts(cand["counts"], entries.get(entry_id), "candidate.counts", cohorts,
-      unique_measures=cand["status"] == "selected")
+      unique_measures=cand["status"] == "selected", pattern=cid)
     repro = cand["reproduction"]
     if cand["basis"] == "reproduced":
       S.obj(repro, ("receipt_ref", "tested_version", "probe", "observed"),
         "candidate.reproduction")
-      _refs([repro["receipt_ref"]], "reproduction.receipt_ref", evidence)
+      _refs([repro["receipt_ref"]], "reproduction.receipt_ref", evidence, pattern=eid)
       for key in ("tested_version", "probe", "observed"):
         S.text(repro[key], "reproduction." + key)
     else:
@@ -154,7 +154,7 @@ def validate_packet(v, catalog=None):
   catalog, entries = _cat(catalog)
   S.obj(v, ("schema_version", "catalog_version", "packet_id", "project", "learnings"),
     "packet")
-  _enum(v["schema_version"], (S.PACKET_SCHEMA,), "packet.schema_version")
+  eid, cid, _ = S.identifier_grammar(v["schema_version"], "packet")
   _int(v["catalog_version"], "packet.catalog_version")
   S.need(v["catalog_version"] == catalog["version"], "packet", "catalog version mismatch")
   S.match(v["packet_id"], r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
@@ -173,13 +173,15 @@ def validate_packet(v, catalog=None):
       _str(row[key], "learning." + key)
       S.need(row[key] == entry[key], "learning." + key, "catalog tuple mismatch")
     _enum(row["mechanism_basis"], S.MECHANISM_BASES, "learning.mechanism_basis")
-    _refs(row["evidence_refs"], "learning.evidence_refs", nonempty=True)
-    _counts(row["counts"], entry, "learning.counts")
+    _refs(row["evidence_refs"], "learning.evidence_refs", nonempty=True, pattern=eid)
+    _counts(row["counts"], entry, "learning.counts", pattern=cid)
   return v
 
 def compile_packet(dossier, catalog):
   catalog, entries = _cat(catalog)
   validate_dossier(dossier, catalog)
+  S.need(dossier["schema_version"] == S.DOSSIER_SCHEMA, "compile",
+    "mixed-version: v2 packet requires v2 dossier; run upgrade first")
   learnings = []
   for cand in dossier["candidates"]:
     if cand["status"] != "selected":
@@ -191,11 +193,11 @@ def compile_packet(dossier, catalog):
       "skill": entry["skill"], "what_broke": entry["what_broke"],
       "mechanism": entry["mechanism"], "proposed_change": entry["proposed_change"],
       "mechanism_basis": cand["basis"],
-      "evidence_refs": ["E%03d" % int(ref[1:]) for ref in cand["evidence_refs"]],
+      "evidence_refs": list(cand["evidence_refs"]),
       "counts": [{"measure": pair["measure"], "population": pair["population"],
       "scope": S.COUNT_SCOPE, "numerator": c["numerator"],
       "denominator": c["denominator"],
-      "cohort_ref": "C%03d" % int(c["cohort_ref"][1:])}
+      "cohort_ref": c["cohort_ref"]}
       for c in cand["counts"] for pair in entry["measures"]
       if pair["measure"] == c["measure"] and
       pair["population"] == c["population"]]})
@@ -241,9 +243,12 @@ def parse_body(body, catalog=None):
 def recount(dossier, packet, catalog=None):
   validate_dossier(dossier, catalog)
   validate_packet(packet, catalog)
+  eid, cid, _ = S.identifier_grammar(dossier["schema_version"], "dossier")
+  expected = S.PACKET_V1 if dossier["schema_version"] == S.DOSSIER_V1 else S.PACKET_SCHEMA
+  S.need(packet["schema_version"] == expected, "recount", "mixed-version dossier and packet")
   _, entries = _cat(catalog)
   for row in packet["learnings"]:
-    _refs(row["evidence_refs"], "learning.evidence_refs", dossier["evidence"], True)
+    _refs(row["evidence_refs"], "learning.evidence_refs", dossier["evidence"], True, pattern=eid)
     _counts(row["counts"], entries[row["catalog_entry"]],
-      "learning.counts", dossier["cohorts"])
+      "learning.counts", dossier["cohorts"], pattern=cid)
   return packet

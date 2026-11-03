@@ -301,7 +301,7 @@ class TestDebriefFiling(unittest.TestCase):
         self.assertEqual(self.creates(), 1)
 
     def test_fresh_approval_replaces_stale_unused_receipt(self):
-        for name, value in (("RENDERER_VERSION", 2), ("PACKET_SCHEMA", "debrief_packet.v2")):
+        for name, value in (("RENDERER_VERSION", 2), ("PACKET_SCHEMA", "debrief_packet.v3")):
             with self.subTest(version=name):
                 self.work = self.root / name
                 original = self.approve()
