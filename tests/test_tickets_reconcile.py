@@ -398,6 +398,33 @@ class TestContinuationTickets(unittest.TestCase):
                             dict(issue, unit="b", continuation_of="a")]}
         self.assertTrue(any("cyclic" in p for p in T.check(plan, draft)))
 
+    def test_malformed_lineage_reports_a_problem(self):
+        plan = {"units": [{"id": "v", "outputs": ["x"]}]}
+        for parent in ([], {}, ["u"]):
+            draft = {"issues": [{"unit": "v", "continuation_of": parent}]}
+            self.assertTrue(any("invalid continuation" in p for p in T.check(plan, draft)))
+
+    def test_check_cli_preserves_numeric_identity(self):
+        plan = {"units": [{"id": uid, "outputs": ["x"]} for uid in ("u", "v")]}
+        draft = T.draft(plan)
+        draft["issues"][0]["extra"] = "NUMBER"
+        draft["issues"][1] = dict(draft["issues"][0], unit="v",
+                                  continuation_of="u", extra="DIFFERENT")
+        with tempfile.TemporaryDirectory() as tmp:
+            plan_path, draft_path = Path(tmp) / "plan.json", Path(tmp) / "tickets.json"
+            plan_path.write_text(json.dumps(plan))
+            # Exhaustive numeric spelling/type pairs: precision, exponent,
+            # integer signed zero, and a number versus a string.
+            for before, after in (("0.12345678901234567891", "0.12345678901234567892"),
+                                  ("1e999", "2e999"), ("-0", "0"), ("1", '"1"')):
+                raw = json.dumps(draft).replace('"NUMBER"', before).replace('"DIFFERENT"', after)
+                draft_path.write_text(raw)
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    rc = T.cmd_check(SimpleNamespace(plan=str(plan_path), tickets=str(draft_path)))
+                self.assertEqual(rc, 2, output.getvalue())
+                self.assertIn("invalid continuation mapping", output.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

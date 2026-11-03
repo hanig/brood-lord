@@ -112,7 +112,33 @@ RECONCILE_UNKNOWN = 4
 TERMINAL_ISSUE_STATES = frozenset(("done", "completed", "cancelled", "canceled"))
 
 
-def read_json(path, expected_type=dict):
+class _JsonNumber:
+    """A decoder-validated numeric token, retaining its exact spelling."""
+
+    def __init__(self, text):
+        self.text = text
+
+    def __str__(self):
+        return self.text
+
+
+def _exact_json(value):
+    """Serialize JSON values without rounding numeric tokens or stringifying them.
+
+    Object member order is immaterial; scalar types and numeric spellings are
+    kept distinct. Only the JSON decoder constructs _JsonNumber instances.
+    """
+    if isinstance(value, _JsonNumber):
+        return str(value)
+    if isinstance(value, dict):
+        return "{" + ",".join(json.dumps(k) + ":" + _exact_json(value[k])
+                              for k in sorted(value)) + "}"
+    if isinstance(value, list):
+        return "[" + ",".join(_exact_json(v) for v in value) + "]"
+    return json.dumps(value, ensure_ascii=True)
+
+
+def read_json(path, expected_type=dict, exact_numbers=False):
     """Read an object by default; issue-list read-backs explicitly need a list."""
     try:
         text = Path(path).read_text()
@@ -121,7 +147,8 @@ def read_json(path, expected_type=dict):
     except (OSError, ValueError) as e:
         return None, str(e)
     try:
-        value = json.loads(text)
+        value = (json.loads(text, parse_int=_JsonNumber, parse_float=_JsonNumber)
+                 if exact_numbers else json.loads(text))
     except Exception as e:
         # Decoder failures include recursion/resource limits, not only syntax.
         # A message-less exception must still signal an unreadable input.
@@ -500,8 +527,9 @@ def _continuation_lineage(plan, issues):
         parent = issue["continuation_of"]
         prior = issues.get(parent) if isinstance(parent, str) else None
         expected = dict(prior, unit=uid, continuation_of=parent) if prior else None
-        if (uid not in units or parent not in units or expected is None
-                or json.dumps(issue, sort_keys=True) != json.dumps(expected, sort_keys=True)):
+        if (uid not in units or not isinstance(parent, str)
+                or parent not in units or expected is None
+                or _exact_json(issue) != _exact_json(expected)):
             problems.append(f"invalid continuation mapping for {uid!r}")
         else:
             parents[uid] = parent
@@ -825,7 +853,7 @@ def cmd_check(args):
     if err:
         print(f"error: no readable plan at {args.plan}: {err}", file=sys.stderr)
         return 2
-    tickets, err = read_json(args.tickets)
+    tickets, err = read_json(args.tickets, exact_numbers=True)
     if err:
         print(f"error: no readable draft at {args.tickets}: {err}. "
               f"Run `tickets.py draft` first.", file=sys.stderr)

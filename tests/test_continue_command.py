@@ -364,6 +364,32 @@ class ContinueCommandTests(unittest.TestCase):
             append.assert_not_called()
         self.assertEqual(events, ["fsync", "rename", "fsync", "rename"])
 
+    def test_draft_precision_is_preserved_and_conflicts_refuse(self):
+        draft = self.mapped_draft()
+        issue = draft["issues"][0]
+        issue["precise"] = "NUMBER"
+        successor = dict(issue, unit="new", continuation_of="old", precise="DIFFERENT")
+        draft["issues"].append(successor)
+        raw = json.dumps(draft).replace('"NUMBER"', '0.12345678901234567891')
+        raw = raw.replace('"DIFFERENT"', '0.12345678901234567892')
+        self.draft_path.write_text(raw)
+        self.assert_refusal("new", "--tickets", str(self.draft_path))
+        draft["issues"].pop()
+        raw = json.dumps(draft).replace('"NUMBER"', '0.12345678901234567891')
+        self.draft_path.write_text(raw)
+        self.result_unit(self.continuation("--write", "--tickets", str(self.draft_path)))
+        precise = json.loads(self.draft_path.read_text(), parse_float=str)
+        self.assertEqual([i["precise"] for i in precise["issues"]],
+                         ["0.12345678901234567891"] * 2)
+
+    def test_malformed_draft_shapes_are_caught_without_writes(self):
+        self.mapped_draft()
+        for malformed in ([], {"issues": [[]]}):
+            self.draft_path.write_text(json.dumps(malformed))
+            self.assert_refusal("cannot continue", "--tickets", str(self.draft_path))
+            result = self.continuation("--write", "--tickets", str(self.draft_path))
+            self.assertNotIn("Traceback", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

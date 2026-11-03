@@ -22,6 +22,32 @@ import unit as U
 from swarm_types import PlanError
 
 
+class _JsonNumber:
+    """A decoder-validated numeric token, retaining its exact spelling."""
+
+    def __init__(self, text):
+        self.text = text
+
+    def __str__(self):
+        return self.text
+
+
+def _exact_json(value):
+    """Serialize JSON values without rounding numeric tokens or stringifying them.
+
+    Object member order is immaterial; scalar types and numeric spellings are
+    kept distinct. Only the JSON decoder constructs _JsonNumber instances.
+    """
+    if isinstance(value, _JsonNumber):
+        return str(value)
+    if isinstance(value, dict):
+        return "{" + ",".join(json.dumps(k) + ":" + _exact_json(value[k])
+                              for k in sorted(value)) + "}"
+    if isinstance(value, list):
+        return "[" + ",".join(_exact_json(v) for v in value) + "]"
+    return json.dumps(value, ensure_ascii=True)
+
+
 def _remote_head(repo, raw, remote, ref):
     SPR.declared_seed({"id": "continue", "kind": "code", "seed": {
         "ref": ref, "base": "0" * 40, "head": "0" * 40}})
@@ -118,7 +144,8 @@ def _append(path, before, plan, mode):
         with tempfile.NamedTemporaryFile(dir=str(path.parent), delete=False) as out:
             temp = out.name
             os.fchmod(out.fileno(), stat.S_IMODE(mode))
-            out.write((json.dumps(plan, indent=2, ensure_ascii=True) + "\n").encode("utf-8"))
+            out.write(plan if isinstance(plan, bytes) else
+                      (json.dumps(plan, indent=2, ensure_ascii=True) + "\n").encode("utf-8"))
             out.flush()
             os.fsync(out.fileno())
         if path.read_bytes() != before:
@@ -162,8 +189,8 @@ def _ticket_entry(draft, predecessor, successor):
     entry.update(unit=successor, continuation_of=predecessor)
     existing = [i for i in issues if i.get("unit") == successor]
     # Compare serialized values, preserving JSON type distinctions (True != 1).
-    if existing and (len(existing) != 1 or json.dumps(existing[0], sort_keys=True)
-                     != json.dumps(entry, sort_keys=True)):
+    if existing and (len(existing) != 1 or _exact_json(existing[0])
+                     != _exact_json(entry)):
         raise PlanError(f"tickets successor {successor!r} differs from expected entry")
     if not existing:
         issues.append(entry)
@@ -187,7 +214,8 @@ def continue_plan(args, validate):
             if draft_path is not None:
                 draft_stream = stack.enter_context(_plan_file(draft_path, args.write))
                 draft_before = draft_stream.read()
-                draft = json.loads(draft_before)
+                draft = json.loads(draft_before, parse_int=_JsonNumber,
+                                   parse_float=_JsonNumber)
                 draft_changed = _ticket_entry(draft, args.unit, args.new_id)
             state_dir, _, _ = CP.resolve_paths(args.state_dir, plan=plan)
             state, error = U.read_json(state_dir / SS.STATE_FILE)
@@ -214,7 +242,8 @@ def continue_plan(args, validate):
                 if plan != json.loads(before):
                     _append(path, before, plan, os.fstat(stream.fileno()).st_mode)
                 if draft_changed:
-                    _append(draft_path, draft_before, draft,
+                    _append(draft_path, draft_before,
+                            (_exact_json(draft) + "\n").encode("utf-8"),
                             os.fstat(draft_stream.fileno()).st_mode)
         print(json.dumps(new, indent=2, ensure_ascii=True))
         return 0
