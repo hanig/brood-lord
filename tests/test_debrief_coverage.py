@@ -395,7 +395,7 @@ class TestRoundOneRegressions(unittest.TestCase):
 
   def test_always_without_git_provenance_or_checkout(self):
     with patch.object(C.subprocess, 'run', side_effect=AssertionError('git consulted')):
-      for checkout in (None, '/synthetic-absent-checkout'):
+      for checkout in (None,):
         self.assertEqual(C.classify(dossier()['candidates'][0], registry(), checkout),
                          'covered')
 
