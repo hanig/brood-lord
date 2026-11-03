@@ -112,9 +112,7 @@ RECONCILE_UNKNOWN = 4
 TERMINAL_ISSUE_STATES = frozenset(("done", "completed", "cancelled", "canceled"))
 
 
-class _JsonNumber:
-    """A decoder-validated numeric token, retaining its exact spelling."""
-
+class _Number:
     def __init__(self, text):
         self.text = text
 
@@ -123,19 +121,20 @@ class _JsonNumber:
 
 
 def _exact_json(value):
-    """Serialize JSON values without rounding numeric tokens or stringifying them.
-
-    Object member order is immaterial; scalar types and numeric spellings are
-    kept distinct. Only the JSON decoder constructs _JsonNumber instances.
-    """
-    if isinstance(value, _JsonNumber):
-        return str(value)
-    if isinstance(value, dict):
-        return "{" + ",".join(json.dumps(k) + ":" + _exact_json(value[k])
-                              for k in sorted(value)) + "}"
-    if isinstance(value, list):
-        return "[" + ",".join(_exact_json(v) for v in value) + "]"
-    return json.dumps(value, ensure_ascii=True)
+    pending, tokens = [value], []
+    while pending:
+        item = pending.pop()
+        if isinstance(item, dict):
+            tokens.append(("object", len(item)))
+            for key in sorted(item, reverse=True):
+                pending.extend((item[key], key))
+        elif isinstance(item, list):
+            tokens.append(("array", len(item)))
+            pending.extend(reversed(item))
+        else:
+            tokens.append((type(item).__name__, str(item) if isinstance(item, _Number)
+                           else json.dumps(item, ensure_ascii=True)))
+    return tokens
 
 
 def read_json(path, expected_type=dict, exact_numbers=False):
@@ -147,7 +146,7 @@ def read_json(path, expected_type=dict, exact_numbers=False):
     except (OSError, ValueError) as e:
         return None, str(e)
     try:
-        value = (json.loads(text, parse_int=_JsonNumber, parse_float=_JsonNumber)
+        value = (json.loads(text, parse_int=_Number, parse_float=_Number)
                  if exact_numbers else json.loads(text))
     except Exception as e:
         # Decoder failures include recursion/resource limits, not only syntax.
@@ -518,7 +517,6 @@ def draft(plan, brief=None, existing=None, autopilot=False, readback=None, repos
 
 
 def _continuation_lineage(plan, issues):
-    """Return only exact copied mappings with an acyclic, in-plan lineage."""
     units = {u["id"]: u for u in plan.get("units", [])}
     parents, problems = {}, []
     for uid, issue in issues.items():
@@ -545,12 +543,13 @@ def _continuation_lineage(plan, issues):
 
 
 def _repointed_needs(current, recorded, parents):
-    """Compare each exact dependency to its explicitly declared ancestors."""
     if not isinstance(current, list) or not isinstance(recorded, list):
         return False
     if len(current) != len(recorded):
         return False
     for now, before in zip(current, recorded):
+        if not isinstance(now, str) or not isinstance(before, str):
+            return False
         while now != before and now in parents:
             now = parents[now]
         if now != before:
@@ -586,9 +585,6 @@ def check(plan, tickets):
         if issue is None:
             continue
         recorded = issue.get("unit_digest")
-        # A continuation deliberately keeps the predecessor's issue body and
-        # digest. Check its inherited predicate fields; the root's digest is
-        # still checked below, so aliases cannot hide original-unit drift.
         parent = parents.get(u["id"])
         if parent is not None:
             prior = units[parent]
@@ -601,8 +597,6 @@ def check(plan, tickets):
         digest_unit = u
         if (u.get("needs") != issue.get("blocked_by")
                 and _repointed_needs(u.get("needs"), issue.get("blocked_by"), parents)):
-            # Reconstruct the issue's declared dependency spelling only after
-            # checking every edge against the explicit continuation relation.
             digest_unit = dict(u, needs=issue["blocked_by"])
         if not recorded:
             # A missing digest is NOT a pass. An issue written before digests

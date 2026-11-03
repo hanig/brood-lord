@@ -22,32 +22,6 @@ import unit as U
 from swarm_types import PlanError
 
 
-class _JsonNumber:
-    """A decoder-validated numeric token, retaining its exact spelling."""
-
-    def __init__(self, text):
-        self.text = text
-
-    def __str__(self):
-        return self.text
-
-
-def _exact_json(value):
-    """Serialize JSON values without rounding numeric tokens or stringifying them.
-
-    Object member order is immaterial; scalar types and numeric spellings are
-    kept distinct. Only the JSON decoder constructs _JsonNumber instances.
-    """
-    if isinstance(value, _JsonNumber):
-        return str(value)
-    if isinstance(value, dict):
-        return "{" + ",".join(json.dumps(k) + ":" + _exact_json(value[k])
-                              for k in sorted(value)) + "}"
-    if isinstance(value, list):
-        return "[" + ",".join(_exact_json(v) for v in value) + "]"
-    return json.dumps(value, ensure_ascii=True)
-
-
 def _remote_head(repo, raw, remote, ref):
     SPR.declared_seed({"id": "continue", "kind": "code", "seed": {
         "ref": ref, "base": "0" * 40, "head": "0" * 40}})
@@ -59,7 +33,7 @@ def _remote_head(repo, raw, remote, ref):
     return head
 
 
-def _continuation(plan, state, args):
+def _continuation(plan, state, args, published=None):
     units = plan.get("units")
     if not isinstance(units, list):
         raise PlanError("plan units must be a JSON list")
@@ -113,6 +87,14 @@ def _continuation(plan, state, args):
     if rc:
         raise PlanError("target/head ancestry check failed: " + err)
     seed["base"] = base
+    if published is not None:
+        frozen = SPR.declared_seed(published)
+        seed.update(head=frozen["head"], base=frozen["base"])
+        for check in (seed, dict(seed, base=recorded_base),
+                      {"ref": target["target_ref"], "base": seed["base"], "head": seed["base"]}):
+            problem = SP._seed_reachability_problem(check, repo, raw, remote)
+            if problem:
+                raise PlanError(problem)
     new = copy.deepcopy(old)
     new.update(id=args.new_id, seed=seed, description="Continuation of " + args.unit,
                author_history=SA.collect_author_history(old, us),
@@ -157,13 +139,13 @@ def _append(path, before, plan, mode):
             os.unlink(temp)
 
 
-def _repoint(plan, state, predecessor, successor):
+def _repoint(plan, state, old, new):
     dependents = []
     for unit in plan["units"]:
         needs = unit.get("needs", [])
         if not isinstance(needs, list):
             raise PlanError(f"unit {unit['id']!r} needs must be a JSON list")
-        if predecessor in needs:
+        if old in needs:
             dependents.append(unit)
     started = []
     for unit in dependents:
@@ -174,27 +156,73 @@ def _repoint(plan, state, predecessor, successor):
     if started:
         raise PlanError("dependents have recorded attempts: " + ", ".join(started))
     for unit in dependents:
-        unit["needs"] = [successor if need == predecessor else need
+        unit["needs"] = [new if need == old else need
                          for need in unit["needs"]]
 
 
-def _ticket_entry(draft, predecessor, successor):
-    issues = draft.get("issues")
-    if not isinstance(issues, list):
+def _parts(text):
+    decoder = json.JSONDecoder()
+    value = decoder.decode(text)
+    if not isinstance(value, (dict, list)):
+        raise PlanError("tickets entries must be objects; issues must be a list")
+    fields = {} if isinstance(value, dict) else []
+    pos = len(text) - len(text.lstrip()) + 1
+    while True:
+        pos += len(text[pos:]) - len(text[pos:].lstrip())
+        if text[pos] in "}]":
+            return fields, pos
+        if isinstance(fields, dict):
+            key, pos = decoder.raw_decode(text, pos)
+            if key in fields:
+                raise PlanError("duplicate tickets field: " + key)
+            pos = text.index(":", pos) + 1
+            pos += len(text[pos:]) - len(text[pos:].lstrip())
+        start = pos
+        _, pos = decoder.raw_decode(text, pos)
+        if isinstance(fields, dict):
+            fields[key] = (start, pos)
+        else:
+            fields.append((start, pos))
+        pos += len(text[pos:]) - len(text[pos:].lstrip())
+        if text[pos] == ",":
+            pos += 1
+
+
+def _ticket_bytes(before, old_id, new_id):
+    encoding = json.detect_encoding(before)
+    prefix = b""
+    if encoding in ("utf-16", "utf-32"):
+        size = 2 if encoding == "utf-16" else 4
+        prefix, before = before[:size], before[size:]
+        encoding += "-le" if prefix.startswith(b"\xff\xfe") else "-be"
+    text = before.decode(encoding)
+    root, _ = _parts(text)
+    if "issues" not in root:
+        raise PlanError(f"tickets predecessor {old_id!r} has no entry")
+    start, end = root["issues"]
+    entries, close = _parts(text[start:end])
+    if not isinstance(entries, list):
         raise PlanError("tickets issues must be a JSON list")
-    old = [i for i in issues if i.get("unit") == predecessor]
+    entries = [text[start+a:start+b] for a, b in entries]
+    old = [e for e in entries if json.loads(e).get("unit") == old_id]
     if len(old) != 1:
-        raise PlanError(f"tickets predecessor {predecessor!r} must have one entry")
-    entry = copy.deepcopy(old[0])
-    entry.update(unit=successor, continuation_of=predecessor)
-    existing = [i for i in issues if i.get("unit") == successor]
-    # Compare serialized values, preserving JSON type distinctions (True != 1).
-    if existing and (len(existing) != 1 or _exact_json(existing[0])
-                     != _exact_json(entry)):
-        raise PlanError(f"tickets successor {successor!r} differs from expected entry")
-    if not existing:
-        issues.append(entry)
-    return not existing
+        raise PlanError(f"tickets predecessor {old_id!r} must have one entry")
+    entry = old[0]
+    fields, end = _parts(entry)
+    changes = [(fields["unit"], json.dumps(new_id))]
+    if "continuation_of" in fields:
+        changes.append((fields["continuation_of"], json.dumps(old_id)))
+    else:
+        changes.append(((end, end), ', "continuation_of": ' + json.dumps(old_id)))
+    for (a, b), value in sorted(changes, reverse=True):
+        entry = entry[:a] + value + entry[b:]
+    existing = [e for e in entries if json.loads(e).get("unit") == new_id]
+    if existing:
+        if existing != [entry]:
+            raise PlanError(f"tickets successor {new_id!r} differs from expected entry")
+        return prefix + before
+    pos = start + close
+    return prefix + (text[:pos] + "," + entry + text[pos:]).encode(encoding)
 
 
 def continue_plan(args, validate):
@@ -214,21 +242,19 @@ def continue_plan(args, validate):
             if draft_path is not None:
                 draft_stream = stack.enter_context(_plan_file(draft_path, args.write))
                 draft_before = draft_stream.read()
-                draft = json.loads(draft_before, parse_int=_JsonNumber,
-                                   parse_float=_JsonNumber)
-                draft_changed = _ticket_entry(draft, args.unit, args.new_id)
+                draft = _ticket_bytes(draft_before, args.unit, args.new_id)
+                draft_changed = draft != draft_before
             state_dir, _, _ = CP.resolve_paths(args.state_dir, plan=plan)
             state, error = U.read_json(state_dir / SS.STATE_FILE)
             if error or not isinstance(state, dict):
                 raise PlanError(f"no readable coordinator state: {error}")
             existing = [u for u in plan["units"] if u.get("id") == args.new_id]
-            # Legacy callers retain duplicate refusal. Opt-in retries compare
-            # the complete derived unit before publishing either file.
             source = copy.deepcopy(plan)
             if tickets or repoint:
                 source["units"] = [u for u in source["units"]
                                    if u.get("id") != args.new_id]
-            new = _continuation(source, state, args)
+            new = _continuation(source, state, args,
+                                existing[0] if existing and (tickets or repoint) else None)
             if existing:
                 if len(existing) != 1 or existing[0] != new:
                     raise PlanError(f"unit {args.new_id!r} already exists and differs")
@@ -243,7 +269,7 @@ def continue_plan(args, validate):
                     _append(path, before, plan, os.fstat(stream.fileno()).st_mode)
                 if draft_changed:
                     _append(draft_path, draft_before,
-                            (_exact_json(draft) + "\n").encode("utf-8"),
+                            draft,
                             os.fstat(draft_stream.fileno()).st_mode)
         print(json.dumps(new, indent=2, ensure_ascii=True))
         return 0

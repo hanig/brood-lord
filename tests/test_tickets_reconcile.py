@@ -342,82 +342,94 @@ class TestTicketsReconcile(unittest.TestCase):
 
 
 class TestContinuationTickets(unittest.TestCase):
-    def test_check_and_stubbed_drain_consume_generated_mapping(self):
+    def test_check_and_drain_accept_mapping(self):
         from tests import test_continue_command as CC
         from tests import test_linear_drain as LD
-        fixture = CC.ContinueCommandTests()
-        fixture.setUp()
-        self.addCleanup(fixture.doCleanups)
-        fixture.unit["tracker"] = "ARC-1"
-        fixture.save()
-        draft = fixture.mapped_draft()
-        draft["project"].update(linear_id="project", slug="sample", team="ARC")
-        draft["issues"][0].update(identifier="ARC-1", linear_id="1")
-        T.sync_blocked_by(draft, {"schema_version": 1, "read_at": "fixture",
-                                 "source": "synthetic", "edges": {"old": []}})
-        fixture.draft_path.write_text(json.dumps(draft))
-        fixture.result_unit(fixture.continuation("--write", "--tickets", str(fixture.draft_path)))
-        result = subprocess.run([sys.executable, str(SCRIPTS / "tickets.py"), "check",
-                                 str(fixture.plan_path), str(fixture.draft_path)],
-                                capture_output=True, text=True, timeout=30)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        f = CC.ContinueCommandTests()
+        f.setUp()
+        self.addCleanup(f.doCleanups)
+        f.unit["tracker"] = "ARC-1"
+        f.save()
+        d = f.mapped_draft()
+        d["project"].update(linear_id="project", slug="sample", team="ARC")
+        d["issues"][0].update(identifier="ARC-1", linear_id="1")
+        T.sync_blocked_by(d, {"schema_version": 1, "read_at": "f",
+            "source": "synthetic", "edges": {"old": []}})
+        f.draft_file.write_text(json.dumps(d))
+        f.apply_tickets()
+        r = subprocess.run([sys.executable, str(SCRIPTS / "tickets.py"), "check",
+            str(f.plan_path), str(f.draft_file)],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         drain = LD.DrainCase()
         drain.setUp()
         self.addCleanup(drain.doCleanups)
-        drain.draft.write_bytes(fixture.draft_path.read_bytes())
+        drain.draft.write_bytes(f.draft_file.read_bytes())
         drain.intent(project="sample", unit="new")
         self.assertEqual(drain.drain(draft=True), 0, drain.stdout)
         self.assertEqual(len(drain.receipts()), 1)
 
-    def test_alias_does_not_hide_predicate_or_root_drift(self):
+    def test_alias_preserves_drift_checks(self):
         old = {"id": "u", "kind": "code", "prompt": "original", "outputs": ["x"]}
         new = dict(old, id="v", prompt="continue")
-        dependent = dict(old, id="d", needs=["u"])
-        plan = {"name": "fixture", "units": [old, dependent]}
-        draft = T.draft(plan)
-        draft["issues"].append(dict(draft["issues"][0], unit="v", continuation_of="u"))
-        plan["units"].append(new)
-        dependent["needs"] = ["v"]
-        self.assertEqual(T.check(plan, draft), [])
+        dep = dict(old, id="d", needs=["u"])
+        p = {"name": "f", "units": [old, dep]}
+        d = T.draft(p)
+        d["issues"].append(dict(d["issues"][0], unit="v", continuation_of="u"))
+        p["units"].append(new)
+        dep["needs"] = ["v"]
+        self.assertEqual(T.check(p, d), [])
         for target, field, value in ((old, "prompt", "drift"), (new, "outputs", ["wrong"]),
-                                     (dependent, "prompt", "drift"),
-                                     (dependent, "needs", ["u", "v"])):
-            previous = target[field]
+            (dep, "prompt", "drift"),
+            (dep, "needs", ["u", "v"])):
+            prior = target[field]
             target[field] = value
-            self.assertTrue(T.check(plan, draft), (target, field))
-            target[field] = previous
-        draft["issues"][-1]["identifier"] = "changed"
-        self.assertTrue(T.check(plan, draft))
-        draft["issues"][-1].pop("continuation_of")
-        self.assertTrue(T.check(plan, draft))
+            self.assertTrue(T.check(p, d), (target, field))
+            target[field] = prior
+        reverse = T.draft(p)
+        reverse["issues"][-1] = dict(reverse["issues"][0], unit="v", continuation_of="u")
+        self.assertEqual(T.check(p, reverse), [])
+        dep["needs"] = ["u"]
+        self.assertTrue(any("'d' has changed" in p for p in T.check(p, reverse)))
+        dep["needs"] = ["v"]
+        d["issues"][-1]["identifier"] = "changed"
+        self.assertTrue(T.check(p, d))
+        d["issues"][-1].pop("continuation_of")
+        self.assertTrue(T.check(p, d))
 
     def test_cycle_is_refused_without_looping(self):
-        plan = {"units": [{"id": uid, "outputs": ["x"]} for uid in ("a", "b")]}
-        issue = {"unit_digest": "x"}
-        draft = {"issues": [dict(issue, unit="a", continuation_of="b"),
-                            dict(issue, unit="b", continuation_of="a")]}
-        self.assertTrue(any("cyclic" in p for p in T.check(plan, draft)))
+        p = {"units": [{"id": uid, "outputs": ["x"]} for uid in ("a", "b")]}
+        i = {"unit_digest": "x"}
+        d = {"issues": [dict(i, unit="a", continuation_of="b"),
+            dict(i, unit="b", continuation_of="a")]}
+        self.assertTrue(any("cyclic" in p for p in T.check(p, d)))
 
     def test_malformed_lineage_reports_a_problem(self):
-        plan = {"units": [{"id": "v", "outputs": ["x"]}]}
+        p = {"units": [{"id": "v", "outputs": ["x"]}]}
         for parent in ([], {}, ["u"]):
-            draft = {"issues": [{"unit": "v", "continuation_of": parent}]}
-            self.assertTrue(any("invalid continuation" in p for p in T.check(plan, draft)))
+            d = {"issues": [{"unit": "v", "continuation_of": parent}]}
+            self.assertTrue(any("invalid continuation" in p for p in T.check(p, d)))
 
-    def test_check_cli_preserves_numeric_identity(self):
-        plan = {"units": [{"id": uid, "outputs": ["x"]} for uid in ("u", "v")]}
-        draft = T.draft(plan)
-        draft["issues"][0]["extra"] = "NUMBER"
-        draft["issues"][1] = dict(draft["issues"][0], unit="v",
-                                  continuation_of="u", extra="DIFFERENT")
+    def test_malformed_dependency_reports_drift(self):
+        p = {"units": [{"id": "a", "outputs": ["x"]},
+            {"id": "d", "outputs": ["x"], "needs": ["a"]}]}
+        d = T.draft(p)
+        for invalid in ({}, [], 1, None):
+            p["units"][1]["needs"] = [invalid]
+            self.assertTrue(T.check(p, d))
+
+    def test_exact_number_check(self):
+        p = {"units": [{"id": uid, "outputs": ["x"]} for uid in ("u", "v")]}
+        d = T.draft(p)
+        d["issues"][0]["extra"] = "NUMBER"
+        d["issues"][1] = dict(d["issues"][0], unit="v",
+            continuation_of="u", extra="DIFFERENT")
         with tempfile.TemporaryDirectory() as tmp:
             plan_path, draft_path = Path(tmp) / "plan.json", Path(tmp) / "tickets.json"
-            plan_path.write_text(json.dumps(plan))
-            # Exhaustive numeric spelling/type pairs: precision, exponent,
-            # integer signed zero, and a number versus a string.
+            plan_path.write_text(json.dumps(p))
             for before, after in (("0.12345678901234567891", "0.12345678901234567892"),
-                                  ("1e999", "2e999"), ("-0", "0"), ("1", '"1"')):
-                raw = json.dumps(draft).replace('"NUMBER"', before).replace('"DIFFERENT"', after)
+            ("1e999", "2e999"), ("-0", "0"), ("1", '"1"')):
+                raw = json.dumps(d).replace('"NUMBER"', before).replace('"DIFFERENT"', after)
                 draft_path.write_text(raw)
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
