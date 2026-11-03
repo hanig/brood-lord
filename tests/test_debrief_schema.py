@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "skills/hanig-debrief/scripts/debrief_schema.py"
@@ -55,6 +56,33 @@ class TestDebriefSchema(unittest.TestCase):
     for applicability in ({"always": True}, {"fixed_in": "a" * 40}, {"fixed_in": "b" * 64}):
       self.cov["entries"][0]["applicability"] = applicability
       self.assertEqual(self.load(self.cov, True), self.cov)
+
+  def test_public_pr_trailing_slash(self):
+    for suffix in ('/', '/files/', '/?diff=split#anchor'):
+      self.cov['entries'][0]['references'] = [
+        'https://github.com/hanig/brood-lord/pull/123' + suffix]
+      self.assertEqual(self.load(self.cov, True), self.cov)
+
+  def test_reference_controls_anywhere(self):
+    for code in list(range(32)) + list(range(127, 160)):
+      for template in ('docs/a{}b.md',
+          'https://github.com/hanig/brood-lord/pull/1?x=a{}b',
+          'https://github.com/hanig/brood-lord/pull/1#a{}b'):
+        with self.subTest(code=code, template=template):
+          self.cov['entries'][0]['references'] = [template.format(chr(code))]
+          self.reject(self.cov, 'references:', True)
+
+  def test_nested_json_named_error(self):
+    path = self.root / 'nested.json'
+    path.write_text('[' * 10000 + '0' + ']' * 10000)
+    with self.assertRaisesRegex(S.SchemaError, 'JSON:'):
+      S.load_json(path)
+
+  def test_unreadable_skills_root_named_error(self):
+    # Deterministic even when the test runner can bypass filesystem permissions.
+    with patch.object(Path, 'iterdir', side_effect=PermissionError('synthetic')):
+      with self.assertRaisesRegex(S.SchemaError, 'catalog.*unreadable skills root'):
+        S.validate_catalog(self.cat, self.root)
 
   def test_large_integer_error(self):
     limit = getattr(sys, "get_int_max_str_digits", lambda: 0)()

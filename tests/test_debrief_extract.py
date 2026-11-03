@@ -511,6 +511,15 @@ class TestExtract(unittest.TestCase):
       scan.return_value.__enter__.return_value = [types.SimpleNamespace(name='\udcff')]
       self.eq(self.collect()['omissions'][0]['locator'], '.')
 
+  def test_e_review_surrogate_owner(self):
+    # Synthetic directory entry: portable even on filesystems refusing these bytes.
+    with mock.patch.object(X.os, 'scandir') as scan:
+      scan.return_value.__enter__.return_value = [types.SimpleNamespace(name='\udcff')]
+      got = self.collect()
+    self.false(got['evidence'])
+    self.eq(got['omissions'][0]['locator'], '.')
+    self.true(got['omissions'][0]['reason'].startswith('unsupported'))
+
   def test_e_review_unicode(self):
     for value in (r'"\U00110000"', r'"\uD800"', r'"\U0000DFFF"'):
       self.put('lesson.md', '---\nname: ' + value + '\ndescription: desc\nmetadata:\n  type: feedback\n---\nbody')

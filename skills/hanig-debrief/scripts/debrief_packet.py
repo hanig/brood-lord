@@ -29,7 +29,7 @@ def _refs(refs, at, evidence=None, nonempty=False):
     if evidence is not None:
       S.need(ref in evidence, at, "dangling evidence reference")
 
-def _counts(counts, entry, at, cohorts=None):
+def _counts(counts, entry, at, cohorts=None, unique_measures=True):
   _list(counts, at)
   measures = set()
   for c in counts:
@@ -41,7 +41,7 @@ def _counts(counts, entry, at, cohorts=None):
     S.need(any(c["measure"] == pair["measure"] and
       c["population"] == pair["population"]
       for pair in entry["measures"]), at, "unpermitted count pair")
-    S.need(c["measure"] not in measures, at, "duplicate measure")
+    S.need(not unique_measures or c["measure"] not in measures, at, "duplicate measure")
     measures.add(c["measure"])
     _enum(c["scope"], (S.COUNT_SCOPE,), at + ".scope")
     for key in ("numerator", "denominator"):
@@ -127,7 +127,8 @@ def validate_dossier(v, catalog=None):
       S.match(entry_id, S.CATALOG_ID, "candidate.catalog_entry")
       S.need(entry_id in entries, "candidate.catalog_entry", "unknown catalog entry")
     _refs(cand["evidence_refs"], "candidate.evidence_refs", evidence)
-    _counts(cand["counts"], entries.get(entry_id), "candidate.counts", cohorts)
+    _counts(cand["counts"], entries.get(entry_id), "candidate.counts", cohorts,
+      unique_measures=cand["status"] == "selected")
     repro = cand["reproduction"]
     if cand["basis"] == "reproduced":
       S.obj(repro, ("receipt_ref", "tested_version", "probe", "observed"),
