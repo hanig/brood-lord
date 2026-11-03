@@ -1222,7 +1222,7 @@ def validate_receipt(receipt, request, index):
         raise ValueError(problem)
 
 
-def ingest(run, response):
+def ingest(run, response, loss_accounted=False):
     request = run["request"]
     if (not isinstance(response, dict) or response.get("basis") != request["basis"]
             or response.get("launch_id") != run["launch_id"]
@@ -1270,7 +1270,7 @@ def ingest(run, response):
     # Only the coordinator's complete, error-free reread after quiescence
     # accounts for missing claims. Retain the stage; do not fabricate a final
     # marker or relax cleanup's requirement for it.
-    loss_accounted = bool(response.get("loss_accounted") is True
+    loss_accounted = bool(loss_accounted
                           and not run.get("final") and not problems)
     run["reconciled"] = bool(not problems and (run.get("final") or loss_accounted) and
         isinstance(supervision, dict) and supervision.get("launch_id") == run["launch_id"])
@@ -1411,6 +1411,7 @@ def retrieve_records(run, call, save):
         if value is not MISSING:
             response[field] = value
     lifecycle = response.get('lifecycle', {})
+    loss_accounted = False
     if (not response.get('errors') and response.get('final') is None
             and request['verification_host']['executor'] == 'slurm'
             and isinstance(lifecycle, dict) and lifecycle.get('stage') == run['stage']
@@ -1418,8 +1419,8 @@ def retrieve_records(run, call, save):
             and slurm_quiescent(lifecycle, request)
             and all(state[0] in INFRASTRUCTURE_LOSS
                     for state in lifecycle['cleanup_sacct_states'].values())):
-        response['loss_accounted'] = True
-    ingest(run, response)
+        loss_accounted = True
+    ingest(run, response, loss_accounted=loss_accounted)
     save()
 
 
