@@ -108,6 +108,37 @@ class TestDebriefCLI(unittest.TestCase):
         self.cli('collect', '--root', 'project=' + str(self.project), work=linked, code=1)
         self.assertFalse((linked / 'dossier.json').exists())
 
+    def test_workdir_symlink_dotdot_preserves_requested_location(self):
+        (self.root / 'storage/deep').mkdir(parents=True)
+        (self.root / 'alias').symlink_to(self.root / 'storage/deep')
+        self.work.mkdir()
+        unrelated = self.work / 'dossier.json'
+        unrelated.write_text('unrelated')
+        requested = self.root / 'alias/../private'
+        self.cli('collect', '--root', 'project=' + str(self.project), work=requested)
+        P.load_dossier(self.root / 'storage/private/dossier.json')
+        self.assertEqual(unrelated.read_text(), 'unrelated')
+
+    def test_dossier_mode_with_owner_write_masked(self):
+        old = os.umask(0o200)
+        try:
+            self.collect()
+        finally:
+            os.umask(old)
+        self.assertEqual((self.work / 'dossier.json').stat().st_mode & 0o777, 0o600)
+
+    def test_documented_classify_command_executes(self):
+        self.collect()
+        registry = json.loads((SCRIPT.parent.parent / 'declarations.json').read_text())
+        text = next(d['normative_text'] for d in registry['declarations']
+                    if d['id'] == 'workflow.classify')
+        command = text.split('Next run ', 1)[1].split(' to group', 1)[0]
+        result = subprocess.run(['/bin/sh', '-c', command], capture_output=True,
+            text=True, env=dict(self.env, PATH=str(SCRIPT.parent) + ':/usr/bin:/bin',
+                HANIG_DEBRIEF_DIR=str(SCRIPT.parent.parent),
+                WORK=str(self.work), CHECKOUT=str(self.project)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_explicit_workdir_required(self):
         result = subprocess.run([sys.executable, str(SCRIPT), 'show'], capture_output=True)
         self.assertEqual(result.returncode, 2)
