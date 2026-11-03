@@ -16,15 +16,14 @@ BUNDLE = Path(__file__).resolve().parents[1]
 
 
 def workdir(raw):
-    logical = Path(raw)
-    if not logical.is_absolute():
-        logical = Path.cwd() / logical
-    resolved = logical.resolve()
-    for path in (logical, resolved):
-        for parent in (path,) + tuple(path.parents):
-            S.need(not os.path.lexists(str(parent / '.git')),
-                   'workdir', 'inside a Git worktree')
-    resolved.mkdir(mode=0o700, parents=True, exist_ok=True)
+    resolved = Path(raw).resolve()
+    for parent in (resolved,) + tuple(resolved.parents):
+        S.need(not os.path.lexists(str(parent / '.git')),
+               'workdir', 'inside a Git worktree')
+    for parent in reversed((resolved,) + tuple(resolved.parents)):
+        if not parent.exists():
+            parent.mkdir(mode=0o700)
+            parent.chmod(0o700)
     resolved.chmod(0o700)
     return resolved
 

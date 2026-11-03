@@ -139,6 +139,19 @@ class TestDebriefCLI(unittest.TestCase):
                 WORK=str(self.work), CHECKOUT=str(self.project)))
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_relative_workdir_leaves_repository(self):
+        subprocess.run(['git', 'init', '-q', str(self.project)], check=True, env=self.env)
+        result = subprocess.run([sys.executable, str(SCRIPT), 'collect',
+            '--workdir', '../private', '--root', 'project=.'],
+            cwd=self.project, env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        P.load_dossier(self.work / 'dossier.json')
+
+    def test_nested_workdir_with_owner_write_masked(self):
+        self.work = self.root / 'new/private'
+        self.test_dossier_mode_with_owner_write_masked()
+        self.assertEqual(self.work.stat().st_mode & 0o777, 0o700)
+
     def test_explicit_workdir_required(self):
         result = subprocess.run([sys.executable, str(SCRIPT), 'show'], capture_output=True)
         self.assertEqual(result.returncode, 2)
