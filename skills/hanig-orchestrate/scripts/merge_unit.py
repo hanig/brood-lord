@@ -1262,6 +1262,14 @@ def _verify_integration(args, repo, snapshot):
             # Late Slurm terminal evidence can make an earlier PASS admissible:
             # append that enrichment without rewriting the original observation.
             identity = evidence.get("execution", {}).get("launch_id")
+            # Retrieval may enrich accounting but cannot retract a FAIL already
+            # published for this launch and exact claim binding. A distinct
+            # launch still publishes its own result; admission binds all FAILs.
+            if identity and any(
+                    r.get("execution", {}).get("launch_id") == identity
+                    and V.merge_failure_problem([r], evidence) for r in previous):
+                evidence["result"] = "fail"
+                evidence.pop("incomplete_reason", None)
             repeated = identity and any(
                 isinstance(r.get("execution"), dict)
                 and r["execution"].get("launch_id") == identity
