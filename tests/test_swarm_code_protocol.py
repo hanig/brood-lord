@@ -123,7 +123,7 @@ class TestRepairLoopProtocol(unittest.TestCase):
         ("finding reproduction",
          "Reproduce each confirmed finding before acting on it."),
         ("in-envelope repair",
-         "Repair the reproduced findings that fall inside the task's supported envelope."),
+         "Repair the reproduced findings that fall inside the task's supported envelope and do not contradict the task."),
         ("repair round discipline",
          "Mutation-check each repair, commit all intended edits, keep the worktree "
          "clean, and gate the next round with --dispositions FILE, up to the round "
@@ -149,6 +149,18 @@ class TestRepairLoopProtocol(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn("If a reproduced failure remains, do NOT open a pull request", prompt)
         self.assertIn("unavailable, partial, incomplete, and failing reviews are not a pass", prompt)
+
+    def test_required_phrase_guard_rejects_task_contradicting_repair(self):
+        protocol = SCP._code_completion_protocol(self.INTENT)
+        unqualified = protocol.replace(
+            "supported envelope and do not contradict the task.",
+            "supported envelope.")
+        self.assertNotEqual(unqualified, protocol)
+        with mock.patch.object(SCP, "_code_completion_protocol",
+                               return_value=unqualified):
+            prompt = SCP._dispatch_prompt({"kind": "code"}, self.INTENT)
+            self.assertEqual(SCP._code_protocol_problem(prompt, self.INTENT),
+                             "missing in-envelope repair")
 
     def test_required_phrase_guard_rejects_each_missing_step(self):
         protocol = SCP._code_completion_protocol(self.INTENT)

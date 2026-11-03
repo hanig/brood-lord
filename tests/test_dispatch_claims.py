@@ -578,7 +578,7 @@ class TestTheProtocolRequiresReviewAndPush(unittest.TestCase):
                 "Commit all intended edits first and leave the worktree clean",
                 "Only exit 0 (REVIEW_PASS) permits opening a pull request",
                 "Reproduce each confirmed finding before acting on it.",
-                "Repair the reproduced findings that fall inside the task's supported envelope.",
+                "Repair the reproduced findings that fall inside the task's supported envelope and do not contradict the task.",
                 "gate the next round with --dispositions FILE",
                 "up to the round limit the task states",
                 "Only when a reproduced failure remains after the last permitted round",
