@@ -92,7 +92,7 @@ assert '--worker' in pathlib.Path(sys.argv[-1]).read_text()
 assert '--partition=fixture-cpu' in sys.argv
 assert '--mem=2G' in sys.argv
 assert '--time=00:05:00' in sys.argv
-if pathlib.Path(os.environ['REMOTE_MODE']).read_text() not in ('slurm-missing', 'slurm-pending', 'slurm-running', 'slurm-lost-job-id'):
+if pathlib.Path(os.environ['REMOTE_MODE']).read_text() not in ('slurm-missing', 'slurm-pending', 'slurm-running', 'slurm-lost-job-id', 'slurm-node-loss'):
     result = subprocess.run(['/bin/sh', sys.argv[-1]], capture_output=True)
     assert result.returncode == 0 or pathlib.Path(os.environ['REMOTE_MODE']).read_text() == 'slurm-worker-died', result.stderr
     if pathlib.Path(os.environ['REMOTE_MODE']).read_text() == 'slurm-supervisor-died':
@@ -111,7 +111,8 @@ if '--name' in sys.argv:
     print('321|' + sys.argv[sys.argv.index('--name') + 1])
     raise SystemExit(0)
 mode = pathlib.Path(os.environ['REMOTE_MODE']).read_text()
-print('321|PENDING|0:0' if mode in ('slurm-pending', 'slurm-lost-job-id') else
+print('321|NODE_FAIL|0:0' if mode == 'slurm-node-loss' else
+      '321|PENDING|0:0' if mode in ('slurm-pending', 'slurm-lost-job-id') else
       '321|RUNNING|0:0' if mode == 'slurm-running' else
       '321|CANCELLED|0:0' if mode == 'slurm-cancelled' else
       '321|FAILED|1:0' if mode in ('slurm-missing', 'slurm-completed-fail', 'slurm-worker-died') else '321|COMPLETED|0:0')
@@ -1816,7 +1817,7 @@ class TestRemoteVerification(unittest.TestCase):
         result = self.verify('--verification-timeout', '1')
         self.assertNotEqual(result.returncode, 0)
         row, = self.rows()
-        self.assertEqual(row['result'], 'incomplete')
+        self.assertEqual(row['result'], 'fail' if mode == 'slurm-missing' else 'incomplete')
         stage = Path(row['execution']['stage'])
         self.assertTrue(stage.exists())
         self.mode.write_text('pass')
@@ -1966,6 +1967,25 @@ class TestRemoteVerification(unittest.TestCase):
         result = self.admitted()
         self.assert_ok(result)
         self.assertFalse(marker.exists())
+
+    def test_slurm_node_loss_allows_one_fresh_retry(self):
+        self.slurm_policy()
+        self.program()
+        self.mode.write_text('slurm-node-loss')
+        self.assert_failed(self.verify())
+        first, = self.rows()
+        self.assertEqual(first['result'], 'incomplete')
+        self.assertIn('NODE_FAIL', first['incomplete_reason'])
+        self.f.assert_refused(self.admitted())
+        self.mode.write_text('pass')
+        self.assert_ok(self.verify())
+        second = self.rows()[-1]
+        self.assertNotEqual(first['execution']['stage'], second['execution']['stage'])
+        self.assertNotEqual(first['execution']['launch_id'], second['execution']['launch_id'])
+        self.assertEqual(second['result'], 'pass')
+        self.assert_ok(self.admitted())
+        # Lost work retains its original bytes; retry never reuses that stage.
+        self.assertTrue(Path(first['execution']['stage']).exists())
 
     def test_inconclusive_retry_is_persisted_and_bounded(self):
         self.program()
