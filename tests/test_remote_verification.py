@@ -1987,6 +1987,20 @@ class TestRemoteVerification(unittest.TestCase):
         # Lost work retains its original bytes; retry never reuses that stage.
         self.assertTrue(Path(first['execution']['stage']).exists())
 
+    def test_slurm_second_node_loss_exhausts_retry(self):
+        self.slurm_policy()
+        self.program()
+        self.mode.write_text('slurm-node-loss')
+        for attempt in range(2):
+            self.assert_failed(self.verify())
+            self.assertEqual(len(self.rows()), attempt + 1)
+            self.assertEqual(self.rows()[-1]['result'], 'incomplete')
+        result = self.verify()
+        self.assert_failed(result)
+        self.assertIn('INCONCLUSIVE retry exhausted', result.stderr)
+        self.assertEqual(len(self.rows()), 2)
+        self.f.assert_refused(self.admitted())
+
     def test_inconclusive_retry_is_persisted_and_bounded(self):
         self.program()
         ssh = self.f.bin / 'ssh'
@@ -2013,7 +2027,7 @@ class TestRemoteVerification(unittest.TestCase):
         self.assert_failed(self.verify())
         self.assertEqual(self.rows()[-1]['result'], 'fail')
         self.f.assert_refused(self.admitted())
-        self.assertIn('candidate merge verifier failed; repair the candidate', self.verify().stderr)
+        self.assertIn('candidate merge verifier failed for this exact binding; repair the candidate', self.verify().stderr)
         self.assertEqual(len(self.rows()), 2)
 
     def test_absent_ssh_client_does_not_create_an_unresolved_launch(self):
