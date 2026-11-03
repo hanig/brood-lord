@@ -40,6 +40,111 @@ def wait_for(predicate, timeout=10):
         time.sleep(0.01)
 
 
+class TestLoadSensitiveReadiness(unittest.TestCase):
+    def test_pid_reader_waits_through_creation_before_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'leader.pid'
+            path.touch()
+            # Deterministically stop the writer immediately after creation.
+            with self.assertRaises(ValueError):
+                int(path.read_text())
+            clock = [0.0]
+            def finish_write(seconds):
+                clock[0] += seconds
+                path.write_text('123\n')
+            with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
+                    fixtures, '_pause', side_effect=finish_write) as pause:
+                self.assertEqual(fixtures.wait_pid(path), 123)
+            pause.assert_called_once()
+            for content in ('', 'partial', '0', '-1'):
+                path.write_text(content)
+                self.assertIsNone(fixtures.read_pid(path))
+            path.unlink()
+            self.assertIsNone(fixtures.read_pid(path))
+
+    def test_invalid_pid_readiness_keeps_three_second_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            clock = [0.0]
+            def advance(seconds):
+                clock[0] += seconds
+            with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
+                    fixtures, '_pause', side_effect=advance):
+                with self.assertRaisesRegex(AssertionError, 'PID file did not become ready'):
+                    fixtures.wait_pid(Path(directory) / 'missing')
+            self.assertEqual(clock[0], 3)
+
+    def test_pid_publication_hides_creation_before_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            scope = FixtureProcesses(self, directory)
+            path = Path(directory) / 'leader.pid'
+            observation = Path(directory) / 'observation'
+            # Shell redirection creates the file BEFORE calling printf.
+            # Interpose there, then let the real builtin finish the write.
+            hook = ('printf() { if test -e ' + shlex.quote(str(path)) +
+                    '; then echo exposed; else echo hidden; fi >' +
+                    shlex.quote(str(observation)) + '; command printf "$@"; }\n')
+            script = Path(directory) / 'publish.sh'
+            script.write_text('#!/bin/sh\n' + hook + fixtures.publish_pid(path, '$$'))
+            proc = scope.launch(FixtureSpec(('/bin/sh', str(script))))
+            result = proc.join(10)
+            self.assertEqual(result.state, JoinState.EXITED, result)
+            self.assertEqual(result.returncode, 0, result)
+            self.assertEqual(observation.read_text(), 'hidden\n')
+            self.assertEqual(fixtures.read_pid(path), proc.child_pid)
+            scope.cleanup()
+            scope.assert_no_survivors()
+
+
+class TestCensusRetry(unittest.TestCase):
+    def _exercise(self, failures, deadline=None, leak=False):
+        clock, tries = [0.0], []
+        def query(command, *, text, timeout):
+            tries.append(timeout)
+            # An implementation with no bound must fail fast, never hang tests.
+            if len(tries) > 7:
+                raise AssertionError('ps retry exceeded its 30-second bound')
+            if len(tries) <= failures:
+                clock[0] += timeout
+                raise subprocess.TimeoutExpired(command, timeout)
+            return '%s %s\n' % (os.getpid(), os.getpgrp())
+        with tempfile.TemporaryDirectory() as directory:
+            case = unittest.TestCase()
+            scope = FixtureProcesses(case, directory)
+            proc = mock.Mock()
+            proc._cleaned = fixtures.CleanupResult(CleanupState.CLEAN)
+            def scan():
+                rows = fixtures._session_rows(os.getsid(0) if leak else -1,
+                                              set(), deadline=deadline)
+                return rows, True
+            proc._survivor_scan.side_effect = scan
+            scope.children.append(proc)
+            with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
+                    fixtures.subprocess, 'check_output', side_effect=query):
+                if failures >= 6 or leak or deadline is not None:
+                    with self.assertRaisesRegex(AssertionError,
+                            'fixture processes survived cleanup or absence is unknown') as caught:
+                        scope.assert_no_survivors()
+                    if not leak:
+                        self.assertIn('fixture session census', str(caught.exception))
+                    proc._perform_cleanup.assert_called_once()
+                else:
+                    scope.assert_no_survivors()
+                    proc._perform_cleanup.assert_not_called()
+            return clock[0], tries
+
+    def test_ps_times_out_twice_then_confirms_absence(self):
+        self.assertEqual(self._exercise(2), (10, [5, 5, 5]))
+
+    def test_ps_always_times_out_fails_guard_at_thirty_seconds(self):
+        self.assertEqual(self._exercise(100), (30, [5] * 6))
+
+    def test_retry_preserves_earlier_consumer_deadline(self):
+        self.assertEqual(self._exercise(100, deadline=7), (7, [5, 2]))
+
+    def test_successful_query_still_detects_a_real_survivor(self):
+        self.assertEqual(self._exercise(0, leak=True), (0, [5]))
+
+
 class TestFixtureProcessGuard(unittest.TestCase):
     def _scope(self):
         directory = tempfile.TemporaryDirectory()
