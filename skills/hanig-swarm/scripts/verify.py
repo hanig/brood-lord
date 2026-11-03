@@ -848,7 +848,7 @@ def run_merge_preconditions(runner, repo, produced_head, target_commit,
                 "verifier_sha256": digest, "policy_sha256": policy_digest,
                 "authorization_commit": target_commit,
                 "subject_head": produced_head,
-                **outcome_result(outcome),
+                **outcome_result(outcome, execution),
                 "exit_code": outcome["exit_code"],
                 "stdout_tail": outcome["stdout"], "stderr_tail": outcome["stderr"],
                 "schema_version": 2,
@@ -918,8 +918,18 @@ def merge_failure_problem(receipts, evidence):
     return None
 
 
-def outcome_result(outcome):
+def outcome_result(outcome, execution=None):
     """Receipt result from coordinator execution facts, never child diagnostics."""
+    # A returned failing verifier status always outranks transport/accounting.
+    if outcome.get("exit_code") not in (None, 0):
+        return {"result": "fail"}
+    execution = execution or {}
+    state = execution.get("sacct_state") if execution.get("executor") == "slurm" else None
+    if state in RV.INFRASTRUCTURE_LOSS:
+        return {"result": "incomplete", "incomplete_reason": "Slurm infrastructure loss: " + state}
+    if state in RV.TERMINAL and (state != "COMPLETED"
+                                or execution.get("sacct_exit_code") != "0:0"):
+        return {"result": "fail"}
     if outcome.get("incomplete_reason"):
         return {"result": "incomplete", "incomplete_reason": outcome["incomplete_reason"]}
     return {"result": "pass" if outcome["exit_code"] == 0 else "fail"}
@@ -974,13 +984,14 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
                        final_argv0=None, retain_output=False):
     """Observe merge-verifier completion without unit.run's overloaded exit 127.
 
-    Only our timeout or a launch/transport exception is incomplete. Every
+    Only an observed launch/transport exception is incomplete. Every
     returned child status (including 127 or a signal) remains a candidate
     failure unless zero. In particular a stability child exiting without its
     handshake is a FAIL from the pinned parent, not an infrastructure timeout.
     Keep the shared child environment and process-group containment.
     """
     child = None
+    timed_out = False
     completed_failure = None
     out, err, reason = "", "", None
     launch_read, launch_write, launch_error = None, None, ""
@@ -1024,6 +1035,7 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
             launch_write = None
         out, err = child.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
+        timed_out = True
         reason = "coordinator timed out after {}s".format(timeout)
     except (OSError, subprocess.SubprocessError) as exc:
         reason = "coordinator could not launch or collect verifier: {}".format(exc)
@@ -1066,6 +1078,7 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
     if full_output is not None:
         outcome["_full_output"] = full_output
     if launch_error:
+        outcome["exit_code"] = None  # launcher status is not a verifier exit
         outcome["incomplete_reason"] = "coordinator child launcher could not exec verifier: " + launch_error
         return outcome
     if (reason and completed_failure is None
@@ -1077,7 +1090,11 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
     if completed_failure is not None:
         outcome["exit_code"] = completed_failure
         outcome["stderr"] = (outcome["stderr"] + "\n" + reason)[-2000:]
+    elif timed_out:
+        outcome["exit_code"] = outcome["exit_code"] or -signal.SIGKILL
+        outcome["stderr"] = (outcome["stderr"] + "\n" + reason)[-2000:]
     elif reason:
+        outcome["exit_code"] = None  # collection failed; no completed failure observed
         outcome["incomplete_reason"] = reason
     return outcome
 
