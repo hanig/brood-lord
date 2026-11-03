@@ -924,12 +924,20 @@ def outcome_result(outcome, execution=None):
     if outcome.get("exit_code") not in (None, 0):
         return {"result": "fail"}
     execution = execution or {}
-    state = execution.get("sacct_state") if execution.get("executor") == "slurm" else None
-    if state in RV.INFRASTRUCTURE_LOSS:
-        return {"result": "incomplete", "incomplete_reason": "Slurm infrastructure loss: " + state}
-    if state in RV.TERMINAL and (state != "COMPLETED"
-                                or execution.get("sacct_exit_code") != "0:0"):
-        return {"result": "fail"}
+    observations = []
+    if execution.get("executor") == "slurm":
+        observations.append((execution.get("sacct_state"), execution.get("sacct_exit_code")))
+        # Cleanup can observe terminal accounting after supervision saw none.
+        # Preserve every observed failure rather than choosing a convenient row.
+        observations.extend(state for state in execution.get("cleanup_sacct_states", {}).values()
+                            if state is not None)
+    for state, code in observations:
+        if state in RV.TERMINAL - RV.INFRASTRUCTURE_LOSS and (
+                state != "COMPLETED" or code != "0:0"):
+            return {"result": "fail"}
+    for state, code in observations:
+        if state in RV.INFRASTRUCTURE_LOSS:
+            return {"result": "incomplete", "incomplete_reason": "Slurm infrastructure loss: " + state}
     if outcome.get("incomplete_reason"):
         return {"result": "incomplete", "incomplete_reason": outcome["incomplete_reason"]}
     return {"result": "pass" if outcome["exit_code"] == 0 else "fail"}

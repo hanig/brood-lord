@@ -966,7 +966,7 @@ class TestRemoteVerification(unittest.TestCase):
         result = self.verify('--verification-timeout', '1')
         self.assertNotEqual(result.returncode, 0)
         row, = self.rows()
-        self.assertEqual(row['result'], 'incomplete')
+        self.assertEqual(row['result'], 'fail')
         execution = row['execution']
         self.assertEqual(execution['cancellation'], 'requested')
         self.assertIsNone(execution['sacct_state'])
@@ -1817,7 +1817,7 @@ class TestRemoteVerification(unittest.TestCase):
         result = self.verify('--verification-timeout', '1')
         self.assertNotEqual(result.returncode, 0)
         row, = self.rows()
-        self.assertEqual(row['result'], 'fail' if mode == 'slurm-missing' else 'incomplete')
+        self.assertEqual(row['result'], 'fail' if mode in ('slurm-missing', 'slurm-pending') else 'incomplete')
         stage = Path(row['execution']['stage'])
         self.assertTrue(stage.exists())
         self.mode.write_text('pass')
@@ -3889,6 +3889,19 @@ class TestInfrastructureClassification(unittest.TestCase):
                 result = V.outcome_result(outcome, execution)
                 self.assertEqual(result['result'], expected)
                 self.assertEqual('incomplete_reason' in result, expected == 'incomplete')
+
+    def test_cleanup_accounting_cannot_be_hidden_by_supervision(self):
+        for state in ('COMPLETED', 'FAILED', 'TIMEOUT', 'NODE_FAIL',
+                      'PREEMPTED', 'BOOT_FAIL', 'CANCELLED'):
+            for earlier in (None, 'COMPLETED', 'NODE_FAIL'):
+                with self.subTest(state=state, earlier=earlier):
+                    outcome = RV.incomplete('worker did not complete')
+                    execution = dict(executor='slurm', sacct_state=earlier,
+                                     sacct_exit_code='0:0',
+                                     cleanup_sacct_states={'321': [state, '0:0']})
+                    result = V.outcome_result(outcome, execution)
+                    expected = 'fail' if state in ('FAILED', 'TIMEOUT', 'CANCELLED') else 'incomplete'
+                    self.assertEqual(result['result'], expected)
 
     def test_missing_completion_uses_only_loss_states(self):
         for state in RV.TERMINAL:
