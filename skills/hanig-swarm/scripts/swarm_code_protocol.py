@@ -154,7 +154,7 @@ After opening the pull request, STOP. NEVER merge, approve, or enable auto-merge
 {judgment_instruction}
 Push after every meaningful edit. Commit and push the actual changed content to the anchored attempt ref for normal progress; use the recovery ref below when preserving a failed review. An empty or marker commit preserves no implementation; a tree identical to the recorded base is refused.
 {scope_instruction}
-Before opening a pull request, run this repository's review gate. Use hanig-review-gate's review.py from the loaded skill directory with --kind implementation, the actual --round number, and --range {base}..HEAD to review the COMPLETE delta from the recorded base. Commit all intended edits first and leave the worktree clean so that range includes all intended work. Declare the change's claims and the standalone counter-claim "This change cannot make an honest run fail." {author_instruction} Only exit 0 (REVIEW_PASS) permits opening a pull request; unavailable, partial, incomplete, and failing reviews are not a pass. Reproduce each confirmed finding before acting on it. If a reproduced failure remains, do NOT open a pull request: follow the recovery procedure below without moving the anchored attempt ref, then STOP AND REPORT where it was preserved. REVIEW_PASS means the panel failed to refute the claims, not proof.
+Before opening a pull request, run this repository's review gate. Use hanig-review-gate's review.py from the loaded skill directory with --kind implementation, the actual --round number, and --range {base}..HEAD to review the COMPLETE delta from the recorded base. Commit all intended edits first and leave the worktree clean so that range includes all intended work. Declare the change's claims and the standalone counter-claim "This change cannot make an honest run fail." {author_instruction} Reproduce each confirmed finding before acting on it. Repair the reproduced findings that fall inside the task's supported envelope. Mutation-check each repair, commit all intended edits, keep the worktree clean, and gate the next round with --dispositions FILE, up to the round limit the task states. Only when a reproduced failure remains after the last permitted round, or a remaining finding needs an orchestrator decision (out of envelope, or contradicting the task), do NOT open a pull request: follow the recovery procedure below without moving the anchored attempt ref, then STOP AND REPORT where it was preserved. Only exit 0 (REVIEW_PASS) permits opening a pull request; unavailable, partial, incomplete, and failing reviews are not a pass. REVIEW_PASS means the panel failed to refute the claims, not proof.
 Recovery procedure: first inspect status as required below and stage only your own uncommitted work. Set and export SWARM_RECOVERY_MESSAGE to a message beginning RECOVERY, NOT READY: that says the work has not passed review, must not be merged, and lists every open reproduced finding. Run the following in the current attempt worktree. It commits UNCOMMITTED work if present; on an already clean tree it pushes existing content first, then adds an empty recovery label and pushes it. A label commit alone preserves nothing and must never be the only thing pushed. If any step fails, retain the worktree and report the failure; do not clean up or claim preservation succeeded.
 ```sh
 (
@@ -236,6 +236,20 @@ def _code_protocol_problem(prompt, intent):
         "complete review range": f"--range {intent['base_commit']}..HEAD",
         "author exclusion": "--author",
         "finding reproduction": "Reproduce each confirmed finding before acting on it.",
+        "in-envelope repair": (
+            "Repair the reproduced findings that fall inside the task's supported envelope."),
+        "repair round discipline": (
+            "Mutation-check each repair, commit all intended edits, keep the worktree "
+            "clean, and gate the next round with --dispositions FILE, up to the round "
+            "limit the task states."),
+        "exhausted or decision-bound review": (
+            "Only when a reproduced failure remains after the last permitted round, "
+            "or a remaining finding needs an orchestrator decision (out of envelope, "
+            "or contradicting the task), do NOT open a pull request: follow the recovery "
+            "procedure below without moving the anchored attempt ref, then STOP AND "
+            "REPORT where it was preserved."),
+        "passing review permission": (
+            "Only exit 0 (REVIEW_PASS) permits opening a pull request"),
         "failed review preservation": "RECOVERY, NOT READY:",
         "clean-tree recovery label": "git commit --allow-empty",
         "review interpretation": "REVIEW_PASS means the panel failed to refute the claims, not proof.",
