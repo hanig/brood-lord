@@ -35,6 +35,7 @@ FILES = ("candidate.bundle", "request.json", "remote_verify.py", "verify.py",
          "repair_guidance.py")
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY",
             "NODE_FAIL", "PREEMPTED", "BOOT_FAIL", "DEADLINE", "REVOKED"}
+INFRASTRUCTURE_LOSS = {"NODE_FAIL", "PREEMPTED", "BOOT_FAIL"}
 CLEANUP_RETRY_SECONDS = 20
 CLEANUP_MAX_RETRIES = 3
 
