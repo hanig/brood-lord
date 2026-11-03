@@ -1266,7 +1266,13 @@ def ingest(run, response):
                 if run.get("final") is None:
                     run["published"] = False
                 run["final"] = final
-    run["reconciled"] = bool(not problems and run.get("final") and
+    # A terminal infrastructure loss can prevent the worker's final marker.
+    # Only the coordinator's complete, error-free reread after quiescence
+    # accounts for missing claims. Retain the stage; do not fabricate a final
+    # marker or relax cleanup's requirement for it.
+    loss_accounted = bool(response.get("loss_accounted") is True
+                          and not run.get("final") and not problems)
+    run["reconciled"] = bool(not problems and (run.get("final") or loss_accounted) and
         isinstance(supervision, dict) and supervision.get("launch_id") == run["launch_id"])
     if request["verification_host"]["executor"] == "slurm":
         lifecycle = response.get("lifecycle", {})
@@ -1404,6 +1410,15 @@ def retrieve_records(run, call, save):
         value = fetch(name, limit, optional=field == 'lifecycle')
         if value is not MISSING:
             response[field] = value
+    lifecycle = response.get('lifecycle', {})
+    if (not response.get('errors') and response.get('final') is None
+            and request['verification_host']['executor'] == 'slurm'
+            and isinstance(lifecycle, dict) and lifecycle.get('stage') == run['stage']
+            and lifecycle.get('quiescent') is True
+            and slurm_quiescent(lifecycle, request)
+            and all(state[0] in INFRASTRUCTURE_LOSS
+                    for state in lifecycle['cleanup_sacct_states'].values())):
+        response['loss_accounted'] = True
     ingest(run, response)
     save()
 
