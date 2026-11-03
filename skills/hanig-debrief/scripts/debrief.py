@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import stat
 import tempfile
 
 import debrief_coverage as C
@@ -24,7 +25,10 @@ def workdir(raw):
         if not parent.exists():
             parent.mkdir(mode=0o700)
             parent.chmod(0o700)
-    resolved.chmod(0o700)
+    info = resolved.stat()
+    S.need(stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid()
+           and stat.S_IMODE(info.st_mode) == 0o700, 'workdir',
+           'existing directory must be user-owned with mode 0700')
     return resolved
 
 
@@ -68,8 +72,11 @@ def main(argv=None):
         directory = workdir(args.workdir)
         dossier_path, packet_path = directory / 'dossier.json', directory / 'packet.json'
         if args.command == 'collect':
-            S.need(not os.path.lexists(str(dossier_path)), 'collect',
-                   'dossier already exists; use a fresh workdir')
+            artifacts = {'dossier.json', 'packet.json', 'approval.json',
+                         'filing.json', 'gh-receipt.json'}
+            S.need(not any(p.name in artifacts or p.name.startswith(
+                ('.debrief-', '.filing-', '.gh-receipt-')) for p in directory.iterdir()),
+                'collect', 'debrief artifact already exists; use a fresh workdir')
             roots = []
             for index, raw in enumerate(args.root, 1):
                 role, sep, path = raw.partition('=')

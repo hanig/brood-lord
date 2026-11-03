@@ -8,10 +8,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+
+import stat
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'skills/hanig-debrief/scripts/debrief.py'
 sys.path.insert(0, str(SCRIPT.parent))
+import debrief
 import debrief_packet as P
 import debrief_schema as S
 import debrief_triage as T
@@ -93,6 +97,35 @@ class TestDebriefCLI(unittest.TestCase):
         original = path.read_bytes()
         self.cli('collect', '--root', 'project=' + str(self.project), code=1)
         self.assertEqual(path.read_bytes(), original)
+
+    def test_collect_refuses_each_prior_artifact(self):
+        for name in ('dossier.json', 'packet.json', 'approval.json', 'filing.json',
+                     'gh-receipt.json', '.debrief-interrupted', '.filing-interrupted',
+                     '.gh-receipt-interrupted'):
+            with self.subTest(name=name):
+                work = self.root / name.replace('.', '_')
+                work.mkdir(mode=0o700)
+                artifact = work / name
+                artifact.write_bytes(b'prior artifact')
+                self.cli('collect', '--root', 'project=' + str(self.project),
+                         work=work, code=1)
+                self.assertEqual(artifact.read_bytes(), b'prior artifact')
+                self.assertEqual(list(work.iterdir()), [artifact])
+
+    def test_existing_workdir_is_checked_never_chmodded(self):
+        self.work.mkdir(mode=0o755)
+        self.work.chmod(0o755)
+        with mock.patch.object(Path, 'chmod', side_effect=AssertionError('chmod')):
+            with self.assertRaises(S.SchemaError):
+                debrief.workdir(self.work)
+        self.assertEqual(stat.S_IMODE(self.work.stat().st_mode), 0o755)
+        self.work.chmod(0o700)
+        with mock.patch.object(Path, 'chmod', side_effect=AssertionError('chmod')):
+            self.assertEqual(debrief.workdir(self.work), self.work.resolve())
+            with mock.patch.object(debrief.os, 'getuid', return_value=os.getuid() + 1):
+                with self.assertRaises(S.SchemaError):
+                    debrief.workdir(self.work)
+        self.collect()
 
     def test_refuses_git_worktree_and_symlink_alias_before_creation(self):
         subprocess.run(['git', 'init', '-q', str(self.project)], check=True, env=self.env)
