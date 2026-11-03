@@ -161,7 +161,7 @@ class TestDebriefTriage(unittest.TestCase):
 
     def test_invalid_packet_even_with_matching_digest(self):
         for key, value in (("project", "private"), ("catalog_version", True),
-                           ("schema_version", "debrief_packet.v2"), ("learnings", [])):
+                           ("schema_version", "debrief_packet.v3"), ("learnings", [])):
             original = self.packet[key]
             self.packet[key] = value
             self.record["packet_digest"] = self.digest()
