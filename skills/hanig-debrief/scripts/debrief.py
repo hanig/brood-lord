@@ -16,7 +16,9 @@ BUNDLE = Path(__file__).resolve().parents[1]
 
 
 def workdir(raw):
-    logical = Path(os.path.abspath(raw))
+    logical = Path(raw)
+    if not logical.is_absolute():
+        logical = Path.cwd() / logical
     resolved = logical.resolve()
     for path in (logical, resolved):
         for parent in (path,) + tuple(path.parents):
@@ -32,6 +34,7 @@ def write_json(path, value):
     fd, name = tempfile.mkstemp(prefix='.debrief-', dir=str(path.parent))
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            os.fchmod(stream.fileno(), 0o600)
             json.dump(value, stream, ensure_ascii=True, indent=2)
             stream.write('\n')
             stream.flush()
