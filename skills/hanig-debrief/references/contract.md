@@ -98,8 +98,14 @@ Offline validation checks mechanics; the orchestrator judges. Triage never marks
 
 Keys: schema_version = debrief_coverage.v1, version = integer 1 (registry format revision), entries (list, initially empty). Entry keys: id (unique CV001 upward, minimum three-digit padding without extra leading zeros), catalog_entry (existing id), applicability, references (nonempty list), note (nonempty). Applicability: exactly {"fixed_in": SHA} (full lowercase 40- or 64-hex commit SHA) or {"always": true}. <!-- declaration: purpose.scope -->
 
-References: public https://github.com/hanig/brood-lord/pull/N (N is a positive integer; optional slash-separated [A-Za-z0-9_-]+ route, query and fragment; no whitespace/backslash) or repository paths (Unicode, spaces allowed; no NUL, absolute path or empty/./.. component). Applicability uses only Git ancestry against a local checkout, never commit ordering. <!-- declaration: purpose.scope -->
+References: public https://github.com/hanig/brood-lord/pull/N (N is a positive integer; optional slash-separated [A-Za-z0-9_-]+ route, query and fragment; no whitespace/backslash) or repository paths (Unicode, spaces allowed; no NUL, absolute path or empty/./.. component). An always mapping is unconditional. A fixed_in mapping uses Git ancestry against a local checkout, never commit ordering. <!-- declaration: purpose.scope -->
 
 ## Budgets and constants
 
 Caps: 8 MiB/file, 10,000 files/root, 256 MiB total. The 5 MB plan/1.2 MB ledger fit. Limits are inclusive: retain a fully read item at a cap; record the reached limit and any skipped remainder in omissions, then stop before the next read. No silent truncation. <!-- declaration: purpose.scope -->
+
+
+
+
+
+The synthetic example uses a single accepted learning and a synthetic plan unit. <!-- declaration: workflow.triage -->

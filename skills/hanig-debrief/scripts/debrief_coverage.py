@@ -30,7 +30,8 @@ def group(candidates, cohorts=None, catalog=None):
        candidate['basis'],
        frozenset((c['measure'], c['population']) for c in candidate['counts']))
     if (entry_id is None or candidate['status'] in ('rejected', 'unrepresentable')
-        or candidate['coverage_disposition'] in ('extends', 'conflicts')):
+        or candidate['coverage_disposition'] in ('extends', 'conflicts')
+        or candidate['reproduction'] is not None):
       groups.append([candidate])
       continue
     if key not in index:
@@ -41,7 +42,8 @@ def group(candidates, cohorts=None, catalog=None):
   for observations in groups:
     merged = copy.deepcopy(observations[0])
     if (merged['catalog_entry'] is None or merged['status'] in ('rejected', 'unrepresentable')
-        or merged['coverage_disposition'] in ('extends', 'conflicts')):
+        or merged['coverage_disposition'] in ('extends', 'conflicts')
+        or merged['reproduction'] is not None):
       result.append(merged)
       continue
     merged['evidence_refs'] = sorted({ref for c in observations for ref in c['evidence_refs']})
@@ -108,16 +110,21 @@ def _commit(provenance, skill):
 def classify(candidate, registry, checkout, *, provenance=None, catalog=None):
   """Return snapshot coverage without changing the candidate or reading reviews.
 
-  Absent mappings are not_found_in_snapshot. Present mappings require known
-  provenance and an explicit checkout; uncertain applicability stays unknown.
+  Absent mappings are not_found_in_snapshot. Always mappings are unconditional;
+  fixed_in requires known provenance and ancestry in an explicit checkout.
   """
   catalog, entries = P._cat(catalog)
   S.validate_coverage(registry, catalog)
 
-  entry = entries.get(candidate['catalog_entry'])
+  entry_id = candidate['catalog_entry']
+  S.need(entry_id is None or entry_id in entries,
+         'candidate.catalog_entry', 'unknown catalog entry')
+  entry = entries.get(entry_id)
   mappings = [r for r in registry['entries'] if entry and r['catalog_entry'] == entry['id']]
   if not mappings:
     return 'not_found_in_snapshot'
+  if any(r['applicability'].get('always') is True for r in mappings):
+    return 'covered'
   commit = _commit(provenance, entry['skill'])
   if commit is None or checkout is None or not Path(checkout).is_dir():
     return 'unknown'
@@ -141,16 +148,16 @@ def classify(candidate, registry, checkout, *, provenance=None, catalog=None):
   return 'unknown'
 
 
-def _candidate(dossier, candidate_id):
-  P.validate_dossier(dossier)
+def _candidate(dossier, candidate_id, catalog=None):
+  P.validate_dossier(dossier, catalog)
   S.need(type(candidate_id) is int and 0 <= candidate_id < len(dossier['candidates']),
      'candidate_id', 'expected zero-based candidate position')
   return dossier['candidates'][candidate_id]
 
 
-def record_review(dossier, candidate_id, disposition, rationale):
+def record_review(dossier, candidate_id, disposition, rationale, catalog=None):
   """Record a post-grouping decision directly, retaining its private reason."""
-  candidate = _candidate(dossier, candidate_id)
+  candidate = _candidate(dossier, candidate_id, catalog)
   S.need(disposition in ('extends', 'conflicts'), 'disposition', 'expected explicit review decision')
   S.text(rationale, 'rationale')
   candidate['coverage_disposition'] = disposition
@@ -158,9 +165,9 @@ def record_review(dossier, candidate_id, disposition, rationale):
   return candidate
 
 
-def select(dossier):
+def select(dossier, catalog=None):
   """Mark eligible candidates without deleting any private observations."""
-  P.validate_dossier(dossier)
+  P.validate_dossier(dossier, catalog)
   for candidate in dossier['candidates']:
     if candidate['status'] in ('rejected', 'unrepresentable'):
       continue
@@ -173,9 +180,9 @@ def select(dossier):
   return dossier
 
 
-def record_reproduction(dossier, candidate_id, receipt_ref, tested_version, probe, observed):
+def record_reproduction(dossier, candidate_id, receipt_ref, tested_version, probe, observed, catalog=None):
   """Attach a cited receipt; recording is explicit, never an extraction side effect."""
-  candidate = _candidate(dossier, candidate_id)
+  candidate = _candidate(dossier, candidate_id, catalog)
   S.match(receipt_ref, S.EVIDENCE_ID, 'receipt_ref')
   S.need(receipt_ref in dossier['evidence'], 'receipt_ref', 'unresolved evidence record')
   for key, value in (('tested_version', tested_version), ('probe', probe), ('observed', observed)):

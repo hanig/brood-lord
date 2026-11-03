@@ -56,7 +56,7 @@ class TestCoverage(unittest.TestCase):
   def test_five_dispositions_and_private_review(self):
     self.assertEqual(self.classify(), 'covered')
     self.assertEqual(self.classify(registry('DB002')), 'not_found_in_snapshot')
-    self.assertEqual(self.classify(prov=False), 'unknown')
+    self.assertEqual(self.classify(registry(applies={'fixed_in': self.base}), prov=False), 'unknown')
     for disposition in ('extends', 'conflicts'):
       C.record_review(self.d, 0, disposition, 'Explicit private review.')
       self.assertEqual(self.c['coverage_disposition'], disposition)
@@ -73,7 +73,7 @@ class TestCoverage(unittest.TestCase):
       original_registry = copy.deepcopy(reg)
       self.assertEqual(self.classify(reg), 'covered')
       self.assertEqual(self.classify(registry('DB002')), 'not_found_in_snapshot')
-      self.assertEqual(self.classify(prov=False), 'unknown')
+      self.assertEqual(self.classify(registry(applies={'fixed_in': self.base}), prov=False), 'unknown')
       self.assertEqual(self.d, before)
       self.assertEqual(reg, original_registry)
 
@@ -92,10 +92,10 @@ class TestCoverage(unittest.TestCase):
 
   def test_missing_provenance_never_covered(self):
     self.assertEqual(self.classify(registry(applies={'fixed_in': self.base}), prov=False), 'unknown')
-    self.assertEqual(self.classify(prov=False), 'unknown')
+    self.assertEqual(self.classify(registry(applies={'fixed_in': self.base}), prov=False), 'unknown')
   def test_missing_checkout_unknown(self):
-    self.assertEqual(self.classify(checkout=False), 'unknown')
-    self.assertEqual(C.classify(self.c, registry(), self.root / 'absent',
+    self.assertEqual(self.classify(registry(applies={'fixed_in': self.base}), checkout=False), 'unknown')
+    self.assertEqual(C.classify(self.c, registry(applies={'fixed_in': self.base}), self.root / 'absent',
                  provenance=provenance(self.head)), 'unknown')
   def test_ancestry_and_nonancestor(self):
     self.assertEqual(self.classify(registry(applies={'fixed_in': self.base})), 'covered')
@@ -108,11 +108,11 @@ class TestCoverage(unittest.TestCase):
     short = self.git('rev-parse', '--short', 'HEAD')
     self.assertEqual(C.classify(self.c, registry(applies={'fixed_in': self.base}),
                  self.root, provenance=provenance(short)), 'unknown')
-  def test_always_requires_a_resolvable_commit_in_checkout(self):
+  def test_fixed_in_requires_a_resolvable_commit_in_checkout(self):
     empty = self.root / 'empty'
     empty.mkdir()
     subprocess.check_call(['git', '-C', str(empty), 'init', '-q'], env=self.env)
-    self.assertEqual(C.classify(self.c, registry(), empty,
+    self.assertEqual(C.classify(self.c, registry(applies={'fixed_in': self.base}), empty,
                  provenance=provenance(self.head)), 'unknown')
   def test_review_hex_ref_cannot_redirect_installed_commit(self):
     short = self.git('rev-parse', '--short', self.base)
@@ -159,7 +159,7 @@ class TestCoverage(unittest.TestCase):
                  catalog=cat, provenance=provenance(self.head)), 'not_found_in_snapshot')
   def test_unknown_markers_and_git_errors(self):
     for commit in (self.head.upper(), ' ' + self.head, self.head + '-dirty', '--help'):
-      self.assertEqual(C.classify(self.c, registry(), self.root,
+      self.assertEqual(C.classify(self.c, registry(applies={'fixed_in': self.base}), self.root,
                    provenance=provenance(commit)), 'unknown')
     for error in (OSError('missing git'), subprocess.TimeoutExpired('git', 10)):
       with patch.object(C.subprocess, 'run', side_effect=error):
@@ -357,6 +357,47 @@ class TestGroupingSelection(unittest.TestCase):
     self.assertEqual(call.args[0].elts[4].value, '--is-ancestor')
     self.assertNotIn('shell', [k.arg for k in call.keywords])
     self.assertEqual(writes, [('debrief_coverage.py', 'record_reproduction')])
+
+
+class TestRoundOneRegressions(unittest.TestCase):
+  def test_explicit_catalog_survives_selection_and_edits(self):
+    cat = S.load_catalog()
+    cat['entries'][0]['measures'].append(dict(measure='affected', population='units'))
+    d = dossier()
+    d['cohorts']['C001']['population'] = 'units'
+    d['candidates'][0]['counts'][0]['population'] = 'units'
+    P.validate_dossier(d, cat)
+    d['candidates'] = C.group(d['candidates'], d['cohorts'], cat)
+    for operation in (lambda: C.select(d, cat),
+                      lambda: C.record_review(d, 0, 'extends', 'private', cat),
+                      lambda: C.record_reproduction(d, 0, 'E001', 'v', 'p', 'r', cat)):
+      with self.subTest(operation=operation):
+        operation()
+
+  def test_group_retains_all_reproduction_details(self):
+    d = dossier()
+    d['evidence']['E002'] = copy.deepcopy(d['evidence']['E001'])
+    d['candidates'].append(copy.deepcopy(d['candidates'][0]))
+    for i in range(2):
+      C.record_reproduction(d, i, 'E00%d' % (i+1),
+                           'version-%d' % i, 'probe-%d' % i, 'result-%d' % i)
+    d['candidates'] = C.group(d['candidates'], d['cohorts'])
+    self.assertEqual(len(d['candidates']), 2)
+    rendered = json.dumps(d)
+    for value in ('version-1', 'probe-1', 'result-1'):
+      self.assertIn(value, rendered)
+
+  def test_classify_refuses_unknown_catalog(self):
+    c = dossier()['candidates'][0]
+    c['catalog_entry'] = 'DB999'
+    with self.assertRaises(S.SchemaError):
+      C.classify(c, registry(), None)
+
+  def test_always_without_git_provenance_or_checkout(self):
+    with patch.object(C.subprocess, 'run', side_effect=AssertionError('git consulted')):
+      for checkout in (None,):
+        self.assertEqual(C.classify(dossier()['candidates'][0], registry(), checkout),
+                         'covered')
 
 
 if __name__ == '__main__':

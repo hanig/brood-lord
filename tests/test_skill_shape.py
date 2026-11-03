@@ -256,7 +256,8 @@ PROJECT_DECLARATIONS = (
 )
 
 DEBRIEF_DECLARATIONS = ("purpose.scope", "capability.programs",
-                        "paths.skill-directory", "approval.packet")
+                        "paths.skill-directory", "approval.packet",
+                        'workflow.draft', 'workflow.classify', 'workflow.packet', 'workflow.approve', 'workflow.triage')
 
 DECLARATION_INVENTORIES = {
     "hanig-debrief": DEBRIEF_DECLARATIONS,
@@ -268,6 +269,7 @@ DECLARATION_INVENTORIES = {
 REFERENCE_ELABORATION_INVENTORIES = {
     "hanig-debrief": (
         ('references/contract.md', 'purpose.scope', 15),
+        ('references/contract.md', 'workflow.triage', 1),
     ),
     "hanig-project": (
         ('references/reporting-evidence.md', 'findings.bound', 3),
