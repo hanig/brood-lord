@@ -110,7 +110,7 @@ def main(argv=None):
             C.select(dossier, catalog)
         elif args.command == 'compile':
             write_json(packet_path, P.compile_packet(dossier, catalog))
-        elif args.command in ('show', 'recount', 'upgrade', 'downgrade'):
+        elif args.command in ('show', 'recount'):
             packet = P.load_packet(packet_path, catalog)
             P.recount(dossier, packet, catalog)
             if args.command == 'show':

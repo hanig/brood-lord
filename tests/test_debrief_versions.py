@@ -92,25 +92,17 @@ class TestDebriefVersions(unittest.TestCase):
             P.recount(d, p)
 
     def test_capacity_guard_at_v2_bound(self):
-        # A virtual prefilled mapping exercises the actual boundary without
-        # allocating a million records. The new input is real synthetic text.
-        class NearCapacity(dict):
-            def __len__(self):
-                return 999998 + super().__len__()
-        original = E.collect.__globals__.get('dict', dict)
-        def containers(*args, **kwargs):
-            result = original(*args, **kwargs)
-            if 'evidence' in result:
-                result['evidence'] = NearCapacity()
-            return result
+        self.assertEqual(S.MAX_IDENTIFIERS, 999999)
+        # Scale only the bound to exercise inclusive retention and refusal
+        # through the real collector, without allocating a million records.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in ('a', 'b'):
+            for name in ('a', 'b', 'c'):
                 (root / name).mkdir()
                 (root / name / 'evidence.md').write_text('STOP\n')
-            with patch.dict(E.collect.__globals__, dict=containers):
+            with patch.object(S, 'MAX_IDENTIFIERS', 2):
                 got = E.collect([dict(label='fixture', role='project', path=tmp)])
-            self.assertEqual(list(got['evidence']), ['E999999'])
+            self.assertEqual(list(got['evidence']), ['E001', 'E002'])
             self.assertTrue(any(o['reason'] == 'over-budget: evidence ids' for o in got['omissions']))
 
     def test_group_allocates_c1000_only_in_v2(self):
