@@ -258,11 +258,19 @@ def collect(roots, budgets=None):
     loc, name = '/'.join(parts), parts[-1]
     digest = hashlib.sha256(data).hexdigest()
     uid, aid = _owner(parts)
-    if role == 'helpers' and name not in ('evidence.md', 'SUMMARY.md'):
+    if role == 'helpers' and (name not in ('evidence.md', 'SUMMARY.md')
+        or data.startswith(b'#!')):
       _need(Path(name).suffix in ('.py', '.sh', '.bash', '.zsh', '.fish', '.csh',
         '.ksh', '.pl', '.rb', '.js', '.mjs', '.cjs', '.ts', '.lua', '.awk', '.r', '.R', '.ps1')
         or data.startswith(b'#!'))
       rows = [('helper', {'line_range': [1, 1]}, None, None)]
+      if name in ('evidence.md', 'SUMMARY.md'):
+        # Preserve the existing byte-oriented helper observation independently.
+        try:
+          observations = _text_rows(name, role, data.decode('utf-8'))
+        except UnicodeDecodeError:
+          observations = []
+        rows.extend((a, {'line_range': [s, e]}, uid, aid) for a, s, e in observations)
     else:
       text = data.decode('utf-8')
       if name == COPY_MARKER or len(parts) > 1 and parts[-2] == SIDECARS:

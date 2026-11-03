@@ -250,6 +250,20 @@ class TestExtract(unittest.TestCase):
            for i, token in expected])
         self.false(got['omissions'])
 
+  def test_marker_helper_shebang_preserved(self):
+    for name in ('evidence.md', 'SUMMARY.md'):
+      for raw, marker in ((b'#!/bin/sh\necho hello\n', False),
+                          (b'#!/bin/sh\n# STOP reason\n', True),
+                          (b'#!/bin/sh\n# \xff\n', False)):
+        with self.subTest(name=name, raw=raw):
+          path = self.put(name, raw)
+          got = self.collect('helpers')
+          self.eq(len(self.records(got, 'helper')), 1)
+          self.eq(self.locations(got, 'marker:STOP'), [span(2)] if marker else [])
+          self.eq(len(self.members(got, 'helper_scripts')), 1)
+          self.false(got['omissions'])
+          path.unlink()
+
   def test_marker_boundary_refusals(self):
     lines = ['STOPPED', 'review_fail', 'XREVIEW_FAIL', 'REVIEW_FAILED',
       'PROPOSED  DECISION', '_STOP', '1STOP', 'aSTOP', 'STOP_', 'STOP9',
@@ -515,7 +529,8 @@ class TestExtract(unittest.TestCase):
   ('marker case', [("+ r')(?![A-Za-z0-9_])')", "+ r')(?![A-Za-z0-9_])', re.IGNORECASE)")], 'test_marker_boundary_refusals'),
   ('marker excerpt', [("'marker:' + token, i, i", "'marker:' + line, i, i")], 'test_marker_no_excerpts'),
   ('marker left boundary', [(r'(?<![A-Za-z0-9_])', '')], 'test_marker_boundary_refusals'),
-  ('marker helper bypass', [("if role == 'helpers' and name not in ('evidence.md', 'SUMMARY.md'):", "if role == 'helpers':")], 'test_marker_worker_shapes'),
+  ('marker helper bypass', [("if role == 'helpers' and (name not in ('evidence.md', 'SUMMARY.md')\n        or data.startswith(b'#!')):", "if role == 'helpers':")], 'test_marker_worker_shapes'),
+  ('marker helper preservation', [("or data.startswith(b'#!')):", "or False):")], 'test_marker_helper_shebang_preserved'),
   ('marker duplicates', [('dict.fromkeys(MARKER_PATTERN.findall(line))', 'MARKER_PATTERN.findall(line)')], 'test_marker_unique_line_token')]
     for name, replacements, test in mutations:
       with self.subTest(mutation=name):
