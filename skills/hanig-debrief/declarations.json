@@ -23,7 +23,7 @@
     },
     {
       "id": "capability.programs",
-      "normative_text": "scripts/debrief.py provides offline collect, review, reproduce, classify, compile, show and recount. Every command requires --workdir outside Git worktrees (0700 directory, 0600 dossier); no default state path. Recollection requires a fresh directory."
+      "normative_text": "scripts/debrief.py provides offline collect, review, reproduce, classify, compile, show and recount. Every command requires --workdir outside Git worktrees (0700 directory, 0600 dossier); no default state path. Recollection requires a fresh directory. Drafting is offline; only debrief_file.py reaches the network, after one named approval of the exact packet."
     },
     {
       "id": "paths.skill-directory",
