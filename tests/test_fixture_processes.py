@@ -95,6 +95,60 @@ class TestLoadSensitiveReadiness(unittest.TestCase):
             scope.assert_no_survivors()
 
 
+class TestInterruptedPidPublication(unittest.TestCase):
+    """Open round-1 regressions preserved for recovery, NOT READY to merge."""
+
+    def test_correct_group_cleanup_survives_interrupted_publication(self):
+        import test_project as project
+        cls = project.TestDoctorSeesThePrerequisitesTheSkillsRefuseWithout
+        original = cls._doctor
+        observations = []
+
+        def delayed_mv(case, directory, *args, **kwargs):
+            # Stop only the synthetic publisher; doctor's group KILL reaps it.
+            kwargs['overrides']['mv'] = '#!/bin/sh\nkill -STOP $$\n'
+            result = original(case, directory, *args, **kwargs)
+            path = Path(directory) / 'term-ignoring-child.pid'
+            pid = fixtures.read_pid(Path(str(path) + '.tmp'))
+            self.assertIsNotNone(pid)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
+            observations.append((path.exists(), 'login shell timed out' in result.stdout))
+            return result
+
+        case = cls('test_timeout_waits_for_grace_then_kills_group_after_parent_exits')
+        result = unittest.TestResult()
+        with mock.patch.object(cls, '_doctor', delayed_mv):
+            case.run(result)
+        self.assertEqual(observations, [(False, True)])
+        self.assertEqual(result.errors, [])
+        self.assertTrue(result.wasSuccessful(), result.failures)
+
+    def test_escape_cleanup_does_not_skip_pending_publication(self):
+        # Execute the actual cleanup closure with a synthetic escaped PID.
+        # No real signal is sent; the live-child reproduction is retained in
+        # the unit evidence together with its independent kill/reap teardown.
+        source = Path(__file__).with_name('test_project.py').read_text()
+        tree = ast.parse(source)
+        method = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
+                      and n.name == 'test_timeout_does_not_wait_for_a_descendant_that_calls_setsid')
+        cleanup = next(n for n in ast.walk(method) if isinstance(n, ast.FunctionDef)
+                       and n.name == 'contain_escape')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'escape.pid'
+            pending = Path(str(path) + '.tmp')
+            pending.write_text('123')
+            process = mock.Mock()
+            process.getsid.return_value = 123
+            namespace = dict(pidfile=path, os=process, signal=signal,
+                             wait_pid=fixtures.wait_pid)
+            exec(compile(ast.Module(body=[cleanup], type_ignores=[]),
+                         'escape-cleanup', 'exec'), namespace)
+            namespace['contain_escape']()
+            pending.rename(path)
+            process.kill.assert_called_once_with(123, signal.SIGKILL)
+
+
 class TestCensusRetry(unittest.TestCase):
     def _exercise(self, failures, deadline=None, leak=False):
         clock, tries = [0.0], []
