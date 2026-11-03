@@ -3426,7 +3426,7 @@ class TestDoctorSeesThePrerequisitesTheSkillsRefuseWithout(_FixtureTestCase):
     # within reach, and then the "could not determine" branch could not be
     # reached on a machine that has one.
     TOOLS = ("sh", "bash", "hostname", "git", "perl", "readlink",
-             "mktemp", "sleep", "rm")
+             "mktemp", "sleep", "rm", "mv")
 
     def _bin(self, d, cli=False, python=True, claude=True, overrides=None):
         """A PATH with nothing on it but what doctor needs, so this host's own
@@ -3643,7 +3643,7 @@ class TestDoctorSeesThePrerequisitesTheSkillsRefuseWithout(_FixtureTestCase):
             start = time.monotonic()
             r = self._doctor(
                 d, overrides={name: poison
-                              for name in ("mktemp", "sleep", "rm")})
+                              for name in ("mktemp", "sleep", "rm", "mv")})
             self.assertLess(time.monotonic() - start, 20, r.stdout)
             self.assertFalse(marker.exists(),
                              "bounded() still invokes an unbounded helper")
