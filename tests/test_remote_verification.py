@@ -1151,7 +1151,8 @@ class TestRemoteVerification(unittest.TestCase):
         self.f.assert_refused(self.admitted())
         self.assert_clean()
 
-    def test_partial_failure_survives_later_worker_loss_and_blocks_local_escape(self):
+    def test_partial_failure_survives_later_worker_loss_and_blocks_local_escape(
+            self, expected_later="incomplete"):
         first = PYTHON + 'raise SystemExit(125)\n'
         second = (PYTHON + 'import os, signal\n'
                   'os.kill(os.getppid(), signal.SIGKILL)\n')
@@ -1165,7 +1166,7 @@ class TestRemoteVerification(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         first_row, later = self.rows()
         self.assertEqual((first_row['result'], first_row['exit_code']), ('fail', 125))
-        self.assertEqual(later['result'], 'incomplete')
+        self.assertEqual(later['result'], expected_later)
         stage = Path(first_row['execution']['stage'])
         self.assertTrue((stage / 'claim-0.json').exists())
         self.assertFalse((stage / 'worker-complete').exists())
@@ -1393,7 +1394,8 @@ class TestRemoteVerification(unittest.TestCase):
     def test_slurm_partial_failure_survives_later_worker_loss_and_blocks_rerun(self):
         self.slurm_policy()
         self.mode.write_text('slurm-worker-died')
-        self.test_partial_failure_survives_later_worker_loss_and_blocks_local_escape()
+        self.test_partial_failure_survives_later_worker_loss_and_blocks_local_escape(
+            expected_later="fail")
         first, later = self.rows()
         self.assertEqual(first['execution']['job_id'], '321')
         self.assertEqual(first['execution']['cleanup'], 'unconfirmed')
