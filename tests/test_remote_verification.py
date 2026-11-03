@@ -4,6 +4,7 @@ from contextlib import redirect_stdout
 import hashlib
 import fcntl
 import io
+import itertools
 import inspect
 import json
 import os
@@ -1750,10 +1751,16 @@ class TestRemoteVerification(unittest.TestCase):
         self.assertEqual(self.rows(), [row])
         self.f.assert_refused(self.admitted())
 
-    def test_remote_timeout_then_pass_for_same_binding_is_admitted(self):
+    def test_remote_timeout_is_binding_fail(self):
         tail = ('import time\nif Path(%r).read_text() == "timeout": time.sleep(30)\n'
                 % str(self.mode))
-        self.assert_retry_admits('timeout', tail)
+        self.program(tail)
+        self.mode.write_text('timeout')
+        self.assert_failed(self.verify('--verification-timeout', '1'))
+        self.assertEqual(self.rows()[-1]['result'], 'fail')
+        self.mode.write_text('pass')
+        self.assert_ok(self.verify('--verification-timeout', '10'))
+        self.f.assert_refused(self.admitted())
 
     def test_completed_remote_fail_poisoning_survives_later_pass(self):
         self.program('raise SystemExit(125 * int(Path(%r).read_text() == "fail"))\n' % str(self.mode))
@@ -1959,6 +1966,34 @@ class TestRemoteVerification(unittest.TestCase):
         result = self.admitted()
         self.assert_ok(result)
         self.assertFalse(marker.exists())
+
+    def test_inconclusive_retry_is_persisted_and_bounded(self):
+        self.program()
+        ssh = self.f.bin / 'ssh'
+        ssh.unlink()
+        for attempt in range(2):
+            self.assert_failed(self.verify())
+            self.assertEqual(len(self.rows()), attempt + 1)
+            self.assertEqual(self.rows()[-1]['result'], 'incomplete')
+            self.f.assert_refused(self.admitted())
+        third = self.verify()
+        self.assert_failed(third)
+        self.assertIn('INCONCLUSIVE retry exhausted', third.stderr)
+        self.assertEqual(len(self.rows()), 2)
+
+    def test_inconclusive_retry_fail_binds(self):
+        self.program('raise SystemExit(1)\n')
+        ssh = self.f.bin / 'ssh'
+        content = ssh.read_bytes()
+        ssh.unlink()
+        self.assert_failed(self.verify())
+        self.assertEqual(self.rows()[-1]['result'], 'incomplete')
+        ssh.write_bytes(content)
+        ssh.chmod(0o755)
+        self.assert_failed(self.verify())
+        self.assertEqual(self.rows()[-1]['result'], 'fail')
+        self.f.assert_refused(self.admitted())
+        self.assertIn('failed for this exact binding', self.verify().stderr)
 
     def test_absent_ssh_client_does_not_create_an_unresolved_launch(self):
         self.program()
@@ -3794,6 +3829,39 @@ class TestSlurmPolicy(unittest.TestCase):
             path.write_text(json.dumps(policy))
             with self.assertRaisesRegex(ValueError, 'direct executor'):
                 RV.read_policy(tmp)
+
+
+
+class TestInfrastructureClassification(unittest.TestCase):
+    def test_evidence_product_fail_precedence(self):
+        # Exhaustive finite bound: 3 exits x 2 launcher errors x 7 states = 42.
+        states = ('COMPLETED', 'FAILED', 'TIMEOUT', 'NODE_FAIL',
+                  'PREEMPTED', 'BOOT_FAIL', 'CANCELLED')
+        for code, launcher_error, state in itertools.product((0, 1, -9), (False, True), states):
+            with self.subTest(code=code, launcher_error=launcher_error, state=state):
+                with mock.patch.object(RV, '_command', return_value=(0, '321|' + state + '|0:0\n', '')):
+                    observed = RV.scheduler_state('321')
+                self.assertEqual(observed, (state, '0:0'))
+                outcome = dict(exit_code=code, stdout='', stderr='')
+                if launcher_error:
+                    outcome['incomplete_reason'] = 'coordinator transport unavailable'
+                execution = dict(executor='slurm', sacct_state=observed[0],
+                                 sacct_exit_code=observed[1])
+                expected = ('fail' if code != 0 else
+                            'incomplete' if state in ('NODE_FAIL', 'PREEMPTED', 'BOOT_FAIL') else
+                            'fail' if state != 'COMPLETED' else
+                            'incomplete' if launcher_error else 'pass')
+                result = V.outcome_result(outcome, execution)
+                self.assertEqual(result['result'], expected)
+                self.assertEqual('incomplete_reason' in result, expected == 'incomplete')
+
+    def test_missing_completion_uses_only_loss_states(self):
+        for state in RV.TERMINAL:
+            with self.subTest(state=state):
+                outcome = RV.incomplete('transport unavailable')
+                execution = dict(executor='slurm', sacct_state=state, sacct_exit_code='0:0')
+                expected = 'incomplete' if state in RV.INFRASTRUCTURE_LOSS or state == 'COMPLETED' else 'fail'
+                self.assertEqual(V.outcome_result(outcome, execution)['result'], expected)
 
 
 if __name__ == '__main__':
