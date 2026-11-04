@@ -104,15 +104,14 @@ class TestMergeVerificationRouting(unittest.TestCase):
         with self.subTest(evidence="ledger"):
             self.assertEqual(list((self.f.state_dir / "remote-verifications").glob("*.json")), [])
 
-    def test_local_loss_retry_uses_fresh_workdir(self):
+    def test_fresh_retry_workdir(self):
         directories = []
         def observe(*args, **kwargs):
             directories.append(kwargs.get("cwd", args[2] if len(args) > 2 else None))
             return RV.incomplete("coordinator launcher unavailable")
         with mock.patch.object(V, "_observe_execution", side_effect=observe):
-            self.assertEqual(self.invoke(), 1)
-            self.assertEqual(self.invoke(), 1)
-            self.assertEqual(self.invoke(), 1)
+            for _ in range(3):
+                self.assertEqual(self.invoke(), 1)
         self.assertEqual(len(directories), 2)
         self.assertNotEqual(*directories)
         self.assertTrue(all(not Path(p).exists() for p in directories))
@@ -125,16 +124,17 @@ class TestMergeVerificationRouting(unittest.TestCase):
         row, = S.load_verifications(self.f.state_dir)[0]
         self.transport.journal.write_text((json.dumps(row) + "\n") * count)
 
-    def test_legacy_timeout_cannot_retry(self):
-        self.legacy_loss("coordinator timed out after 1s")
+    def assert_unattested(self, reason):
+        self.legacy_loss(reason)
         self.assertEqual(self.invoke(), 1)
         self.spawn.assert_not_called()
         self.assertIn("lacks attested infrastructure", self.diagnostic)
 
+    def test_legacy_timeout_cannot_retry(self):
+        self.assert_unattested("coordinator timed out after 1s")
+
     def test_unknown_reason_cannot_retry(self):
-        self.legacy_loss("unrecognized loss")
-        self.assertEqual(self.invoke(), 1)
-        self.spawn.assert_not_called()
+        self.assert_unattested("unrecognized loss")
 
     def test_legacy_losses_exhaust_retry(self):
         self.legacy_loss("coordinator launcher unavailable", count=2)
@@ -153,7 +153,7 @@ class TestMergeVerificationRouting(unittest.TestCase):
         self.assertEqual(self.invoke(), 1)
         self.assertIn("INCONCLUSIVE retry exhausted", self.diagnostic)
 
-    def test_provisional_excludes_retry_count(self):
+    def test_provisional_retry_count(self):
         self.legacy_loss("coordinator launcher unavailable")
         loss = S.load_verifications(self.f.state_dir)[0][0]
         for state in ('RUNNING', 'PENDING', None):
@@ -165,7 +165,7 @@ class TestMergeVerificationRouting(unittest.TestCase):
         self.f.assert_refused(self.transport.admitted())
         self.assertEqual(self.invoke(), 0, self.diagnostic)
 
-    def test_passing_retry_allows_reverification(self):
+    def test_resolved_retry(self):
         self.legacy_loss("coordinator launcher unavailable")
         self.assertEqual(self.invoke(), 0, self.diagnostic)
         self.assertTrue(list((self.f.state_dir / "verification-retries").glob("*.json")))
