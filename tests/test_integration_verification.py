@@ -567,13 +567,6 @@ class TestIntegrationReceiptBinding(IntegrationRepo):
             self.assertIn("integration receipt has no produced_head",
                           S._verify_shape_problem(branch_local))
 
-    def test_inconclusive_never_satisfies_pass_requirement(self):
-        self.write_receipt(result="incomplete", exit_code=0,
-                           incomplete_reason="coordinator transport lost")
-        admitted, refusal = self.admit()
-        self.assertIsNone(admitted)
-        self.assertIn("no passing receipt", refusal)
-
     def test_an_honest_compatible_pair_is_admitted(self):
         expected = self.write_receipt()
         admitted, refusal = self.admit()
@@ -624,6 +617,13 @@ class TestIntegrationReceiptBinding(IntegrationRepo):
         admitted, refusal = self.admit()
         self.assertIsNone(admitted)
         self.assertIn("target moved after the check", refusal)
+
+    def test_incomplete_is_not_pass(self):
+        self.write_receipt(result="incomplete", exit_code=0,
+                           incomplete_reason="coordinator transport lost")
+        admitted, refusal = self.admit()
+        self.assertIsNone(admitted)
+        self.assertIn("no passing receipt", refusal)
 
 
 if __name__ == "__main__":
