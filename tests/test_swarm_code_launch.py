@@ -143,8 +143,9 @@ class TestReviewLineageLaunch(unittest.TestCase):
         units = [code_unit(fixture.repo, uid) for uid in ("a", "b", "c")]
         for i in (1, 2):
             units[i]["continuation_of"] = units[i - 1]["id"]
-        state = {"schema_version": 1, "halted": None, "units": {
-            "a": {"state": "DONE"}, "b": {"state": "DONE"}}}
+        state = {"schema_version": 1, "halted": None, "units": {}}
+        for uid in ("a", "b"):
+            S.SS._unit_state(state, uid)["state"] = "DONE"
         plan = {"name": "fixture", "units": units}
         state_dir = str(fixture.tmp / "state")
         ok, why = S.acquire_lease(state_dir)
@@ -161,7 +162,7 @@ class TestReviewLineageLaunch(unittest.TestCase):
 
     def test_enrollment_shapes_and_history_reach_launch(self):
         from tests.test_attempt_worktrees import TestPerAttemptWorktrees, code_unit, paseo_resolvable
-        # Exhaustive 3 shapes x 3 histories x every possible prior ancestor.
+        # Exhaustive 3 shapes x 4 histories x every possible prior ancestor.
         for size in (1, 2, 3):
             for history in ("none", "enrolled", "missing", "legacy"):
                 for ancestor in range(size):
