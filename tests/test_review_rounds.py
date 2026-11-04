@@ -805,10 +805,12 @@ class TestManagedBudget(unittest.TestCase):
         def response(reviewer, *_args):
             _, error = review._post("https://example.invalid", {}, {}, 1, retries=1)
             return {"name": reviewer["name"], "ok": False, "error": error}
-        with patch.object(review.urllib.request, "urlopen",
-                          side_effect=lambda *a, **kw: io.BytesIO(b"partial")):
-            result = self.invoke(extra=flags, response=response)
-        self.assertEqual(result[0], 2, result[1:3])
+        for body in (b"", b"partial"):
+            with patch.object(review.urllib.request, "urlopen",
+                              side_effect=lambda *a, **kw: io.BytesIO(body)):
+                result = self.invoke(extra=flags, response=response)
+            self.assertEqual(result[0], 2, result[1:3])
+            self.assertEqual(review.REVIEW_BYTES == 0, not body)
         self.assertGreater(review.REVIEW_BYTES, 0)
         self.assertEqual(self.invoke(extra=flags, offline=True)[0], 4)
 
