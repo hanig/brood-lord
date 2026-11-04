@@ -1149,21 +1149,17 @@ def verification_retry_guard(args, repo, snapshot):
             raise Refusal("verification journal is invalid: " + str(problems))
         matched = [r for r in rows if r.get("unit") == binding["unit"]
                     and all(r.get(k) == v for k, v in basis.items())
-                    and r.get("subject_head") == binding["head"]
-                    and r.get("claim") in policies
+                    and r.get("subject_head") == binding["head"] and r.get("claim") in policies
                     and (r.get("policy_sha256"), r.get("verifier_sha256")) == policies[r["claim"]]]
         retrieving = (getattr(args, "retrieve_remote_evidence", False)
                       or RV.pending_problem(args.state_dir, binding["unit"], basis, rows))
-        losses = [r for r in matched if r.get("result") == "incomplete"
-                  and r.get("incomplete_reason") != "Slurm accounting pending"]
-        passed = {r["claim"] for r in matched if r.get("result") == "pass"
-                  and not RV.execution_problem(r)}
+        losses = [r for r in matched if r.get("result") == "incomplete" and r.get("incomplete_reason") != "Slurm accounting pending"]
+        passed = {r["claim"] for r in matched if r.get("result") == "pass" and not RV.execution_problem(r)}
         losses = [r for r in losses if r["claim"] not in passed]
         if losses and not retrieving:
             if any(r.get("result") == "fail" for r in matched):
                 raise Refusal("candidate merge verifier failed for this exact binding; repair the candidate")
-            if path.exists() or any(sum(r["claim"] == c for r in losses) > 1
-                                    for c in policies):
+            if path.exists() or any(sum(r["claim"] == c for r in losses) > 1 for c in policies):
                 raise Refusal("INCONCLUSIVE retry exhausted for this exact candidate binding")
             def attested(row):
                 reason = row.get("incomplete_reason", "")
@@ -1268,8 +1264,7 @@ def _verify_integration(args, repo, snapshot):
             # Late Slurm terminal evidence can make an earlier PASS admissible:
             # append that enrichment without rewriting the original observation.
             identity = evidence.get("execution", {}).get("launch_id")
-            if identity and any(
-                    isinstance(r.get("execution"), dict)
+            if identity and any(isinstance(r.get("execution"), dict)
                     and r["execution"].get("launch_id") == identity
                     and V.merge_failure_problem([r], evidence) for r in previous):
                 evidence["result"] = "fail"
