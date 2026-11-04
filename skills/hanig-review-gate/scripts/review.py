@@ -3273,7 +3273,6 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason, exc
             for m in members]
     args.plan_exchange = exchange
     disarm_watchdog()
-    refund_review_round(args, state, REVIEW_BYTES)
     journal = record_review_round(args, completed, state)
     report = {"state": state, "checked_at": now(), "reviewed": label,
               "profile": "plan", "profile_reason": profile_reason, "escalated": False,
@@ -3740,6 +3739,7 @@ def _main():
                          n_out_of_scope_critical=len(oos_critical),
                          n_incomplete=len(incomplete))
     disarm_watchdog()
+    refund_review_round(args, state, REVIEW_BYTES)
     journal = record_review_round(args, completed, state)
 
     report = {
