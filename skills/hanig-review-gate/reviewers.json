@@ -494,6 +494,41 @@
     "response_id": "gen-1791859813-xrI8OCVHzGCdAcPB7khK",
     "observed_in": "g1-panel-roster live preflight via zsh -ic and review.PROVIDERS; observed 2026-10-13T02:50:16.279896+00:00"
    }
+  },
+  {
+   "name": "muse-wonder",
+   "provider": "openrouter",
+   "model": "meta/muse-wonder",
+   "effort": "high",
+   "max_output_tokens": 128000,
+   "enabled": true,
+   "profiles": [
+    "planning"
+   ],
+   "family": {
+    "listing": "openrouter",
+    "vendor": "meta",
+    "prefix": "muse-",
+    "separator": ".",
+    "suffix": "",
+    "major": 0,
+    "named_version": "wonder"
+   },
+   "_note": "Owner decision 2026-11-03: Muse Wonder joins the planning committee through OpenRouter; astra and gemini-argon stay.",
+   "_max_output_tokens": "MEASURED through review.PROVIDERS with review.SYSTEM and input ping at the configured effort and 128000 cap. Establishes budget acceptance and usable output, not capacity for every review.",
+   "_max_output_tokens_accepted": {
+    "max_output_tokens": 128000,
+    "provider": "openrouter",
+    "model": "meta/muse-wonder",
+    "effort": "high",
+    "date": "2026-11-04",
+    "outcome": "completed",
+    "input_tokens": 1088,
+    "output_tokens": 111,
+    "reasoning_tokens": 80,
+    "response_id": "gen-1793761384-BOwHJpzLKlWTZo4LL71f",
+    "observed_in": "Q planning-seat live preflight via zsh -ic and review.PROVIDERS with review.SYSTEM and input ping; observed 2026-11-04T03:03:26.746907+00:00"
+   }
   }
  ],
  "_effort_null_is_deliberate": "Measured 2026-09-19, three samples per cell against a real 120-line diff at a 16000 cap: glm-5.3 at effort=high burned the ENTIRE budget on reasoning and returned zero characters in 3 of 3 samples, at effort=low in 2 of 3, and at effort=null returned a 4581-character review for $0.016 in 3 of 3. kimi-k2.7-code spends ~12k completion tokens at every level, so effort changes nothing but price: high cost 83% more and returned slightly LESS answer. A null effort here is therefore deliberate and load-bearing, not an omission. Setting one on either reviewer makes the gate pay more for less, and on glm-5.3 for nothing at all. glm-5.3 was dropped from the roster on 2026-09-28; its measurements stay here as the evidence for the rule. kimi-k2.7-code keeps effort null.",
