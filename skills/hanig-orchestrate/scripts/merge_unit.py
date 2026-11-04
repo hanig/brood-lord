@@ -1120,6 +1120,16 @@ def _active_entry_lease(args):
         raise Refusal(DI.refusal_message("D5 active: " + str(exc))) from exc
 
 
+def attested_infrastructure_loss(receipt):
+    """Whether coordinator accounting attests loss, independent of diagnostic text."""
+    execution = receipt.get("execution") or {}
+    if execution.get("executor") != "slurm":
+        return False
+    return (execution.get("sacct_state") in RV.INFRASTRUCTURE_LOSS
+            or any(state is not None and state[0] in RV.INFRASTRUCTURE_LOSS
+                   for state in execution.get("cleanup_sacct_states", {}).values()))
+
+
 def verify_integration(args, repo, snapshot):
     """Run without the lease using the repo extracted by the authority reader.
 
@@ -1215,7 +1225,10 @@ def verify_integration(args, repo, snapshot):
                 and r.get("claim") == evidence["claim"]
                 and r.get("result") == evidence["result"]
                 and r.get("exit_code") == evidence["exit_code"]
-                and r.get("incomplete_reason") == evidence.get("incomplete_reason")
+                # Only newly attested loss enriches a repeated incomplete row;
+                # reworded diagnostics or loss of accounting add no evidence.
+                and (not attested_infrastructure_loss(evidence)
+                     or attested_infrastructure_loss(r))
                 and RV.execution_problem(r) == RV.execution_problem(evidence) for r in previous)
             if not repeated:
                 S._fsync_append(state_dir / S.VERIFY_RECEIPTS, evidence)
