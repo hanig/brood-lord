@@ -504,7 +504,7 @@ class TestExtract(unittest.TestCase):
   ('closing pipe', [(r'[ \t]*(?:\||$)', r'[ \t]*\|')], 'test_d_open_table_cell'),
   ('bullet spaces', [(r'[-*] [ \t]*\S', r'[-*] \S'),
     (r'[-*] [ \t]*NEEDS YOU', r'[-*] NEEDS YOU')], 'test_d_bullet_spacing'),
-  ('helper selection', [('_need(Path(name).suffix in', '_need(True or Path(name).suffix in')], 'test_d_helpers'),
+  ('helper selection', [('_helper_selected(name, data):', '_helper_selected(name, data):\n  return True')], 'test_d_helpers'),
   ('entries', [("visited >= max_entries", "visited >= PER_ROOT_FILES")], 'test_round1_entry_budget'),
   ('directories', [("visited = 0", "visited = 0; dirs = 0"),
     ("if len(parts) > max_depth:", "dirs += 1\n          if dirs > PER_ROOT_FILES or len(parts) > max_depth:")], 'test_round1_entry_budget'),
@@ -686,6 +686,28 @@ class TestExtract(unittest.TestCase):
     self.true(all(o['reason'].startswith('unsupported') for o in got['omissions']))
 
 
+  def test_x_helpers_selected_cap(self):
+    self.put('000.txt', 'ordinary text')
+    self.put('001.not-a-script', 'ordinary text')
+    self.put('PLAN.md', 'not a helper')
+    self.put('z.sh', '#!/bin/sh\nexit 0')
+    got = self.collect('helpers', files_per_root=1)
+    self.eq([r['locator'] for r in got['evidence'].values()], ['z.sh'])
+    self.false(any('over-budget' in o['reason'] for o in got['omissions']))
+    self.put('zzz', '#!/bin/sh\nexit 0')
+    got = self.collect('helpers', files_per_root=2)
+    self.eq([r['locator'] for r in got['evidence'].values()], ['z.sh', 'zzz'])
+    self.false(any('over-budget' in o['reason'] for o in got['omissions']))
+
+  def test_x_operator_exclusion_overlap(self):
+    self.put('.git/PLAN.md', '| D-1 | hidden |')
+    self.put('notes.jsonl', '{}')
+    got = X.collect([dict(label='A', role='project', path=self.root)],
+      exclusions=[('project', '.git'), ('project', '*.jsonl')])
+    self.eq(sorted((o['locator'], o['reason']) for o in got['omissions']),
+      [('.git', 'skipped: excluded by operator'), ('notes.jsonl', 'skipped: excluded by operator')])
+    self.false(got['evidence'])
+
   def test_x_selected_file_cap(self):
     self.put('000.bin', 'unsupported')
     self.put('PLAN.md', '| D-1 | decision |')
@@ -792,6 +814,11 @@ class TestExtract(unittest.TestCase):
   def test_x_traversal_mutations(self):
     source = (SCRIPTS / 'debrief_extract.py').read_text()
     mutations = [
+      ('helper count', 'if not _helper_selected(name, data):', 'if False:',
+       'test_x_helpers_selected_cap'),
+      ('exclusion overlap', "if any(fnmatch.fnmatchcase(loc, pattern) for pattern in patterns):",
+       "if name != '.git' and not name.endswith('.jsonl') and any(fnmatch.fnmatchcase(loc, pattern) for pattern in patterns):",
+       'test_x_operator_exclusion_overlap'),
       ('lexical sort', 'key=lambda item: (item[0], item[1])',
        'key=lambda item: item[1]', 'test_x_bfs_exhaustive'),
       ('unselected count', "if not known:\n          omit", "if not known:\n          count += 1\n          omit",

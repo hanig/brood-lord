@@ -241,6 +241,13 @@ def _open_root(path):
     os.close(fd)
     raise
 
+def _helper_selected(name, data):
+  return (name in ('evidence.md', 'SUMMARY.md')
+    or Path(name).suffix in ('.py', '.sh', '.bash', '.zsh', '.fish', '.csh',
+      '.ksh', '.pl', '.rb', '.js', '.mjs', '.cjs', '.ts', '.lua', '.awk', '.r', '.R', '.ps1')
+    or data.startswith(b'#!'))
+
+
 def _walk(root_fd, max_entries, max_depth, patterns, omit):
   """BFS with one open directory at a time and bounded entry enumeration.
 
@@ -271,11 +278,11 @@ def _walk(root_fd, max_entries, max_depth, patterns, omit):
           if not _text(name):
             omit('/'.join(prefix) or '.', 'unsupported: filename')
             continue
-          if name == '.git' or name.endswith('.jsonl'):
-            omit(loc, 'skipped: excluded input')
-            continue
           if any(fnmatch.fnmatchcase(loc, pattern) for pattern in patterns):
             omit(loc, 'skipped: excluded by operator')
+            continue
+          if name == '.git' or name.endswith('.jsonl'):
+            omit(loc, 'skipped: excluded input')
             continue
           try:
             st = os.stat(name, dir_fd=fd, follow_symlinks=False)
@@ -339,9 +346,7 @@ def collect(roots, budgets=None, exclusions=None):
     uid, aid = _owner(parts)
     if role == 'helpers' and (name not in ('evidence.md', 'SUMMARY.md')
         or data.startswith(b'#!')):
-      _need(Path(name).suffix in ('.py', '.sh', '.bash', '.zsh', '.fish', '.csh',
-        '.ksh', '.pl', '.rb', '.js', '.mjs', '.cjs', '.ts', '.lua', '.awk', '.r', '.R', '.ps1')
-        or data.startswith(b'#!'))
+      _need(_helper_selected(name, data))
       rows = [('helper', {'line_range': [1, 1]}, None, None)]
       if name in ('evidence.md', 'SUMMARY.md'):
         # Preserve the existing byte-oriented helper observation independently.
@@ -430,10 +435,6 @@ def collect(roots, budgets=None, exclusions=None):
         if not known:
           omit(label, loc, 'unsupported: format')
           continue
-        if count >= caps['files_per_root']:
-          omit(label, '.', 'over-budget: uninspected remainder (max-files)')
-          break
-        count += 1
         if st.st_size > caps['per_file_bytes']:
           omit(label, loc, 'over-budget: per-file bytes')
           continue
@@ -441,8 +442,24 @@ def collect(roots, budgets=None, exclusions=None):
           omit(label, loc, 'over-budget: total bytes')
           continue
         try:
-          used += st.st_size
-          data = _read_file(fd, name, st, st.st_size)
+          # Helper selection may depend on a shebang. Inspect stable bytes
+          # before charging this file, retaining the adapter's selection rule.
+          if role == 'helpers':
+            used += st.st_size
+            data = _read_file(fd, name, st, st.st_size)
+            if data is None:
+              omit(label, loc, 'unstable: changed during read')
+              continue
+            if not _helper_selected(name, data):
+              omit(label, loc, 'unsupported: format or encoding')
+              continue
+          if count >= caps['files_per_root']:
+            omit(label, '.', 'over-budget: uninspected remainder (max-files)')
+            break
+          count += 1
+          if role != 'helpers':
+            used += st.st_size
+            data = _read_file(fd, name, st, st.st_size)
           if data is None:
             omit(label, loc, 'unstable: changed during read')
           else:
