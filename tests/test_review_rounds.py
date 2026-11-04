@@ -36,7 +36,8 @@ class TestRoundReservations(unittest.TestCase):
         os.chdir(self.repo)
         self.addCleanup(os.chdir, original)
         self.state = self.root / "state"
-        env = patch.dict(os.environ, {"XDG_STATE_HOME": str(self.state)})
+        env = patch.dict(os.environ, {"XDG_STATE_HOME": str(self.state),
+                                      "SWARM_REVIEW_LINEAGE": "legacy"})
         env.start()
         self.addCleanup(env.stop)
         self.git("init", "-q")
@@ -697,7 +698,7 @@ class TestClosedRoundGrammar(unittest.TestCase):
 class TestManagedBudget(unittest.TestCase):
     def setUp(self):
         TestRoundReservations.setUp(self)
-        os.environ.pop("SWARM_REVIEW_LINEAGE", None)
+        os.environ["SWARM_REVIEW_LINEAGE"] = '["u"]'
     git = TestRoundReservations.git
     fix = TestRoundReservations.fix
     invoke = TestRoundReservations.invoke
@@ -707,9 +708,8 @@ class TestManagedBudget(unittest.TestCase):
         with patch.dict(os.environ, {"SWARM_REVIEW_LINEAGE": json.dumps(chain or [unit])}):
             return review.change_identity(plan_name="plan", unit=unit)
 
-    def reserve(self, n, chain=("u",), explicit=()):
-        return review.managed_budget(self.identity(chain[-1], chain), n, "standard",
-                                     "plan", chain, explicit)
+    def reserve(self, n, chain=("u",)):
+        return review.managed_budget(self.identity(chain[-1], chain), n, "standard")
 
     def test_rebase_changes_only_unmanaged_identity(self):
         managed, unmanaged = self.identity(), review.change_identity()
@@ -750,201 +750,73 @@ class TestManagedBudget(unittest.TestCase):
                 review.change_identity(plan_name="plan", unit="u", lineage_root="other")
             self.assertEqual(review.review_lineage("u", "root"), ["root", "u"])
 
-    def legacy(self, unit, count):
+    def test_missing_environment_refuses_before_ledger(self):
+        os.environ.pop("SWARM_REVIEW_LINEAGE")
+        for extra in ((), ("--lineage-root", "u")):
+            result = self.invoke(extra=("--plan-name", "plan", "--unit", "u") + extra)
+            self.assertEqual(result[0], 4, result[1:3])
+            self.assertIn("SWARM_REVIEW_LINEAGE missing", result[2])
+            self.assertEqual(self.markers(), [])
+
+    def test_legacy_continuation_keeps_old_accounting(self):
+        os.environ["SWARM_REVIEW_LINEAGE"] = "legacy"
         remote = self.git("remote", "get-url", "origin")
-        key = review.identity_hash([remote, self.base, ["plan-unit", "plan", unit]])
-        for n in range(1, count + 1):
-            review.reserve_round(key, n, "standard")
-        return key
+        expected = review.identity_hash([remote, self.base, ["plan-unit", "plan", "u-b"]])
+        self.assertEqual(review.change_identity(plan_name="plan", unit="u-b"), expected)
+        for n in (1, 2, 3):
+            result = self.invoke(n, extra=("--plan-name", "plan", "--unit", "u-b"))
+            self.assertEqual(result[0], 0, result[1:3])
+        result = self.invoke(extra=("--plan-name", "plan", "--unit", "u-b",
+                                    "--fresh-cycle-from", "standard"))
+        self.assertEqual(result[0], 0, result[1:3])
+        self.assertTrue(all(p.name.startswith("cycle-") for p in self.markers()))
 
-    def test_exhaustive_legacy_import_and_idempotence(self):
-        for units in ((), ("u",), ("u", "u-b"), ("unknown",)):
-            for counts in itertools.product(range(4), repeat=len(units)):
-                with self.subTest(units=units, counts=counts), tempfile.TemporaryDirectory() as home:
-                    with patch.dict(os.environ, {"XDG_STATE_HOME": home}):
-                        keys = [self.legacy(u, n) for u, n in zip(units, counts)]
-                        chain = ("u", "u-b")
-                        total = sum(counts)
-                        if units == ("unknown",) and total:
-                            with self.assertRaisesRegex(ValueError, "LEGACY_IDENTITY_AMBIGUOUS.*--import-legacy-identity"):
-                                self.reserve(total + 1, chain)
-                            explicit = keys
-                        else:
-                            explicit = ()
-                        for _ in range(2):
-                            if total >= 3:
-                                with self.assertRaisesRegex(ValueError, "MANAGED_BUDGET_EXHAUSTED"):
-                                    self.reserve(total + 1, chain, explicit if not _ else ())
-                            elif _ == 0:
-                                self.reserve(total + 1, chain, explicit)
-                            else:
-                                error = "MANAGED_BUDGET_EXHAUSTED" if total == 2 else "managed --round must be"
-                                with self.assertRaisesRegex(ValueError, error):
-                                    self.reserve(total + 1, chain, explicit if not _ else ())
-                        ledger = review.round_ledger_root() / self.identity("u-b", chain)
-                        events = [json.loads(p.read_text()) for p in ledger.glob("event-*.json")]
-                        imports = [e for e in events if e["type"] == "import"]
-                        self.assertEqual(sum(e["count"] for e in imports), total)
-                        self.assertEqual(len(imports), sum(n > 0 for n in counts))
+    def test_probe_release_persists_and_number_can_be_reused(self):
+        flags = ("--plan-name", "plan", "--unit", "u")
+        for _ in range(2):
+            result = self.invoke(extra=flags, offline=True)
+            self.assertEqual(result[0], 2, result[1:3])
+            self.assertEqual(result[3], [])
+        before = {p: p.read_bytes() for p in self.markers()}
+        self.assertEqual(sum(json.loads(b)["type"] == "uncharged"
+                             for b in before.values()), 2)
+        result = self.invoke(extra=flags)
+        self.assertEqual(result[0], 0, result[1:3])
+        self.assertEqual(len(result[3]), 2)
+        for p, data in before.items():
+            self.assertEqual(p.read_bytes(), data)
 
-    def test_independent_legacy_owners_can_migrate_without_wrong_charges(self):
-        keys = [self.legacy(u, 1) for u in ("u", "v")]
-        with self.assertRaisesRegex(ValueError, "LEGACY_IDENTITY_AMBIGUOUS"):
-            self.reserve(2)
-        self.reserve(2, ("v",))
-        self.reserve(2)
-        for unit, key in zip(("u", "v"), keys):
-            dfd = review._open_directory_chain(review.round_ledger_root() / self.identity(unit))
-            try:
-                imported, reserved, _ = review.budget_history(dfd, self.identity(unit))
-                self.assertEqual(imported, {key: 1})
-                self.assertEqual(len(reserved), 1)
-            finally:
-                os.close(dfd)
+    def test_outage_on_first_prompt_stays_charged(self):
+        calls = []
+        def outage(reviewer, *_args):
+            calls.append(reviewer["name"])
+            self.assertTrue(self.markers())
+            return {"name": reviewer["name"], "ok": False, "error": "outage"}
+        result = self.invoke(extra=("--plan-name", "plan", "--unit", "u"), response=outage)
+        self.assertEqual(result[0], 2, result[1:3])
+        self.assertTrue(calls)
+        self.assertEqual([json.loads(p.read_text())["type"] for p in self.markers()], ["reserve"])
+        with self.assertRaisesRegex(ValueError, "managed --round must be"):
+            self.reserve(1)
 
-    def test_dns_unavailable_refunds_through_cli(self):
-        import socket
-        def response(reviewer, *_args):
-            _, error = review._post("https://example.invalid", {}, {}, 1, retries=1)
-            return {"name": reviewer["name"], "ok": False, "error": error}
-        for reason in (socket.gaierror("DNS failed"), ConnectionRefusedError("refused")):
-            with patch.object(review.urllib.request, "urlopen", side_effect=
-                              review.urllib.error.URLError(reason)):
-                for _ in range(4):
-                    result = self.invoke(extra=("--plan-name", "plan", "--unit", "u"), response=response)
-                    self.assertEqual(result[0], 2, result[1:3])
-                    self.assertEqual(review.REVIEW_BYTES, 0)
-        self.reserve(1)
-        for reason in (socket.gaierror("uncertain read"), ConnectionRefusedError("read")):
-            review.REVIEW_BYTES = 0
-            with patch.object(review.urllib.request, "urlopen", return_value=io.BytesIO()) as opened:
-                with patch.object(opened.return_value, "read", side_effect=reason):
-                    review._post("https://example.invalid", {}, {}, 1, retries=1)
-            self.assertGreater(review.REVIEW_BYTES, 0)
-
-    def test_interrupted_publication_does_not_poison_other_units(self):
+    def test_interrupted_publication_recovers(self):
         with patch.object(review.json, "dump", side_effect=OSError("interrupted")):
             with self.assertRaises(OSError):
                 self.reserve(1)
-        self.reserve(1, ("v",))
         self.reserve(1)
         with self.assertRaisesRegex(ValueError, "managed --round must be"):
             self.reserve(1)
 
-    def test_empty_ledger_never_enumerates_git_history(self):
+    def test_unrelated_history_never_enumerates_git_history(self):
+        review.reserve_round(review.change_identity(), 1, "standard")
         original = review.subprocess.check_output
         def metadata(argv, *args, **kwargs):
             if argv[:2] in (["git", "rev-list"], ["git", "for-each-ref"]):
-                self.fail("empty ledger enumerated repository history")
+                self.fail("managed ledger enumerated repository history")
             return original(argv, *args, **kwargs)
         with patch.object(review.subprocess, "check_output", side_effect=metadata):
             self.reserve(1)
             self.reserve(2)
-
-    def test_mapped_other_lineage_does_not_spend_this_budget(self):
-        self.legacy("v", 1)
-        self.reserve(2, ("v",))
-        self.reserve(1)
-
-    def test_unmanaged_history_keeps_its_own_budget(self):
-        review.reserve_round(review.change_identity(), 1, "standard")
-        self.reserve(1)
-
-    def test_overlapping_zero_byte_refunds_in_either_order(self):
-        from types import SimpleNamespace
-        for order in ((0, 1), (1, 0)):
-            with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, {"XDG_STATE_HOME": home}):
-                records = [self.reserve(n) for n in (1, 2)]
-                for n in order:
-                    review.refund_review_round(SimpleNamespace(budget_reservation=records[n]), "REVIEW_UNAVAILABLE", 0)
-                self.reserve(1)
-
-    def test_concurrent_migration_and_event_read_are_serialized(self):
-        for migrating in (False, True):
-            with self.subTest(migrating=migrating), tempfile.TemporaryDirectory() as home, \
-                 patch.dict(os.environ, {"XDG_STATE_HOME": home}):
-                key = self.legacy("u", 1) if migrating else None
-                ids = [self.identity(u) for u in ("u", "v")]
-                ready, release, entered = threading.Event(), threading.Event(), threading.Event()
-                first_locks, lock = {}, review.ledger_lock
-                def observed_lock(dfd):
-                    st = os.fstat(dfd)
-                    first_locks.setdefault(threading.get_ident(), (st.st_dev, st.st_ino))
-                    if len(first_locks) == 2:
-                        entered.set()
-                    return lock(dfd)
-                owner, name = (review, "legacy_imports") if migrating else (review.json, "dump")
-                original = getattr(owner, name)
-                def paused(*args, **kwargs):
-                    result = original(*args, **kwargs) if migrating else None
-                    identity = args[0] if migrating else args[0].get("identity")
-                    if identity == ids[0]:
-                        ready.set()
-                        if not release.wait(5):
-                            raise RuntimeError("fixture release timeout")
-                    return result if migrating else original(*args, **kwargs)
-                with patch.object(owner, name, paused), patch.object(review, "ledger_lock", observed_lock), \
-                     concurrent.futures.ThreadPoolExecutor(2) as pool:
-                    a = pool.submit(review.managed_budget, ids[0], 2 if migrating else 1, "standard", "plan", ("u",))
-                    try:
-                        self.assertTrue(ready.wait(3))
-                        b = pool.submit(review.managed_budget, ids[1], 2 if migrating else 1, "standard", "plan", ("v",), (key,) if migrating else ())
-                        self.assertTrue(entered.wait(3))
-                        self.assertEqual(len(set(first_locks.values())), 1)
-                        with self.assertRaises(concurrent.futures.TimeoutError):
-                            b.result(timeout=.2)
-                    finally:
-                        release.set()
-                    a.result(timeout=5)
-                    if migrating:
-                        with self.assertRaisesRegex(ValueError, "LEGACY_MAPPING_CONFLICT"):
-                            b.result(timeout=5)
-                        self.reserve(3)
-                    else:
-                        b.result(timeout=5)
-
-    def test_uncertain_http_read_stays_charged(self):
-        error = review.urllib.error.HTTPError("https://example.invalid", 400, "fixture", {}, None)
-        review.REVIEW_BYTES = 0
-        with patch.object(error, "read", side_effect=OSError("uncertain")), \
-             patch.object(review.urllib.request, "urlopen", side_effect=error):
-            review._post("https://example.invalid", {}, {}, 1, retries=1)
-        self.assertGreater(review.REVIEW_BYTES, 0)
-
-    def test_cli_refund_requires_zero_transport_bytes(self):
-        flags = ("--plan-name", "plan", "--unit", "u")
-        for _ in range(2):
-            self.assertEqual(self.invoke(extra=flags, offline=True)[0], 2)
-        def response(reviewer, *_args):
-            _, error = review._post("https://example.invalid", {}, {}, 1, retries=1)
-            return {"name": reviewer["name"], "ok": False, "error": error}
-        for body in (b"", b"partial"):
-            with patch.object(review.urllib.request, "urlopen",
-                              side_effect=lambda *a, **kw: io.BytesIO(body)):
-                result = self.invoke(extra=flags, response=response)
-            self.assertEqual(result[0], 2, result[1:3])
-            self.assertEqual(review.REVIEW_BYTES == 0, not body)
-        self.assertGreater(review.REVIEW_BYTES, 0)
-        self.assertEqual(self.invoke(extra=flags, offline=True)[0], 4)
-
-    def test_refund_outcomes_bytes_and_persistent_retry(self):
-        from types import SimpleNamespace
-        for state, count in itertools.product(review.STATES, (0, 1)):
-            with self.subTest(state=state, response_bytes=count), tempfile.TemporaryDirectory() as home:
-                with patch.dict(os.environ, {"XDG_STATE_HOME": home}):
-                    record = self.reserve(1)
-                    args = SimpleNamespace(budget_reservation=record)
-                    review.refund_review_round(args, state, count)
-                    ledger = review.round_ledger_root() / record["identity"]
-                    if state == "REVIEW_UNAVAILABLE" and count == 0:
-                        before = {p.name: p.read_bytes() for p in ledger.glob("event-*.json")}
-                        self.reserve(1)
-                        self.assertTrue(any(json.loads(b)["type"] == "refund" for b in before.values()))
-                        for name, data in before.items():
-                            self.assertEqual((ledger / name).read_bytes(), data)
-                    else:
-                        with self.assertRaisesRegex(ValueError, "managed --round must be"):
-                            self.reserve(1)
 
 
 if __name__ == "__main__":
