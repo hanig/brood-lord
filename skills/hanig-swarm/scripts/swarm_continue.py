@@ -96,7 +96,7 @@ def _continuation(plan, state, args, published=None):
             if problem:
                 raise PlanError(problem)
     new = copy.deepcopy(old)
-    new.update(id=args.new_id, seed=seed, description="Continuation of " + args.unit,
+    new.update(id=args.new_id, seed=seed, continuation_of=args.unit, description="Continuation of " + args.unit,
                author_history=SA.collect_author_history(old, us),
                # Byte decoding preserves CRLF in UTF-8 prompts.
                prompt=Path(args.prompt_file).read_bytes().decode("utf-8"))
