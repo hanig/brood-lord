@@ -8,7 +8,7 @@ import os
 import stat
 import sys
 import tempfile
-from contextlib import contextmanager, redirect_stdout
+from contextlib import ExitStack, contextmanager, redirect_stdout
 from pathlib import Path
 
 import coordinator_paths as CP
@@ -33,7 +33,7 @@ def _remote_head(repo, raw, remote, ref):
     return head
 
 
-def _continuation(plan, state, args):
+def _continuation(plan, state, args, published=None):
     units = plan.get("units")
     if not isinstance(units, list):
         raise PlanError("plan units must be a JSON list")
@@ -87,6 +87,14 @@ def _continuation(plan, state, args):
     if rc:
         raise PlanError("target/head ancestry check failed: " + err)
     seed["base"] = base
+    if published is not None:
+        frozen = SPR.declared_seed(published)
+        seed.update(head=frozen["head"], base=frozen["base"])
+        for check in (seed, dict(seed, base=recorded_base),
+                      {"ref": target["target_ref"], "base": seed["base"], "head": seed["base"]}):
+            problem = SP._seed_reachability_problem(check, repo, raw, remote)
+            if problem:
+                raise PlanError(problem)
     new = copy.deepcopy(old)
     new.update(id=args.new_id, seed=seed, description="Continuation of " + args.unit,
                author_history=SA.collect_author_history(old, us),
@@ -118,7 +126,8 @@ def _append(path, before, plan, mode):
         with tempfile.NamedTemporaryFile(dir=str(path.parent), delete=False) as out:
             temp = out.name
             os.fchmod(out.fileno(), stat.S_IMODE(mode))
-            out.write((json.dumps(plan, indent=2, ensure_ascii=True) + "\n").encode("utf-8"))
+            out.write(plan if isinstance(plan, bytes) else
+                      (json.dumps(plan, indent=2, ensure_ascii=True) + "\n").encode("utf-8"))
             out.flush()
             os.fsync(out.fileno())
         if path.read_bytes() != before:
@@ -130,22 +139,138 @@ def _append(path, before, plan, mode):
             os.unlink(temp)
 
 
+def _repoint(plan, state, old, new):
+    dependents = []
+    for unit in plan["units"]:
+        needs = unit.get("needs", [])
+        if not isinstance(needs, list):
+            raise PlanError(f"unit {unit['id']!r} needs must be a JSON list")
+        if old in needs:
+            dependents.append(unit)
+    started = []
+    for unit in dependents:
+        us = (state.get("units") or {}).get(unit["id"]) or {}
+        if (us.get("attempts") or us.get("attempt_dir")
+                or us.get("attempt_launch_intents")):
+            started.append(unit["id"])
+    if started:
+        raise PlanError("dependents have recorded attempts: " + ", ".join(started))
+    for unit in dependents:
+        unit["needs"] = [new if need == old else need
+                         for need in unit["needs"]]
+
+
+def _parts(text):
+    decoder = json.JSONDecoder(parse_int=lambda n: (n,))
+    value = decoder.decode(text)
+    if not isinstance(value, (dict, list)):
+        raise PlanError("tickets entries must be objects; issues must be a list")
+    fields = {} if isinstance(value, dict) else []
+    pos = len(text) - len(text.lstrip()) + 1
+    while True:
+        pos += len(text[pos:]) - len(text[pos:].lstrip())
+        if text[pos] in "}]":
+            return fields, pos
+        if isinstance(fields, dict):
+            key, pos = decoder.raw_decode(text, pos)
+            if key in fields:
+                raise PlanError("duplicate tickets field: " + key)
+            pos = text.index(":", pos) + 1
+            pos += len(text[pos:]) - len(text[pos:].lstrip())
+        start = pos
+        _, pos = decoder.raw_decode(text, pos)
+        if isinstance(fields, dict):
+            fields[key] = (start, pos)
+        else:
+            fields.append((start, pos))
+        pos += len(text[pos:]) - len(text[pos:].lstrip())
+        if text[pos] == ",":
+            pos += 1
+
+
+def _ticket_bytes(before, old, new):
+    encoding = json.detect_encoding(before)
+    prefix = b""
+    if encoding in ("utf-16", "utf-32"):
+        size = 2 if encoding == "utf-16" else 4
+        prefix, before = before[:size], before[size:]
+        encoding += "-le" if prefix.startswith(b"\xff\xfe") else "-be"
+    text = before.decode(encoding)
+    root, _ = _parts(text)
+    if "issues" not in root:
+        raise PlanError(f"tickets predecessor {old!r} has no entry")
+    start, end = root["issues"]
+    entries, close = _parts(text[start:end])
+    if not isinstance(entries, list):
+        raise PlanError("tickets issues must be a JSON list")
+    entries = [text[start+a:start+b] for a, b in entries]
+    prior = [e for e in entries if json.loads(e, parse_int=lambda n: (n,)).get("unit") == old]
+    if len(prior) != 1:
+        raise PlanError(f"tickets predecessor {old!r} must have one entry")
+    entry = prior[0]
+    fields, end = _parts(entry)
+    changes = [(fields["unit"], json.dumps(new))]
+    if "continuation_of" in fields:
+        changes.append((fields["continuation_of"], json.dumps(old)))
+    else:
+        changes.append(((end, end), ', "continuation_of": ' + json.dumps(old)))
+    for (a, b), value in sorted(changes, reverse=True):
+        entry = entry[:a] + value + entry[b:]
+    existing = [e for e in entries if json.loads(e, parse_int=lambda n: (n,)).get("unit") == new]
+    if existing:
+        if existing != [entry]:
+            raise PlanError(f"tickets successor {new!r} differs from expected entry")
+        return prefix + before
+    pos = start + close
+    return prefix + (text[:pos] + "," + entry + text[pos:]).encode(encoding)
+
+
 def continue_plan(args, validate):
     try:
         path = Path(args.plan).resolve()
-        with _plan_file(path, args.write) as stream:
+        tickets = getattr(args, "tickets", None)
+        repoint = getattr(args, "repoint_dependents", False)
+        with ExitStack() as stack:
+            stream = stack.enter_context(_plan_file(path, args.write))
             before = stream.read()
             plan = json.loads(before)
+            draft_path = Path(tickets).resolve() if tickets else None
+            if draft_path is not None and (draft_path == path
+                                          or os.path.samefile(path, draft_path)):
+                raise PlanError("plan and tickets must be different files")
+            draft_changed = False
+            if draft_path is not None:
+                draft_stream = stack.enter_context(_plan_file(draft_path, args.write))
+                draft_before = draft_stream.read()
+                draft = _ticket_bytes(draft_before, args.unit, args.new_id)
+                draft_changed = draft != draft_before
             state_dir, _, _ = CP.resolve_paths(args.state_dir, plan=plan)
             state, error = U.read_json(state_dir / SS.STATE_FILE)
             if error or not isinstance(state, dict):
                 raise PlanError(f"no readable coordinator state: {error}")
-            new = _continuation(plan, state, args)
-            plan["units"].append(new)
+            existing = [u for u in plan["units"] if u.get("id") == args.new_id]
+            source = copy.deepcopy(plan)
+            if tickets or repoint:
+                source["units"] = [u for u in source["units"]
+                                   if u.get("id") != args.new_id]
+            new = _continuation(source, state, args,
+                                existing[0] if existing and (tickets or repoint) else None)
+            if existing:
+                if len(existing) != 1 or existing[0] != new:
+                    raise PlanError(f"unit {args.new_id!r} already exists and differs")
+            else:
+                plan["units"].append(new)
+            if repoint:
+                _repoint(plan, state, args.unit, args.new_id)
             with redirect_stdout(io.StringIO()):
                 validate(plan)
             if args.write:
-                _append(path, before, plan, os.fstat(stream.fileno()).st_mode)
+                if plan != json.loads(before):
+                    _append(path, before, plan, os.fstat(stream.fileno()).st_mode)
+                if draft_changed:
+                    _append(draft_path, draft_before,
+                            draft,
+                            os.fstat(draft_stream.fileno()).st_mode)
         print(json.dumps(new, indent=2, ensure_ascii=True))
         return 0
     except (PlanError, CP.PathPolicyError, OSError, ValueError,

@@ -112,7 +112,29 @@ RECONCILE_UNKNOWN = 4
 TERMINAL_ISSUE_STATES = frozenset(("done", "completed", "cancelled", "canceled"))
 
 
-def read_json(path, expected_type=dict):
+class _Number(tuple):
+    def __new__(cls, text):
+        return tuple.__new__(cls, (text,))
+
+
+def _exact_json(value):
+    pending, tokens = [value], []
+    while pending:
+        item = pending.pop()
+        if isinstance(item, dict):
+            tokens.append(("object", len(item)))
+            for key in sorted(item, reverse=True):
+                pending.extend((item[key], key))
+        elif isinstance(item, list):
+            tokens.append(("array", len(item)))
+            pending.extend(reversed(item))
+        else:
+            tokens.append((type(item).__name__, item[0] if isinstance(item, _Number)
+                           else json.dumps(item, ensure_ascii=True)))
+    return tokens
+
+
+def read_json(path, expected_type=dict, exact_numbers=False):
     """Read an object by default; issue-list read-backs explicitly need a list."""
     try:
         text = Path(path).read_text()
@@ -121,7 +143,8 @@ def read_json(path, expected_type=dict):
     except (OSError, ValueError) as e:
         return None, str(e)
     try:
-        value = json.loads(text)
+        value = (json.loads(text, parse_int=_Number, parse_float=_Number)
+                 if exact_numbers else json.loads(text))
     except Exception as e:
         # Decoder failures include recursion/resource limits, not only syntax.
         # A message-less exception must still signal an unreadable input.
@@ -490,6 +513,47 @@ def draft(plan, brief=None, existing=None, autopilot=False, readback=None, repos
     return out
 
 
+def _lineage(plan, issues):
+    units = {u["id"]: u for u in plan.get("units", [])}
+    parents, problems = {}, []
+    for uid, issue in issues.items():
+        if "continuation_of" not in issue:
+            continue
+        parent = issue["continuation_of"]
+        prior = issues.get(parent) if isinstance(parent, str) else None
+        expected = dict(prior, unit=uid, continuation_of=parent) if prior else None
+        if (uid not in units or not isinstance(parent, str)
+                or parent not in units or expected is None
+                or _exact_json(issue) != _exact_json(expected)):
+            problems.append(f"invalid continuation mapping for {uid!r}")
+        else:
+            parents[uid] = parent
+    for uid in parents:
+        seen, cursor = set(), uid
+        while cursor in parents:
+            if cursor in seen:
+                problems.append(f"cyclic continuation mapping for {uid!r}")
+                break
+            seen.add(cursor)
+            cursor = parents[cursor]
+    return ({} if problems else parents), problems
+
+
+def _repointed_needs(current, recorded, parents):
+    if not isinstance(current, list) or not isinstance(recorded, list):
+        return False
+    if len(current) != len(recorded):
+        return False
+    for now, before in zip(current, recorded):
+        if not isinstance(now, str) or not isinstance(before, str):
+            return False
+        while now != before and now in parents:
+            now = parents[now]
+        if now != before:
+            return False
+    return True
+
+
 def check(plan, tickets):
     """Both directions. A unit with no issue is work nobody can see; an issue
     with no unit is a promise nothing will ever verify."""
@@ -507,6 +571,9 @@ def check(plan, tickets):
         problems.append(f"unit {d!r} has more than one issue")
 
     by_unit = {i.get("unit"): i for i in (tickets.get("issues") or [])}
+    parents, lineage_problems = _lineage(plan, by_unit)
+    problems.extend(lineage_problems)
+    units = {u["id"]: u for u in plan.get("units", [])}
     for u in (plan.get("units") or []):
         if not (u.get("outputs") or []):
             problems.append(f"unit {u['id']!r} declares no outputs, so its "
@@ -515,6 +582,19 @@ def check(plan, tickets):
         if issue is None:
             continue
         recorded = issue.get("unit_digest")
+        parent = parents.get(u["id"])
+        if parent is not None:
+            prior = units[parent]
+            if (any(u.get(k) != prior.get(k) for k in BODY_FIELDS
+                    if k not in ("prompt", "description", "needs"))
+                    or not _repointed_needs(u.get("needs", []),
+                                           prior.get("needs", []), parents)):
+                problems.append(f"continuation {u['id']!r} changed inherited predicate fields")
+            continue
+        digest_unit = u
+        if (u.get("needs") != issue.get("blocked_by")
+                and _repointed_needs(u.get("needs"), issue.get("blocked_by"), parents)):
+            digest_unit = dict(u, needs=issue["blocked_by"])
         if not recorded:
             # A missing digest is NOT a pass. An issue written before digests
             # existed, or hand-edited, would otherwise be accepted however
@@ -525,7 +605,7 @@ def check(plan, tickets):
                 f"the issue for {u['id']!r} carries no unit digest, so "
                 f"whether it still describes this unit cannot be told. "
                 f"Re-run `draft` to refresh it; tracker ids are kept.")
-        elif recorded != unit_digest(u):
+        elif recorded != unit_digest(digest_unit):
             problems.append(
                 f"unit {u['id']!r} has changed since its issue was written "
                 f"({recorded} -> {unit_digest(u)}), so the issue now "
@@ -764,7 +844,7 @@ def cmd_check(args):
     if err:
         print(f"error: no readable plan at {args.plan}: {err}", file=sys.stderr)
         return 2
-    tickets, err = read_json(args.tickets)
+    tickets, err = read_json(args.tickets, exact_numbers=True)
     if err:
         print(f"error: no readable draft at {args.tickets}: {err}. "
               f"Run `tickets.py draft` first.", file=sys.stderr)
