@@ -755,12 +755,37 @@ class TestManagedBudget(unittest.TestCase):
             self.assertEqual(review.review_lineage("u", "root"), ["root", "u"])
 
     def test_missing_environment_refuses_before_ledger(self):
+        self.git("checkout", "-b", "swarm-0123456789abcdef")
         os.environ.pop("SWARM_REVIEW_LINEAGE")
         for extra in ((), ("--lineage-root", "u")):
             result = self.invoke(extra=("--plan-name", "plan", "--unit", "u") + extra)
             self.assertEqual(result[0], 4, result[1:3])
             self.assertIn("SWARM_REVIEW_LINEAGE missing", result[2])
             self.assertEqual(self.markers(), [])
+
+    def test_missing_environment_operator_checkout_uses_self_root(self):
+        os.environ.pop("SWARM_REVIEW_LINEAGE")
+        expected = review.identity_hash([
+            self.git("remote", "get-url", "origin"), ["plan-unit", "plan", "u"]])
+        # Exact branch matching: near-matches are ordinary operator branches.
+        for branch in ("change", "swarm-0123456789abcdeF",
+                       "swarm-0123456789abcdef-extra", "detached"):
+            with self.subTest(branch=branch):
+                if branch == "detached":
+                    self.git("checkout", "--detach")
+                elif branch != "change":
+                    self.git("checkout", "-b", branch)
+                self.assertEqual(review.change_identity(plan_name="plan", unit="u"), expected)
+                self.assertEqual(review.review_lineage("u", "u"), ["u"])
+                with self.assertRaisesRegex(ValueError, "--lineage-root conflicts"):
+                    review.review_lineage("u", "other")
+                # Probe release permits the next fixture to reuse round 1.
+                result = self.invoke(extra=("--plan-name", "plan", "--unit", "u"),
+                                     offline=True)
+                self.assertEqual(result[0], 2, result[1:3])
+                self.assertIn("REVIEW_UNAVAILABLE", result[1])
+        result = self.invoke(extra=("--plan-name", "plan", "--unit", "u"))
+        self.assertEqual(result[0], 0, result[1:3])
 
     def test_legacy_continuation_keeps_old_accounting(self):
         os.environ["SWARM_REVIEW_LINEAGE"] = "legacy"
