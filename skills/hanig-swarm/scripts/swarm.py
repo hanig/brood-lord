@@ -1827,6 +1827,8 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
         if thinking:
             argv += ["--thinking", str(thinking)]
         for kv in (u.get("env") or []):
+            if str(kv) == f"SWARM_UNIT_ID={u['id']}":
+                continue
             if str(kv).split("=", 1)[0] in {"SWARM_REVIEW_LINEAGE", "SWARM_UNIT_ID"}:
                 return None, "reserved coordinator review environment: " + str(kv).split("=", 1)[0]
             argv += ["--env", str(kv)]
