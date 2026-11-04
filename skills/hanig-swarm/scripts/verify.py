@@ -937,7 +937,7 @@ def outcome_result(outcome, execution=None):
             return {"result": "incomplete", "incomplete_reason": "Slurm infrastructure loss: " + state}
     if outcome.get("incomplete_reason"):
         return {"result": "incomplete", "incomplete_reason": outcome["incomplete_reason"]}
-    if states and not any(state in RV.TERMINAL for state, code in states):
+    if states and execution.get("sacct_state") not in RV.TERMINAL:
         return {"result": "incomplete", "incomplete_reason": "Slurm accounting pending"}
     return {"result": "pass" if outcome["exit_code"] == 0 else "fail"}
 
