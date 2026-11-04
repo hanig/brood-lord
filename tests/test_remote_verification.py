@@ -3982,6 +3982,23 @@ class TestInfrastructureClassification(unittest.TestCase):
                 if zero:
                     self.assertIn('exit time unattested', out['incomplete_reason'])
 
+    def test_zero_exit_survives_failed_final_collection(self):
+        child = mock.Mock(returncode=None, pid=123, stdout=None, stderr=None)
+        status = [None]
+        def poll():
+            child.returncode = status[0]
+            return child.returncode
+        child.poll.side_effect = poll
+        child.communicate.side_effect = subprocess.TimeoutExpired('fixture', 10)
+        with mock.patch.object(V.subprocess, 'Popen', return_value=child), \
+                mock.patch.object(V.time, 'monotonic', side_effect=[0, 2]), \
+                mock.patch.object(V.os, 'killpg',
+                                  side_effect=lambda *args: status.__setitem__(0, 0)):
+            out = V._observe_execution(['fixture'], 1, '.')
+        self.assertEqual(child.poll(), 0)
+        self.assertEqual(V.outcome_result(out)['result'], 'incomplete')
+        self.assertIn('exit time unattested', out['incomplete_reason'])
+
     def test_predeadline_exit_survives_delay_before_poll(self):
         child = mock.Mock(returncode=0, pid=123)
         child.poll.return_value = 0
