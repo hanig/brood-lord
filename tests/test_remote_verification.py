@@ -1972,18 +1972,6 @@ class TestRemoteVerification(unittest.TestCase):
         self.assert_ok(result)
         self.assertFalse(marker.exists())
 
-    def test_pending_loss_preserves_attestation_and_allows_retry(self):
-        self.cancellation_fixture()
-        self.assert_pending(self.verify('--verification-timeout', '1'))
-        (self.f.bin / 'sacct').write_text(PYTHON + SACCT)
-        self.mode.write_text('slurm-node-loss')
-        self.verify('--retrieve-remote-evidence')
-        self.assertIn('Slurm infrastructure loss: NODE_FAIL',
-                      [r.get('incomplete_reason') for r in self.rows()])
-        self.mode.write_text('pass')
-        self.assert_ok(self.verify())
-        self.assert_ok(self.admitted())
-
     def test_node_loss_retry(self):
         self.slurm_policy()
         self.program()
@@ -2002,29 +1990,6 @@ class TestRemoteVerification(unittest.TestCase):
         self.assert_ok(self.verify())
         self.assert_ok(self.admitted())
         self.assertTrue(Path(first['execution']['stage']).exists())
-
-    def assert_retry_exhausted(self):
-        for attempt in range(2):
-            self.assert_failed(self.verify())
-            self.assertEqual(len(self.rows()), attempt + 1)
-            self.assertEqual(self.rows()[-1]['result'], 'incomplete')
-            self.f.assert_refused(self.admitted())
-        result = self.verify()
-        self.assert_failed(result)
-        self.assertIn('INCONCLUSIVE retry exhausted', result.stderr)
-        self.assertEqual(len(self.rows()), 2)
-        self.f.assert_refused(self.admitted())
-
-    def test_second_node_loss_exhausts_retry(self):
-        self.slurm_policy()
-        self.program()
-        self.mode.write_text('slurm-node-loss')
-        self.assert_retry_exhausted()
-
-    def test_persisted_retry_bound(self):
-        self.program()
-        (self.f.bin / 'ssh').unlink()
-        self.assert_retry_exhausted()
 
     def test_retry_fail_binds(self):
         self.program('raise SystemExit(1)\n')

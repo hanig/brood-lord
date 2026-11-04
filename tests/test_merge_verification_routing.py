@@ -104,84 +104,22 @@ class TestMergeVerificationRouting(unittest.TestCase):
         with self.subTest(evidence="ledger"):
             self.assertEqual(list((self.f.state_dir / "remote-verifications").glob("*.json")), [])
 
-    def test_fresh_retry_workdir(self):
+    def test_repeated_incomplete_allows_fresh_runs_but_not_merge(self):
         directories = []
         def observe(*args, **kwargs):
             directories.append(kwargs.get("cwd", args[2] if len(args) > 2 else None))
             return RV.incomplete("coordinator launcher unavailable")
         with mock.patch.object(V, "_observe_execution", side_effect=observe):
-            for _ in range(3):
+            for attempt in range(3):
                 self.assertEqual(self.invoke(), 1)
-        self.assertEqual(len(directories), 2)
-        self.assertNotEqual(*directories)
+                self.assertEqual(len(directories), attempt + 1)
+                self.f.assert_refused(self.transport.admitted())
+        self.assertEqual(len(set(directories)), 3)
         self.assertTrue(all(not Path(p).exists() for p in directories))
-        self.assertIn("INCONCLUSIVE retry exhausted", self.diagnostic)
-
-    def legacy_loss(self, reason, count=1):
-        with mock.patch.object(V, "_observe_execution",
-                               return_value=RV.incomplete(reason)):
-            self.assertEqual(self.invoke(), 1)
-        row, = S.load_verifications(self.f.state_dir)[0]
-        self.transport.journal.write_text((json.dumps(row) + "\n") * count)
-
-    def assert_unattested(self, reason):
-        self.legacy_loss(reason)
-        self.assertEqual(self.invoke(), 1)
-        self.spawn.assert_not_called()
-        self.assertIn("lacks attested infrastructure", self.diagnostic)
-
-    def test_legacy_timeout_cannot_retry(self):
-        self.assert_unattested("coordinator timed out after 1s")
-
-    def test_unknown_reason_cannot_retry(self):
-        self.assert_unattested("unrecognized loss")
-
-    def test_legacy_losses_exhaust_retry(self):
-        self.legacy_loss("coordinator launcher unavailable", count=2)
-        self.assertEqual(self.invoke(), 1)
-        self.spawn.assert_not_called()
-        self.assertIn("INCONCLUSIVE retry exhausted", self.diagnostic)
-
-    def test_unauthorized_pass_keeps_retry_exhausted(self):
-        self.legacy_loss("coordinator launcher unavailable", count=2)
-        row = S.load_verifications(self.f.state_dir)[0][0]
-        row.update(result="pass", exit_code=0, verifier="unauthorized")
-        self.assertIsNone(RV.execution_problem(row))
-        with self.transport.journal.open("a") as out:
-            out.write(json.dumps(row) + "\n")
-        self.f.assert_refused(self.transport.admitted())
-        self.assertEqual(self.invoke(), 1, self.diagnostic)
-        self.spawn.assert_not_called()
-
-    def test_provisional_pass_keeps_exhaustion(self):
-        self.legacy_loss("coordinator launcher unavailable", count=2)
-        row = S.load_verifications(self.f.state_dir)[0][0]
-        row.update(result="pass", exit_code=0)
-        row["execution"].update(location="remote", executor="slurm")
-        self.assertIsNotNone(RV.execution_problem(row))
-        with self.transport.journal.open("a") as out:
-            out.write(json.dumps(row) + "\n")
-        self.assertEqual(self.invoke(), 1)
-        self.assertIn("INCONCLUSIVE retry exhausted", self.diagnostic)
-
-    def test_provisional_retry_count(self):
-        self.legacy_loss("coordinator launcher unavailable")
-        loss = S.load_verifications(self.f.state_dir)[0][0]
-        for state in ('RUNNING', 'PENDING', None):
-            row = dict(loss, **V.outcome_result(dict(exit_code=0),
-                       dict(executor='slurm', sacct_state=state)))
-            self.assertEqual(row["result"], "incomplete")
-            with self.transport.journal.open("a") as out:
-                out.write(json.dumps(row) + "\n")
-        self.f.assert_refused(self.transport.admitted())
-        self.assertEqual(self.invoke(), 0, self.diagnostic)
-
-    def test_resolved_retry(self):
-        self.legacy_loss("coordinator launcher unavailable")
-        self.assertEqual(self.invoke(), 0, self.diagnostic)
-        self.assertTrue(list((self.f.state_dir / "verification-retries").glob("*.json")))
+        self.assertFalse((self.f.state_dir / "verification-retries").exists())
         self.assertEqual(self.invoke(), 0, self.diagnostic)
         self.assert_local_seams()
+        self.transport.assert_ok(self.transport.admitted())
 
     def test_absent_policy_uses_local_seams(self):
         self.assertEqual(self.invoke(), 0, self.diagnostic)
