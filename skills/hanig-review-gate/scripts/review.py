@@ -502,7 +502,7 @@ def managed_budget(identity, round_no=None, profile=None, plan_name=None,
                 append_event(dfd, {"type": "refund", "reservation": refund,
                                                "state": "REVIEW_UNAVAILABLE", "response_bytes": 0})
                 return None
-            found = legacy_imports(identity, plan_name, lineage, explicit)
+            found = legacy_imports(identity, plan_name, lineage, set(explicit) | set(imported))
             for key, count in found.items():
                 if key in imported:
                     if imported[key] != count:
