@@ -136,13 +136,13 @@ class TestMergeVerificationRouting(unittest.TestCase):
         self.assertEqual(self.invoke(), 1)
         self.spawn.assert_not_called()
 
-    def test_legacy_losses_exhaust_retry_without_marker(self):
+    def test_legacy_losses_exhaust_retry(self):
         self.legacy_loss("coordinator launcher unavailable", count=2)
         self.assertEqual(self.invoke(), 1)
         self.spawn.assert_not_called()
         self.assertIn("INCONCLUSIVE retry exhausted", self.diagnostic)
 
-    def test_provisional_pass_cannot_reset_exhaustion(self):
+    def test_provisional_pass_keeps_exhaustion(self):
         self.legacy_loss("coordinator launcher unavailable", count=2)
         row = S.load_verifications(self.f.state_dir)[0][0]
         row.update(result="pass", exit_code=0)
@@ -152,6 +152,18 @@ class TestMergeVerificationRouting(unittest.TestCase):
             out.write(json.dumps(row) + "\n")
         self.assertEqual(self.invoke(), 1)
         self.assertIn("INCONCLUSIVE retry exhausted", self.diagnostic)
+
+    def test_provisional_excludes_retry_count(self):
+        self.legacy_loss("coordinator launcher unavailable")
+        loss = S.load_verifications(self.f.state_dir)[0][0]
+        for state in ('RUNNING', 'PENDING', None):
+            row = dict(loss, **V.outcome_result(dict(exit_code=0),
+                       dict(executor='slurm', sacct_state=state)))
+            self.assertEqual(row["result"], "incomplete")
+            with self.transport.journal.open("a") as out:
+                out.write(json.dumps(row) + "\n")
+        self.f.assert_refused(self.transport.admitted())
+        self.assertEqual(self.invoke(), 0, self.diagnostic)
 
     def test_passing_retry_allows_reverification(self):
         self.legacy_loss("coordinator launcher unavailable")
