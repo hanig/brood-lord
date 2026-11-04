@@ -213,6 +213,7 @@ def _recover_code_launch(state, u, unit_dir, agent):
     if len(matching_registry) == 1:
         workspace_id = (matching_registry[0].get("workspaceId")
                         or matching_registry[0].get("WorkspaceId"))
+    us.setdefault("attempt_cleanup_agents", {})[attempt] = str(agent)
     return SCL._complete_code_launch(
         state, u, unit_dir, agent_path, workspace_id=workspace_id,
         recovery=True)
@@ -460,7 +461,70 @@ def _preserve_and_archive_code_worktree(state, u, unit_dir, report, state_dir=No
         SS.save_state(state_dir, state)
         return
 
+    def safe_to_remove():
+        # Never borrow the current agent for a historical attempt. Backfill
+        # old current bindings in coordinator state; unknown owners stay put.
+        agents = us.setdefault("attempt_cleanup_agents", {})
+        agent = agents.get(attempt)
+        if not agent and Path(us.get("attempt_dir") or "").name == attempt:
+            agent = us.get("job_id")
+            if agent:
+                agents[attempt] = agent
+        reason = "attempt agent is unknown"
+        if agent:
+            rc, out, err = U.run(
+                ["paseo", "inspect", "--json", str(agent)], timeout=60)
+            rec = _paseo_json(out) or {}
+            status = rec.get("Status") or rec.get("status")
+            # Exact lifecycle values: errors, permission blocks and unknown
+            # states never establish safe teardown, even on a terminal unit.
+            settled = (rc == 0 and isinstance(status, str)
+                       and status in U.PASEO_LIFECYCLE
+                       and U.PASEO_LIFECYCLE[status] is None
+                       and not (rec.get("PendingPermissions")
+                                or rec.get("pendingPermissions")))
+            pending = [entry for entry in us.get("continuations", [])
+                       if isinstance(entry, dict)
+                       and entry.get("agent_id") == str(agent)
+                       and entry.get("sent") is not False
+                       and not entry.get("settled_since_send")]
+            if settled and pending:
+                # This observation is after the send. Record settlement,
+                # retaining this pass; a later fresh observation can clean.
+                for entry in pending:
+                    entry["settled_since_send"] = True
+                reason = "continuation pending; first settlement since send"
+            elif settled:
+                meta.pop("cleanup_liveness", None)
+                SS.save_state(state_dir, state)
+                # Inspection can wait: preserve the existing late-write
+                # refusal across that wait as well as snapshot construction.
+                digest, error = R.tree_digest(
+                    workspace_path, expected_git_dir,
+                    expected_git_pointer_sha256)
+                if error or digest != recovery_record["content_sha256"]:
+                    _worktree_cleanup_failed(
+                        state, u, meta, report,
+                        "worktree changed after its recovery snapshot was saved; "
+                        "checkout retained: " + (error or "content digest differs"))
+                    SS.save_state(state_dir, state)
+                    return False
+                return True
+            else:
+                reason = ("Paseo inspect failed or timed out" if rc != 0 else
+                          "agent is not settled (running, error, unknown, "
+                          "or permission-blocked)")
+        # Waiting for liveness is not a failed archive attempt and must not
+        # exhaust the cleanup retry bound. Preserve every other state field.
+        meta["cleanup_attempts"] = tries
+        meta["cleanup_liveness"] = reason
+        report.append(f"{u['id']}: retained worktree {workspace_path}: {reason}")
+        SS.save_state(state_dir, state)
+        return False
+
     if meta.get("workspace_owner") == "coordinator":
+        if not safe_to_remove():
+            return
         rc, out, err = U.run(
             ["git", "-C", intent["repo"], "worktree", "remove", "--force",
              str(workspace_path)], timeout=120)
@@ -495,6 +559,8 @@ def _preserve_and_archive_code_worktree(state, u, unit_dir, report, state_dir=No
             f"{attempt}")
         if state_dir is not None:
             SS.save_state(state_dir, state)
+        return
+    if not safe_to_remove():
         return
     rc, out, err = U.run(
         ["paseo", "workspace", "archive", str(workspace_id), "--json"],

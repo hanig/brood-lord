@@ -95,6 +95,8 @@ class FakePaseo:
         self.launches = []
 
     def __call__(self, argv, **kwargs):
+        if argv[:2] == ["paseo", "inspect"]:
+            return 0, json.dumps({"status": "idle"}), ""
         if argv[:2] != ["paseo", "run"]:
             return self.real_run(argv, **kwargs)
         self.launches.append(list(argv))
@@ -142,6 +144,7 @@ class TestPerAttemptWorktrees(unittest.TestCase):
         err, anchored = S._capture_code_launch(str(attempt), unit)
         self.assertIsNone(err)
         return unit, {"units": {uid: {
+            "attempt_cleanup_agents": {attempt.name: "fixture-agent"},
             "attempt_bases": {attempt.name: anchored["base"]},
             "attempt_launch_intents": {attempt.name: anchored["intent"]},
         }}}
@@ -1585,6 +1588,8 @@ class TestPerAttemptWorktrees(unittest.TestCase):
                               / attempt.name).resolve()))
 
         def failing_archive(argv, **kwargs):
+            if argv[:2] == ["paseo", "inspect"]:
+                return 0, json.dumps({"status": "idle"}), ""
             if (argv[:2] == ["git", "-C"]
                     and "worktree" in argv and "remove" in argv):
                 return 1, "", "archive unavailable"
@@ -1630,6 +1635,8 @@ class TestPerAttemptWorktrees(unittest.TestCase):
         calls = []
 
         def failing_archive(argv, **_kwargs):
+            if argv[:2] == ["paseo", "inspect"]:
+                return 0, json.dumps({"status": "idle"}), ""
             if argv[:3] == ["paseo", "workspace", "archive"]:
                 calls.append(list(argv))
                 return 1, "", "archive unavailable"
@@ -1665,6 +1672,8 @@ class TestPerAttemptWorktrees(unittest.TestCase):
         S.save_state(str(state_dir), state)
 
         def crash_during_archive(argv, **_kwargs):
+            if argv[:2] == ["paseo", "inspect"]:
+                return 0, json.dumps({"status": "idle"}), ""
             if argv[:3] == ["paseo", "workspace", "archive"]:
                 raise Crash()
             return self.real_run(argv, **_kwargs)
@@ -1703,6 +1712,8 @@ class TestPerAttemptWorktrees(unittest.TestCase):
         }}
 
         def failing_archive(argv, **_kwargs):
+            if argv[:2] == ["paseo", "inspect"]:
+                return 0, json.dumps({"status": "idle"}), ""
             if argv[:3] == ["paseo", "workspace", "archive"]:
                 return 1, "", "archive unavailable"
             return self.real_run(argv, **_kwargs)

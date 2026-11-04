@@ -1235,5 +1235,39 @@ class TestTerminalWatchWaitsWithoutADeadline(unittest.TestCase):
             unit.run(["/bin/echo", "x"], timeout=30 * 24 * 60 * 60)
 
 
+
+class TestContinuationSettleClock(Base):
+    def test_successful_send_grants_a_full_new_settle_window(self):
+        from unittest import mock
+        u = {"id": "code", "kind": "code", "continuation": {"max": 1}}
+        attempt = str(self.tmp / "attempt")
+        us = {"state": "INCOMPLETE", "attempt_dir": attempt,
+              "job_id": "fixture-agent", "attempts": [attempt],
+              "gpu_hours": 0, "incomplete_since": 1}
+        state = {"schema_version": 1, "units": {"code": us}}
+        state_dir = str(self.tmp / "state")
+        self.assertTrue(swarm.acquire_lease(state_dir)[0])
+        self.addCleanup(swarm.release_lease, state_dir)
+        now = 100000
+        with mock.patch.object(swarm.U, "run", return_value=(0, "", "")), \
+             mock.patch.object(swarm.SS, "trusted_launch_facts",
+                               return_value={"fixture": True}), \
+             mock.patch.object(swarm.SE, "_receipt_reason",
+                               return_value=swarm.U.REASON_NO_OUTPUTS), \
+             mock.patch.object(swarm.SE, "_check",
+                               return_value=(swarm.INCOMPLETE, "", "")), \
+             mock.patch.object(swarm.time, "time", return_value=now) as clock:
+            self.assertTrue(swarm.maybe_continue(state_dir, "code", u, us, [], state))
+            self.assertEqual(swarm.load_state(state_dir)["units"]["code"][
+                "incomplete_since"], now)
+            for elapsed, expected in ((1, "INCOMPLETE"),
+                                      (swarm.SETTLE_S, "INCOMPLETE"),
+                                      (swarm.SETTLE_S + 1, "FAILED")):
+                clock.return_value = now + elapsed
+                observed = swarm.advance({"name": "fixture", "units": [u]}, state,
+                              state_dir, str(self.tmp / "runs"), False, max_new=0)
+                self.assertEqual(us["state"], expected, repr(observed))
+                self.assertEqual(len(us["continuations"]), 1)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
