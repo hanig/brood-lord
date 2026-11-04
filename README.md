@@ -836,7 +836,7 @@ skipped rounds. Start at 1 only for a new identity; subsequent rounds require
 `--dispositions FILE`. For an existing ledger history, fresh cycles require
 an exhausted predecessor plus `--fresh-cycle-from PROFILE`; an unseen identity
 records the explicit declaration as cycle 1 with no declared predecessor. Sizing, listing, plan reviews and adjudication do
-not reserve implementation rounds.
+not reserve implementation rounds. The gate counts per identity; the orchestrator tracks a maximum of three substantive rounds per logical plan unit across attempts and continuations by hand in PLAN.md. A continuation branch is a new gate identity, not a new lineage budget. After exhaustion, the mandate's committee step applies.
 
 `--size` measures the same gathered body as a review, before truncation,
 including file headers, separators and removal of recognized review-history

@@ -946,6 +946,20 @@ class TestAuthoredSkillShape(unittest.TestCase):
         self.assertEqual(DECLARATION_REGISTRY.body_diff(skill), "")
         self.assertEqual(_declaration_completeness_problems(skill), [])
 
+    def test_orchestrate_round_budget_survives_continuations(self):
+        skill = SKILLS / "hanig-orchestrate"
+        data = json.loads((skill / "declarations.json").read_text(encoding="utf-8"))
+        text = next(item["normative_text"] for item in data["declarations"]
+                    if item["id"] == "review.rounds")
+        for phrase in (
+                "three substantive review rounds, counted across attempts and continuations",
+                "by hand in the plan's PLAN.md round ledger",
+                "gate still counts rounds per identity",
+                "mandate's committee step"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+        self.assertIn(text, (skill / "SKILL.md").read_text(encoding="utf-8"))
+
     def test_orchestrate_report_timezone_reaches_the_generated_body(self):
         skill = SKILLS / "hanig-orchestrate"
         data = json.loads((skill / "declarations.json").read_text(encoding="utf-8"))

@@ -120,12 +120,14 @@ that cries wolf gets switched off, which costs more than the defect it prevents.
 
 Open-ended loops are how runaways happen, so every review cycle is bounded:
 
-- **Max 3 rounds per change.** Not per session: per change.
+- **Max 3 substantive rounds per logical plan unit across attempts and continuations.** The orchestrator tracks each lineage by hand in the plan's PLAN.md round ledger. The gate counts rounds per identity; a continuation branch is a new identity to the gate and does not reset the orchestrator's budget. Unit R was stopped on 2026-11-04; gate-enforced lineage budgeting did not merge.
 - **If round N+1 finds a defect in round N's fix, stop patching.** That is the
   signal that the problem is upstream of the symptom. Convene a step-back
   committee (below) with the full history rather than shipping another patch.
-- **After 3 rounds without convergence, start fresh** — new reviewers, full
-  history of what was tried. Declare the replaced profile with
+- **After budget exhaustion, apply the mandate's committee step** with full
+  history before any authorized successor cycle. The gate's per-identity
+  successor mechanism does not authorize more lineage rounds. For an authorized
+  successor cycle, declare the replaced profile with
   `--round 1 --fresh-cycle-from fast|standard|deep`, and repeat
   `--fresh-cycle-from` on each round of that cycle. The replacement must select
   at least that profile's current enabled reviewer count (minimum two); the
