@@ -40,6 +40,266 @@ def wait_for(predicate, timeout=10):
         time.sleep(0.01)
 
 
+class TestLoadSensitiveReadiness(unittest.TestCase):
+    def test_pid_reader_waits_through_creation_before_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'leader.pid'
+            path.touch()
+            # Deterministically stop the writer immediately after creation.
+            with self.assertRaises(ValueError):
+                int(path.read_text())
+            clock = [0.0]
+            def finish_write(seconds):
+                clock[0] += seconds
+                path.write_text('123\n')
+            with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
+                    fixtures, '_pause', side_effect=finish_write) as pause:
+                self.assertEqual(fixtures.wait_pid(path), 123)
+            pause.assert_called_once()
+            for content in ('', 'partial', '0', '-1'):
+                path.write_text(content)
+                self.assertIsNone(fixtures.read_pid(path))
+            path.unlink()
+            self.assertIsNone(fixtures.read_pid(path))
+
+    def test_invalid_pid_readiness_keeps_three_second_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            clock = [0.0]
+            def advance(seconds):
+                clock[0] += seconds
+            with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
+                    fixtures, '_pause', side_effect=advance):
+                with self.assertRaisesRegex(AssertionError, 'PID file did not become ready'):
+                    fixtures.wait_pid(Path(directory) / 'missing')
+            self.assertEqual(clock[0], 3)
+
+    def test_pending_pid_waits_for_content_and_remains_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'leader.pid'
+            pending = Path(str(path) + '.tmp')
+            pending.touch()
+            clock = [0.0]
+            def finish_write(seconds):
+                clock[0] += seconds
+                pending.write_text('123\n')
+            with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
+                    fixtures, '_pause', side_effect=finish_write):
+                self.assertEqual(fixtures.wait_pid(path, include_temporary=True), 123)
+            self.assertGreater(clock[0], 0)
+            self.assertLess(clock[0], 3)
+            self.assertIsNone(fixtures.read_pid(path))
+            for content in (None, '', 'partial', '0', '-1', '12', 'partial\n', '0\n', '-1\n'):
+                with self.subTest(content=content):
+                    if content is None:
+                        pending.unlink()
+                    else:
+                        pending.write_text(content)
+                    clock[0] = 0.0
+                    def advance(seconds):
+                        clock[0] += seconds
+                    with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
+                            fixtures, '_pause', side_effect=advance):
+                        with self.assertRaisesRegex(AssertionError, 'PID file did not become ready'):
+                            fixtures.wait_pid(path, include_temporary=True)
+                    self.assertEqual(clock[0], 3)
+            pending.write_text('123\n')
+            clock[0] = 0.0
+            with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
+                    fixtures, '_pause', side_effect=advance):
+                with self.assertRaisesRegex(AssertionError, 'PID file did not become ready'):
+                    fixtures.wait_pid(path)
+            self.assertEqual(clock[0], 3)
+
+    def test_temporary_numeric_prefix_is_not_complete_pid_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'escape.pid'
+            pending = Path(str(path) + '.tmp')
+            pending.write_text('12')
+            clock = [0.0]
+            def finish_write(seconds):
+                clock[0] += seconds
+                pending.write_text('12345\n')
+            with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
+                    fixtures, '_pause', side_effect=finish_write):
+                self.assertEqual(fixtures.wait_pid(path, include_temporary=True), 12345)
+            self.assertGreater(clock[0], 0)
+            self.assertLess(clock[0], 3)
+
+    def test_pid_publication_hides_creation_before_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            scope = FixtureProcesses(self, directory)
+            path = Path(directory) / 'leader.pid'
+            observation = Path(directory) / 'observation'
+            # Shell redirection creates the file BEFORE calling printf.
+            # Interpose there, then let the real builtin finish the write.
+            hook = ('printf() { if test -e ' + shlex.quote(str(path)) +
+                    '; then echo exposed; else echo hidden; fi >' +
+                    shlex.quote(str(observation)) + '; command printf "$@"; }\n')
+            script = Path(directory) / 'publish.sh'
+            script.write_text('#!/bin/sh\n' + hook + fixtures.publish_pid(path, '$$'))
+            proc = scope.launch(FixtureSpec(('/bin/sh', str(script))))
+            result = proc.join(10)
+            self.assertEqual(result.state, JoinState.EXITED, result)
+            self.assertEqual(result.returncode, 0, result)
+            self.assertEqual(observation.read_text(), 'hidden\n')
+            self.assertEqual(fixtures.read_pid(path), proc.child_pid)
+            scope.cleanup()
+            scope.assert_no_survivors()
+
+
+class TestInterruptedPidPublication(unittest.TestCase):
+    """Exercise consumers when a single writer stops before its final rename."""
+
+    def test_correct_group_cleanup_survives_interrupted_publication(self):
+        import test_project as project
+        cls = project.TestDoctorSeesThePrerequisitesTheSkillsRefuseWithout
+        original = cls._doctor
+        observations = []
+        pids = []
+
+        def delayed_mv(case, directory, *args, **kwargs):
+            # Stop only the synthetic publisher; doctor's group KILL reaps it.
+            kwargs['overrides']['mv'] = '#!/bin/sh\nkill -STOP $$\n'
+            result = original(case, directory, *args, **kwargs)
+            path = Path(directory) / 'term-ignoring-child.pid'
+            pid = fixtures.read_pid(Path(str(path) + '.tmp'))
+            self.assertIsNotNone(pid)
+            pids.append(pid)
+            observations.append((path.exists(), 'login shell timed out' in result.stdout))
+            return result
+
+        case = cls('test_timeout_waits_for_grace_then_kills_group_after_parent_exits')
+        result = unittest.TestResult()
+        with mock.patch.object(cls, '_doctor', delayed_mv):
+            case.run(result)
+        self.assertEqual(observations, [(False, True)])
+        self.assertEqual(result.errors, [])
+        self.assertTrue(result.wasSuccessful(), result.failures)
+        # The consumer already waits up to five seconds for reaping. Inspect
+        # death after that readiness boundary, not immediately after doctor.
+        for pid in pids:
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
+
+    def test_interrupted_publication_allows_existing_reaping_wait(self):
+        import test_project as project
+        cls = project.TestDoctorSeesThePrerequisitesTheSkillsRefuseWithout
+        original, real_kill = cls._doctor, os.kill
+        target, seen = [None], [0]
+        def doctor(case, directory, *args, **kwargs):
+            result = original(case, directory, *args, **kwargs)
+            target[0] = fixtures.read_pid(Path(directory) / 'term-ignoring-child.pid.tmp')
+            return result
+        def delayed_reaping(pid, signum):
+            if pid == target[0] and signum == 0:
+                seen[0] += 1
+                if seen[0] == 1:
+                    return None
+            return real_kill(pid, signum)
+        case = type(self)('test_correct_group_cleanup_survives_interrupted_publication')
+        result = unittest.TestResult()
+        with mock.patch.object(cls, '_doctor', doctor), mock.patch.object(
+                os, 'kill', side_effect=delayed_reaping):
+            case.run(result)
+        self.assertEqual(result.errors, [])
+        self.assertTrue(result.wasSuccessful(), result.failures)
+        self.assertGreaterEqual(seen[0], 2)
+
+    def test_escape_writer_completes_temporary_pid_before_rename(self):
+        source = Path(__file__).with_name('test_project.py').read_text()
+        method = next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef)
+                      and n.name == 'test_timeout_does_not_wait_for_a_descendant_that_calls_setsid')
+        assignment = next(n for n in ast.walk(method) if isinstance(n, ast.Assign)
+                          and any(isinstance(t, ast.Name) and t.id == 'code' for t in n.targets))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'escape.pid'
+            namespace = dict(pidfile=path)
+            exec(compile(ast.Module(body=[assignment], type_ignores=[]),
+                         'escape-writer', 'exec'), namespace)
+            # Run the actual writer through close, stopping before rename and
+            # the long sleep. This directly owned child exits without spawning.
+            prefix = namespace['code'].split('rename(', 1)[0]
+            result = subprocess.run([shutil.which('perl'), '-e', prefix],
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(path.exists())
+            self.assertIsNotNone(fixtures.read_pid(str(path) + '.tmp', require_complete=True))
+
+    def test_escape_cleanup_does_not_skip_pending_publication(self):
+        # Execute the actual cleanup closure with a synthetic escaped PID.
+        # No real signal is sent; the live-child reproduction is retained in
+        # the unit evidence together with its independent kill/reap teardown.
+        source = Path(__file__).with_name('test_project.py').read_text()
+        tree = ast.parse(source)
+        method = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
+                      and n.name == 'test_timeout_does_not_wait_for_a_descendant_that_calls_setsid')
+        cleanup = next(n for n in ast.walk(method) if isinstance(n, ast.FunctionDef)
+                       and n.name == 'contain_escape')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'escape.pid'
+            pending = Path(str(path) + '.tmp')
+            pending.write_text('123\n')
+            process = mock.Mock()
+            process.getsid.return_value = 123
+            namespace = dict(pidfile=path, os=process, signal=signal,
+                             wait_pid=fixtures.wait_pid)
+            exec(compile(ast.Module(body=[cleanup], type_ignores=[]),
+                         'escape-cleanup', 'exec'), namespace)
+            namespace['contain_escape']()
+            pending.rename(path)
+            process.kill.assert_called_once_with(123, signal.SIGKILL)
+
+
+class TestCensusRetry(unittest.TestCase):
+    def _exercise(self, failures, deadline=None, leak=False):
+        clock, tries = [0.0], []
+        def query(command, *, text, timeout):
+            tries.append(timeout)
+            # An implementation with no bound must fail fast, never hang tests.
+            if len(tries) > 7:
+                raise AssertionError('ps retry exceeded its 30-second bound')
+            if len(tries) <= failures:
+                clock[0] += timeout
+                raise subprocess.TimeoutExpired(command, timeout)
+            return '%s %s\n' % (os.getpid(), os.getpgrp())
+        with tempfile.TemporaryDirectory() as directory:
+            case = unittest.TestCase()
+            scope = FixtureProcesses(case, directory)
+            proc = mock.Mock()
+            proc._cleaned = fixtures.CleanupResult(CleanupState.CLEAN)
+            def scan():
+                rows = fixtures._session_rows(os.getsid(0) if leak else -1,
+                                              set(), deadline=deadline)
+                return rows, True
+            proc._survivor_scan.side_effect = scan
+            scope.children.append(proc)
+            with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
+                    fixtures.subprocess, 'check_output', side_effect=query):
+                if failures >= 6 or leak or deadline is not None:
+                    with self.assertRaisesRegex(AssertionError,
+                            'fixture processes survived cleanup or absence is unknown') as caught:
+                        scope.assert_no_survivors()
+                    if not leak:
+                        self.assertIn('fixture session census', str(caught.exception))
+                    proc._perform_cleanup.assert_called_once()
+                else:
+                    scope.assert_no_survivors()
+                    proc._perform_cleanup.assert_not_called()
+            return clock[0], tries
+
+    def test_ps_times_out_twice_then_confirms_absence(self):
+        self.assertEqual(self._exercise(2), (10, [5, 5, 5]))
+
+    def test_ps_always_times_out_fails_guard_at_thirty_seconds(self):
+        self.assertEqual(self._exercise(100), (30, [5] * 6))
+
+    def test_retry_preserves_earlier_consumer_deadline(self):
+        self.assertEqual(self._exercise(100, deadline=7), (7, [5, 2]))
+
+    def test_successful_query_still_detects_a_real_survivor(self):
+        self.assertEqual(self._exercise(0, leak=True), (0, [5]))
+
+
 class TestFixtureProcessGuard(unittest.TestCase):
     def _scope(self):
         directory = tempfile.TemporaryDirectory()
