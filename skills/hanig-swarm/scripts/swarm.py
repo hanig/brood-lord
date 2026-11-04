@@ -1890,6 +1890,9 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
         rec = SW._paseo_json(out) or {}
         agent = (rec.get("agentId") or rec.get("AgentId")
                  or rec.get("id") or rec.get("Id"))
+        if agent:
+            SS._unit_state(state, u["id"]).setdefault(
+                "attempt_cleanup_agents", {})[attempt] = str(agent)
         reported_workspace = rec.get("cwd") or rec.get("Cwd")
         workspace = reuse_workspace
         workspace_id = (SCL._paseo_workspace_id(out)
@@ -2030,6 +2033,8 @@ def maybe_continue(state_dir, uid, u, us, report, state=None):
     if rc != 0:
         entry["error"] = (err or out or "").strip()[:200]
     else:
+        us["incomplete_since"] = time.time()
+        entry["settled_since_send"] = False
         SS._set_unit_state(us, "RUNNING")
     SS.save_state(state_dir, state)
     if rc != 0:
