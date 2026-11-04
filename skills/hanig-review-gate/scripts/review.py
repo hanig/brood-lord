@@ -158,7 +158,22 @@ def review_lineage(unit, explicit=None):
         raise ValueError("--lineage-root empty")
     raw = os.environ.get("SWARM_REVIEW_LINEAGE")
     if raw is None:
-        raise ValueError("SWARM_REVIEW_LINEAGE missing coordinator enrollment decision")
+        try:
+            branch = subprocess.run(["git", "symbolic-ref", "--quiet", "HEAD"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    timeout=15)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ValueError("SWARM_REVIEW_LINEAGE cannot inspect Git branch") from exc
+        if branch.returncode not in (0, 1):
+            raise ValueError("SWARM_REVIEW_LINEAGE cannot inspect Git branch")
+        if branch.returncode == 0:
+            if not branch.stdout.endswith(b"\n"):
+                raise ValueError("SWARM_REVIEW_LINEAGE cannot inspect Git branch")
+            if re.fullmatch(rb"refs/heads/swarm-[0-9a-f]{16}", branch.stdout[:-1]):
+                raise ValueError("SWARM_REVIEW_LINEAGE missing coordinator enrollment decision")
+        if explicit is not None and explicit != unit:
+            raise ValueError("--lineage-root conflicts with implicit unit root")
+        return [unit]
     if raw == "legacy":
         if explicit is not None:
             raise ValueError("--lineage-root conflicts with legacy enrollment")
