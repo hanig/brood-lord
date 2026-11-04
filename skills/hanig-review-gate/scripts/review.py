@@ -3499,9 +3499,9 @@ def _main():
                          f"can never be met. Pass --quorum 2, or drop --plan.")
     if args.kind == "implementation" and args.plan_name is not None and args.unit is not None:
         if args.fresh_cycle_from is not None:
-            config_error("--fresh-cycle-from refused for managed; mandate committee step")
+            config_error("--fresh-cycle-from refused for managed; Step back: mandate committee step")
         if args.round is not None and args.round > MAX_ROUNDS:
-            config_error("MANAGED_BUDGET_EXHAUSTED: mandate committee step")
+            config_error("MANAGED_BUDGET_EXHAUSTED: Step back: mandate committee step")
     if args.round is not None:
         if args.round < 1:
             config_error(f"--round must be 1 or more, got {args.round}.")
