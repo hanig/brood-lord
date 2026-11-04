@@ -756,8 +756,6 @@ class TestManagedBudget(unittest.TestCase):
         return key
 
     def test_exhaustive_legacy_import_and_idempotence(self):
-        # Finite bound: none, one, two attributable ledgers, one ambiguous;
-        # itertools product of 0..3 charges per ledger, no random sampling.
         for units in ((), ("u",), ("u", "u-b"), ("unknown",)):
             for counts in itertools.product(range(4), repeat=len(units)):
                 with self.subTest(units=units, counts=counts), tempfile.TemporaryDirectory() as home:
@@ -787,15 +785,21 @@ class TestManagedBudget(unittest.TestCase):
                         self.assertEqual(sum(e["count"] for e in imports), total)
                         self.assertEqual(len(imports), sum(n > 0 for n in counts))
 
+    def test_mapped_other_lineage_does_not_spend_this_budget(self):
+        self.legacy("v", 1)
+        self.reserve(2, ("v",))
+        self.reserve(1)
+
     def test_cli_refund_requires_zero_transport_bytes(self):
         flags = ("--plan-name", "plan", "--unit", "u")
         for _ in range(2):
             self.assertEqual(self.invoke(extra=flags, offline=True)[0], 2)
         def response(reviewer, *_args):
-            with patch.object(review.urllib.request, "urlopen", return_value=io.BytesIO(b"partial")):
-                _, error = review._post("https://example.invalid", {}, {}, 1, retries=1)
+            _, error = review._post("https://example.invalid", {}, {}, 1, retries=1)
             return {"name": reviewer["name"], "ok": False, "error": error}
-        result = self.invoke(extra=flags, response=response)
+        with patch.object(review.urllib.request, "urlopen",
+                          side_effect=lambda *a, **kw: io.BytesIO(b"partial")):
+            result = self.invoke(extra=flags, response=response)
         self.assertEqual(result[0], 2, result[1:3])
         self.assertGreater(review.REVIEW_RESPONSE_BYTES, 0)
         self.assertEqual(self.invoke(extra=flags, offline=True)[0], 4)
