@@ -3866,10 +3866,9 @@ class TestSlurmPolicy(unittest.TestCase):
 
 
 class TestInfrastructureClassification(unittest.TestCase):
-    states = ('COMPLETED', 'FAILED', 'TIMEOUT', 'NODE_FAIL',
-              'PREEMPTED', 'BOOT_FAIL', 'CANCELLED')
+    states = ('COMPLETED', 'FAILED', 'TIMEOUT', 'NODE_FAIL', 'PREEMPTED', 'BOOT_FAIL', 'CANCELLED')
     def test_evidence_product(self):
-        # Exhaustive finite bound: 3 exits x 2 launcher errors x 7 states = 42.
+        # Exhaustive: 3 exits x 2 launcher errors x 7 states = 42.
         for code, error, state in itertools.product((0, 1, -9), (False, True), self.states):
             with self.subTest(code=code, error=error, state=state):
                 with mock.patch.object(RV, '_command', return_value=(0, '321|' + state + '|0:0\n', '')):
@@ -3888,17 +3887,18 @@ class TestInfrastructureClassification(unittest.TestCase):
                 self.assertEqual('incomplete_reason' in result, want == 'incomplete')
 
     def test_provisional_accounting(self):
-        for state in ('RUNNING', 'PENDING', None):
-            with self.subTest(state=state):
-                result = V.outcome_result(dict(exit_code=0), dict(executor='slurm', sacct_state=state))
+        for state, other in itertools.product(('RUNNING', 'PENDING', None), (False, True)):
+            with self.subTest(state=state, other=other):
+                cleanup = {'123': ['COMPLETED', '0:0'], '322': [state, '0:0']} if other else {}
+                result = V.outcome_result(dict(exit_code=0), dict(executor='slurm',
+                    job_id='322', sacct_state=state, cleanup_sacct_states=cleanup))
                 self.assertEqual(result, dict(result='incomplete', incomplete_reason='Slurm accounting pending'))
 
     def test_cleanup_failure_precedence(self):
         for state, earlier in itertools.product(self.states, (None, 'COMPLETED', 'NODE_FAIL')):
             with self.subTest(state=state, earlier=earlier):
                 out = RV.incomplete('worker did not complete')
-                ex = dict(executor='slurm', sacct_state=earlier, sacct_exit_code='0:0',
-                                 cleanup_sacct_states={'321': [state, '0:0']})
+                ex = dict(executor='slurm', sacct_state=earlier, sacct_exit_code='0:0', cleanup_sacct_states={'321': [state, '0:0']})
                 result = V.outcome_result(out, ex)
                 want = 'fail' if state in ('FAILED', 'TIMEOUT', 'CANCELLED') else 'incomplete'
                 self.assertEqual(result['result'], want)
