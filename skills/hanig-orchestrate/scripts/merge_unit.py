@@ -1123,11 +1123,7 @@ def _active_entry_lease(args):
 
 @contextmanager
 def verification_retry_guard(args, repo, snapshot):
-    """Serialize this candidate's verifier and reserve its sole loss retry.
-
-    Receipt history is append-only. A crash after reserving the retry cannot
-    grant another run. Retrieval of an existing remote launch consumes no run.
-    """
+    """Lock the binding and durably reserve one loss retry; retrieval is free."""
     binding, target = snapshot["binding"], snapshot["target"]
     runner = execution_runner(args.state_dir, repo)
     basis, error = V.candidate_merge_basis(runner, repo, binding["head"], target)
@@ -1157,10 +1153,10 @@ def verification_retry_guard(args, repo, snapshot):
                     and r.get("subject_head") == binding["head"]
                     and r.get("claim") in policies
                     and (r.get("policy_sha256"), r.get("verifier_sha256")) == policies[r["claim"]]]
-        # Pending launches must be retrieved, never replaced by a clean retry.
         retrieving = (getattr(args, "retrieve_remote_evidence", False)
                       or RV.pending_problem(args.state_dir, binding["unit"], basis, rows))
-        losses = [r for r in matching if r.get("result") == "incomplete"]
+        losses = [r for r in matching if r.get("result") == "incomplete"
+                  and r.get("incomplete_reason") != "Slurm accounting is not terminal"]
         passed = {r["claim"] for r in matching if r.get("result") == "pass"
                   and not RV.execution_problem(r)}
         losses = [r for r in losses if r["claim"] not in passed]
@@ -1273,9 +1269,6 @@ def _verify_integration(args, repo, snapshot):
             # Late Slurm terminal evidence can make an earlier PASS admissible:
             # append that enrichment without rewriting the original observation.
             identity = evidence.get("execution", {}).get("launch_id")
-            # Retrieval may enrich accounting but cannot retract a FAIL already
-            # published for this launch and exact claim binding. A distinct
-            # launch still publishes its own result; admission binds all FAILs.
             if identity and any(
                     isinstance(r.get("execution"), dict)
                     and r["execution"].get("launch_id") == identity

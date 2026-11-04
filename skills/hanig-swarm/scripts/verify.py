@@ -920,15 +920,12 @@ def merge_failure_problem(receipts, evidence):
 
 def outcome_result(outcome, execution=None):
     """Receipt result from coordinator execution facts, never child diagnostics."""
-    # A returned failing verifier status always outranks transport/accounting.
     if outcome.get("exit_code") not in (None, 0):
         return {"result": "fail"}
     execution = execution or {}
     observations = []
     if execution.get("executor") == "slurm":
         observations.append((execution.get("sacct_state"), execution.get("sacct_exit_code")))
-        # Cleanup can observe terminal accounting after supervision saw none.
-        # Preserve every observed failure rather than choosing a convenient row.
         observations.extend(state for state in execution.get("cleanup_sacct_states", {}).values()
                             if state is not None)
     for state, code in observations:
@@ -940,6 +937,8 @@ def outcome_result(outcome, execution=None):
             return {"result": "incomplete", "incomplete_reason": "Slurm infrastructure loss: " + state}
     if outcome.get("incomplete_reason"):
         return {"result": "incomplete", "incomplete_reason": outcome["incomplete_reason"]}
+    if observations and not any(state in RV.TERMINAL for state, code in observations):
+        return {"result": "incomplete", "incomplete_reason": "Slurm accounting is not terminal"}
     return {"result": "pass" if outcome["exit_code"] == 0 else "fail"}
 
 
