@@ -579,7 +579,7 @@ class TestTheProtocolRequiresReviewAndPush(unittest.TestCase):
                 "Only exit 0 (REVIEW_PASS) permits opening a pull request",
                 "Reproduce each confirmed finding before acting on it.",
                 "Repair the reproduced findings that fall inside the task's supported envelope and do not contradict the task.",
-                "Only after a REVIEW_FAIL whose reproduced in-envelope findings were repaired, gate the next round with --dispositions FILE",
+                "Only after a REVIEW_FAIL, once all reproduced in-envelope findings (if any) are repaired, gate the next round with --dispositions FILE",
                 "A passing round never requires another.",
                 "first repair and mutation-check every other reproduced in-envelope finding",
                 "commit those repairs; only then preserve and stop.",
