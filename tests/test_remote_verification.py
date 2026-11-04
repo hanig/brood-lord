@@ -1972,6 +1972,18 @@ class TestRemoteVerification(unittest.TestCase):
         self.assert_ok(result)
         self.assertFalse(marker.exists())
 
+    def test_pending_loss_preserves_attestation_and_allows_retry(self):
+        self.cancellation_fixture()
+        self.assert_pending(self.verify('--verification-timeout', '1'))
+        (self.f.bin / 'sacct').write_text(PYTHON + SACCT)
+        self.mode.write_text('slurm-node-loss')
+        self.verify('--retrieve-remote-evidence')
+        self.assertIn('Slurm infrastructure loss: NODE_FAIL',
+                      [r.get('incomplete_reason') for r in self.rows()])
+        self.mode.write_text('pass')
+        self.assert_ok(self.verify())
+        self.assert_ok(self.admitted())
+
     def test_node_loss_retry(self):
         self.slurm_policy()
         self.program()
