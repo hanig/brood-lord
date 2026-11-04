@@ -74,7 +74,6 @@ import os
 import re
 import signal
 import stat
-import socket
 import subprocess
 import sys
 import tempfile
@@ -134,7 +133,8 @@ def change_identity(target="origin/main", plan_name=None, unit=None, lineage_roo
                  fix="run in the intended Git checkout and configure its origin remote")
     if plan_name is not None and unit is not None:
         lineage = review_lineage(unit, lineage_root)
-        return identity_hash([remote, ["plan-unit", plan_name, lineage[0]]])
+        if lineage is not None:
+            return identity_hash([remote, ["plan-unit", plan_name, lineage[0]]])
     target_head = git("rev-parse", "--verify", target + "^{commit}",
                       fix="fetch the target or pass --target REF naming an existing target commit")
     base = git("merge-base", "HEAD", target_head,
@@ -158,7 +158,11 @@ def review_lineage(unit, explicit=None):
         raise ValueError("--lineage-root empty")
     raw = os.environ.get("SWARM_REVIEW_LINEAGE")
     if raw is None:
-        return [explicit, unit] if explicit is not None and explicit != unit else [unit]
+        raise ValueError("SWARM_REVIEW_LINEAGE missing coordinator enrollment decision")
+    if raw == "legacy":
+        if explicit is not None:
+            raise ValueError("--lineage-root conflicts with legacy enrollment")
+        return None
     try:
         chain = json.loads(raw)
     except (ValueError, TypeError) as exc:
@@ -406,96 +410,26 @@ def budget_history(dfd, identity):
     expected = {f"event-{n}.json" for n in range(1, len(names) + 1)}
     if names != expected:
         raise ValueError("BUDGET_EVENTS_INVALID")
-    imported, reserved, refunded = {}, {}, set()
+    reserved, uncharged = {}, set()
     for number in range(1, len(names) + 1):
         e = ledger_json(dfd, f"event-{number}.json")
         if not isinstance(e, dict):
             raise ValueError("BUDGET_EVENT_INVALID")
-        if e.get("type") == "import" and set(e) == {"type", "legacy", "count"}:
-            key, count = e["legacy"], e["count"]
-            if (not valid_digest(key)
-                    or type(count) is not int or count < 0 or key in imported):
-                raise ValueError("BUDGET_IMPORT_INVALID")
-            imported[key] = count
-        elif e.get("type") == "reserve" and set(e) == {"type", "round", "profile", "identity"}:
-            charged = sum(imported.values()) + len(reserved) - len(refunded)
+        if e.get("type") == "reserve" and set(e) == {"type", "round", "profile", "identity"}:
+            charged = len(reserved) - len(uncharged)
             if (e["identity"] != identity or type(e["round"]) is not int or e["round"] != charged + 1
                     or e["round"] > MAX_ROUNDS or e["profile"] not in LADDER):
                 raise ValueError("BUDGET_RESERVATION_INVALID")
             reserved[number] = e
-        elif e.get("type") == "refund" and set(e) == {"type", "reservation", "state", "response_bytes"}:
+        elif e.get("type") == "uncharged" and set(e) == {"type", "reservation", "reason"}:
             key = e["reservation"]
-            if (type(key) is not int or key not in reserved or key in refunded
-                    or e["state"] != "REVIEW_UNAVAILABLE"
-                    or type(e["response_bytes"]) is not int or e["response_bytes"] != 0):
-                raise ValueError("BUDGET_REFUND_INVALID")
-            refunded.add(key)
+            if (type(key) is not int or key not in reserved or key in uncharged
+                    or e["reason"] != "pre-dispatch probe unavailable"):
+                raise ValueError("BUDGET_UNCHARGED_INVALID")
+            uncharged.add(key)
         else:
             raise ValueError("BUDGET_EVENT_UNKNOWN")
-    return imported, reserved, refunded
-
-
-def legacy_imports(identity, plan_name, lineage, explicit):
-    if any(not valid_digest(x) for x in explicit):
-        raise ValueError("--import-legacy-identity requires HEX sha256")
-    found, unknown, owners, histories = {}, [], {}, {}
-    for path in sorted(round_ledger_root().iterdir()):
-        if path.name == identity or not valid_digest(path.name):
-            continue
-        dfd = _open_directory_chain(path)
-        try:
-            if any(n.startswith(("event-", ".pending-")) for n in os.listdir(dfd)):
-                imported, _, _ = budget_history(dfd, path.name)
-                for key in imported:
-                    if key in owners:
-                        raise ValueError("LEGACY_MAPPING_CONFLICT: " + key)
-                    owners[key] = path.name
-            else:
-                lock = ledger_lock(dfd)
-                try:
-                    entries = validate_round_history(dfd, path.name)
-                finally:
-                    os.close(lock)
-                if entries:
-                    histories[path.name] = (entries[-1]["cycle"] - 1) * MAX_ROUNDS + entries[-1]["round"]
-        finally:
-            os.close(dfd)
-    candidates, unrelated = set(explicit), set()
-    if set(histories) - candidates - set(owners):
-        remote = subprocess.check_output(["git", "remote", "get-url", "origin"]).decode(
-            "utf-8", "surrogateescape")[:-1]
-        commits = subprocess.check_output(["git", "rev-list", "--all", "--reflog"]).decode().splitlines()
-        for base in commits:
-            for unit in lineage:
-                key = identity_hash([remote, base, ["plan-unit", plan_name, unit]])
-                if key in histories:
-                    candidates.add(key)
-        remaining = set(histories) - candidates - set(owners)
-        if remaining:
-            branches = subprocess.check_output(["git", "for-each-ref", "--format=%(refname:short)",
-                                                "refs/heads"]).decode("utf-8", "surrogateescape").splitlines()
-            for base in commits:
-                if not remaining:
-                    break
-                for branch in branches:
-                    key = identity_hash([remote, base, ["branch", branch]])
-                    if key in remaining:
-                        unrelated.add(key)
-                        remaining.remove(key)
-    for key, count in histories.items():
-        if key in unrelated:
-            continue
-        if key not in candidates:
-            if key not in owners:
-                unknown.append(key)
-        elif key in owners:
-            raise ValueError("LEGACY_MAPPING_CONFLICT: " + key)
-        else:
-            found[key] = count
-    missing = set(explicit) - set(found)
-    if missing:
-        raise ValueError("--import-legacy-identity missing ledger: " + ", ".join(sorted(missing)))
-    return found, unknown
+    return reserved, uncharged
 
 
 def ledger_lock(dfd):
@@ -511,41 +445,27 @@ def ledger_lock(dfd):
         raise
 
 
-def managed_budget(identity, round_no=None, profile=None, plan_name=None,
-                   lineage=(), explicit=(), refund=None):
+def managed_budget(identity, round_no=None, profile=None, uncharge=None):
     dfd = _open_directory_chain(round_ledger_root() / identity)
     try:
-        root = _open_directory_chain(round_ledger_root())
+        lock = ledger_lock(dfd)
         try:
-            lock = ledger_lock(root)
-        finally:
-            os.close(root)
-        try:
-            imported, reserved, refunded = budget_history(dfd, identity)
-            if refund is not None:
-                if refund in refunded:
+            reserved, uncharged = budget_history(dfd, identity)
+            if uncharge is not None:
+                if uncharge in uncharged:
                     return None
-                if refund not in reserved:
-                    raise ValueError("REFUND_UNKNOWN")
-                append_event(dfd, {"type": "refund", "reservation": refund,
-                                  "state": "REVIEW_UNAVAILABLE", "response_bytes": 0})
+                if uncharge not in reserved:
+                    raise ValueError("UNCHARGED_UNKNOWN")
+                append_event(dfd, {"type": "uncharged", "reservation": uncharge,
+                                  "reason": "pre-dispatch probe unavailable"})
                 return None
-            found, unknown = legacy_imports(identity, plan_name, lineage, set(explicit) | set(imported))
-            for key, count in found.items():
-                if key in imported:
-                    if imported[key] != count:
-                        raise ValueError("LEGACY_HISTORY_CHANGED: " + key)
-                    continue
-                append_event(dfd, {"type": "import", "legacy": key, "count": count})
-                imported[key] = count
-            if unknown:
-                raise ValueError(f"LEGACY_IDENTITY_AMBIGUOUS: {', '.join(unknown)}; attributable imports retained; run each legacy owner's --plan-name/--unit to map its history, then retry; use --import-legacy-identity HEX only for that owner's history; never delete history")
-            charged = sum(imported.values()) + len(reserved) - len(refunded)
+            charged = len(reserved) - len(uncharged)
             if charged >= MAX_ROUNDS:
                 raise ValueError("MANAGED_BUDGET_EXHAUSTED: mandate committee step")
             if round_no != charged + 1:
                 raise ValueError(f"managed --round must be {charged + 1}; charged {charged}")
-            event = append_event(dfd, {"type": "reserve", "round": round_no, "profile": profile, "identity": identity})
+            event = append_event(dfd, {"type": "reserve", "round": round_no,
+                                      "profile": profile, "identity": identity})
             return {"identity": identity, "event": event}
         finally:
             os.close(lock)
@@ -553,10 +473,14 @@ def managed_budget(identity, round_no=None, profile=None, plan_name=None,
         os.close(dfd)
 
 
-def refund_review_round(args, state, response_bytes):
+def release_probe_round(args):
+    """Only the initial no-runnable probe exit calls this; dispatch never does.
+
+    Outages after dispatch stay charged, even when they return no response.
+    """
     reservation = getattr(args, "budget_reservation", None)
-    if reservation and state == "REVIEW_UNAVAILABLE" and response_bytes == 0:
-        managed_budget(reservation["identity"], refund=reservation["event"])
+    if reservation:
+        managed_budget(reservation["identity"], uncharge=reservation["event"])
 
 
 def reserve_review_round(args):
@@ -570,12 +494,11 @@ def reserve_review_round(args):
                      "--plan-name/--unit when branch identity is unavailable; "
                      "origin and a shared target commit are still required.".format(exc))
     try:
-        if args.plan_name is not None and args.unit is not None:
+        if (args.plan_name is not None and args.unit is not None
+                and review_lineage(args.unit, args.lineage_root) is not None):
             if args.fresh_cycle_from is not None:
                 raise ValueError("--fresh-cycle-from refused for managed; mandate committee step")
-            record = managed_budget(identity, args.round, args.selected_profile,
-                                    args.plan_name, review_lineage(args.unit, args.lineage_root),
-                                    args.import_legacy_identity)
+            record = managed_budget(identity, args.round, args.selected_profile)
             args.budget_reservation = record
         else:
             record = reserve_round(identity, args.round, args.selected_profile,
@@ -1370,14 +1293,10 @@ def no_content_error(rev, text, *, finish_reason=None, reasoning_tokens=None,
         " (" + ", ".join(details) + ")" if details else "")
 
 
-REVIEW_BYTES = 0
-
-
 def _post(url, payload, headers, timeout, retries=3, deadline=None):
     """POST with backoff on transient failures. A gateway hiccup must not
     silently remove a reviewer from the panel -- that would quietly shrink the
     quorum and make the gate weaker than it claims to be."""
-    global REVIEW_BYTES
     last = None
     for attempt in range(1, retries + 1):
         if deadline is not None:
@@ -1388,10 +1307,8 @@ def _post(url, payload, headers, timeout, retries=3, deadline=None):
             timeout = min(timeout, max(1, int(left)))
         req = urllib.request.Request(url, data=json.dumps(payload).encode(),
                                      headers=headers)
-        connected = False
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                connected = True
                 chunks, total = [], 0
                 while True:
                     if deadline is not None and time.time() > deadline:
@@ -1400,7 +1317,6 @@ def _post(url, payload, headers, timeout, retries=3, deadline=None):
                     chunk = r.read(65536)
                     if not chunk:
                         break
-                    REVIEW_BYTES += len(chunk)
                     chunks.append(chunk)
                     total += len(chunk)
                     if total > 64 * 1024 * 1024:
@@ -1418,20 +1334,16 @@ def _post(url, payload, headers, timeout, retries=3, deadline=None):
                     piece = e.read(8192)
                     if not piece:
                         break
-                    REVIEW_BYTES += len(piece)
                     parts.append(piece)
                     got += len(piece)
             except Exception:
-                REVIEW_BYTES += 1
+                pass
             body = redact(b"".join(parts).decode(errors="replace"))[:300]
             last = f"HTTP {e.code}: {body}"
             # 4xx is our fault (bad key, bad model id) -- retrying cannot help.
             if e.code < 500 and e.code != 429:
                 return None, last
         except Exception as e:  # timeout, DNS, TLS reset
-            reason = e.reason if isinstance(e, urllib.error.URLError) else e
-            if not isinstance(e, json.JSONDecodeError) and (connected or not isinstance(reason, (socket.gaierror, ConnectionRefusedError))):
-                REVIEW_BYTES += 1
             last = f"{type(e).__name__}: {redact(e)}"
         if attempt < retries:
             nap = min(2 ** attempt, 15)
@@ -3379,7 +3291,6 @@ def build_parser():
                     help="identity merge-base target (default origin/main)")
     ap.add_argument("--plan-name", help="stable plan identity, paired with --unit when given")
     ap.add_argument("--lineage-root", help="explicit root of managed unit lineage")
-    ap.add_argument("--import-legacy-identity", action="append", default=[], metavar="HEX")
     ap.add_argument("--unit", help="stable unit identity; plan/unit replaces branch identity")
     ap.add_argument("--timeout", type=int, default=1200,
                     help="per reviewer seconds (default 1200: at 64000 output "
@@ -3530,7 +3441,13 @@ def _main():
         if args.quorum > 2:
             config_error(f"--plan runs two reviewers, so quorum {args.quorum} "
                          f"can never be met. Pass --quorum 2, or drop --plan.")
+    enrolled = False
     if args.kind == "implementation" and args.plan_name is not None and args.unit is not None:
+        try:
+            enrolled = review_lineage(args.unit, args.lineage_root) is not None
+        except ValueError as exc:
+            config_error(str(exc))
+    if enrolled:
         if args.fresh_cycle_from is not None:
             config_error("--fresh-cycle-from refused for managed; Step back: mandate committee step")
         if args.round is not None and args.round > MAX_ROUNDS:
@@ -3666,8 +3583,6 @@ def _main():
     prompt = build_prompt(body, args.claim, truncated, args.context,
                           args.threat_model, dispositions, args.input_redactions)
 
-    global REVIEW_BYTES
-    REVIEW_BYTES = 0
     if args.kind == "implementation":
         reserve_review_round(args)
 
@@ -3685,7 +3600,7 @@ def _main():
 
     if not runnable:
         disarm_watchdog()
-        refund_review_round(args, "REVIEW_UNAVAILABLE", REVIEW_BYTES)
+        release_probe_round(args)
         journal = record_review_round(args, [], "REVIEW_UNAVAILABLE")
         report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
                   "profile": profile, "profile_reason": profile_reason,
@@ -3722,7 +3637,6 @@ def _main():
             reviewers, prompt, args, truncated, label, len(body))
         if not completed and not failed:
             disarm_watchdog()
-            refund_review_round(args, "REVIEW_UNAVAILABLE", REVIEW_BYTES)
             journal = record_review_round(args, [], "REVIEW_UNAVAILABLE")
             report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
                       "profile": profile, "profile_reason": profile_reason,
@@ -3772,7 +3686,6 @@ def _main():
                          n_out_of_scope_critical=len(oos_critical),
                          n_incomplete=len(incomplete))
     disarm_watchdog()
-    refund_review_round(args, state, REVIEW_BYTES)
     journal = record_review_round(args, completed, state)
 
     report = {
