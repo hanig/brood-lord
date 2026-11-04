@@ -1215,6 +1215,7 @@ def verify_integration(args, repo, snapshot):
                 and r.get("claim") == evidence["claim"]
                 and r.get("result") == evidence["result"]
                 and r.get("exit_code") == evidence["exit_code"]
+                and r.get("incomplete_reason") == evidence.get("incomplete_reason")
                 and RV.execution_problem(r) == RV.execution_problem(evidence) for r in previous)
             if not repeated:
                 S._fsync_append(state_dir / S.VERIFY_RECEIPTS, evidence)
