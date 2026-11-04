@@ -4217,7 +4217,7 @@ SCHEMA_FIELDS = [
      "default is agents.json default.provider"),
     ("model", "code", "optional", "overrides the provider's default"),
     ("continuation_of", "code", "optional",
-     "id of the preceding code unit in this plan; acyclic review-budget lineage"),
+     "preceding code unit id; acyclic review-budget lineage"),
     ("author_history", "code", "optional",
      "JSON list of objects with exactly unit, attempt (non-empty strings), "
      "and identity (provider/model or null). Coordinator-recorded potential "

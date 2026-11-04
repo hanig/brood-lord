@@ -107,7 +107,7 @@ ROUND_LOCK_WAIT_SECONDS = 5
 def change_identity(target="origin/main", plan_name=None, unit=None, lineage_root=None):
     """Hash exact Git identity bytes, never the changing diff or tip commit.
 
-    Managed plan/unit identities omit the merge-base and use their lineage root.
+    Managed identities bind plan and root, without merge-base.
     Unmanaged fix commits preserve identity while the merge-base is unchanged.
     Renaming the branch, changing the remote, rebasing, or changing an explicit
     plan/unit declaration defines another identity; this is not a tamper barrier.
@@ -164,7 +164,7 @@ def review_lineage(unit, explicit=None):
         raise ValueError("SWARM_REVIEW_LINEAGE malformed JSON") from exc
     if (not isinstance(chain, list) or not chain
             or any(not isinstance(x, str) or not x.strip() for x in chain)):
-        raise ValueError("SWARM_REVIEW_LINEAGE malformed: expected nonempty unit list")
+        raise ValueError("SWARM_REVIEW_LINEAGE malformed unit list")
     if len(set(chain)) != len(chain):
         raise ValueError("SWARM_REVIEW_LINEAGE cycle or duplicate unit")
     if chain[-1] != unit:
@@ -375,63 +375,63 @@ def reserve_round(identity, round_no, profile, fresh_from=None):
         os.close(directory)
 
 
-def ledger_json(directory, name):
-    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+def ledger_json(dfd, name):
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dfd)
     with os.fdopen(fd, "r", encoding="utf-8") as stream:
         if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
             raise ValueError("nonregular ledger record: " + name)
         return json.load(stream, object_pairs_hook=reject_duplicate_keys)
 
 
-def append_budget_event(directory, event):
-    number = 1 + len([n for n in os.listdir(directory) if n.startswith("event-")])
+def append_event(dfd, event):
+    number = 1 + len([n for n in os.listdir(dfd) if n.startswith("event-")])
     name = "event-{}.json".format(number)
-    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
+    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dfd)
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
         json.dump(event, stream, sort_keys=True)
         stream.write("\n")
         stream.flush()
         os.fsync(stream.fileno())
-    os.fsync(directory)
+    os.fsync(dfd)
     return number
 
 
-def budget_history(directory):
-    """Replay budget events."""
-    names = set(os.listdir(directory)) - {"lock"}
+def budget_history(dfd):
+    """Replay."""
+    names = set(os.listdir(dfd)) - {"lock"}
     expected = {"event-{}.json".format(n) for n in range(1, len(names) + 1)}
     if names != expected:
-        raise ValueError("managed budget has malformed or missing event records")
-    imported, reservations, refunded = {}, {}, set()
+        raise ValueError("BUDGET_EVENTS_MISSING_OR_MALFORMED")
+    imported, reserved, refunded = {}, {}, set()
     for number in range(1, len(names) + 1):
-        e = ledger_json(directory, "event-{}.json".format(number))
+        e = ledger_json(dfd, "event-{}.json".format(number))
         if not isinstance(e, dict):
-            raise ValueError("managed budget malformed event")
+            raise ValueError("BUDGET_EVENT_INVALID")
         if e.get("type") == "import" and set(e) == {"type", "legacy", "count"}:
             key, count = e["legacy"], e["count"]
             if (not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{64}", key)
                     or type(count) is not int or count < 0 or key in imported):
-                raise ValueError("managed budget invalid legacy import")
+                raise ValueError("BUDGET_IMPORT_INVALID")
             imported[key] = count
         elif e.get("type") == "reserve" and set(e) == {"type", "round", "profile"}:
-            charged = sum(imported.values()) + len(reservations) - len(refunded)
+            charged = sum(imported.values()) + len(reserved) - len(refunded)
             if (type(e["round"]) is not int or e["round"] != charged + 1
                     or e["round"] > MAX_ROUNDS or e["profile"] not in LADDER):
-                raise ValueError("managed budget invalid reservation")
-            reservations[number] = e
+                raise ValueError("BUDGET_RESERVATION_INVALID")
+            reserved[number] = e
         elif e.get("type") == "refund" and set(e) == {"type", "reservation", "state", "response_bytes"}:
             key = e["reservation"]
-            if (type(key) is not int or key not in reservations or key in refunded
-                    or key != max(reservations) or e["state"] != "REVIEW_UNAVAILABLE"
+            if (type(key) is not int or key not in reserved or key in refunded
+                    or key != max(reserved) or e["state"] != "REVIEW_UNAVAILABLE"
                     or type(e["response_bytes"]) is not int or e["response_bytes"] != 0):
-                raise ValueError("managed budget invalid refund")
+                raise ValueError("BUDGET_REFUND_INVALID")
             refunded.add(key)
         else:
-            raise ValueError("managed budget unrecognized event")
-    return imported, reservations, refunded
+            raise ValueError("BUDGET_EVENT_UNKNOWN")
+    return imported, reserved, refunded
 
 
-def legacy_budget_imports(identity, plan_name, lineage, explicit):
+def legacy_imports(identity, plan_name, lineage, explicit):
     remote = subprocess.check_output(["git", "remote", "get-url", "origin"]).decode(
         "utf-8", "surrogateescape")[:-1]
     commits = subprocess.check_output(["git", "rev-list", "--all", "--reflog"]).decode().splitlines()
@@ -441,29 +441,26 @@ def legacy_budget_imports(identity, plan_name, lineage, explicit):
         raise ValueError("--import-legacy-identity requires HEX sha256")
     candidates.update(explicit)
     found, unknown, owners = {}, [], {}
-    root = round_ledger_root()
-    for path in sorted(root.iterdir()):
-        if path.name == identity or not re.fullmatch(r"[0-9a-f]{64}", path.name):
-            continue
-        directory = _open_directory_chain(path)
+    paths = [p for p in sorted(round_ledger_root().iterdir())
+             if p.name != identity and re.fullmatch(r"[0-9a-f]{64}", p.name)]
+    for path in paths:
+        dfd = _open_directory_chain(path)
         try:
-            if any(n.startswith("event-") for n in os.listdir(directory)):
-                imported, _, _ = budget_history(directory)
+            if any(n.startswith("event-") for n in os.listdir(dfd)):
+                imported, _, _ = budget_history(dfd)
                 for key in imported:
                     if key in owners and owners[key] != path.name:
                         raise ValueError("LEGACY_MAPPING_CONFLICT: " + key)
                     owners[key] = path.name
         finally:
-            os.close(directory)
-    for path in sorted(root.iterdir()):
-        if path.name == identity or not re.fullmatch(r"[0-9a-f]{64}", path.name):
-            continue
-        directory = _open_directory_chain(path)
+            os.close(dfd)
+    for path in paths:
+        dfd = _open_directory_chain(path)
         try:
-            names = os.listdir(directory)
+            names = os.listdir(dfd)
             if any(n.startswith("event-") for n in names):
                 continue
-            entries = validate_round_history(directory, path.name)
+            entries = validate_round_history(dfd, path.name)
             if not entries:
                 continue
             if path.name not in candidates:
@@ -475,7 +472,7 @@ def legacy_budget_imports(identity, plan_name, lineage, explicit):
                 raise ValueError("LEGACY_MAPPING_CONFLICT: " + path.name)
             found[path.name] = (entries[-1]["cycle"] - 1) * MAX_ROUNDS + entries[-1]["round"]
         finally:
-            os.close(directory)
+            os.close(dfd)
     if unknown:
         raise ValueError("LEGACY_IDENTITY_AMBIGUOUS: {}; inspect provenance and attest with "
                          "--import-legacy-identity HEX (repeatable); never delete history".format(
@@ -488,42 +485,42 @@ def legacy_budget_imports(identity, plan_name, lineage, explicit):
 
 def managed_budget(identity, round_no=None, profile=None, plan_name=None,
                    lineage=(), explicit=(), refund=None):
-    directory = _open_directory_chain(round_ledger_root() / identity)
+    dfd = _open_directory_chain(round_ledger_root() / identity)
     try:
         lock = os.open("lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
-                       0o600, dir_fd=directory)
+                       0o600, dir_fd=dfd)
         try:
             if not stat.S_ISREG(os.fstat(lock).st_mode):
                 raise ValueError("lock: not a regular file")
             acquire_round_lock(lock)
-            imported, reserved, refunded = budget_history(directory)
+            imported, reserved, refunded = budget_history(dfd)
             if refund is not None:
                 if refund in refunded:
                     return None
                 if refund not in reserved or refund != max(reserved):
-                    raise ValueError("refund reservation is no longer the latest round")
-                append_budget_event(directory, {"type": "refund", "reservation": refund,
+                    raise ValueError("REFUND_NOT_LATEST")
+                append_event(dfd, {"type": "refund", "reservation": refund,
                                                "state": "REVIEW_UNAVAILABLE", "response_bytes": 0})
                 return None
-            found = legacy_budget_imports(identity, plan_name, lineage, explicit)
+            found = legacy_imports(identity, plan_name, lineage, explicit)
             for key, count in found.items():
                 if key in imported:
                     if imported[key] != count:
                         raise ValueError("LEGACY_HISTORY_CHANGED: " + key)
                     continue
-                append_budget_event(directory, {"type": "import", "legacy": key, "count": count})
+                append_event(dfd, {"type": "import", "legacy": key, "count": count})
                 imported[key] = count
             charged = sum(imported.values()) + len(reserved) - len(refunded)
             if charged >= MAX_ROUNDS:
                 raise ValueError("MANAGED_BUDGET_EXHAUSTED: mandate committee step applies")
             if round_no != charged + 1:
                 raise ValueError("managed --round must be {}; charged {}".format(charged + 1, charged))
-            event = append_budget_event(directory, {"type": "reserve", "round": round_no, "profile": profile})
+            event = append_event(dfd, {"type": "reserve", "round": round_no, "profile": profile})
             return {"identity": identity, "event": event}
         finally:
             os.close(lock)
     finally:
-        os.close(directory)
+        os.close(dfd)
 
 
 def refund_review_round(args, state, response_bytes):
@@ -1343,14 +1340,14 @@ def no_content_error(rev, text, *, finish_reason=None, reasoning_tokens=None,
         " (" + ", ".join(details) + ")" if details else "")
 
 
-REVIEW_RESPONSE_BYTES = 0
+REVIEW_BYTES = 0
 
 
 def _post(url, payload, headers, timeout, retries=3, deadline=None):
     """POST with backoff on transient failures. A gateway hiccup must not
     silently remove a reviewer from the panel -- that would quietly shrink the
     quorum and make the gate weaker than it claims to be."""
-    global REVIEW_RESPONSE_BYTES
+    global REVIEW_BYTES
     last = None
     for attempt in range(1, retries + 1):
         if deadline is not None:
@@ -1371,7 +1368,7 @@ def _post(url, payload, headers, timeout, retries=3, deadline=None):
                     chunk = r.read(65536)
                     if not chunk:
                         break
-                    REVIEW_RESPONSE_BYTES += len(chunk)
+                    REVIEW_BYTES += len(chunk)
                     chunks.append(chunk)
                     total += len(chunk)
                     if total > 64 * 1024 * 1024:
@@ -1389,19 +1386,19 @@ def _post(url, payload, headers, timeout, retries=3, deadline=None):
                     piece = e.read(8192)
                     if not piece:
                         break
-                    REVIEW_RESPONSE_BYTES += len(piece)
+                    REVIEW_BYTES += len(piece)
                     parts.append(piece)
                     got += len(piece)
             except Exception:
-                pass
+                REVIEW_BYTES += 1
             body = redact(b"".join(parts).decode(errors="replace"))[:300]
             last = f"HTTP {e.code}: {body}"
             # 4xx is our fault (bad key, bad model id) -- retrying cannot help.
             if e.code < 500 and e.code != 429:
                 return None, last
         except Exception as e:  # timeout, DNS, TLS reset
-            # Uncertain reads stay charged.
-            REVIEW_RESPONSE_BYTES += 1
+            # Uncertain read.
+            REVIEW_BYTES += 1
             last = f"{type(e).__name__}: {redact(e)}"
         if attempt < retries:
             nap = min(2 ** attempt, 15)
@@ -3276,7 +3273,7 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason, exc
             for m in members]
     args.plan_exchange = exchange
     disarm_watchdog()
-    refund_review_round(args, state, REVIEW_RESPONSE_BYTES)
+    refund_review_round(args, state, REVIEW_BYTES)
     journal = record_review_round(args, completed, state)
     report = {"state": state, "checked_at": now(), "reviewed": label,
               "profile": "plan", "profile_reason": profile_reason, "escalated": False,
@@ -3637,8 +3634,8 @@ def _main():
     prompt = build_prompt(body, args.claim, truncated, args.context,
                           args.threat_model, dispositions, args.input_redactions)
 
-    global REVIEW_RESPONSE_BYTES
-    REVIEW_RESPONSE_BYTES = 0
+    global REVIEW_BYTES
+    REVIEW_BYTES = 0
     if args.kind == "implementation":
         reserve_review_round(args)
 
@@ -3656,7 +3653,7 @@ def _main():
 
     if not runnable:
         disarm_watchdog()
-        refund_review_round(args, "REVIEW_UNAVAILABLE", REVIEW_RESPONSE_BYTES)
+        refund_review_round(args, "REVIEW_UNAVAILABLE", REVIEW_BYTES)
         journal = record_review_round(args, [], "REVIEW_UNAVAILABLE")
         report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
                   "profile": profile, "profile_reason": profile_reason,
@@ -3693,7 +3690,7 @@ def _main():
             reviewers, prompt, args, truncated, label, len(body))
         if not completed and not failed:
             disarm_watchdog()
-            refund_review_round(args, "REVIEW_UNAVAILABLE", REVIEW_RESPONSE_BYTES)
+            refund_review_round(args, "REVIEW_UNAVAILABLE", REVIEW_BYTES)
             journal = record_review_round(args, [], "REVIEW_UNAVAILABLE")
             report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
                       "profile": profile, "profile_reason": profile_reason,
