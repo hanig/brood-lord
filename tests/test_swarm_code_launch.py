@@ -126,6 +126,30 @@ class TestCodeLaunchExtraction(unittest.TestCase):
 
 
 class TestReviewLineageLaunch(unittest.TestCase):
+    def test_advance_records_full_chain_before_launch(self):
+        from tests.test_attempt_worktrees import TestPerAttemptWorktrees, code_unit, paseo_resolvable
+        fixture = TestPerAttemptWorktrees()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        units = [code_unit(fixture.repo, uid) for uid in ("a", "b", "c")]
+        for i in (1, 2):
+            units[i]["continuation_of"] = units[i - 1]["id"]
+        state = {"schema_version": 1, "halted": None, "units": {
+            "a": {"state": "DONE"}, "b": {"state": "DONE"}}}
+        plan = {"name": "fixture", "units": units}
+        state_dir = str(fixture.tmp / "state")
+        ok, why = S.acquire_lease(state_dir)
+        self.assertTrue(ok, why)
+        self.addCleanup(S.release_lease, state_dir)
+        with paseo_resolvable():
+            report, count, _ = S.advance(plan, state, state_dir,
+                                        str(fixture.tmp / "runs"), False, max_new=1)
+        self.assertEqual(count, 1, report)
+        unit = state["units"]["c"]
+        decision = unit["attempt_review_lineages"][Path(unit["attempt_dir"]).name]
+        self.assertEqual(decision, {"review_lineage": ["a", "b", "c"], "enrollment": "enrolled"})
+        self.assertIn('SWARM_REVIEW_LINEAGE=["a", "b", "c"]', fixture.fake.launches[-1])
+
     def test_enrollment_shapes_and_history_reach_launch(self):
         from tests.test_attempt_worktrees import TestPerAttemptWorktrees, code_unit, paseo_resolvable
         # Exhaustive 3 shapes x 3 histories x every possible prior ancestor.
