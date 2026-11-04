@@ -168,7 +168,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
         expected = {
             "luna": ("openai", "gpt-6-luna", "max"),
             "terra": ("openai", "gpt-6.1-terra", "xhigh"),
-            "haiku-5.5": ("anthropic", "claude-haiku-5-5", "max"),
+            "haiku-5.5": ("anthropic", "claude-haiku-5-5", "high"),
             "astra": ("openai", "gpt-6-astra", "xhigh"),
             "kimi-k3": ("openrouter", "moonshotai/kimi-k3", "xhigh"),
             "gemini-argon": ("openrouter", "google/gemini-4-argon", "xhigh"),
@@ -194,7 +194,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
                 self.assertEqual(payload["model"], seat["model"])
                 self.assertEqual(payload["max_tokens"], 128000)
                 if seat["provider"] == "anthropic":
-                    self.assertEqual(payload["output_config"], {"effort": "max"})
+                    self.assertEqual(payload["output_config"], {"effort": "high"})
                     self.assertEqual(payload["thinking"], {"type": "adaptive"})
                 else:
                     self.assertEqual(payload["reasoning"], {"effort": seat["effort"]})
