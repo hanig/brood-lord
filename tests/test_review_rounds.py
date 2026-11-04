@@ -811,7 +811,14 @@ class TestManagedBudget(unittest.TestCase):
                  patch.dict(os.environ, {"XDG_STATE_HOME": home}):
                 key = self.legacy("u", 1) if migrating else None
                 ids = [self.identity(u) for u in ("u", "v")]
-                ready, release = threading.Event(), threading.Event()
+                ready, release, entered = threading.Event(), threading.Event(), threading.Event()
+                first_locks, lock = {}, review.ledger_lock
+                def observed_lock(dfd):
+                    st = os.fstat(dfd)
+                    first_locks.setdefault(threading.get_ident(), (st.st_dev, st.st_ino))
+                    if len(first_locks) == 2:
+                        entered.set()
+                    return lock(dfd)
                 owner, name = (review, "legacy_imports") if migrating else (review.json, "dump")
                 original = getattr(owner, name)
                 def paused(*args, **kwargs):
@@ -822,11 +829,14 @@ class TestManagedBudget(unittest.TestCase):
                         if not release.wait(5):
                             raise RuntimeError("fixture release timeout")
                     return result if migrating else original(*args, **kwargs)
-                with patch.object(owner, name, paused), concurrent.futures.ThreadPoolExecutor(2) as pool:
+                with patch.object(owner, name, paused), patch.object(review, "ledger_lock", observed_lock), \
+                     concurrent.futures.ThreadPoolExecutor(2) as pool:
                     a = pool.submit(review.managed_budget, ids[0], 2 if migrating else 1, "standard", "plan", ("u",))
                     try:
                         self.assertTrue(ready.wait(3))
                         b = pool.submit(review.managed_budget, ids[1], 2 if migrating else 1, "standard", "plan", ("v",), (key,) if migrating else ())
+                        self.assertTrue(entered.wait(3))
+                        self.assertEqual(len(set(first_locks.values())), 1)
                         with self.assertRaises(concurrent.futures.TimeoutError):
                             b.result(timeout=.2)
                     finally:
