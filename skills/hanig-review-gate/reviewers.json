@@ -429,7 +429,7 @@
    "name": "haiku-5.5",
    "provider": "anthropic",
    "model": "claude-haiku-5-5",
-   "effort": "max",
+   "effort": "high",
    "max_output_tokens": 128000,
    "enabled": true,
    "profiles": [
@@ -445,20 +445,20 @@
    },
    "_cost": null,
    "_cost_note": "Unmeasured: models.json contains no Anthropic Haiku price list.",
-   "_note": "Owner decision 2026-10-12: replaces sonnet-5.5 in fast through native Anthropic at max effort.",
+   "_note": "Owner decision 2026-10-12: replaces sonnet-5.5 in fast through native Anthropic. Orchestrator change 2026-11-03 under the owner's standing delegation: high replaces that decision's max effort. In two of two small-diff reviews (unit e-m-inline-markers, rounds 1 and 2), the model used all 128000 output tokens on reasoning and emitted no review, giving REVIEW_INCOMPLETE.",
    "_max_output_tokens": "MEASURED through review.PROVIDERS with review.SYSTEM and input ping at the configured effort and 128000 cap. Establishes budget acceptance and usable output, not capacity for every review.",
    "_max_output_tokens_accepted": {
-    "date": "2026-10-13",
+    "date": "2026-11-03",
     "max_output_tokens": 128000,
     "provider": "anthropic",
     "model": "claude-haiku-5-5",
-    "effort": "max",
+    "effort": "high",
     "outcome": "completed",
-    "input_tokens": 1378,
-    "output_tokens": 5595,
-    "reasoning_tokens": 5395,
-    "response_id": "msg_011CfyUYAbYajPheHyDpPd77",
-    "observed_in": "g1-panel-roster live preflight via zsh -ic and review.PROVIDERS; observed 2026-10-13T02:50:13.365353+00:00"
+    "input_tokens": 1610,
+    "output_tokens": 945,
+    "reasoning_tokens": 781,
+    "response_id": "msg_011CggwskJAutxSa5X7Anekk",
+    "observed_in": "e-h-haiku-effort live preflight via zsh -ic and review.PROVIDERS with review.SYSTEM and input ping; observed 2026-11-04T00:32:44.805739+00:00 (2026-11-03 America/Los_Angeles)"
    }
   },
   {
