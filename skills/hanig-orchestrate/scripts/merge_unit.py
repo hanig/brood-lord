@@ -13,7 +13,6 @@ GitHub's head compare protects the merge, not a concurrent CI rerun/retarget.
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
 import hashlib
 import json
 import os
@@ -1121,66 +1120,7 @@ def _active_entry_lease(args):
         raise Refusal(DI.refusal_message("D5 active: " + str(exc))) from exc
 
 
-@contextmanager
-def verification_retry_guard(args, repo, snapshot):
-    binding, target = snapshot["binding"], snapshot["target"]
-    runner = execution_runner(args.state_dir, repo)
-    basis, error = V.candidate_merge_basis(runner, repo, binding["head"], target)
-    if error:
-        raise Refusal(error)
-    policies = {}
-    for claim in (V.INTEGRATION_CLAIM, V.STABILITY_CLAIM):
-        policy, digest, verifier, error = V.merge_precondition_policy(runner, repo, target, claim=claim)
-        if error:
-            raise Refusal(error)
-        if policy["verifiers"]:
-            policies[claim] = (digest, verifier)
-    identity = dict(basis, unit=binding["unit"], policies=policies)
-    directory = Path(args.state_dir) / "verification-retries"
-    directory.mkdir(exist_ok=True)
-    path = directory / (RV.record_digest(identity) + ".json")
-    with path.with_suffix(".lock").open("a") as lock:
-        try:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise Refusal("verification for this binding is already in progress")
-        rows, problems = S.load_verifications(args.state_dir)
-        if problems:
-            raise Refusal("verification journal is invalid: " + str(problems))
-        matched = [r for r in rows if r.get("unit") == binding["unit"]
-                    and all(r.get(k) == v for k, v in basis.items())
-                    and r.get("subject_head") == binding["head"] and r.get("claim") in policies
-                    and (r.get("policy_sha256"), r.get("verifier_sha256")) == policies[r["claim"]]]
-        retrieving = (getattr(args, "retrieve_remote_evidence", False)
-                      or RV.pending_problem(args.state_dir, binding["unit"], basis, rows))
-        losses = [r for r in matched if r.get("result") == "incomplete" and r.get("incomplete_reason") != "Slurm accounting pending"]
-        passed = {r["claim"] for r in matched if r.get("result") == "pass" and not RV.execution_problem(r)}
-        losses = [r for r in losses if r["claim"] not in passed]
-        if losses and not retrieving:
-            if any(r.get("result") == "fail" for r in matched):
-                raise Refusal("candidate merge verifier failed for this exact binding; repair the candidate")
-            if path.exists() or any(sum(r["claim"] == c for r in losses) > 1 for c in policies):
-                raise Refusal("INCONCLUSIVE retry exhausted for this exact candidate binding")
-            def attested(row):
-                reason = row.get("incomplete_reason", "")
-                return (reason in {"ssh is unavailable", "coordinator launcher unavailable"}
-                        or reason in {"Slurm infrastructure loss: " + s for s in RV.INFRASTRUCTURE_LOSS}
-                        or reason.startswith(("coordinator child launcher could not exec verifier: ",
-                            "coordinator could not launch or collect verifier: ",
-                            "remote transport incomplete: ", "ssh/remote transport exited ")))
-            if any(not attested(r) for r in losses):
-                raise Refusal("INCONCLUSIVE lacks attested infrastructure evidence")
-            RV.publish(path, dict(binding=identity, retry_reserved=True), once=True)
-        yield
-
-
 def verify_integration(args, repo, snapshot):
-    _d5_refuse('verify_integration', args.state_dir)
-    with verification_retry_guard(args, repo, snapshot):
-        return _verify_integration(args, repo, snapshot)
-
-
-def _verify_integration(args, repo, snapshot):
     """Run without the lease using the repo extracted by the authority reader.
 
     Like integration_evidence, this helper receives the local repository as an
