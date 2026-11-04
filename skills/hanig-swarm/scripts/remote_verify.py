@@ -1266,8 +1266,7 @@ def ingest(run, response, loss_accounted=False):
                 if run.get("final") is None:
                     run["published"] = False
                 run["final"] = final
-    loss_accounted = bool(loss_accounted
-                          and not run.get("final") and not problems)
+    loss_accounted = bool(loss_accounted and not run.get("final") and not problems)
     run["reconciled"] = bool(not problems and (run.get("final") or loss_accounted) and
         isinstance(supervision, dict) and supervision.get("launch_id") == run["launch_id"])
     if request["verification_host"]["executor"] == "slurm":
