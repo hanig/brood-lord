@@ -504,7 +504,7 @@ class TestExtract(unittest.TestCase):
   ('closing pipe', [(r'[ \t]*(?:\||$)', r'[ \t]*\|')], 'test_d_open_table_cell'),
   ('bullet spaces', [(r'[-*] [ \t]*\S', r'[-*] \S'),
     (r'[-*] [ \t]*NEEDS YOU', r'[-*] NEEDS YOU')], 'test_d_bullet_spacing'),
-  ('helper selection', [('_helper_selected(name, data):', '_helper_selected(name, data):\n  return True')], 'test_d_helpers'),
+  ('helper selection', [('def _helper_selected(name, data):', 'def _helper_selected(name, data):\n  return True')], 'test_d_helpers'),
   ('entries', [("visited >= max_entries", "visited >= PER_ROOT_FILES")], 'test_round1_entry_budget'),
   ('directories', [("visited = 0", "visited = 0; dirs = 0"),
     ("if len(parts) > max_depth:", "dirs += 1\n          if dirs > PER_ROOT_FILES or len(parts) > max_depth:")], 'test_round1_entry_budget'),
