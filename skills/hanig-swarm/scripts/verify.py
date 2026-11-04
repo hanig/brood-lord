@@ -1002,6 +1002,7 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
     child = None
     timed_out = False
     completed_failure = None
+    exited_before_deadline = False
     out, err, reason = "", "", None
     launch_read, launch_write, launch_error = None, None, ""
     try:
@@ -1042,7 +1043,26 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
         if launch_write is not None:
             os.close(launch_write)
             launch_write = None
-        out, err = child.communicate(timeout=timeout)
+        # Observe execution separately while draining pipes: a descendant can
+        # retain them after the leader exits. A late zero is still a timeout.
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(argv, timeout)
+            try:
+                out, err = child.communicate(timeout=min(remaining, 0.05))
+            except subprocess.TimeoutExpired:
+                finished = child.poll()
+                observed = time.monotonic()
+                if finished is not None and observed <= deadline:
+                    exited_before_deadline = True
+                if observed >= deadline:
+                    raise
+            else:
+                if not exited_before_deadline and time.monotonic() > deadline:
+                    raise subprocess.TimeoutExpired(argv, timeout)
+                break
     except subprocess.TimeoutExpired:
         timed_out = True
         reason = "coordinator timed out after {}s".format(timeout)
@@ -1056,7 +1076,7 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
             # failure is still evidence when a descendant holds a pipe open;
             # the capture timeout must not launder it into a retryable result.
             finished = child.poll()
-            if timed_out and finished == 0:
+            if timed_out and exited_before_deadline and finished == 0:
                 timed_out = False
                 reason = "coordinator could not collect verifier output after {}s".format(timeout)
             if finished is not None and finished != 0:

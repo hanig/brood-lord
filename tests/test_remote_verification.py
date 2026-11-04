@@ -2010,6 +2010,17 @@ class TestRemoteVerification(unittest.TestCase):
         self.verify('--retrieve-remote-evidence', '--verification-timeout', '1')
         self.assertEqual(self.rows(), rows)
 
+    def test_attested_loss_does_not_suppress_later_fail(self):
+        self.slurm_policy()
+        self.program()
+        self.mode.write_text('slurm-node-loss')
+        self.verify()
+        self.assertEqual(self.rows()[-1]['result'], 'incomplete')
+        self.mode.write_text('slurm-worker-died')
+        self.verify('--retrieve-remote-evidence', '--verification-timeout', '1')
+        self.assertEqual(self.rows()[-1]['result'], 'fail')
+        self.f.assert_refused(self.admitted())
+
     def test_retry_fail_binds(self):
         self.program('raise SystemExit(1)\n')
         ssh = self.f.bin / 'ssh'
@@ -3912,6 +3923,21 @@ class TestInfrastructureClassification(unittest.TestCase):
             out = V._observe_execution([sys.executable, '-c', program], 2, tmp)
         self.assertEqual(V.outcome_result(out)['result'], 'incomplete')
         self.assertIn('collect', out['incomplete_reason'])
+
+    def test_execution_deadline_is_separate_from_collection(self):
+        for observed, want in ((0.5, 'incomplete'), (2, 'fail')):
+            with self.subTest(observed=observed):
+                child = mock.Mock(returncode=0, pid=123)
+                child.poll.return_value = 0
+                child.communicate.side_effect = [
+                    subprocess.TimeoutExpired('fixture', 1), ('', '')]
+                with mock.patch.object(V.subprocess, 'Popen', return_value=child), \
+                        mock.patch.object(V.time, 'monotonic', side_effect=[0, 0, observed, 2]), \
+                        mock.patch.object(V.os, 'killpg'):
+                    out = V._observe_execution(['fixture'], 1, '.')
+                self.assertEqual(V.outcome_result(out)['result'], want)
+                if want == 'incomplete':
+                    self.assertIn('collect', out['incomplete_reason'])
 
     def test_secondary_pending_accounting_is_provisional(self):
         for pending in (None, ['RUNNING', '0:0'], ['PENDING', '0:0']):
