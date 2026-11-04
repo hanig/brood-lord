@@ -1419,7 +1419,7 @@ RETRY_MODES = ("restart", "resume")
 
 # --- dispatch -------------------------------------------------------------
 def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
-            dispatch_source=None, plan_path=None, review_lineage=None):
+            dispatch_source=None, plan_path=None, lineage_chain=None):
     """Submit, and return (job_id, error). Dispatch differs per kind; judging
     does not.
 
@@ -1804,7 +1804,7 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
         # Artifacts remain in the external attempt root even though source
         # work runs in the checkout. Passing these automatically makes the
         # declared output location reachable without relying on prompt prose.
-        lineage = review_lineage if review_lineage is not None else SPR.review_lineage(
+        lineage = lineage_chain if lineage_chain is not None else SPR.review_lineage(
             {"units": [u]}, u["id"])
         argv += ["--env", "SWARM_REVIEW_LINEAGE=" + json.dumps(lineage),
                  "--env", f"SWARM_UNIT_ID={u['id']}",
@@ -2397,7 +2397,7 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
                             recovered_job, problem = _submit(
                                 u, us["attempt_dir"], False, state, state_dir,
                                 dispatch_source=source, plan_path=plan_path,
-                                review_lineage=SPR.review_lineage(plan, uid))
+                                lineage_chain=SPR.review_lineage(plan, uid))
                         if problem:
                             SS._set_unit_state(us, "NEEDS_HUMAN")
                             us["launch_recovery_problem"] = problem
@@ -3012,7 +3012,7 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
         submit_args = ({"dispatch_source": dispatch_source}
                        if dispatch_source is not None else {})
         if "continuation_of" in u:
-            submit_args["review_lineage"] = SPR.review_lineage(plan, u["id"])
+            submit_args["lineage_chain"] = SPR.review_lineage(plan, u["id"])
         if plan_path is not None:
             submit_args["plan_path"] = plan_path
         job_id, err = ((None, claim_refusal) if claim_refusal
