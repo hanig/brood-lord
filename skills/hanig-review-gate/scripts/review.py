@@ -397,7 +397,7 @@ def append_budget_event(directory, event):
 
 
 def budget_history(directory):
-    """Replay append-only imports, reservations and zero-feedback refunds."""
+    """Replay budget events."""
     names = set(os.listdir(directory)) - {"lock"}
     expected = {"event-{}.json".format(n) for n in range(1, len(names) + 1)}
     if names != expected:
@@ -432,11 +432,6 @@ def budget_history(directory):
 
 
 def legacy_budget_imports(identity, plan_name, lineage, explicit):
-    """Match old hash preimages against available Git history; unknowns refuse.
-
-    Explicit hashes are operator attestations, not inferred unit suffixes.
-    Old markers remain charged forever, including every predecessor cycle.
-    """
     remote = subprocess.check_output(["git", "remote", "get-url", "origin"]).decode(
         "utf-8", "surrogateescape")[:-1]
     commits = subprocess.check_output(["git", "rev-list", "--all", "--reflog"]).decode().splitlines()
@@ -445,8 +440,21 @@ def legacy_budget_imports(identity, plan_name, lineage, explicit):
     if any(not re.fullmatch(r"[0-9a-f]{64}", x) for x in explicit):
         raise ValueError("--import-legacy-identity requires HEX sha256")
     candidates.update(explicit)
-    found, unknown = {}, []
+    found, unknown, owners = {}, [], {}
     root = round_ledger_root()
+    for path in sorted(root.iterdir()):
+        if path.name == identity or not re.fullmatch(r"[0-9a-f]{64}", path.name):
+            continue
+        directory = _open_directory_chain(path)
+        try:
+            if any(n.startswith("event-") for n in os.listdir(directory)):
+                imported, _, _ = budget_history(directory)
+                for key in imported:
+                    if key in owners and owners[key] != path.name:
+                        raise ValueError("LEGACY_MAPPING_CONFLICT: " + key)
+                    owners[key] = path.name
+        finally:
+            os.close(directory)
     for path in sorted(root.iterdir()):
         if path.name == identity or not re.fullmatch(r"[0-9a-f]{64}", path.name):
             continue
@@ -459,8 +467,12 @@ def legacy_budget_imports(identity, plan_name, lineage, explicit):
             if not entries:
                 continue
             if path.name not in candidates:
+                if path.name in owners:
+                    continue
                 unknown.append(path.name)
                 continue
+            if path.name in owners:
+                raise ValueError("LEGACY_MAPPING_CONFLICT: " + path.name)
             found[path.name] = (entries[-1]["cycle"] - 1) * MAX_ROUNDS + entries[-1]["round"]
         finally:
             os.close(directory)
@@ -1388,7 +1400,7 @@ def _post(url, payload, headers, timeout, retries=3, deadline=None):
             if e.code < 500 and e.code != 429:
                 return None, last
         except Exception as e:  # timeout, DNS, TLS reset
-            # A failed read can conceal partial bytes; uncertainty stays charged.
+            # Uncertain reads stay charged.
             REVIEW_RESPONSE_BYTES += 1
             last = f"{type(e).__name__}: {redact(e)}"
         if attempt < retries:
