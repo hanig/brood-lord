@@ -1161,12 +1161,22 @@ def verification_retry_guard(args, repo, snapshot):
         retrieving = (getattr(args, "retrieve_remote_evidence", False)
                       or RV.pending_problem(args.state_dir, binding["unit"], basis, rows))
         losses = [r for r in matching if r.get("result") == "incomplete"]
+        passed = {r["claim"] for r in matching if r.get("result") == "pass"}
+        losses = [r for r in losses if r["claim"] not in passed]
         if losses and not retrieving:
             if any(r.get("result") == "fail" for r in matching):
                 raise Refusal("candidate merge verifier failed for this exact binding; repair the candidate")
-            if path.exists():
+            if path.exists() or any(sum(r["claim"] == c for r in losses) > 1
+                                    for c in policies):
                 raise Refusal("INCONCLUSIVE retry exhausted for this exact candidate binding")
-            if any(not r.get("incomplete_reason") for r in losses):
+            def attested(row):
+                reason = row.get("incomplete_reason", "")
+                return (reason in {"ssh is unavailable", "coordinator launcher unavailable"}
+                        or reason in {"Slurm infrastructure loss: " + s for s in RV.INFRASTRUCTURE_LOSS}
+                        or reason.startswith(("coordinator child launcher could not exec verifier: ",
+                            "coordinator could not launch or collect verifier: ",
+                            "remote transport incomplete: ", "ssh/remote transport exited ")))
+            if any(not attested(r) for r in losses):
                 raise Refusal("INCONCLUSIVE lacks attested infrastructure evidence")
             RV.publish(path, dict(binding=identity, retry_reserved=True), once=True)
         yield

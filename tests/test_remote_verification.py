@@ -1985,6 +1985,7 @@ class TestRemoteVerification(unittest.TestCase):
         self.assertNotEqual(first['execution']['stage'], second['execution']['stage'])
         self.assertNotEqual(first['execution']['launch_id'], second['execution']['launch_id'])
         self.assertEqual(second['result'], 'pass')
+        self.assert_ok(self.verify())  # PASS resolves the reserved retry.
         self.assert_ok(self.admitted())
         # Lost work retains its original bytes; retry never reuses that stage.
         self.assertTrue(Path(first['execution']['stage']).exists())
