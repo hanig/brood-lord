@@ -126,27 +126,51 @@ class TestCodeLaunchExtraction(unittest.TestCase):
 
 
 class TestReviewLineageLaunch(unittest.TestCase):
-    def test_three_unit_chain_reaches_launch_environment(self):
+    def test_enrollment_shapes_and_history_reach_launch(self):
         from tests.test_attempt_worktrees import TestPerAttemptWorktrees, code_unit, paseo_resolvable
-        fixture = TestPerAttemptWorktrees()
-        fixture.setUp()
-        self.addCleanup(fixture.doCleanups)
-        units = [code_unit(fixture.repo, uid) for uid in ("u", "u-b", "u-c")]
-        for index in (1, 2):
-            units[index]["continuation_of"] = units[index - 1]["id"]
-        units[-1]["env"] = ["SWARM_UNIT_ID=u-c"]
-        chain = S.SPR.review_lineage({"units": units}, "u-c")
-        with paseo_resolvable():
-            job, error = S._submit(units[-1], str(fixture.attempt("u-c", "chain")),
-                                   False, {"units": {}}, str(fixture.tmp / "state"),
-                                   lineage_chain=chain)
-        self.assertIsNone(error)
-        self.assertTrue(job)
-        argv = fixture.fake.launches[-1]
-        values = [argv[i + 1] for i, v in enumerate(argv) if v == "--env"]
-        lineage = [v.split("=", 1)[1] for v in values if v.startswith("SWARM_REVIEW_LINEAGE=")]
-        self.assertEqual([json.loads(v) for v in lineage], [["u", "u-b", "u-c"]])
-        self.assertIn("SWARM_UNIT_ID=u-c", values)
+        # Exhaustive 3 shapes x 3 histories x every possible prior ancestor.
+        for size in (1, 2, 3):
+            for history in ("none", "enrolled", "missing", "legacy"):
+                for ancestor in range(size):
+                    with self.subTest(size=size, history=history, ancestor=ancestor):
+                        fixture = TestPerAttemptWorktrees()
+                        fixture.setUp()
+                        try:
+                            units = [code_unit(fixture.repo, "u" + str(i)) for i in range(size)]
+                            for i in range(1, size):
+                                units[i]["continuation_of"] = units[i - 1]["id"]
+                            unit = units[-1]
+                            unit["env"] = ["SWARM_UNIT_ID=" + unit["id"]]
+                            chain = S.SPR.review_lineage({"units": units}, unit["id"])
+                            state = {"units": {}}
+                            if history != "none":
+                                prior = {"attempts": ["/synthetic/old"]}
+                                if history != "missing":
+                                    prior["attempt_review_lineages"] = {"old": {
+                                        "review_lineage": chain[:ancestor + 1],
+                                        "enrollment": history}}
+                                state["units"][chain[ancestor]] = prior
+                            attempt = fixture.attempt(unit["id"], "chain")
+                            with paseo_resolvable():
+                                job, error = S._submit(unit, str(attempt), False, state,
+                                                       str(fixture.tmp / "state"), lineage_chain=chain)
+                            self.assertIsNone(error)
+                            self.assertTrue(job)
+                            enrolled = history in ("none", "enrolled")
+                            expected = {"review_lineage": chain,
+                                        "enrollment": "enrolled" if enrolled else "legacy"}
+                            actual = state["units"][unit["id"]]["attempt_review_lineages"]["chain"]
+                            self.assertEqual(actual, expected)
+                            durable = S.load_state(str(fixture.tmp / "state"))
+                            self.assertEqual(durable["units"][unit["id"]]["attempt_review_lineages"]["chain"],
+                                             expected)
+                            argv = fixture.fake.launches[-1]
+                            values = [argv[i + 1] for i, v in enumerate(argv) if v == "--env"]
+                            self.assertEqual([v for v in values if v.startswith("SWARM_REVIEW_LINEAGE=")],
+                                             ["SWARM_REVIEW_LINEAGE=" + (json.dumps(chain) if enrolled else "legacy")])
+                            self.assertEqual(values.count("SWARM_UNIT_ID=" + unit["id"]), 1)
+                        finally:
+                            fixture.doCleanups()
 
 
 if __name__ == "__main__":

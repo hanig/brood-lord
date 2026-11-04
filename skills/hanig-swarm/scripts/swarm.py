@@ -1417,6 +1417,27 @@ CHARGE_METRICS = ("gpu_hours", "cpu_hours", "read_bytes", "wall_seconds",
                   "items")
 RETRY_MODES = ("restart", "resume")
 
+def _record_review_lineage(state, chain, unit_dir):
+    """Enroll from coordinator history, retaining decisions on repeat launch."""
+    us = state.setdefault("units", {}).setdefault(chain[-1], {})
+    decisions = us.setdefault("attempt_review_lineages", {})
+    attempt = Path(unit_dir).name
+    if attempt not in decisions:
+        legacy = False
+        for uid in chain:
+            prior = state["units"].get(uid, {})
+            recorded = prior.get("attempt_review_lineages", {})
+            attempts = {Path(a).name for a in prior.get("attempts", [])
+                        if not str(a).startswith(SP.DRY_PREFIX)}
+            attempts.update(prior.get("attempt_launch_intents", {}))
+            if any(recorded.get(a, {}).get("enrollment") != "enrolled"
+                   for a in attempts):
+                legacy = True
+        decisions[attempt] = {"review_lineage": list(chain),
+                              "enrollment": "legacy" if legacy else "enrolled"}
+    return decisions[attempt]
+
+
 # --- dispatch -------------------------------------------------------------
 def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
             dispatch_source=None, plan_path=None, lineage_chain=None):
@@ -1434,6 +1455,8 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
         return None, problem
     anchored_base = None
     if kind == "code":
+        _record_review_lineage(
+            state, lineage_chain if lineage_chain is not None else [u["id"]], unit_dir)
         # Capture only facts the coordinator can know before the agent exists.
         # The immutable base and generated path are durable before the
         # coordinator creates the worktree or asks Paseo to run in it.
@@ -1804,9 +1827,12 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
         # Artifacts remain in the external attempt root even though source
         # work runs in the checkout. Passing these automatically makes the
         # declared output location reachable without relying on prompt prose.
-        lineage = lineage_chain if lineage_chain is not None else SPR.review_lineage(
-            {"units": [u]}, u["id"])
-        argv += ["--env", "SWARM_REVIEW_LINEAGE=" + json.dumps(lineage),
+        decision = _record_review_lineage(
+            state, lineage_chain if lineage_chain is not None else [u["id"]], unit_dir)
+        SS.save_state(state_dir, state)
+        lineage = ("legacy" if decision["enrollment"] == "legacy"
+                   else json.dumps(decision["review_lineage"]))
+        argv += ["--env", "SWARM_REVIEW_LINEAGE=" + lineage,
                  "--env", f"SWARM_UNIT_ID={u['id']}",
                  "--env", f"SWARM_UNIT_DIR={unit_dir}"]
         # An agent under default permissions stops at the first Write and
@@ -2979,6 +3005,8 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
             continue
         # Persist the allocation BEFORE submitting: a crash between the two
         # must leave an orphaned directory, never an unrecorded job.
+        if u.get("kind") == "code" and not dry_run:
+            _record_review_lineage(state, SPR.review_lineage(plan, uid), unit_dir)
         us["attempt_dir"] = unit_dir
         # A dry attempt is TAGGED, so it can never be mistaken for real work
         # when counting the retry budget.
@@ -3013,8 +3041,6 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
                 u, root, state_dir, Path(unit_dir).name)
         submit_args = ({"dispatch_source": dispatch_source}
                        if dispatch_source is not None else {})
-        if "continuation_of" in u:
-            submit_args["lineage_chain"] = SPR.review_lineage(plan, u["id"])
         if plan_path is not None:
             submit_args["plan_path"] = plan_path
         job_id, err = ((None, claim_refusal) if claim_refusal
