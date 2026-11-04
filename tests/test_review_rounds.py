@@ -787,6 +787,57 @@ class TestManagedBudget(unittest.TestCase):
                         self.assertEqual(sum(e["count"] for e in imports), total)
                         self.assertEqual(len(imports), sum(n > 0 for n in counts))
 
+    def test_independent_legacy_owners_can_migrate_without_wrong_charges(self):
+        keys = [self.legacy(u, 1) for u in ("u", "v")]
+        with self.assertRaisesRegex(ValueError, "LEGACY_IDENTITY_AMBIGUOUS"):
+            self.reserve(2)
+        self.reserve(2, ("v",))
+        self.reserve(2)
+        for unit, key in zip(("u", "v"), keys):
+            dfd = review._open_directory_chain(review.round_ledger_root() / self.identity(unit))
+            try:
+                imported, reserved, _ = review.budget_history(dfd, self.identity(unit))
+                self.assertEqual(imported, {key: 1})
+                self.assertEqual(len(reserved), 1)
+            finally:
+                os.close(dfd)
+
+    def test_dns_unavailable_refunds_through_cli(self):
+        import socket
+        def response(reviewer, *_args):
+            _, error = review._post("https://example.invalid", {}, {}, 1, retries=1)
+            return {"name": reviewer["name"], "ok": False, "error": error}
+        with patch.object(review.urllib.request, "urlopen", side_effect=
+                          review.urllib.error.URLError(socket.gaierror("DNS failed"))):
+            for _ in range(4):
+                result = self.invoke(extra=("--plan-name", "plan", "--unit", "u"), response=response)
+                self.assertEqual(result[0], 2, result[1:3])
+                self.assertEqual(review.REVIEW_BYTES, 0)
+        self.reserve(1)
+        with patch.object(review.urllib.request, "urlopen", return_value=io.BytesIO()) as opened:
+            with patch.object(opened.return_value, "read", side_effect=socket.gaierror("uncertain read")):
+                review._post("https://example.invalid", {}, {}, 1, retries=1)
+        self.assertGreater(review.REVIEW_BYTES, 0)
+
+    def test_interrupted_publication_does_not_poison_other_units(self):
+        with patch.object(review.json, "dump", side_effect=OSError("interrupted")):
+            with self.assertRaises(OSError):
+                self.reserve(1)
+        self.reserve(1, ("v",))
+        self.reserve(1)
+        with self.assertRaisesRegex(ValueError, "managed --round must be"):
+            self.reserve(1)
+
+    def test_empty_ledger_never_enumerates_git_history(self):
+        original = review.subprocess.check_output
+        def metadata(argv, *args, **kwargs):
+            if argv[:2] in (["git", "rev-list"], ["git", "for-each-ref"]):
+                self.fail("empty ledger enumerated repository history")
+            return original(argv, *args, **kwargs)
+        with patch.object(review.subprocess, "check_output", side_effect=metadata):
+            self.reserve(1)
+            self.reserve(2)
+
     def test_mapped_other_lineage_does_not_spend_this_budget(self):
         self.legacy("v", 1)
         self.reserve(2, ("v",))
