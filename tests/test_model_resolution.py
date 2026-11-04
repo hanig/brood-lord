@@ -1182,14 +1182,17 @@ class TestResolveEndToEnd(StateHome):
 
     def test_any_configuration_error_stops_before_any_seat_starts(self):
         roster = [dict(r) for r in shipped()[0]]
-        last = next(r for r in reversed(roster) if r.get("family"))
-        last["family"] = dict(last["family"], separator="_")
+        # These mutations exercise ordered point releases, not named pins.
+        seat = next(r for r in roster if r["name"] == "sol")
+        self.assertNotIn("named_version", seat["family"])
+        seat["family"] = dict(seat["family"], separator="_")
         code, err = self.exit_code(load_reviewers=mock.Mock(return_value=roster))
         self.assertEqual(code, 4)
         self.assertIn("separator", err)
         roster = [dict(r) for r in shipped()[0]]
-        last = next(r for r in reversed(roster) if r.get("family"))
-        last["family"] = dict(last["family"], major=last["family"]["major"] + 1)
+        seat = next(r for r in roster if r["name"] == "sol")
+        self.assertNotIn("named_version", seat["family"])
+        seat["family"] = dict(seat["family"], major=seat["family"]["major"] + 1)
         code, err = self.exit_code(load_reviewers=mock.Mock(return_value=roster))
         self.assertEqual(code, 4)
         self.assertIn("not in its family", err)
