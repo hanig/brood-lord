@@ -745,6 +745,10 @@ class TestManagedBudget(unittest.TestCase):
             with self.subTest(raw=raw), patch.dict(os.environ, {"SWARM_REVIEW_LINEAGE": raw}):
                 with self.assertRaisesRegex(ValueError, "SWARM_REVIEW_LINEAGE.*" + named):
                     review.change_identity(plan_name="plan", unit="u")
+                result = self.invoke(extra=("--plan-name", "plan", "--unit", "u"))
+                self.assertEqual(result[0], 4, result[1:3])
+                self.assertIn("SWARM_REVIEW_LINEAGE", result[2])
+                self.assertEqual(self.markers(), [])
         with patch.dict(os.environ, {"SWARM_REVIEW_LINEAGE": '["root", "u"]'}):
             with self.assertRaisesRegex(ValueError, "--lineage-root conflicts"):
                 review.change_identity(plan_name="plan", unit="u", lineage_root="other")
