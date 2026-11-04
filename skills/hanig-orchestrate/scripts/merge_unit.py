@@ -1123,7 +1123,6 @@ def _active_entry_lease(args):
 
 @contextmanager
 def verification_retry_guard(args, repo, snapshot):
-    """Lock the binding and durably reserve one loss retry; retrieval is free."""
     binding, target = snapshot["binding"], snapshot["target"]
     runner = execution_runner(args.state_dir, repo)
     basis, error = V.candidate_merge_basis(runner, repo, binding["head"], target)
@@ -1148,20 +1147,20 @@ def verification_retry_guard(args, repo, snapshot):
         rows, problems = S.load_verifications(args.state_dir)
         if problems:
             raise Refusal("verification journal is invalid: " + str(problems))
-        matching = [r for r in rows if r.get("unit") == binding["unit"]
+        matched = [r for r in rows if r.get("unit") == binding["unit"]
                     and all(r.get(k) == v for k, v in basis.items())
                     and r.get("subject_head") == binding["head"]
                     and r.get("claim") in policies
                     and (r.get("policy_sha256"), r.get("verifier_sha256")) == policies[r["claim"]]]
         retrieving = (getattr(args, "retrieve_remote_evidence", False)
                       or RV.pending_problem(args.state_dir, binding["unit"], basis, rows))
-        losses = [r for r in matching if r.get("result") == "incomplete"
-                  and r.get("incomplete_reason") != "Slurm accounting is not terminal"]
-        passed = {r["claim"] for r in matching if r.get("result") == "pass"
+        losses = [r for r in matched if r.get("result") == "incomplete"
+                  and r.get("incomplete_reason") != "Slurm accounting pending"]
+        passed = {r["claim"] for r in matched if r.get("result") == "pass"
                   and not RV.execution_problem(r)}
         losses = [r for r in losses if r["claim"] not in passed]
         if losses and not retrieving:
-            if any(r.get("result") == "fail" for r in matching):
+            if any(r.get("result") == "fail" for r in matched):
                 raise Refusal("candidate merge verifier failed for this exact binding; repair the candidate")
             if path.exists() or any(sum(r["claim"] == c for r in losses) > 1
                                     for c in policies):
@@ -1304,7 +1303,7 @@ def _verify_integration(args, repo, snapshot):
     if any(evidence["result"] != "pass" for evidence in evidences):
         if any(evidence["result"] == "fail" for evidence in evidences):
             raise Refusal("candidate merge verifier failed; repair the candidate")
-        raise Refusal("INCONCLUSIVE candidate merge verification; one clean retry is permitted after reconciled infrastructure loss")
+        raise Refusal("INCONCLUSIVE verification; reconcile infrastructure loss before retry")
 
 
 def print_pending_close(args, plan):
