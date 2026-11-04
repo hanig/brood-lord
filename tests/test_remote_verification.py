@@ -2003,8 +2003,14 @@ class TestRemoteVerification(unittest.TestCase):
         self.assert_failed(self.verify())
         self.assertEqual(self.rows()[-1]['result'], 'fail')
         self.f.assert_refused(self.admitted())
-        self.assertIn('candidate merge verifier failed for this exact binding; repair the candidate', self.verify().stderr)
-        self.assertEqual(len(self.rows()), 2)
+        # A later matching PASS cannot erase the binding FAIL.
+        passed = dict(self.rows()[-1], result='pass', exit_code=0)
+        with self.journal.open('a') as stream:
+            stream.write(json.dumps(passed) + '\n')
+        self.assertIsNone(RV.execution_problem(passed))
+        refused = self.admitted()
+        self.f.assert_refused(refused)
+        self.assertIn('returned FAIL for this exact candidate binding', refused.stderr)
 
     def test_absent_ssh_client_does_not_create_an_unresolved_launch(self):
         self.program()
