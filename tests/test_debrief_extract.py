@@ -1,6 +1,8 @@
 """Synthetic, isolated adapter and mutation acceptance tests."""
 import ast
 import hashlib
+import itertools
+import stat
 import json
 import os
 import random
@@ -683,6 +685,133 @@ class TestExtract(unittest.TestCase):
     self.eq(len(self.members(got, 'helper_scripts')), 2)
     self.eq({o['locator'] for o in got['omissions']}, {'README.md', 'data.csv', 'NOTES', 'state.json'})
     self.true(all(o['reason'].startswith('unsupported') for o in got['omissions']))
+
+
+  def test_x_selected_file_cap(self):
+    self.put('000.bin', 'unsupported')
+    self.put('PLAN.md', '| D-1 | decision |')
+    got = self.collect(files_per_root=1)
+    self.eq([r['locator'] for r in got['evidence'].values()], ['PLAN.md'])
+    self.false(any('over-budget' in o['reason'] for o in got['omissions']))
+    self.put('z/PLAN.md', '| D-2 | next |')
+    got = self.collect(files_per_root=1)
+    self.true(any(o['reason'] == 'over-budget: uninspected remainder (max-files)'
+      for o in got['omissions']))
+
+  def test_x_relative_exclusions_prune(self):
+    self.put('.swarm/PLAN.md', '| D-1 | hidden |')
+    self.put('PLAN.md', '| D-2 | visible |')
+    self.put('skip.bin', 'skip')
+    roots = [dict(label='A', role='project', path=self.root)]
+    original = X.os.open
+    def guarded(name, *args, **kwargs):
+      self.assertNotEqual(name, '.swarm', 'excluded directory was opened')
+      return original(name, *args, **kwargs)
+    with mock.patch.object(X.os, 'open', side_effect=guarded):
+      got = X.collect(roots, exclusions=[('project', '.swarm'), ('project', 'skip.*'),
+                                        ('memory', 'PLAN.md')])
+    self.eq([r['locator'] for r in got['evidence'].values()], ['PLAN.md'])
+    self.eq(sorted((o['locator'], o['reason']) for o in got['omissions']),
+      [('.swarm', 'skipped: excluded by operator'), ('skip.bin', 'skipped: excluded by operator')])
+    # Absolute patterns do not match root-relative paths.
+    got = X.collect(roots, exclusions=[('project', str(self.root / 'PLAN.md'))])
+    self.eq(len(got['evidence']), 2)
+
+  def test_x_entry_cap_and_per_root_reset(self):
+    for i in range(5):
+      self.put(str(i) + '.bin', 'unselected')
+    roots = [dict(label=l, role='project', path=self.root) for l in ('A', 'B')]
+    got = X.collect(roots, {'entries_per_root': 3})
+    for label in ('A', 'B'):
+      omissions = [o for o in got['omissions'] if o['source_root'] == label]
+      self.eq(len(omissions), 4)
+      self.eq(omissions[-1]['reason'], 'over-budget: uninspected remainder (max-entries)')
+    got = X.collect(roots, {'entries_per_root': 5})
+    self.false(any('over-budget' in o['reason'] for o in got['omissions']))
+
+  def test_x_bfs_exhaustive(self):
+    # Exhaustive ordered trees, depth <= 2, 0..3 entries per directory.
+    # 1 + 81 + 81**2 + 81**3 = 538084 trees; no random seed.
+    shapes = [shape for n in range(4) for shape in itertools.product('fdh', repeat=n)]
+    variants = [('f', ())] + [(kind, shape) for kind in 'dh' for shape in shapes]
+    names = ('z', 'a', 'm')  # deliberately not sorted; h denotes dot-directory
+    def entries(shape):
+      return [(('.' if kind == 'h' else '') + names[i], kind)
+              for i, kind in enumerate(shape)]
+    tree, opened = {}, []
+    def scan(fd):
+      opened.append(fd)
+      return Scan(tree[fd])
+    class Scan:
+      def __init__(self, children):
+        self.children = children
+      def __enter__(self):
+        return (types.SimpleNamespace(name=name) for name, kind in reversed(self.children))
+      def __exit__(self, *args):
+        pass
+    def info(name, dir_fd, **kwargs):
+      kind = dict(tree[dir_fd])[name]
+      return types.SimpleNamespace(st_mode=stat.S_IFREG if kind == 'f' else stat.S_IFDIR)
+    fake = types.SimpleNamespace(dup=lambda fd: fd, close=lambda fd: None,
+      open=lambda name, flags, dir_fd: dir_fd + (name,), scandir=scan, stat=info,
+      O_RDONLY=0, O_DIRECTORY=0, O_NOFOLLOW=0)
+    def unexpected(*args):
+      self.fail(str(args))
+    total = 0
+    with mock.patch.object(X, 'os', fake):
+      for size in range(4):
+        for arrangement in itertools.product(variants, repeat=size):
+          tree.clear()
+          tree[()] = entries([kind for kind, children in arrangement])
+          for (name, kind), (_, children) in zip(tree[()], arrangement):
+            if kind != 'f':
+              tree[(name,)] = entries(children)
+              for child, child_kind in tree[(name,)]:
+                if child_kind != 'f':
+                  tree[(name, child)] = []
+          # Independent level-by-level oracle partitions files and directory
+          # classes explicitly, without the implementation's category key.
+          level, expected_files, expected_dirs = [()], [], []
+          while level:
+            following = []
+            for directory in level:
+              expected_dirs.append(directory)
+              children = tree[directory]
+              expected_files.extend(directory + (name,) for name in sorted(
+                name for name, kind in children if kind == 'f'))
+              for kind in ('d', 'h'):
+                following.extend(directory + (name,) for name in sorted(
+                  name for name, tag in children if tag == kind))
+            level = following
+          opened.clear()
+          got = [tuple(parts) for fd, parts, st in X._walk((), 100, 128, [], unexpected)]
+          self.eq(got, expected_files)
+          self.eq(opened, expected_dirs)
+          total += 1
+    self.eq(total, 538084)
+
+  def test_x_traversal_mutations(self):
+    source = (SCRIPTS / 'debrief_extract.py').read_text()
+    mutations = [
+      ('lexical sort', 'key=lambda item: (item[0], item[1])',
+       'key=lambda item: item[1]', 'test_x_bfs_exhaustive'),
+      ('unselected count', "if not known:\n          omit", "if not known:\n          count += 1\n          omit",
+       'test_x_selected_file_cap'),
+      ('absolute exclusion', 'fnmatch.fnmatchcase(loc, pattern)',
+       "fnmatch.fnmatchcase('/absolute/' + loc, pattern)", 'test_x_relative_exclusions_prune')]
+    for label, before, after, test in mutations:
+      with self.subTest(mutation=label):
+        self.assertIn(before, source)
+        mutant = types.ModuleType('debrief_extract_mutant')
+        exec(compile(source.replace(before, after), '<synthetic mutation>', 'exec'), mutant.__dict__)
+        case = TestExtract(test)
+        case.setUp()
+        try:
+          with mock.patch.dict(globals(), {'X': mutant}):
+            with self.assertRaises(AssertionError):
+              getattr(case, test)()
+        finally:
+          case.doCleanups()
 
 if __name__ == '__main__':
   unittest.main()
