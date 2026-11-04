@@ -1184,7 +1184,8 @@ class TestRemoteVerification(unittest.TestCase):
         self.assert_pending(self.verify('--verification-timeout', '1'))
         original = self.journal.read_bytes()
         first, = self.rows()
-        self.assertEqual(first['result'], 'pass')
+        self.assertEqual(first['result'], 'incomplete')
+        self.assertEqual(first['incomplete_reason'], 'Slurm accounting is not terminal')
         self.assertIsNone(first['execution']['sacct_state'])
         (self.f.bin / 'sacct').write_text(PYTHON + 'import sys\n'
             'print("321|" + sys.argv[sys.argv.index("--name")+1] '
@@ -1985,38 +1986,32 @@ class TestRemoteVerification(unittest.TestCase):
         self.assertNotEqual(first['execution']['stage'], second['execution']['stage'])
         self.assertNotEqual(first['execution']['launch_id'], second['execution']['launch_id'])
         self.assertEqual(second['result'], 'pass')
-        self.assert_ok(self.verify())  # PASS resolves the reserved retry.
+        self.assert_ok(self.verify())
         self.assert_ok(self.admitted())
-        # Lost work retains its original bytes; retry never reuses that stage.
         self.assertTrue(Path(first['execution']['stage']).exists())
 
-    def test_slurm_second_node_loss_exhausts_retry(self):
-        self.slurm_policy()
-        self.program()
-        self.mode.write_text('slurm-node-loss')
+    def assert_retry_exhausted(self):
         for attempt in range(2):
             self.assert_failed(self.verify())
             self.assertEqual(len(self.rows()), attempt + 1)
             self.assertEqual(self.rows()[-1]['result'], 'incomplete')
+            self.f.assert_refused(self.admitted())
         result = self.verify()
         self.assert_failed(result)
         self.assertIn('INCONCLUSIVE retry exhausted', result.stderr)
         self.assertEqual(len(self.rows()), 2)
         self.f.assert_refused(self.admitted())
 
+    def test_second_node_loss_exhausts_retry(self):
+        self.slurm_policy()
+        self.program()
+        self.mode.write_text('slurm-node-loss')
+        self.assert_retry_exhausted()
+
     def test_inconclusive_retry_is_persisted_and_bounded(self):
         self.program()
-        ssh = self.f.bin / 'ssh'
-        ssh.unlink()
-        for attempt in range(2):
-            self.assert_failed(self.verify())
-            self.assertEqual(len(self.rows()), attempt + 1)
-            self.assertEqual(self.rows()[-1]['result'], 'incomplete')
-            self.f.assert_refused(self.admitted())
-        third = self.verify()
-        self.assert_failed(third)
-        self.assertIn('INCONCLUSIVE retry exhausted', third.stderr)
-        self.assertEqual(len(self.rows()), 2)
+        (self.f.bin / 'ssh').unlink()
+        self.assert_retry_exhausted()
 
     def test_inconclusive_retry_fail_binds(self):
         self.program('raise SystemExit(1)\n')
@@ -3869,50 +3864,56 @@ class TestSlurmPolicy(unittest.TestCase):
                 RV.read_policy(tmp)
 
 
-
 class TestInfrastructureClassification(unittest.TestCase):
+    states = ('COMPLETED', 'FAILED', 'TIMEOUT', 'NODE_FAIL',
+              'PREEMPTED', 'BOOT_FAIL', 'CANCELLED')
     def test_evidence_product_fail_precedence(self):
         # Exhaustive finite bound: 3 exits x 2 launcher errors x 7 states = 42.
-        states = ('COMPLETED', 'FAILED', 'TIMEOUT', 'NODE_FAIL',
-                  'PREEMPTED', 'BOOT_FAIL', 'CANCELLED')
-        for code, launcher_error, state in itertools.product((0, 1, -9), (False, True), states):
-            with self.subTest(code=code, launcher_error=launcher_error, state=state):
+        for code, error, state in itertools.product((0, 1, -9), (False, True), self.states):
+            with self.subTest(code=code, error=error, state=state):
                 with mock.patch.object(RV, '_command', return_value=(0, '321|' + state + '|0:0\n', '')):
-                    observed = RV.scheduler_state('321')
-                self.assertEqual(observed, (state, '0:0'))
-                outcome = dict(exit_code=code, stdout='', stderr='')
-                if launcher_error:
-                    outcome['incomplete_reason'] = 'coordinator transport unavailable'
-                execution = dict(executor='slurm', sacct_state=observed[0],
-                                 sacct_exit_code=observed[1])
+                    seen = RV.scheduler_state('321')
+                self.assertEqual(seen, (state, '0:0'))
+                out = dict(exit_code=code, stdout='', stderr='')
+                if error:
+                    out['incomplete_reason'] = 'coordinator transport unavailable'
+                ex = dict(executor='slurm', sacct_state=seen[0],
+                                 sacct_exit_code=seen[1])
                 expected = ('fail' if code != 0 else
                             'incomplete' if state in ('NODE_FAIL', 'PREEMPTED', 'BOOT_FAIL') else
                             'fail' if state != 'COMPLETED' else
-                            'incomplete' if launcher_error else 'pass')
-                result = V.outcome_result(outcome, execution)
+                            'incomplete' if error else 'pass')
+                result = V.outcome_result(out, ex)
                 self.assertEqual(result['result'], expected)
                 self.assertEqual('incomplete_reason' in result, expected == 'incomplete')
 
-    def test_cleanup_accounting_cannot_be_hidden_by_supervision(self):
-        for state in ('COMPLETED', 'FAILED', 'TIMEOUT', 'NODE_FAIL',
-                      'PREEMPTED', 'BOOT_FAIL', 'CANCELLED'):
+    def test_nonterminal_accounting_is_provisional(self):
+        for state in ('RUNNING', 'PENDING', None):
+            with self.subTest(state=state):
+                result = V.outcome_result(dict(exit_code=0),
+                    dict(executor='slurm', sacct_state=state))
+                self.assertEqual(result, dict(result='incomplete',
+                    incomplete_reason='Slurm accounting is not terminal'))
+
+    def test_cleanup_failure_precedence(self):
+        for state in self.states:
             for earlier in (None, 'COMPLETED', 'NODE_FAIL'):
                 with self.subTest(state=state, earlier=earlier):
-                    outcome = RV.incomplete('worker did not complete')
-                    execution = dict(executor='slurm', sacct_state=earlier,
+                    out = RV.incomplete('worker did not complete')
+                    ex = dict(executor='slurm', sacct_state=earlier,
                                      sacct_exit_code='0:0',
                                      cleanup_sacct_states={'321': [state, '0:0']})
-                    result = V.outcome_result(outcome, execution)
+                    result = V.outcome_result(out, ex)
                     expected = 'fail' if state in ('FAILED', 'TIMEOUT', 'CANCELLED') else 'incomplete'
                     self.assertEqual(result['result'], expected)
 
-    def test_missing_completion_uses_only_loss_states(self):
+    def test_missing_completion(self):
         for state in RV.TERMINAL:
             with self.subTest(state=state):
-                outcome = RV.incomplete('transport unavailable')
-                execution = dict(executor='slurm', sacct_state=state, sacct_exit_code='0:0')
+                out = RV.incomplete('transport unavailable')
+                ex = dict(executor='slurm', sacct_state=state, sacct_exit_code='0:0')
                 expected = 'incomplete' if state in RV.INFRASTRUCTURE_LOSS or state == 'COMPLETED' else 'fail'
-                self.assertEqual(V.outcome_result(outcome, execution)['result'], expected)
+                self.assertEqual(V.outcome_result(out, ex)['result'], expected)
 
 
 if __name__ == '__main__':
