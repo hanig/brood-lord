@@ -149,7 +149,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
             "standard": {"terra", "kimi-k2.7-code", "sonnet-5.5"},
             "deep": {"terra", "kimi-k2.7-code", "sonnet-5.5", "sol"},
             "plan": {"luna", "kimi-k3"},
-            "planning": {"astra", "gemini-argon"},
+            "planning": {"astra", "gemini-argon", "muse-wonder"},
             "committee": {"deepseek-v4-pro", "gemini-argon", "sonnet-5.5"},
             "tiebreak": {"sol-tiebreak"},
         }
@@ -172,6 +172,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
             "astra": ("openai", "gpt-6-astra", "xhigh"),
             "kimi-k3": ("openrouter", "moonshotai/kimi-k3", "xhigh"),
             "gemini-argon": ("openrouter", "google/gemini-4-argon", "xhigh"),
+            "muse-wonder": ("openrouter", "meta/muse-wonder", "high"),
             "kimi-k2.7-code": ("openrouter", "moonshotai/kimi-k2.7-code", None),
             "sonnet-5.5": ("anthropic", "claude-sonnet-5-5", "high"),
             "deepseek-v4-pro": ("openrouter", "deepseek/deepseek-v4-pro", None),
@@ -183,7 +184,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
 
     def test_new_seats_reach_the_real_provider_payload_builders(self):
         roster = {r["name"]: r for r in R.load_reviewers()}
-        for name in ("gemini-argon", "haiku-5.5", "kimi-k3"):
+        for name in ("gemini-argon", "haiku-5.5", "kimi-k3", "muse-wonder"):
             seat = roster[name]
             with self.subTest(seat=name), patch.dict(os.environ, {
                     "OPENROUTER_API_KEY": "test-key",
@@ -198,6 +199,25 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
                     self.assertEqual(payload["thinking"], {"type": "adaptive"})
                 else:
                     self.assertEqual(payload["reasoning"], {"effort": seat["effort"]})
+
+    def test_planning_selects_exactly_three_members_across_two_providers(self):
+        import committee
+        members = committee.pick_members([], profile="planning")
+        self.assertEqual({m["name"] for m in members},
+                         {"astra", "gemini-argon", "muse-wonder"})
+        self.assertEqual(len(members), 3)
+        self.assertEqual({m["provider"] for m in members},
+                         {"openai", "openrouter"})
+        muse = next(m for m in members if m["name"] == "muse-wonder")
+        self.assertEqual(muse["profiles"], ["planning"])
+        self.assertEqual(muse["family"], {
+            "listing": "openrouter", "vendor": "meta", "prefix": "muse-",
+            "separator": ".", "suffix": "", "major": 0,
+            "named_version": "wonder"})
+        record = muse["_max_output_tokens_accepted"]
+        self.assertEqual(record["effort"], muse["effort"])
+        self.assertIsInstance(record["response_id"], str)
+        self.assertTrue(record["response_id"].strip())
 
     def test_default_committee_selects_three_independent_members(self):
         import committee
