@@ -421,6 +421,17 @@ class ContinueCommandTests(unittest.TestCase):
     def test_recovery_after_ref_advances(self):
         self.crash_recovery(advance_refs=True)
 
+    def test_unrelated_nested_plan_metadata_preserves_legacy_continue(self):
+        value = "leaf"
+        for _ in range(600):
+            value = [value]
+        self.plan["metadata"] = value
+        self.save()
+        valid = self.run_cli("validate", str(self.plan_path), "--check-seeds")
+        self.assertEqual(valid.returncode, 0, valid.stdout + valid.stderr)
+        self.result_unit(self.continuation("--write"))
+        self.assertEqual(self.plan_now()["metadata"], value)
+
     def test_bad_drafts_refuse_without_writes(self):
         self.mapped_draft()
         for malformed in ([], {"issues": [[]]}):

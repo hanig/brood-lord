@@ -404,6 +404,19 @@ class TestContinuationTickets(unittest.TestCase):
             dict(i, unit="b", continuation_of="a")]}
         self.assertTrue(any("cyclic" in p for p in T.check(p, d)))
 
+    def test_alias_drift_reports_the_compared_digest(self):
+        old = {"id": "u", "outputs": ["x"]}
+        dep = dict(old, id="d", needs=["u"])
+        plan = {"units": [old, dep]}
+        draft = T.draft(plan)
+        plan["units"].append(dict(old, id="v"))
+        draft["issues"].append(dict(draft["issues"][0], unit="v", continuation_of="u"))
+        dep.update(needs=["v"], outputs=["changed"])
+        compared = T.unit_digest(dict(dep, needs=["u"]))
+        self.assertNotEqual(compared, T.unit_digest(dep))
+        problem = next(p for p in T.check(plan, draft) if "unit 'd' has changed" in p)
+        self.assertIn(" -> " + compared + ")", problem)
+
     def test_bad_lineage(self):
         p = {"units": [{"id": "v", "outputs": ["x"]}]}
         for parent in ([], {}, ["u"]):
