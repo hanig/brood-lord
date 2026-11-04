@@ -1266,10 +1266,6 @@ def ingest(run, response, loss_accounted=False):
                 if run.get("final") is None:
                     run["published"] = False
                 run["final"] = final
-    # A terminal infrastructure loss can prevent the worker's final marker.
-    # Only the coordinator's complete, error-free reread after quiescence
-    # accounts for missing claims. Retain the stage; do not fabricate a final
-    # marker or relax cleanup's requirement for it.
     loss_accounted = bool(loss_accounted
                           and not run.get("final") and not problems)
     run["reconciled"] = bool(not problems and (run.get("final") or loss_accounted) and
