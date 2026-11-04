@@ -687,10 +687,10 @@ class TestExtract(unittest.TestCase):
 
 
   def test_x_selected_byte_caps(self):
-    self.put('a-pitfall.md', 'x' * 33)
-    self.put('b-pitfall.md', 'guidance')
-    for budget in ('per_file_bytes', 'total_bytes'):
-      got = self.collect(files_per_root=1, **{budget: 32})
+    self.put('a-pitfall.sh', 'x' * 33)
+    self.put('b-pitfall.sh', 'guidance')
+    for role, budget in itertools.product(('project', 'helpers'), ('per_file_bytes', 'total_bytes')):
+      got = self.collect(role, files_per_root=1, **{budget: 32})
       self.false(got['evidence'])
       self.true(any('max-files' in o['reason'] for o in got['omissions']))
     self.put('c-pitfall.md', 'guidance')
