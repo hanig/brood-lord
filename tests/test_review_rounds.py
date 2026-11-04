@@ -803,6 +803,24 @@ class TestManagedBudget(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "managed --round must be"):
             self.reserve(1)
 
+    def test_identity_lock_serializes_reservations(self):
+        self.reserve(1)
+        dfd = review._open_directory_chain(review.round_ledger_root() / self.identity())
+        lock = review.ledger_lock(dfd)
+        try:
+            with patch.object(review, "ROUND_LOCK_WAIT_SECONDS", .05):
+                result = self.invoke(2, extra=("--plan-name", "plan", "--unit", "u"))
+            self.assertEqual(result[0], 4, result[1:3])
+            self.assertIn("lock wait", result[2])
+            self.assertEqual(result[3], [])
+            self.assertEqual(len(self.markers()), 1)
+        finally:
+            os.close(lock)
+            os.close(dfd)
+        result = self.invoke(2, extra=("--plan-name", "plan", "--unit", "u"))
+        self.assertEqual(result[0], 0, result[1:3])
+        self.assertEqual(len(self.markers()), 2)
+
     def test_interrupted_publication_recovers(self):
         with patch.object(review.json, "dump", side_effect=OSError("interrupted")):
             with self.assertRaises(OSError):
