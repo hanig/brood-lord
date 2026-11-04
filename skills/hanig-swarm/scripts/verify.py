@@ -923,22 +923,22 @@ def outcome_result(outcome, execution=None):
     if outcome.get("exit_code") not in (None, 0):
         return {"result": "fail"}
     execution = execution or {}
-    observations = []
+    states = []
     if execution.get("executor") == "slurm":
-        observations.append((execution.get("sacct_state"), execution.get("sacct_exit_code")))
-        observations.extend(state for state in execution.get("cleanup_sacct_states", {}).values()
+        states.append((execution.get("sacct_state"), execution.get("sacct_exit_code")))
+        states.extend(state for state in execution.get("cleanup_sacct_states", {}).values()
                             if state is not None)
-    for state, code in observations:
+    for state, code in states:
         if state in RV.TERMINAL - RV.INFRASTRUCTURE_LOSS and (
                 state != "COMPLETED" or code != "0:0"):
             return {"result": "fail"}
-    for state, code in observations:
+    for state, code in states:
         if state in RV.INFRASTRUCTURE_LOSS:
             return {"result": "incomplete", "incomplete_reason": "Slurm infrastructure loss: " + state}
     if outcome.get("incomplete_reason"):
         return {"result": "incomplete", "incomplete_reason": outcome["incomplete_reason"]}
-    if observations and not any(state in RV.TERMINAL for state, code in observations):
-        return {"result": "incomplete", "incomplete_reason": "Slurm accounting is not terminal"}
+    if states and not any(state in RV.TERMINAL for state, code in states):
+        return {"result": "incomplete", "incomplete_reason": "Slurm accounting pending"}
     return {"result": "pass" if outcome["exit_code"] == 0 else "fail"}
 
 
@@ -1085,7 +1085,7 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
     if full_output is not None:
         outcome["_full_output"] = full_output
     if launch_error:
-        outcome["exit_code"] = None  # launcher status is not a verifier exit
+        outcome["exit_code"] = None
         outcome["incomplete_reason"] = "coordinator child launcher could not exec verifier: " + launch_error
         return outcome
     if (reason and completed_failure is None
@@ -1101,7 +1101,7 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
         outcome["exit_code"] = outcome["exit_code"] or -signal.SIGKILL
         outcome["stderr"] = (outcome["stderr"] + "\n" + reason)[-2000:]
     elif reason:
-        outcome["exit_code"] = None  # collection failed; no completed failure observed
+        outcome["exit_code"] = None
         outcome["incomplete_reason"] = reason
     return outcome
 
