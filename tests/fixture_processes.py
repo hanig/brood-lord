@@ -216,10 +216,13 @@ def _ps_command():
     return command
 
 
-def read_pid(path):
+def read_pid(path, require_complete=False):
     """Read a published positive PID, or report that it is not ready yet."""
     try:
-        pid = int(Path(path).read_text())
+        content = Path(path).read_text()
+        if require_complete and not content.endswith('\n'):
+            return None
+        pid = int(content)
     except (FileNotFoundError, ValueError):
         return None
     return pid if pid > 0 else None
@@ -231,13 +234,15 @@ def wait_pid(path, timeout=3, include_temporary=False):
     The optional temporary name belongs to the same single writer in a private
     fixture directory. Post-termination checks and independent escape teardown
     must retain its PID even when termination prevents the final rename.
+    The writer's trailing newline is required before a temporary PID is
+    complete: a numeric prefix must never become a signal target.
     Ordinary readiness still requires the atomically published final name.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         pid = read_pid(path)
         if pid is None and include_temporary:
-            pid = read_pid(str(path) + '.tmp')
+            pid = read_pid(str(path) + '.tmp', require_complete=True)
         if pid is not None:
             return pid
         _pause(min(0.02, max(0, deadline - time.monotonic())))

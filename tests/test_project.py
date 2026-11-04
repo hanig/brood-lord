@@ -4255,7 +4255,7 @@ $noisy_started = $started;
             self.addCleanup(contain_escape)
             code = ("use POSIX qw(setsid); setsid(); "
                     "open(my $f, q(>), q(%s.tmp)) or die $!; "
-                    "print $f $$; close $f or die $!; "
+                    "print $f \"$$\\n\"; close $f or die $!; "
                     "rename(q(%s.tmp), q(%s)) or die $!; sleep 600") % (
                         pidfile, pidfile, pidfile)
             bash = ("#!/bin/sh\n"

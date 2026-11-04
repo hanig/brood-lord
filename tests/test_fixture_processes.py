@@ -81,14 +81,14 @@ class TestLoadSensitiveReadiness(unittest.TestCase):
             clock = [0.0]
             def finish_write(seconds):
                 clock[0] += seconds
-                pending.write_text('123')
+                pending.write_text('123\n')
             with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
                     fixtures, '_pause', side_effect=finish_write):
                 self.assertEqual(fixtures.wait_pid(path, include_temporary=True), 123)
             self.assertGreater(clock[0], 0)
             self.assertLess(clock[0], 3)
             self.assertIsNone(fixtures.read_pid(path))
-            for content in (None, '', 'partial', '0', '-1'):
+            for content in (None, '', 'partial', '0', '-1', '12', 'partial\n', '0\n', '-1\n'):
                 with self.subTest(content=content):
                     if content is None:
                         pending.unlink()
@@ -102,13 +102,28 @@ class TestLoadSensitiveReadiness(unittest.TestCase):
                         with self.assertRaisesRegex(AssertionError, 'PID file did not become ready'):
                             fixtures.wait_pid(path, include_temporary=True)
                     self.assertEqual(clock[0], 3)
-            pending.write_text('123')
+            pending.write_text('123\n')
             clock[0] = 0.0
             with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
                     fixtures, '_pause', side_effect=advance):
                 with self.assertRaisesRegex(AssertionError, 'PID file did not become ready'):
                     fixtures.wait_pid(path)
             self.assertEqual(clock[0], 3)
+
+    def test_temporary_numeric_prefix_is_not_complete_pid_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'escape.pid'
+            pending = Path(str(path) + '.tmp')
+            pending.write_text('12')
+            clock = [0.0]
+            def finish_write(seconds):
+                clock[0] += seconds
+                pending.write_text('12345\n')
+            with mock.patch.object(fixtures.time, 'monotonic', side_effect=lambda: clock[0]), mock.patch.object(
+                    fixtures, '_pause', side_effect=finish_write):
+                self.assertEqual(fixtures.wait_pid(path, include_temporary=True), 12345)
+            self.assertGreater(clock[0], 0)
+            self.assertLess(clock[0], 3)
 
     def test_pid_publication_hides_creation_before_write(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -140,6 +155,7 @@ class TestInterruptedPidPublication(unittest.TestCase):
         cls = project.TestDoctorSeesThePrerequisitesTheSkillsRefuseWithout
         original = cls._doctor
         observations = []
+        pids = []
 
         def delayed_mv(case, directory, *args, **kwargs):
             # Stop only the synthetic publisher; doctor's group KILL reaps it.
@@ -148,8 +164,7 @@ class TestInterruptedPidPublication(unittest.TestCase):
             path = Path(directory) / 'term-ignoring-child.pid'
             pid = fixtures.read_pid(Path(str(path) + '.tmp'))
             self.assertIsNotNone(pid)
-            with self.assertRaises(ProcessLookupError):
-                os.kill(pid, 0)
+            pids.append(pid)
             observations.append((path.exists(), 'login shell timed out' in result.stdout))
             return result
 
@@ -160,6 +175,35 @@ class TestInterruptedPidPublication(unittest.TestCase):
         self.assertEqual(observations, [(False, True)])
         self.assertEqual(result.errors, [])
         self.assertTrue(result.wasSuccessful(), result.failures)
+        # The consumer already waits up to five seconds for reaping. Inspect
+        # death after that readiness boundary, not immediately after doctor.
+        for pid in pids:
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
+
+    def test_interrupted_publication_allows_existing_reaping_wait(self):
+        import test_project as project
+        cls = project.TestDoctorSeesThePrerequisitesTheSkillsRefuseWithout
+        original, real_kill = cls._doctor, os.kill
+        target, seen = [None], [0]
+        def doctor(case, directory, *args, **kwargs):
+            result = original(case, directory, *args, **kwargs)
+            target[0] = fixtures.read_pid(Path(directory) / 'term-ignoring-child.pid.tmp')
+            return result
+        def delayed_reaping(pid, signum):
+            if pid == target[0] and signum == 0:
+                seen[0] += 1
+                if seen[0] == 1:
+                    return None
+            return real_kill(pid, signum)
+        case = type(self)('test_correct_group_cleanup_survives_interrupted_publication')
+        result = unittest.TestResult()
+        with mock.patch.object(cls, '_doctor', doctor), mock.patch.object(
+                os, 'kill', side_effect=delayed_reaping):
+            case.run(result)
+        self.assertEqual(result.errors, [])
+        self.assertTrue(result.wasSuccessful(), result.failures)
+        self.assertGreaterEqual(seen[0], 2)
 
     def test_escape_cleanup_does_not_skip_pending_publication(self):
         # Execute the actual cleanup closure with a synthetic escaped PID.
@@ -174,7 +218,7 @@ class TestInterruptedPidPublication(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'escape.pid'
             pending = Path(str(path) + '.tmp')
-            pending.write_text('123')
+            pending.write_text('123\n')
             process = mock.Mock()
             process.getsid.return_value = 123
             namespace = dict(pidfile=path, os=process, signal=signal,
