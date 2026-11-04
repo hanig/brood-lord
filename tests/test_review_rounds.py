@@ -774,13 +774,13 @@ class TestManagedBudget(unittest.TestCase):
                         for _ in range(2):
                             if total >= 3:
                                 with self.assertRaisesRegex(ValueError, "MANAGED_BUDGET_EXHAUSTED"):
-                                    self.reserve(total + 1, chain, explicit)
+                                    self.reserve(total + 1, chain, explicit if not _ else ())
                             elif _ == 0:
                                 self.reserve(total + 1, chain, explicit)
                             else:
                                 error = "MANAGED_BUDGET_EXHAUSTED" if total == 2 else "managed --round must be"
                                 with self.assertRaisesRegex(ValueError, error):
-                                    self.reserve(total + 1, chain, explicit)
+                                    self.reserve(total + 1, chain, explicit if not _ else ())
                         ledger = review.round_ledger_root() / self.identity("u-b", chain)
                         events = [json.loads(p.read_text()) for p in ledger.glob("event-*.json")]
                         imports = [e for e in events if e["type"] == "import"]
