@@ -111,7 +111,7 @@ class ContinueCommandTests(unittest.TestCase):
                          "evidence": str(self.attempt / "evidence.md")})
         self.assertEqual(unit["prompt"].encode("utf-8"), self.prompt.read_bytes())
         expected = dict(self.unit, id="new", seed=unit["seed"], prompt=unit["prompt"],
-                        description="Continuation of old",
+                        description="Continuation of old", continuation_of="old",
                         author_history=[{"unit": "old", "attempt": "a1", "identity": None}])
         self.assertEqual(unit, expected)
         self.assertEqual(self.snapshot(), before)
@@ -254,7 +254,11 @@ class ContinueCommandTests(unittest.TestCase):
         return [(p.read_bytes(), p.stat().st_ino) for p in (self.plan_path, self.draft_file)]
 
     def plan_now(self):
-        return json.loads(self.plan_path.read_text())
+        plan = json.loads(self.plan_path.read_text())
+        for unit in plan["units"]:
+            if unit["id"] == "new":
+                self.assertEqual(unit["continuation_of"], "old")
+        return plan
 
     def mapped_draft(self):
         sys.path.insert(0, str(ROOT / "skills/hanig-project/scripts"))
