@@ -145,7 +145,8 @@ class TestReviewLineageLaunch(unittest.TestCase):
             units[i]["continuation_of"] = units[i - 1]["id"]
         state = {"schema_version": 1, "halted": None, "units": {}}
         for uid in ("a", "b"):
-            S.SS._unit_state(state, uid)["state"] = "DONE"
+            S.SS._unit_state(state, uid)["state"] = "ABANDONED"
+        units[-1]["outputs"] = ["result.txt"]
         plan = {"name": "fixture", "units": units}
         state_dir = str(fixture.tmp / "state")
         ok, why = S.acquire_lease(state_dir)
