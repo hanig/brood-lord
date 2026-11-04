@@ -385,7 +385,7 @@ def ledger_json(dfd, name):
 
 def append_event(dfd, event):
     number = 1 + len([n for n in os.listdir(dfd) if n.startswith("event-")])
-    name = "event-{}.json".format(number)
+    name = f"event-{number}.json"
     fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dfd)
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
         json.dump(event, stream, sort_keys=True)
@@ -396,15 +396,15 @@ def append_event(dfd, event):
     return number
 
 
-def budget_history(dfd):
+def budget_history(dfd, identity):
     """Replay."""
     names = set(os.listdir(dfd)) - {"lock"}
-    expected = {"event-{}.json".format(n) for n in range(1, len(names) + 1)}
+    expected = {f"event-{n}.json" for n in range(1, len(names) + 1)}
     if names != expected:
         raise ValueError("BUDGET_EVENTS_INVALID")
     imported, reserved, refunded = {}, {}, set()
     for number in range(1, len(names) + 1):
-        e = ledger_json(dfd, "event-{}.json".format(number))
+        e = ledger_json(dfd, f"event-{number}.json")
         if not isinstance(e, dict):
             raise ValueError("BUDGET_EVENT_INVALID")
         if e.get("type") == "import" and set(e) == {"type", "legacy", "count"}:
@@ -413,9 +413,9 @@ def budget_history(dfd):
                     or type(count) is not int or count < 0 or key in imported):
                 raise ValueError("BUDGET_IMPORT_INVALID")
             imported[key] = count
-        elif e.get("type") == "reserve" and set(e) == {"type", "round", "profile"}:
+        elif e.get("type") == "reserve" and set(e) == {"type", "round", "profile", "identity"}:
             charged = sum(imported.values()) + len(reserved) - len(refunded)
-            if (type(e["round"]) is not int or e["round"] != charged + 1
+            if (e["identity"] != identity or type(e["round"]) is not int or e["round"] != charged + 1
                     or e["round"] > MAX_ROUNDS or e["profile"] not in LADDER):
                 raise ValueError("BUDGET_RESERVATION_INVALID")
             reserved[number] = e
@@ -447,7 +447,7 @@ def legacy_imports(identity, plan_name, lineage, explicit):
         dfd = _open_directory_chain(path)
         try:
             if any(n.startswith("event-") for n in os.listdir(dfd)):
-                imported, _, _ = budget_history(dfd)
+                imported, _, _ = budget_history(dfd, path.name)
                 for key in imported:
                     if key in owners and owners[key] != path.name:
                         raise ValueError("LEGACY_MAPPING_CONFLICT: " + key)
@@ -474,9 +474,7 @@ def legacy_imports(identity, plan_name, lineage, explicit):
         finally:
             os.close(dfd)
     if unknown:
-        raise ValueError("LEGACY_IDENTITY_AMBIGUOUS: {}; attest provenance with "
-                         "--import-legacy-identity HEX; never delete history".format(
-                             ", ".join(unknown)))
+        raise ValueError(f"LEGACY_IDENTITY_AMBIGUOUS: {', '.join(unknown)}; attest provenance with --import-legacy-identity HEX; never delete history")
     missing = set(explicit) - set(found)
     if missing:
         raise ValueError("--import-legacy-identity missing ledger: " + ", ".join(sorted(missing)))
@@ -493,14 +491,14 @@ def managed_budget(identity, round_no=None, profile=None, plan_name=None,
             if not stat.S_ISREG(os.fstat(lock).st_mode):
                 raise ValueError("lock: not a regular file")
             acquire_round_lock(lock)
-            imported, reserved, refunded = budget_history(dfd)
+            imported, reserved, refunded = budget_history(dfd, identity)
             if refund is not None:
                 if refund in refunded:
                     return None
                 if refund not in reserved or refund != max(reserved):
                     raise ValueError("REFUND_NOT_LATEST")
                 append_event(dfd, {"type": "refund", "reservation": refund,
-                                               "state": "REVIEW_UNAVAILABLE", "response_bytes": 0})
+                                  "state": "REVIEW_UNAVAILABLE", "response_bytes": 0})
                 return None
             found = legacy_imports(identity, plan_name, lineage, set(explicit) | set(imported))
             for key, count in found.items():
@@ -514,8 +512,8 @@ def managed_budget(identity, round_no=None, profile=None, plan_name=None,
             if charged >= MAX_ROUNDS:
                 raise ValueError("MANAGED_BUDGET_EXHAUSTED: mandate committee step")
             if round_no != charged + 1:
-                raise ValueError("managed --round must be {}; charged {}".format(charged + 1, charged))
-            event = append_event(dfd, {"type": "reserve", "round": round_no, "profile": profile})
+                raise ValueError(f"managed --round must be {charged + 1}; charged {charged}")
+            event = append_event(dfd, {"type": "reserve", "round": round_no, "profile": profile, "identity": identity})
             return {"identity": identity, "event": event}
         finally:
             os.close(lock)
