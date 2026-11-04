@@ -160,6 +160,7 @@ from swarm_plan_rules import (
     _PLACEHOLDER_PREFIX,
     CONVERGE_UNIT_KEYS,
     COSMETIC_FIELDS,
+    review_lineage,
     declared_seed,
     declared_scope,
     _norm_scope,
@@ -463,6 +464,8 @@ def validate_plan(plan, survey=None, new_attempts=True):
     for u in units:
         if not isinstance(u, dict):
             continue
+        if "continuation_of" in u:
+            SPR.review_lineage(plan, u.get("id"))
         SPR.declared_seed(u)
         SPR.declared_scope(u)
         SA.declared_author_history(u)
@@ -1416,7 +1419,7 @@ RETRY_MODES = ("restart", "resume")
 
 # --- dispatch -------------------------------------------------------------
 def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
-            dispatch_source=None, plan_path=None):
+            dispatch_source=None, plan_path=None, review_lineage=None):
     """Submit, and return (job_id, error). Dispatch differs per kind; judging
     does not.
 
@@ -1801,7 +1804,10 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
         # Artifacts remain in the external attempt root even though source
         # work runs in the checkout. Passing these automatically makes the
         # declared output location reachable without relying on prompt prose.
-        argv += ["--env", f"SWARM_UNIT_ID={u['id']}",
+        lineage = review_lineage if review_lineage is not None else SPR.review_lineage(
+            {"units": [u]}, u["id"])
+        argv += ["--env", "SWARM_REVIEW_LINEAGE=" + json.dumps(lineage),
+                 "--env", f"SWARM_UNIT_ID={u['id']}",
                  "--env", f"SWARM_UNIT_DIR={unit_dir}"]
         # An agent under default permissions stops at the first Write and
         # waits for a person, which is correct behaviour and fatal to an
@@ -1821,6 +1827,8 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
         if thinking:
             argv += ["--thinking", str(thinking)]
         for kv in (u.get("env") or []):
+            if str(kv).split("=", 1)[0] in {"SWARM_REVIEW_LINEAGE", "SWARM_UNIT_ID"}:
+                return None, "reserved coordinator review environment: " + str(kv).split("=", 1)[0]
             argv += ["--env", str(kv)]
         # Invocation context comes from coordinator arguments, never audit
         # records. Keep it out of the persisted launch intent.
@@ -2388,7 +2396,8 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
                         if not problem:
                             recovered_job, problem = _submit(
                                 u, us["attempt_dir"], False, state, state_dir,
-                                dispatch_source=source, plan_path=plan_path)
+                                dispatch_source=source, plan_path=plan_path,
+                                review_lineage=SPR.review_lineage(plan, uid))
                         if problem:
                             SS._set_unit_state(us, "NEEDS_HUMAN")
                             us["launch_recovery_problem"] = problem
@@ -3002,6 +3011,8 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
                 u, root, state_dir, Path(unit_dir).name)
         submit_args = ({"dispatch_source": dispatch_source}
                        if dispatch_source is not None else {})
+        if "continuation_of" in u:
+            submit_args["review_lineage"] = SPR.review_lineage(plan, u["id"])
         if plan_path is not None:
             submit_args["plan_path"] = plan_path
         job_id, err = ((None, claim_refusal) if claim_refusal
@@ -4205,6 +4216,8 @@ SCHEMA_FIELDS = [
     ("provider", "code", "optional",
      "default is agents.json default.provider"),
     ("model", "code", "optional", "overrides the provider's default"),
+    ("continuation_of", "code", "optional",
+     "id of the preceding code unit in this plan; acyclic review-budget lineage"),
     ("author_history", "code", "optional",
      "JSON list of objects with exactly unit, attempt (non-empty strings), "
      "and identity (provider/model or null). Coordinator-recorded potential "
