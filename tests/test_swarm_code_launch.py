@@ -135,6 +135,42 @@ class TestReviewLineageLaunch(unittest.TestCase):
         self.assertIsNone(error)
         self.assertTrue(job)
 
+    def test_dry_launch_intent_does_not_make_real_continuation_legacy(self):
+        from tests.test_attempt_worktrees import TestPerAttemptWorktrees, code_unit, paseo_resolvable
+        fixture = TestPerAttemptWorktrees()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        root = code_unit(fixture.repo, "a")
+        root["outputs"] = ["result.txt"]
+        state = {"schema_version": 1, "halted": None, "units": {}}
+        state_dir = str(fixture.tmp / "state")
+        ok, why = S.acquire_lease(state_dir)
+        self.assertTrue(ok, why)
+        self.addCleanup(S.release_lease, state_dir)
+        report, count, _ = S.advance({"name": "fixture", "units": [root]}, state,
+                                    state_dir, str(fixture.tmp / "runs"), True)
+        self.assertEqual(count, 1, report)
+        # Consume the actual persisted dry intent, not an invented DRY- key.
+        state = S.load_state(state_dir)
+        prior = state["units"]["a"]
+        self.assertTrue(prior["attempts"][0].startswith(S.SP.DRY_PREFIX))
+        dry = Path(prior["attempt_dir"]).name
+        intent = prior["attempt_launch_intents"][dry]
+        self.assertNotIn(dry, prior.get("attempt_review_lineages", {}))
+        child = code_unit(fixture.repo, "b")
+        child["continuation_of"] = "a"
+        attempt = fixture.attempt("b", "real")
+        with paseo_resolvable():
+            job, error = S._submit(child, str(attempt), False, state, state_dir,
+                                   lineage_chain=["a", "b"])
+        self.assertIsNone(error)
+        self.assertTrue(job)
+        durable = S.load_state(state_dir)
+        self.assertEqual(durable["units"]["a"]["attempt_launch_intents"][dry], intent)
+        self.assertEqual(durable["units"]["b"]["attempt_review_lineages"]["real"],
+                         {"review_lineage": ["a", "b"], "enrollment": "enrolled"})
+        self.assertIn('SWARM_REVIEW_LINEAGE=["a", "b"]', fixture.fake.launches[-1])
+
     def test_advance_records_full_chain_before_launch(self):
         from tests.test_attempt_worktrees import TestPerAttemptWorktrees, code_unit, paseo_resolvable
         fixture = TestPerAttemptWorktrees()

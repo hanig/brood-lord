@@ -1429,7 +1429,14 @@ def _record_review_lineage(state, chain, unit_dir):
             recorded = prior.get("attempt_review_lineages", {})
             attempts = {Path(a).name for a in prior.get("attempts", [])
                         if not str(a).startswith(SP.DRY_PREFIX)}
-            attempts.update(prior.get("attempt_launch_intents", {}))
+            dry_attempts = {Path(str(a)[len(SP.DRY_PREFIX):]).name
+                            for a in prior.get("attempts", [])
+                            if str(a).startswith(SP.DRY_PREFIX)}
+            # Dry advance persists launch intents too. Only coordinator-tagged
+            # dry attempts are excluded; an untagged intent remains evidence
+            # of a prior real launch whose missing decision makes it legacy.
+            attempts.update(a for a in prior.get("attempt_launch_intents", {})
+                            if a not in dry_attempts)
             if any(recorded.get(a, {}).get("enrollment") != "enrolled"
                    for a in attempts):
                 legacy = True
