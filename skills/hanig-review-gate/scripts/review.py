@@ -107,7 +107,7 @@ ROUND_LOCK_WAIT_SECONDS = 5
 def change_identity(target="origin/main", plan_name=None, unit=None, lineage_root=None):
     """Hash exact Git identity bytes, never the changing diff or tip commit.
 
-    Managed identities bind plan and root, without merge-base.
+    Managed identities exclude merge-base.
     Unmanaged fix commits preserve identity while the merge-base is unchanged.
     Renaming the branch, changing the remote, rebasing, or changing an explicit
     plan/unit declaration defines another identity; this is not a tamper barrier.
@@ -154,7 +154,7 @@ def identity_hash(payload):
 
 def review_lineage(unit, explicit=None):
     if explicit is not None and (not isinstance(explicit, str) or not explicit.strip()):
-        raise ValueError("--lineage-root must be a nonempty unit")
+        raise ValueError("--lineage-root empty")
     raw = os.environ.get("SWARM_REVIEW_LINEAGE")
     if raw is None:
         return [explicit, unit] if explicit is not None and explicit != unit else [unit]
@@ -168,7 +168,7 @@ def review_lineage(unit, explicit=None):
     if len(set(chain)) != len(chain):
         raise ValueError("SWARM_REVIEW_LINEAGE cycle or duplicate unit")
     if chain[-1] != unit:
-        raise ValueError("SWARM_REVIEW_LINEAGE missing/conflicting --unit endpoint")
+        raise ValueError("SWARM_REVIEW_LINEAGE conflicting --unit endpoint")
     if explicit is not None and explicit != chain[0]:
         raise ValueError("--lineage-root conflicts with SWARM_REVIEW_LINEAGE")
     return chain
@@ -401,7 +401,7 @@ def budget_history(dfd):
     names = set(os.listdir(dfd)) - {"lock"}
     expected = {"event-{}.json".format(n) for n in range(1, len(names) + 1)}
     if names != expected:
-        raise ValueError("BUDGET_EVENTS_MISSING_OR_MALFORMED")
+        raise ValueError("BUDGET_EVENTS_INVALID")
     imported, reserved, refunded = {}, {}, set()
     for number in range(1, len(names) + 1):
         e = ledger_json(dfd, "event-{}.json".format(number))
@@ -474,12 +474,12 @@ def legacy_imports(identity, plan_name, lineage, explicit):
         finally:
             os.close(dfd)
     if unknown:
-        raise ValueError("LEGACY_IDENTITY_AMBIGUOUS: {}; inspect provenance and attest with "
-                         "--import-legacy-identity HEX (repeatable); never delete history".format(
+        raise ValueError("LEGACY_IDENTITY_AMBIGUOUS: {}; attest provenance with "
+                         "--import-legacy-identity HEX; never delete history".format(
                              ", ".join(unknown)))
     missing = set(explicit) - set(found)
     if missing:
-        raise ValueError("--import-legacy-identity missing reservation records: " + ", ".join(sorted(missing)))
+        raise ValueError("--import-legacy-identity missing ledger: " + ", ".join(sorted(missing)))
     return found
 
 
@@ -512,7 +512,7 @@ def managed_budget(identity, round_no=None, profile=None, plan_name=None,
                 imported[key] = count
             charged = sum(imported.values()) + len(reserved) - len(refunded)
             if charged >= MAX_ROUNDS:
-                raise ValueError("MANAGED_BUDGET_EXHAUSTED: mandate committee step applies")
+                raise ValueError("MANAGED_BUDGET_EXHAUSTED: mandate committee step")
             if round_no != charged + 1:
                 raise ValueError("managed --round must be {}; charged {}".format(charged + 1, charged))
             event = append_event(dfd, {"type": "reserve", "round": round_no, "profile": profile})
@@ -542,7 +542,7 @@ def reserve_review_round(args):
     try:
         if args.plan_name is not None and args.unit is not None:
             if args.fresh_cycle_from is not None:
-                raise ValueError("--fresh-cycle-from refused for managed identity; mandate committee step applies")
+                raise ValueError("--fresh-cycle-from refused for managed; mandate committee step")
             record = managed_budget(identity, args.round, args.selected_profile,
                                     args.plan_name, review_lineage(args.unit, args.lineage_root),
                                     args.import_legacy_identity)
@@ -1397,8 +1397,8 @@ def _post(url, payload, headers, timeout, retries=3, deadline=None):
             if e.code < 500 and e.code != 429:
                 return None, last
         except Exception as e:  # timeout, DNS, TLS reset
-            # Uncertain read.
-            REVIEW_BYTES += 1
+            if not isinstance(e, json.JSONDecodeError):
+                REVIEW_BYTES += 1
             last = f"{type(e).__name__}: {redact(e)}"
         if attempt < retries:
             nap = min(2 ** attempt, 15)
@@ -3500,9 +3500,9 @@ def _main():
                          f"can never be met. Pass --quorum 2, or drop --plan.")
     if args.kind == "implementation" and args.plan_name is not None and args.unit is not None:
         if args.fresh_cycle_from is not None:
-            config_error("--fresh-cycle-from refused for managed identity; mandate committee step applies")
+            config_error("--fresh-cycle-from refused for managed; mandate committee step")
         if args.round is not None and args.round > MAX_ROUNDS:
-            config_error("MANAGED_BUDGET_EXHAUSTED: mandate committee step applies")
+            config_error("MANAGED_BUDGET_EXHAUSTED: mandate committee step")
     if args.round is not None:
         if args.round < 1:
             config_error(f"--round must be 1 or more, got {args.round}.")
