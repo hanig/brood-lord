@@ -205,6 +205,26 @@ class TestInterruptedPidPublication(unittest.TestCase):
         self.assertTrue(result.wasSuccessful(), result.failures)
         self.assertGreaterEqual(seen[0], 2)
 
+    def test_escape_writer_completes_temporary_pid_before_rename(self):
+        source = Path(__file__).with_name('test_project.py').read_text()
+        method = next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef)
+                      and n.name == 'test_timeout_does_not_wait_for_a_descendant_that_calls_setsid')
+        assignment = next(n for n in ast.walk(method) if isinstance(n, ast.Assign)
+                          and any(isinstance(t, ast.Name) and t.id == 'code' for t in n.targets))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'escape.pid'
+            namespace = dict(pidfile=path)
+            exec(compile(ast.Module(body=[assignment], type_ignores=[]),
+                         'escape-writer', 'exec'), namespace)
+            # Run the actual writer through close, stopping before rename and
+            # the long sleep. This directly owned child exits without spawning.
+            prefix = namespace['code'].split('rename(', 1)[0]
+            result = subprocess.run([shutil.which('perl'), '-e', prefix],
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(path.exists())
+            self.assertIsNotNone(fixtures.read_pid(str(path) + '.tmp', require_complete=True))
+
     def test_escape_cleanup_does_not_skip_pending_publication(self):
         # Execute the actual cleanup closure with a synthetic escaped PID.
         # No real signal is sent; the live-child reproduction is retained in
