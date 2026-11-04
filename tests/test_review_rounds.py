@@ -67,7 +67,7 @@ class TestRoundReservations(unittest.TestCase):
     def markers(self):
         return sorted((self.state / "hanig-review-gate/rounds").glob("*/*.json"))
 
-    def invoke(self, number=1, extra=(), fail_journal=False):
+    def invoke(self, number=1, extra=(), fail_journal=False, offline=False, response=None):
         calls, records = [], []
         roster = [{"name": n, "model": n, "provider": "stub",
                    "profiles": ["standard"], "enabled": True} for n in ("a", "b")]
@@ -91,8 +91,8 @@ class TestRoundReservations(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with ExitStack() as stack:
             for name, replacement in (("load_effective_reviewers", lambda: roster),
-                                      ("availability", lambda _r: None),
-                                      ("run_one", answer),
+                                      ("availability", lambda _r: "offline" if offline else None),
+                                      ("run_one", response or answer),
                                       ("_run_journal_append", journal)):
                 stack.enter_context(patch.object(review, name, replacement))
             stack.enter_context(patch.object(sys, "argv", argv))
@@ -778,13 +778,27 @@ class TestManagedBudget(unittest.TestCase):
                             elif _ == 0:
                                 self.reserve(total + 1, chain, explicit)
                             else:
-                                with self.assertRaisesRegex(ValueError, "managed --round must be"):
+                                error = "MANAGED_BUDGET_EXHAUSTED" if total == 2 else "managed --round must be"
+                                with self.assertRaisesRegex(ValueError, error):
                                     self.reserve(total + 1, chain, explicit)
                         ledger = review.round_ledger_root() / self.identity("u-b", chain)
                         events = [json.loads(p.read_text()) for p in ledger.glob("event-*.json")]
                         imports = [e for e in events if e["type"] == "import"]
                         self.assertEqual(sum(e["count"] for e in imports), total)
                         self.assertEqual(len(imports), sum(n > 0 for n in counts))
+
+    def test_cli_refund_requires_zero_transport_bytes(self):
+        flags = ("--plan-name", "plan", "--unit", "u")
+        for _ in range(2):
+            self.assertEqual(self.invoke(extra=flags, offline=True)[0], 2)
+        def response(reviewer, *_args):
+            with patch.object(review.urllib.request, "urlopen", return_value=io.BytesIO(b"partial")):
+                _, error = review._post("https://example.invalid", {}, {}, 1, retries=1)
+            return {"name": reviewer["name"], "ok": False, "error": error}
+        result = self.invoke(extra=flags, response=response)
+        self.assertEqual(result[0], 2, result[1:3])
+        self.assertGreater(review.REVIEW_RESPONSE_BYTES, 0)
+        self.assertEqual(self.invoke(extra=flags, offline=True)[0], 4)
 
     def test_refund_outcomes_bytes_and_persistent_retry(self):
         from types import SimpleNamespace
