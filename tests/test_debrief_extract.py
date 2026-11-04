@@ -3,6 +3,8 @@ import ast
 import hashlib
 import json
 import os
+import random
+import string
 from pathlib import Path
 import sys
 import tempfile
@@ -221,12 +223,119 @@ class TestExtract(unittest.TestCase):
     self.eq(len(self.members(got, 'units')), 2)
     self.eq(len(self.members(got, 'evidence_documents')), 5)
 
-  def test_marker_exact_untrimmed(self):
+  def test_marker_whole_lines_and_whitespace(self):
     self.put('evidence.md', 'STOP\n STOP\nSTOP \nREVIEW_FAIL\n REVIEW_FAIL\n'
   'REVIEW_UNAVAILABLE\nPROPOSED DECISION\nPROPOSED DECISION \n')
     got = self.collect()
     self.eq(self.locations(got),
-  [span(i) for i in (1, 4, 6, 7)])
+  [span(i) for i in range(1, 9)])
+
+  def test_marker_worker_shapes(self):
+    lines = ['- REVIEW_FAIL in implementation round 1: three reviewers completed.',
+      'REVIEW_FAIL (exit 1), all four reviewers completed',
+      'STOP reason: contract conflict', '## REVIEW_FAIL and recovery boundary',
+      '```text', 'the STOP rule', '```', '- PROPOSED DECISION: retry',
+      'status: REVIEW_UNAVAILABLE; retry later']
+    expected = [(i, token) for i, token in ((1, 'REVIEW_FAIL'),
+      (2, 'REVIEW_FAIL'), (3, 'STOP'), (4, 'REVIEW_FAIL'), (6, 'STOP'),
+      (8, 'PROPOSED DECISION'), (9, 'REVIEW_UNAVAILABLE'))]
+    for name in ('evidence.md', 'SUMMARY.md'):
+      self.put(name, '\n'.join(lines))
+    for role in ('project', 'state', 'helpers'):
+      with self.subTest(role=role):
+        got = self.collect(role)
+        self.eq([(r['locator'], r['location'], r['adapter']['name'])
+          for r in got['evidence'].values()],
+          [(name, span(i), 'marker:' + token) for name in ('SUMMARY.md', 'evidence.md')
+           for i, token in expected])
+        self.false(got['omissions'])
+
+  def test_marker_helper_shebang_preserved(self):
+    for name in ('evidence.md', 'SUMMARY.md'):
+      for raw, marker in ((b'#!/bin/sh\necho hello\n', False),
+                          (b'#!/bin/sh\n# STOP reason\n', True),
+                          (b'#!/bin/sh\n# \xff\n', False)):
+        with self.subTest(name=name, raw=raw):
+          path = self.put(name, raw)
+          got = self.collect('helpers')
+          self.eq(len(self.records(got, 'helper')), 1)
+          self.eq(self.locations(got, 'marker:STOP'), [span(2)] if marker else [])
+          self.eq(len(self.members(got, 'helper_scripts')), 1)
+          self.false(got['omissions'])
+          path.unlink()
+
+  def test_marker_boundary_refusals(self):
+    lines = ['STOPPED', 'review_fail', 'XREVIEW_FAIL', 'REVIEW_FAILED',
+      'PROPOSED  DECISION', '_STOP', '1STOP', 'aSTOP', 'STOP_', 'STOP9',
+      'REVIEW_UNAVAILABLEz', 'PROPOSED\tDECISION', 'PROPOSED\nDECISION',
+      'stop', 'review_unavailable', 'proposed decision']
+    self.put('evidence.md', '\n'.join(lines))
+    self.false(self.collect()['evidence'])
+
+  def test_marker_unique_line_token(self):
+    self.put('evidence.md', 'STOP STOP REVIEW_FAIL STOP REVIEW_FAIL\n'
+      'REVIEW_FAIL/REVIEW_UNAVAILABLE/PROPOSED DECISION/STOP\nSTOP')
+    got = self.collect()
+    self.eq([(r['location'], r['adapter']['name']) for r in got['evidence'].values()],
+      [(span(i), 'marker:' + token) for i, token in ((1, 'STOP'),
+       (1, 'REVIEW_FAIL'), (2, 'REVIEW_FAIL'), (2, 'REVIEW_UNAVAILABLE'),
+       (2, 'PROPOSED DECISION'), (2, 'STOP'), (3, 'STOP'))])
+
+  def test_marker_no_excerpts(self):
+    lines = ['PRIVATE_SYNTHETIC_A: STOP because PRIVATE_SYNTHETIC_B',
+      'PRIVATE_SYNTHETIC_C: REVIEW_FAIL and REVIEW_UNAVAILABLE',
+      'PRIVATE_SYNTHETIC_D: PROPOSED DECISION then STOP']
+    for name in ('evidence.md', 'SUMMARY.md'):
+      self.put(name, '\n'.join(lines))
+    for role in ('project', 'state', 'helpers'):
+      dossier = self.collect(role)
+      self.eq(len(dossier['evidence']), 10)
+      serialized = json.dumps(dossier)
+      for line in lines:
+        self.assertNotIn(line, serialized)
+      self.assertNotIn('PRIVATE_SYNTHETIC', serialized)
+      for r in dossier['evidence'].values():
+        self.eq(set(r), set('source_root locator sha256 location unit_id attempt_id adapter status'.split()))
+
+  def test_marker_seeded_oracle(self):
+    # Fixed seed, 600 lines, 1..5 insertions, 0..16 prefix/suffix characters.
+    # ASCII identifier boundaries are deliberate: Unicode letters are delimiters.
+    rng = random.Random(20261103)
+    identifiers = string.ascii_letters + string.digits + '_'
+    alphabet = identifiers + ' -.:/()[]`\t\r\v\f\x85éΩ９'
+    tokens = ('STOP', 'REVIEW_FAIL', 'REVIEW_UNAVAILABLE', 'PROPOSED DECISION')
+    choices = tokens + ('STOPPED', 'review_fail', 'XREVIEW_FAIL',
+      'REVIEW_FAILED', 'PROPOSED  DECISION')
+    lines = []
+    for _ in range(600):
+      parts = []
+      for _ in range(rng.randint(1, 5)):
+        parts.extend((''.join(rng.choice(alphabet) for _ in range(rng.randint(0, 16))),
+          rng.choice(choices),
+          ''.join(rng.choice(alphabet) for _ in range(rng.randint(0, 16)))))
+      lines.append(''.join(parts))
+    expected = set()
+    # Independent literal substring scan: no regex or production constants.
+    for i, line in enumerate(lines, 1):
+      for token in tokens:
+        for start in range(len(line)):
+          end = start + len(token)
+          if (line[start:end] == token
+              and (start == 0 or line[start - 1] not in identifiers)
+              and (end == len(line) or line[end] not in identifiers)):
+            expected.add((i, 'marker:' + token))
+    self.true(expected)
+    for name in ('evidence.md', 'SUMMARY.md'):
+      self.put(name, '\n'.join(lines))
+    for role in ('project', 'state', 'helpers'):
+      got = self.collect(role)
+      actual = [(r['locator'], r['location']['line_range'][0], r['adapter']['name'])
+        for r in got['evidence'].values()]
+      self.eq(len(actual), len(set(actual)))
+      self.eq(set(actual), {(name, i, tag) for name in ('evidence.md', 'SUMMARY.md')
+        for i, tag in expected})
+      self.true(all(r['location']['line_range'][0] == r['location']['line_range'][1]
+        for r in got['evidence'].values()))
 
   def test_no_network_or_execution_imports(self):
     tree = ast.parse((SCRIPTS / 'debrief_extract.py').read_text())
@@ -263,7 +372,7 @@ class TestExtract(unittest.TestCase):
     for separator in ('\r', '\v', '\f', '\x1c', '\x1d', '\x1e', '\x85', '\u2028', '\u2029'):
       self.put('evidence.md', 'prefix' + separator + 'STOP\nSTOP\nSTOP\r\n')
       self.eq(self.locations(self.collect(), 'marker:STOP'),
-  [span(2)])
+  [span(1), span(2), span(3)])
       self.put('CLAUDE.md', 'a' + separator + 'b\n')
       self.eq(self.records(self.collect(), 'guidance')[0]['location'],
   span(1))
@@ -415,7 +524,14 @@ class TestExtract(unittest.TestCase):
   ('dry', [("aid = None", "raise ValueError('unsupported')")], 'test_state_source_coverage'),
   ('table', [(r'\|[ \t]*D-[A-Za-z0-9._-]+[ \t]*(?:\||$)', r'\| ?D-[A-Za-z0-9._-]+ ?\|')], 'test_source_coverage'),
   ('unsupported', [('if not known:', 'if False:')], 'test_exclusions'),
-  ('strip', [('if line in MARKERS', 'if line.strip() in MARKERS')], 'test_marker_exact_untrimmed')]
+  ('whole-line markers', [("return [('marker:' + token, i, i) for i, line in enumerate(lines, 1)\n      for token in dict.fromkeys(MARKER_PATTERN.findall(line))]",
+    "return [('marker:' + line, i, i) for i, line in enumerate(lines, 1) if line in MARKERS]")], 'test_marker_worker_shapes'),
+  ('marker case', [("+ r')(?![A-Za-z0-9_])')", "+ r')(?![A-Za-z0-9_])', re.IGNORECASE)")], 'test_marker_boundary_refusals'),
+  ('marker excerpt', [("'marker:' + token, i, i", "'marker:' + line, i, i")], 'test_marker_no_excerpts'),
+  ('marker left boundary', [(r'(?<![A-Za-z0-9_])', '')], 'test_marker_boundary_refusals'),
+  ('marker helper bypass', [("if role == 'helpers' and (name not in ('evidence.md', 'SUMMARY.md')\n        or data.startswith(b'#!')):", "if role == 'helpers':")], 'test_marker_worker_shapes'),
+  ('marker helper preservation', [("or data.startswith(b'#!')):", "or False):")], 'test_marker_helper_shebang_preserved'),
+  ('marker duplicates', [('dict.fromkeys(MARKER_PATTERN.findall(line))', 'MARKER_PATTERN.findall(line)')], 'test_marker_unique_line_token')]
     for name, replacements, test in mutations:
       with self.subTest(mutation=name):
         changed = source

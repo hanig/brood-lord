@@ -1,7 +1,7 @@
 """collect([{label, role, path}], budgets).
 Caps: per_file_bytes, files_per_root, total_bytes; max_depth defaults/caps at
 128 levels; every hit omitted. Roots resolve once; descendant symlinks are omitted.
-Only LF delimits lines; CR, including CRLF, is content (no marker match).
+Only LF delimits lines; CR, including CRLF, is content (and a marker boundary).
 """
 import hashlib
 import json
@@ -15,6 +15,8 @@ import debrief_schema as S
 from debrief_schema import PER_FILE_BYTES, PER_ROOT_FILES, TOTAL_BYTES, POPULATIONS
 
 MARKERS = ('STOP', 'REVIEW_FAIL', 'REVIEW_UNAVAILABLE', 'PROPOSED DECISION')
+MARKER_PATTERN = re.compile(r'(?<![A-Za-z0-9_])(' + '|'.join(MARKERS)
+  + r')(?![A-Za-z0-9_])')
 STATES = ('DONE', 'RUNNING', 'FAILED', 'PREEMPTED', 'INCOMPLETE', 'NEEDS_HUMAN')
 COPY_MARKER = '.installed-by-multi-agent-skills'
 SIDECARS = '.multi-agent-skills-provenance'
@@ -145,8 +147,8 @@ def _text_rows(name, role, text):
   if guidance and role != 'memory':
     return [('guidance', 1, max(1, len(lines)))]
   if role != 'memory' and name in ('evidence.md', 'SUMMARY.md'):
-    return [('marker:' + line, i, i) for i, line in enumerate(lines, 1)
-  if line in MARKERS]
+    return [('marker:' + token, i, i) for i, line in enumerate(lines, 1)
+      for token in dict.fromkeys(MARKER_PATTERN.findall(line))]
   if role != 'memory' and name == 'PLAN.md':
     rows, needs, fence = [], False, None
     for i, line in enumerate(lines, 1):
@@ -256,11 +258,19 @@ def collect(roots, budgets=None):
     loc, name = '/'.join(parts), parts[-1]
     digest = hashlib.sha256(data).hexdigest()
     uid, aid = _owner(parts)
-    if role == 'helpers':
+    if role == 'helpers' and (name not in ('evidence.md', 'SUMMARY.md')
+        or data.startswith(b'#!')):
       _need(Path(name).suffix in ('.py', '.sh', '.bash', '.zsh', '.fish', '.csh',
         '.ksh', '.pl', '.rb', '.js', '.mjs', '.cjs', '.ts', '.lua', '.awk', '.r', '.R', '.ps1')
         or data.startswith(b'#!'))
       rows = [('helper', {'line_range': [1, 1]}, None, None)]
+      if name in ('evidence.md', 'SUMMARY.md'):
+        # Preserve the existing byte-oriented helper observation independently.
+        try:
+          observations = _text_rows(name, role, data.decode('utf-8'))
+        except UnicodeDecodeError:
+          observations = []
+        rows.extend((a, {'line_range': [s, e]}, uid, aid) for a, s, e in observations)
     else:
       text = data.decode('utf-8')
       if name == COPY_MARKER or len(parts) > 1 and parts[-2] == SIDECARS:
