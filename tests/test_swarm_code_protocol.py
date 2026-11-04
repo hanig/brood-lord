@@ -125,7 +125,7 @@ class TestRepairLoopProtocol(unittest.TestCase):
         ("in-envelope repair",
          "Repair the reproduced findings that fall inside the task's supported envelope and do not contradict the task."),
         ("repair round discipline",
-         "Mutation-check each repair, commit all intended edits, and keep the worktree clean. Only after a REVIEW_FAIL whose reproduced in-envelope findings were repaired, gate the next round with --dispositions FILE, up to the round limit the task states. A passing round never requires another. Before stopping for an orchestrator decision on one remaining finding, first repair and mutation-check every other reproduced in-envelope finding that does not contradict the task, and commit those repairs; only then preserve and stop."),
+         "Mutation-check each repair, commit all intended edits, and keep the worktree clean. If no findings reproduce, no code repair is required; record not-reproduced dispositions before the next round. Only after a REVIEW_FAIL whose reproduced in-envelope findings were repaired, gate the next round with --dispositions FILE, up to the round limit the task states. A passing round never requires another. Before stopping for an orchestrator decision on one remaining finding, first repair and mutation-check every other reproduced in-envelope finding that does not contradict the task, and commit those repairs; only then preserve and stop."),
         ("exhausted or decision-bound review",
          "Only when a reproduced failure remains after the last permitted round, "
          "or a remaining finding needs an orchestrator decision (out of envelope, "
@@ -164,6 +164,21 @@ class TestRepairLoopProtocol(unittest.TestCase):
                     mutated = S._dispatch_prompt({"kind": "code"}, self.INTENT)
                     self.assertEqual(SCP._code_protocol_problem(mutated, self.INTENT),
                                      "missing repair round discipline")
+
+    def test_pass_head_and_false_findings_have_explicit_routes(self):
+        prompt = S._dispatch_prompt({"kind": "code"}, self.INTENT)
+        for phrase in (
+                "After REVIEW_PASS, keep the reviewed head unchanged",
+                "If that head changes, do not open a pull request; preserve and stop",
+                "If no findings reproduce, no code repair is required",
+                "record not-reproduced dispositions before the next round"):
+            self.assertIn(phrase, prompt)
+            protocol = SCP._code_completion_protocol(self.INTENT).replace(phrase, "")
+            with mock.patch.object(SCP, "_code_completion_protocol", return_value=protocol):
+                mutated = S._dispatch_prompt({"kind": "code"}, self.INTENT)
+                self.assertIsNotNone(SCP._code_protocol_problem(mutated, self.INTENT))
+        self.assertLess(prompt.index("For REVIEW_FAIL, follow this repair loop:"),
+                        prompt.index("Repair the reproduced findings"))
 
     def test_required_phrase_guard_rejects_task_contradicting_repair(self):
         protocol = SCP._code_completion_protocol(self.INTENT)

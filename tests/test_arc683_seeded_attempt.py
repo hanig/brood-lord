@@ -487,7 +487,7 @@ class UnseededCompatibilityTests(unittest.TestCase):
         # Prompt golden re-captured from this test for the bounded repair-loop
         # protocol, including its task-contradiction exception.
         self.assertEqual(hashlib.sha256(S._dispatch_prompt(unit, intent).encode()).hexdigest(),
-                         "30b814e31da44ec2d06df769532e8630174216f4455072b4895f2b7e6917ae44")
+                         "960bb7c56935bafd8665d4114f6a4a0d5c6abb045746ed7881b675cce1554d80")
         self.assertEqual(S.plan_digest({"name": "seed-compat", "units": [unit]}),
                          "55ce911fb07620734d54da3b6ef9cde709df04d099bc7d7ffd66aaf2d24db93a")
 
