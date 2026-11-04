@@ -270,11 +270,26 @@ class TestDebriefCLI(unittest.TestCase):
         help_text = self.cli('collect', '--help')
         self.assertIn('exit 3', help_text)
 
+    def test_x_existing_byte_omission_exit(self):
+        with mock.patch.object(debrief.E, 'PER_FILE_BYTES', 4):
+            self.assertEqual(debrief.main(['collect', '--workdir', str(self.work),
+                '--root', 'project=' + str(self.project)]), 0)
+        self.assertTrue(P.load_dossier(self.work / 'dossier.json')['omissions'])
+
     def test_x_exit_truncation(self):
         (self.project / 'PLAN.md').write_text('| D-1 | decision |')
         self.assertEqual(debrief.main(['collect', '--workdir', str(self.work),
             '--root', 'project=' + str(self.project), '--max-files', '1']), 3)
         P.load_dossier(self.work / 'dossier.json')
+
+    def test_x_existing_budget_mutation(self):
+        source = SCRIPT.read_text()
+        mutant = types.ModuleType('debrief_mutant')
+        mutant.__file__ = str(SCRIPT)
+        exec(compile(source.replace('over-budget: uninspected remainder', 'over-budget:'), str(SCRIPT), 'exec'), mutant.__dict__)
+        with mock.patch.dict(globals(), {'debrief': mutant}):
+            with self.assertRaises(AssertionError):
+                self.test_x_existing_byte_omission_exit()
 
     def test_x_exit_mutation(self):
         source = SCRIPT.read_text()

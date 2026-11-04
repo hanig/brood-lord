@@ -260,12 +260,13 @@ def _walk(root_fd, max_entries, max_depth, patterns, omit):
   while pending:
     prefix = pending.popleft()
     fd = os.dup(root_fd)
+    truncated = False
     try:
       for part in prefix:
         child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
         os.close(fd)
         fd = child
-      admitted, truncated = [], False
+      admitted = []
       with os.scandir(fd) as entries:
         for entry in entries:
           if visited >= max_entries:
@@ -308,11 +309,12 @@ def _walk(root_fd, max_entries, max_depth, patterns, omit):
       if len(prefix) == max_depth:
         omit('/'.join(prefix), 'limit reached: max_depth')
       if truncated:
-        omit('.', 'over-budget: uninspected remainder (max-entries)')
         return
     except OSError:
       omit('/'.join(prefix) or '.', 'skipped: unreadable directory')
     finally:
+      if truncated:
+        omit('.', 'over-budget: uninspected remainder (max-entries)')
       os.close(fd)
 
 
@@ -435,6 +437,12 @@ def collect(roots, budgets=None, exclusions=None):
         if not known:
           omit(label, loc, 'unsupported: format')
           continue
+        selected = role != 'helpers' or _helper_selected(name, b'')
+        if selected:
+          if count >= caps['files_per_root']:
+            omit(label, '.', 'over-budget: uninspected remainder (max-files)')
+            break
+          count += 1
         if st.st_size > caps['per_file_bytes']:
           omit(label, loc, 'over-budget: per-file bytes')
           continue
@@ -442,24 +450,16 @@ def collect(roots, budgets=None, exclusions=None):
           omit(label, loc, 'over-budget: total bytes')
           continue
         try:
-          # Helper selection may depend on a shebang. Inspect stable bytes
-          # before charging this file, retaining the adapter's selection rule.
-          if role == 'helpers':
-            used += st.st_size
-            data = _read_file(fd, name, st, st.st_size)
-            if data is None:
-              omit(label, loc, 'unstable: changed during read')
-              continue
+          used += st.st_size
+          data = _read_file(fd, name, st, st.st_size)
+          if not selected and data is not None:
             if not _helper_selected(name, data):
               omit(label, loc, 'unsupported: format or encoding')
               continue
-          if count >= caps['files_per_root']:
-            omit(label, '.', 'over-budget: uninspected remainder (max-files)')
-            break
-          count += 1
-          if role != 'helpers':
-            used += st.st_size
-            data = _read_file(fd, name, st, st.st_size)
+            if count >= caps['files_per_root']:
+              omit(label, '.', 'over-budget: uninspected remainder (max-files)')
+              break
+            count += 1
           if data is None:
             omit(label, loc, 'unstable: changed during read')
           else:

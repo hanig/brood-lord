@@ -686,6 +686,18 @@ class TestExtract(unittest.TestCase):
     self.true(all(o['reason'].startswith('unsupported') for o in got['omissions']))
 
 
+  def test_x_selected_byte_caps(self):
+    self.put('a-pitfall.md', 'x' * 33)
+    self.put('b-pitfall.md', 'guidance')
+    for budget in ('per_file_bytes', 'total_bytes'):
+      got = self.collect(files_per_root=1, **{budget: 32})
+      self.false(got['evidence'])
+      self.true(any('max-files' in o['reason'] for o in got['omissions']))
+    self.put('c-pitfall.md', 'guidance')
+    got = self.collect(files_per_root=1, entries_per_root=2)
+    for budget in ('max-files', 'max-entries'):
+      self.true(any(budget in o['reason'] for o in got['omissions']))
+
   def test_x_helpers_selected_cap(self):
     self.put('000.txt', 'ordinary text')
     self.put('001.not-a-script', 'ordinary text')
@@ -734,7 +746,6 @@ class TestExtract(unittest.TestCase):
     self.eq([r['locator'] for r in got['evidence'].values()], ['PLAN.md'])
     self.eq(sorted((o['locator'], o['reason']) for o in got['omissions']),
       [('.swarm', 'skipped: excluded by operator'), ('skip.bin', 'skipped: excluded by operator')])
-    # Absolute patterns do not match root-relative paths.
     got = X.collect(roots, exclusions=[('project', str(self.root / 'PLAN.md'))])
     self.eq(len(got['evidence']), 2)
 
@@ -790,8 +801,6 @@ class TestExtract(unittest.TestCase):
               for child, child_kind in tree[(name,)]:
                 if child_kind != 'f':
                   tree[(name, child)] = []
-          # Independent level-by-level oracle partitions files and directory
-          # classes explicitly, without the implementation's category key.
           level, expected_files, expected_dirs = [()], [], []
           while level:
             following = []
@@ -814,6 +823,10 @@ class TestExtract(unittest.TestCase):
   def test_x_traversal_mutations(self):
     source = (SCRIPTS / 'debrief_extract.py').read_text()
     mutations = [
+      ('byte count', "count += 1\n        if st.st_size", "count += int(st.st_size <= caps['per_file_bytes'] and st.st_size <= caps['total_bytes'] - used)\n        if st.st_size",
+       'test_x_selected_byte_caps'),
+      ('lost entry omission', 'if truncated:\n        omit', 'if False:\n        omit',
+       'test_x_selected_byte_caps'),
       ('helper count', 'if not _helper_selected(name, data):', 'if False:',
        'test_x_helpers_selected_cap'),
       ('exclusion overlap', "if any(fnmatch.fnmatchcase(loc, pattern) for pattern in patterns):",

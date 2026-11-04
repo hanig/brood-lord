@@ -53,7 +53,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     for name in ('collect', 'review', 'reproduce', 'classify', 'compile', 'show', 'recount', 'upgrade', 'downgrade'):
         cmd = sub.add_parser(name, description=(
-            'Write a dossier; exit 3 if a budget truncates collection, otherwise 0.'
+            'Write a dossier; exit 3 on max-files or max-entries truncation, otherwise 0.'
             if name == 'collect' else None))
         cmd.add_argument('--workdir', required=True)
         if name == 'collect':
@@ -145,7 +145,7 @@ def main(argv=None):
         print('debrief failed: %s' % exc, file=sys.stderr)
         return 1
     if args.command == 'collect' and any(
-            o['reason'].startswith('over-budget:') for o in dossier['omissions']):
+            o['reason'].startswith('over-budget: uninspected remainder') for o in dossier['omissions']):
         return 3
     return 0
 
