@@ -1991,6 +1991,25 @@ class TestRemoteVerification(unittest.TestCase):
         self.assert_ok(self.admitted())
         self.assertTrue(Path(first['execution']['stage']).exists())
 
+    def test_terminal_loss_enriches_provisional_receipt(self):
+        self.slurm_policy()
+        self.program()
+        self.mode.write_text('slurm-running')
+        self.verify('--verification-timeout', '1')
+        first = self.rows()[-1]
+        self.assertEqual(first['result'], 'incomplete')
+        self.mode.write_text('slurm-node-loss')
+        self.verify('--retrieve-remote-evidence', '--verification-timeout', '1')
+        rows = [r for r in self.rows()
+                if r['execution']['launch_id'] == first['execution']['launch_id']]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0], first)
+        self.assertEqual(rows[1]['result'], 'incomplete')
+        self.assertIn('NODE_FAIL', rows[1]['incomplete_reason'])
+        self.f.assert_refused(self.admitted())
+        self.verify('--retrieve-remote-evidence', '--verification-timeout', '1')
+        self.assertEqual(self.rows(), rows)
+
     def test_retry_fail_binds(self):
         self.program('raise SystemExit(1)\n')
         ssh = self.f.bin / 'ssh'
@@ -3885,6 +3904,25 @@ class TestInfrastructureClassification(unittest.TestCase):
                 result = V.outcome_result(out, ex)
                 want = 'fail' if state in ('FAILED', 'TIMEOUT', 'CANCELLED') else 'incomplete'
                 self.assertEqual(result['result'], want)
+
+    def test_successful_child_with_open_pipe_is_collection_loss(self):
+        program = ("import subprocess,sys; subprocess.Popen([sys.executable, "
+                   "'-c', 'import time; time.sleep(15)'])")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = V._observe_execution([sys.executable, '-c', program], 2, tmp)
+        self.assertEqual(V.outcome_result(out)['result'], 'incomplete')
+        self.assertIn('collect', out['incomplete_reason'])
+
+    def test_secondary_pending_accounting_is_provisional(self):
+        for pending in (None, ['RUNNING', '0:0'], ['PENDING', '0:0']):
+            with self.subTest(pending=pending):
+                execution = dict(executor='slurm', job_id='321',
+                    sacct_state='COMPLETED', sacct_exit_code='0:0',
+                    cleanup_sacct_states={'321': ['COMPLETED', '0:0'], '322': pending})
+                self.assertEqual(V.outcome_result(dict(exit_code=0), execution),
+                    dict(result='incomplete', incomplete_reason='Slurm accounting pending'))
+                self.assertEqual(V.outcome_result(dict(exit_code=1), execution),
+                    dict(result='fail'))
 
     def test_missing_completion(self):
         for state in RV.TERMINAL:
