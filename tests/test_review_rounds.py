@@ -807,17 +807,20 @@ class TestManagedBudget(unittest.TestCase):
         def response(reviewer, *_args):
             _, error = review._post("https://example.invalid", {}, {}, 1, retries=1)
             return {"name": reviewer["name"], "ok": False, "error": error}
-        with patch.object(review.urllib.request, "urlopen", side_effect=
-                          review.urllib.error.URLError(socket.gaierror("DNS failed"))):
-            for _ in range(4):
-                result = self.invoke(extra=("--plan-name", "plan", "--unit", "u"), response=response)
-                self.assertEqual(result[0], 2, result[1:3])
-                self.assertEqual(review.REVIEW_BYTES, 0)
+        for reason in (socket.gaierror("DNS failed"), ConnectionRefusedError("refused")):
+            with patch.object(review.urllib.request, "urlopen", side_effect=
+                              review.urllib.error.URLError(reason)):
+                for _ in range(4):
+                    result = self.invoke(extra=("--plan-name", "plan", "--unit", "u"), response=response)
+                    self.assertEqual(result[0], 2, result[1:3])
+                    self.assertEqual(review.REVIEW_BYTES, 0)
         self.reserve(1)
-        with patch.object(review.urllib.request, "urlopen", return_value=io.BytesIO()) as opened:
-            with patch.object(opened.return_value, "read", side_effect=socket.gaierror("uncertain read")):
-                review._post("https://example.invalid", {}, {}, 1, retries=1)
-        self.assertGreater(review.REVIEW_BYTES, 0)
+        for reason in (socket.gaierror("uncertain read"), ConnectionRefusedError("read")):
+            review.REVIEW_BYTES = 0
+            with patch.object(review.urllib.request, "urlopen", return_value=io.BytesIO()) as opened:
+                with patch.object(opened.return_value, "read", side_effect=reason):
+                    review._post("https://example.invalid", {}, {}, 1, retries=1)
+            self.assertGreater(review.REVIEW_BYTES, 0)
 
     def test_interrupted_publication_does_not_poison_other_units(self):
         with patch.object(review.json, "dump", side_effect=OSError("interrupted")):

@@ -134,6 +134,7 @@ class TestReviewLineageLaunch(unittest.TestCase):
         units = [code_unit(fixture.repo, uid) for uid in ("u", "u-b", "u-c")]
         for index in (1, 2):
             units[index]["continuation_of"] = units[index - 1]["id"]
+        units[-1]["env"] = ["SWARM_UNIT_ID=u-c"]
         chain = S.SPR.review_lineage({"units": units}, "u-c")
         with paseo_resolvable():
             job, error = S._submit(units[-1], str(fixture.attempt("u-c", "chain")),
