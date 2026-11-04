@@ -18,7 +18,7 @@ from swarm_types import PlanError
 
 
 def review_lineage(plan, unit):
-    """Resolve coordinator plan links."""
+    """Resolve plan links."""
     units = {u.get("id"): u for u in plan["units"] if isinstance(u, dict)}
     chain = []
     current = unit
