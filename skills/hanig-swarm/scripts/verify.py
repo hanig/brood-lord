@@ -993,9 +993,9 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
                        final_argv0=None, retain_output=False):
     """Observe merge-verifier completion without unit.run's overloaded exit 127.
 
-    Only an observed launch/transport exception is incomplete. Every
-    returned child status (including 127 or a signal) remains a candidate
-    failure unless zero. In particular a stability child exiting without its
+    Launch/collection loss and an unattested zero exit time are incomplete.
+    Every observed nonzero child status (including 127 or a signal) remains
+    a candidate failure. In particular a stability child exiting without its
     handshake is a FAIL from the pinned parent, not an infrastructure timeout.
     Keep the shared child environment and process-group containment.
     """
@@ -1044,7 +1044,8 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
             os.close(launch_write)
             launch_write = None
         # Observe execution separately while draining pipes: a descendant can
-        # retain them after the leader exits. A late zero is still a timeout.
+        # retain them after the leader exits. Polling attests observation time,
+        # not exit time; a zero first seen at/after the deadline is ambiguous.
         deadline = time.monotonic() + timeout
         while True:
             remaining = deadline - time.monotonic()
@@ -1055,12 +1056,12 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
             except subprocess.TimeoutExpired:
                 finished = child.poll()
                 observed = time.monotonic()
-                if finished is not None and observed <= deadline:
+                if finished is not None and observed < deadline:
                     exited_before_deadline = True
                 if observed >= deadline:
                     raise
             else:
-                if not exited_before_deadline and time.monotonic() > deadline:
+                if not exited_before_deadline and time.monotonic() >= deadline:
                     raise subprocess.TimeoutExpired(argv, timeout)
                 break
     except subprocess.TimeoutExpired:
@@ -1076,9 +1077,10 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
             # failure is still evidence when a descendant holds a pipe open;
             # the capture timeout must not launder it into a retryable result.
             finished = child.poll()
-            if timed_out and exited_before_deadline and finished == 0:
+            if timed_out and finished == 0:
                 timed_out = False
-                reason = "coordinator could not collect verifier output after {}s".format(timeout)
+                reason = ("coordinator could not collect verifier output after {}s".format(timeout)
+                          if exited_before_deadline else "exit time unattested")
             if finished is not None and finished != 0:
                 completed_failure = finished
             # Kill the session even if its leader exited while descendants

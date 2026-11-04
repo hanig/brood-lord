@@ -1774,9 +1774,12 @@ class TestRemoteVerification(unittest.TestCase):
         self.assertNotEqual(self.verify().returncode, 0)
         self.assertEqual(self.rows()[-1]['result'], 'fail')
         self.assertEqual(self.rows()[-1]['exit_code'], 125)
+        failures = self.rows()
         self.mode.write_text('pass')
         result = self.verify()
         self.assert_ok(result)
+        self.assertEqual(self.rows()[:len(failures)], failures)
+        self.assertEqual(self.rows()[-1]['result'], 'pass')
         refused = self.admitted()
         self.f.assert_refused(refused)
         self.assertIn('FAIL', refused.stderr)
@@ -3926,7 +3929,7 @@ class TestInfrastructureClassification(unittest.TestCase):
         self.assertIn('collect', out['incomplete_reason'])
 
     def test_execution_deadline_is_separate_from_collection(self):
-        for observed, want in ((0.5, 'incomplete'), (2, 'fail')):
+        for observed, reason in ((0.5, 'collect'), (2, 'exit time unattested')):
             with self.subTest(observed=observed):
                 child = mock.Mock(returncode=0, pid=123)
                 child.poll.return_value = 0
@@ -3936,9 +3939,28 @@ class TestInfrastructureClassification(unittest.TestCase):
                         mock.patch.object(V.time, 'monotonic', side_effect=[0, 0, observed, 2]), \
                         mock.patch.object(V.os, 'killpg'):
                     out = V._observe_execution(['fixture'], 1, '.')
-                self.assertEqual(V.outcome_result(out)['result'], want)
-                if want == 'incomplete':
-                    self.assertIn('collect', out['incomplete_reason'])
+                self.assertEqual(V.outcome_result(out)['result'], 'incomplete')
+                self.assertIn(reason, out['incomplete_reason'])
+
+    def test_deadline_poll_evidence_matrix(self):
+        # At/after the deadline: 2 observation times x 4 child statuses.
+        for observed, status in itertools.product((1, 2), (None, 0, 3, -15)):
+            with self.subTest(observed=observed, status=status):
+                child = mock.Mock(returncode=status, pid=123)
+                child.poll.return_value = status
+                def collected(**kwargs):
+                    if child.returncode is None:
+                        child.returncode = -9
+                    return ('', '')
+                child.communicate.side_effect = collected
+                with mock.patch.object(V.subprocess, 'Popen', return_value=child), \
+                        mock.patch.object(V.time, 'monotonic', side_effect=[0, observed]), \
+                        mock.patch.object(V.os, 'killpg'):
+                    out = V._observe_execution(['fixture'], 1, '.')
+                self.assertEqual(V.outcome_result(out)['result'],
+                                 'incomplete' if status == 0 else 'fail')
+                if status == 0:
+                    self.assertIn('exit time unattested', out['incomplete_reason'])
 
     def test_predeadline_exit_survives_delay_before_poll(self):
         child = mock.Mock(returncode=0, pid=123)
@@ -3948,7 +3970,8 @@ class TestInfrastructureClassification(unittest.TestCase):
                 mock.patch.object(V.time, 'monotonic', side_effect=[0, 2]), \
                 mock.patch.object(V.os, 'killpg'):
             out = V._observe_execution(['already-completed'], 1, '.')
-        self.assertNotEqual(V.outcome_result(out)['result'], 'fail')
+        self.assertEqual(V.outcome_result(out)['result'], 'incomplete')
+        self.assertIn('exit time unattested', out['incomplete_reason'])
 
     def test_predeadline_exit_survives_delay_after_collection(self):
         real_popen = subprocess.Popen
@@ -3965,7 +3988,8 @@ class TestInfrastructureClassification(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(V.subprocess, 'Popen', DelayedObservation):
             out = V._observe_execution([sys.executable, '-c', 'pass'], 1, tmp)
-        self.assertEqual(V.outcome_result(out)['result'], 'pass')
+        self.assertEqual(V.outcome_result(out)['result'], 'incomplete')
+        self.assertIn('exit time unattested', out['incomplete_reason'])
 
     def test_secondary_pending_accounting_is_provisional(self):
         for pending in (None, ['RUNNING', '0:0'], ['PENDING', '0:0']):
