@@ -792,6 +792,53 @@ class TestManagedBudget(unittest.TestCase):
         self.reserve(2, ("v",))
         self.reserve(1)
 
+    def test_unmanaged_history_keeps_its_own_budget(self):
+        review.reserve_round(review.change_identity(), 1, "standard")
+        self.reserve(1)
+
+    def test_overlapping_zero_byte_refunds_in_either_order(self):
+        from types import SimpleNamespace
+        for order in ((0, 1), (1, 0)):
+            with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, {"XDG_STATE_HOME": home}):
+                records = [self.reserve(n) for n in (1, 2)]
+                for n in order:
+                    review.refund_review_round(SimpleNamespace(budget_reservation=records[n]), "REVIEW_UNAVAILABLE", 0)
+                self.reserve(1)
+
+    def test_concurrent_migration_and_event_read_are_serialized(self):
+        for migrating in (False, True):
+            with self.subTest(migrating=migrating), tempfile.TemporaryDirectory() as home, \
+                 patch.dict(os.environ, {"XDG_STATE_HOME": home}):
+                key = self.legacy("u", 1) if migrating else None
+                ids = [self.identity(u) for u in ("u", "v")]
+                ready, release = threading.Event(), threading.Event()
+                owner, name = (review, "legacy_imports") if migrating else (review.json, "dump")
+                original = getattr(owner, name)
+                def paused(*args, **kwargs):
+                    result = original(*args, **kwargs) if migrating else None
+                    identity = args[0] if migrating else args[0].get("identity")
+                    if identity == ids[0]:
+                        ready.set()
+                        if not release.wait(5):
+                            raise RuntimeError("fixture release timeout")
+                    return result if migrating else original(*args, **kwargs)
+                with patch.object(owner, name, paused), concurrent.futures.ThreadPoolExecutor(2) as pool:
+                    a = pool.submit(review.managed_budget, ids[0], 2 if migrating else 1, "standard", "plan", ("u",))
+                    try:
+                        self.assertTrue(ready.wait(3))
+                        b = pool.submit(review.managed_budget, ids[1], 2 if migrating else 1, "standard", "plan", ("v",), (key,) if migrating else ())
+                        with self.assertRaises(concurrent.futures.TimeoutError):
+                            b.result(timeout=.2)
+                    finally:
+                        release.set()
+                    a.result(timeout=5)
+                    if migrating:
+                        with self.assertRaisesRegex(ValueError, "LEGACY_MAPPING_CONFLICT"):
+                            b.result(timeout=5)
+                        self.reserve(3)
+                    else:
+                        b.result(timeout=5)
+
     def test_uncertain_http_read_stays_charged(self):
         error = review.urllib.error.HTTPError("https://example.invalid", 400, "fixture", {}, None)
         review.REVIEW_BYTES = 0
