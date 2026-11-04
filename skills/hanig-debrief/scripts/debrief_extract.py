@@ -1,8 +1,13 @@
-"""collect([{label, role, path}], budgets).
-Caps: per_file_bytes, files_per_root, total_bytes; max_depth defaults/caps at
-128 levels; every hit omitted. Roots resolve once; descendant symlinks are omitted.
+"""collect([{label, role, path}], budgets, exclusions=[(role, glob)]).
+BFS, files first, then ordinary directories, then dot-directories.
+Per-root files_per_root counts adapter candidates; entries_per_root bounds
+scandir enumeration (plus one lookahead). Both accept positive overrides.
+Other caps: per_file_bytes, total_bytes, max_depth (at most 128 levels).
+Every truncation is omitted. Roots resolve once; descendant symlinks are omitted.
 Only LF delimits lines; CR, including CRLF, is content (and a marker boundary).
 """
+from collections import deque
+import fnmatch
 import hashlib
 import json
 import os
@@ -13,6 +18,8 @@ import stat
 import debrief_schema as S
 
 from debrief_schema import PER_FILE_BYTES, PER_ROOT_FILES, TOTAL_BYTES, POPULATIONS
+
+PER_ROOT_ENTRIES = 200000
 
 MARKERS = ('STOP', 'REVIEW_FAIL', 'REVIEW_UNAVAILABLE', 'PROPOSED DECISION')
 MARKER_PATTERN = re.compile(r'(?<![A-Za-z0-9_])(' + '|'.join(MARKERS)
@@ -234,12 +241,93 @@ def _open_root(path):
     os.close(fd)
     raise
 
-def collect(roots, budgets=None):
+def _helper_selected(name, data):
+  return (name in ('evidence.md', 'SUMMARY.md')
+    or Path(name).suffix in ('.py', '.sh', '.bash', '.zsh', '.fish', '.csh',
+      '.ksh', '.pl', '.rb', '.js', '.mjs', '.cjs', '.ts', '.lua', '.awk', '.r', '.R', '.ps1')
+    or data.startswith(b'#!'))
+
+
+def _walk(root_fd, max_entries, max_depth, patterns, omit):
+  """BFS with one open directory at a time and bounded entry enumeration.
+
+  Sort the admitted entries of each directory before processing them. A budget
+  cutting off a directory's enumeration explicitly leaves its remainder unknown.
+  Queue paths, not descriptors, so breadth cannot exhaust the descriptor limit.
+  """
+  pending = deque([[]])
+  visited = 0
+  while pending:
+    prefix = pending.popleft()
+    fd = os.dup(root_fd)
+    truncated = False
+    try:
+      for part in prefix:
+        child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        os.close(fd)
+        fd = child
+      admitted = []
+      with os.scandir(fd) as entries:
+        for entry in entries:
+          if visited >= max_entries:
+            truncated = True
+            break
+          visited += 1
+          name = entry.name
+          parts = prefix + [name]
+          loc = '/'.join(parts)
+          if not _text(name):
+            omit('/'.join(prefix) or '.', 'unsupported: filename')
+            continue
+          if any(fnmatch.fnmatchcase(loc, pattern) for pattern in patterns):
+            omit(loc, 'skipped: excluded by operator')
+            continue
+          if name == '.git' or name.endswith('.jsonl'):
+            omit(loc, 'skipped: excluded input')
+            continue
+          try:
+            st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+          except OSError:
+            omit(loc, 'skipped: unreadable or changed path')
+            continue
+          category = (1 if not name.startswith('.') else 2) if stat.S_ISDIR(st.st_mode) else 0
+          admitted.append((category, name, st))
+      for category, name, st in sorted(admitted, key=lambda item: (item[0], item[1])):
+        parts = prefix + [name]
+        loc = '/'.join(parts)
+        if stat.S_ISLNK(st.st_mode):
+          omit(loc, 'skipped: symlink')
+        elif stat.S_ISDIR(st.st_mode):
+          if len(parts) > max_depth:
+            omit(loc, 'over-budget: max_depth')
+          else:
+            pending.append(parts)
+        elif not stat.S_ISREG(st.st_mode):
+          omit(loc, 'unsupported: file type')
+        else:
+          yield fd, parts, st
+      if len(prefix) == max_depth:
+        omit('/'.join(prefix), 'limit reached: max_depth')
+      if truncated:
+        return
+    except OSError:
+      omit('/'.join(prefix) or '.', 'skipped: unreadable directory')
+    finally:
+      if truncated:
+        omit('.', 'over-budget: uninspected remainder (max-entries)')
+      os.close(fd)
+
+
+def collect(roots, budgets=None, exclusions=None):
   caps = {'per_file_bytes': PER_FILE_BYTES, 'files_per_root': PER_ROOT_FILES,
-  'total_bytes': TOTAL_BYTES, 'max_depth': 128}
+  'total_bytes': TOTAL_BYTES, 'max_depth': 128, 'entries_per_root': PER_ROOT_ENTRIES}
   for key, value in (budgets or {}).items():
-    _need(not (key not in caps or type(value) is not int or not 0 < value <= caps[key]))
+    _need(not (key not in caps or type(value) is not int or value <= 0
+      or key not in ('files_per_root', 'entries_per_root') and value > caps[key]))
     caps[key] = value
+  exclusions = exclusions or []
+  for role, pattern in exclusions:
+    _need(role in ('project', 'memory', 'state', 'helpers') and _text(pattern))
   labels = set()
   for root in roots:
     _need(not (set(root) != {'label', 'role', 'path'} or not _text(root['label'])
@@ -260,9 +348,7 @@ def collect(roots, budgets=None):
     uid, aid = _owner(parts)
     if role == 'helpers' and (name not in ('evidence.md', 'SUMMARY.md')
         or data.startswith(b'#!')):
-      _need(Path(name).suffix in ('.py', '.sh', '.bash', '.zsh', '.fish', '.csh',
-        '.ksh', '.pl', '.rb', '.js', '.mjs', '.cjs', '.ts', '.lua', '.awk', '.r', '.R', '.ps1')
-        or data.startswith(b'#!'))
+      _need(_helper_selected(name, data))
       rows = [('helper', {'line_range': [1, 1]}, None, None)]
       if name in ('evidence.md', 'SUMMARY.md'):
         # Preserve the existing byte-oriented helper observation independently.
@@ -335,79 +421,60 @@ def collect(roots, budgets=None):
       continue
     count = 0
 
-    def walk(fd, prefix):
-      nonlocal count, used
-      names = []
-      with os.scandir(fd) as entries:
-        for entry in entries:
-          names.append(entry.name)
-      for name in sorted(names):
-        parts = prefix + [name]
-        loc = '/'.join(parts)
-        if count >= caps['files_per_root'] or used >= caps['total_bytes']:
-          omit(label, '.', 'over-budget: uninspected remainder')
-          return
-        if not _text(name):
-          omit(label, '/'.join(prefix) or '.', 'unsupported: filename')
+    walker = _walk(root_fd, caps['entries_per_root'], caps['max_depth'],
+      [pattern for excluded_role, pattern in exclusions if excluded_role == role],
+      lambda loc, reason: omit(label, loc, reason))
+    try:
+      for fd, parts, st in walker:
+        name, loc = parts[-1], '/'.join(parts)
+        known = (name in ('CLAUDE.md', 'AGENTS.md', 'PLAN.md', 'evidence.md',
+    'SUMMARY.md', COPY_MARKER) or 'pitfall' in name
+    or len(parts) > 1 and parts[-2] == SIDECARS
+    or role == 'memory' and name.endswith('.md')
+    or role == 'state' and name in ('swarm-state.json', 'unit.json', 'receipt.json')
+    or role in ('project', 'state') and name == 'plan.json'
+    or role == 'helpers')
+        if not known:
+          omit(label, loc, 'unsupported: format')
           continue
-        if name == '.git' or name.endswith('.jsonl'):
-          omit(label, loc, 'skipped: excluded input')
+        selected = role != 'helpers' or _helper_selected(name, b'')
+        if selected:
+          if count >= caps['files_per_root']:
+            omit(label, '.', 'over-budget: uninspected remainder (max-files)')
+            break
+          count += 1
+        if st.st_size > caps['per_file_bytes']:
+          omit(label, loc, 'over-budget: per-file bytes')
+          continue
+        if st.st_size > caps['total_bytes'] - used:
+          omit(label, loc, 'over-budget: total bytes')
           continue
         try:
-          st = os.stat(name, dir_fd=fd, follow_symlinks=False)
-          if stat.S_ISLNK(st.st_mode):
-            omit(label, loc, 'skipped: symlink')
-          elif stat.S_ISDIR(st.st_mode):
-            if len(parts) > caps['max_depth']:
-              omit(label, loc, 'over-budget: max_depth')
+          used += st.st_size
+          data = _read_file(fd, name, st, st.st_size)
+          if not selected and data is not None:
+            if not _helper_selected(name, data):
+              omit(label, loc, 'unsupported: format or encoding')
               continue
-            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-            try:
-              walk(child, parts)
-            finally:
-              os.close(child)
-            if len(parts) == caps['max_depth']:
-              omit(label, loc, 'limit reached: max_depth')
-          elif not stat.S_ISREG(st.st_mode):
-            omit(label, loc, 'unsupported: file type')
-          else:
+            if count >= caps['files_per_root']:
+              omit(label, '.', 'over-budget: uninspected remainder (max-files)')
+              break
             count += 1
-            if st.st_size > caps['per_file_bytes']:
-              omit(label, loc, 'over-budget: per-file bytes')
-              continue
-            if st.st_size > caps['total_bytes'] - used:
-              omit(label, loc, 'over-budget: total bytes')
-              continue
-            known = (name in ('CLAUDE.md', 'AGENTS.md', 'PLAN.md', 'evidence.md',
-  'SUMMARY.md', COPY_MARKER) or 'pitfall' in name
-  or len(parts) > 1 and parts[-2] == SIDECARS
-  or role == 'memory' and name.endswith('.md')
-  or role == 'state' and name in ('swarm-state.json', 'unit.json', 'receipt.json')
-  or role in ('project', 'state') and name == 'plan.json'
-  or role == 'helpers')
-            if not known:
-              omit(label, loc, 'unsupported: format')
-              continue
-            used += st.st_size
-            data = _read_file(fd, name, st, st.st_size)
-            if data is None:
-              omit(label, loc, 'unstable: changed during read')
-            else:
-              try:
-                adapt(label, role, parts, data)
-              except (ValueError, UnicodeError, RecursionError):
-                omit(label, loc, 'unsupported: format or encoding')
-            if st.st_size == caps['per_file_bytes']:
-              omit(label, loc, 'limit reached: per-file bytes (retained if stable)')
+          if data is None:
+            omit(label, loc, 'unstable: changed during read')
+          else:
+            try:
+              adapt(label, role, parts, data)
+            except (ValueError, UnicodeError, RecursionError):
+              omit(label, loc, 'unsupported: format or encoding')
+          if st.st_size == caps['per_file_bytes']:
+            omit(label, loc, 'limit reached: per-file bytes (retained if stable)')
         except OSError:
           omit(label, loc, 'skipped: unreadable or changed path')
-    try:
-      walk(root_fd, [])
-    except OSError:
-      omit(label, '.', 'skipped: unreadable directory')
     finally:
+      walker.close()
       os.close(root_fd)
-    if count == caps['files_per_root'] or used == caps['total_bytes']:
+    if used == caps['total_bytes']:
       omit(label, '.', 'limit reached: files or total bytes')
   for population, ids in members.items():
     if ids:

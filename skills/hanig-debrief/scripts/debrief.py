@@ -52,10 +52,18 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     for name in ('collect', 'review', 'reproduce', 'classify', 'compile', 'show', 'recount', 'upgrade', 'downgrade'):
-        cmd = sub.add_parser(name)
+        cmd = sub.add_parser(name, description=(
+            'Write a dossier; exit 3 on max-files or max-entries truncation, otherwise 0.'
+            if name == 'collect' else None))
         cmd.add_argument('--workdir', required=True)
         if name == 'collect':
             cmd.add_argument('--root', action='append', required=True, metavar='ROLE=PATH')
+            cmd.add_argument('--exclude', action='append', default=[], metavar='ROLE=GLOB',
+                             help='skip matching POSIX-relative paths; prune directories (repeatable)')
+            cmd.add_argument('--max-files', type=int, default=E.PER_ROOT_FILES,
+                             help='adapter-selected files per root (default: %(default)s)')
+            cmd.add_argument('--max-entries', type=int, default=E.PER_ROOT_ENTRIES,
+                             help='directory entries per root (default: %(default)s)')
         if name in ('review', 'reproduce'):
             cmd.add_argument('--candidate', type=int, required=True)
         if name == 'review':
@@ -82,7 +90,13 @@ def main(argv=None):
                 role, sep, path = raw.partition('=')
                 S.need(bool(sep and path), 'root', 'expected ROLE=PATH')
                 roots.append(dict(label='root %d' % index, role=role, path=path))
-            dossier = E.collect(roots)
+            exclusions = []
+            for raw in args.exclude:
+                role, sep, pattern = raw.partition('=')
+                S.need(bool(sep and pattern), 'exclude', 'expected ROLE=GLOB')
+                exclusions.append((role, pattern))
+            dossier = E.collect(roots, {'files_per_root': args.max_files,
+                                       'entries_per_root': args.max_entries}, exclusions)
             dossier.update(schema_version=S.DOSSIER_SCHEMA, candidates=[])
         else:
             dossier = P.load_dossier(dossier_path, catalog)
@@ -130,6 +144,9 @@ def main(argv=None):
     except (OSError, ValueError, RecursionError) as exc:
         print('debrief failed: %s' % exc, file=sys.stderr)
         return 1
+    if args.command == 'collect' and any(
+            o['reason'].startswith('over-budget: uninspected remainder') for o in dossier['omissions']):
+        return 3
     return 0
 
 

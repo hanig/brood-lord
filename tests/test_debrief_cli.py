@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -229,6 +230,76 @@ class TestDebriefCLI(unittest.TestCase):
         T.validate(example / (packet['packet_id'] + '.json'), example / 'packet.json',
                    [example / 'plan.json'])
 
+
+
+    def test_x_bulk_tree_and_exclusion(self):
+        (self.project / 'PLAN.md').write_text('| D-1 | decision |')
+        bulk = self.project / '.swarm'
+        bulk.mkdir()
+        for i in range(12000):
+            (bulk / ('%05d-pitfall.md' % i)).write_text('guidance')
+        self.cli('collect', '--root', 'project=' + str(self.project), code=3)
+        got = P.load_dossier(self.work / 'dossier.json')
+        self.assertIn('PLAN.md', [r['locator'] for r in got['evidence'].values()])
+        self.assertTrue(any(o['reason'] == 'over-budget: uninspected remainder (max-files)'
+                            for o in got['omissions']))
+        other = self.root / 'excluded'
+        self.cli('collect', '--root', 'project=' + str(self.project),
+                 '--exclude', 'project=.swarm', work=other)
+        got = P.load_dossier(other / 'dossier.json')
+        self.assertEqual([o for o in got['omissions'] if 'excluded by operator' in o['reason']],
+                         [dict(source_root='root 1', locator='.swarm', reason='skipped: excluded by operator')])
+        self.assertFalse(any(r['locator'].startswith('.swarm/') for r in got['evidence'].values()))
+
+    def test_x_cli_budgets_and_validation(self):
+        for flag in ('--max-files', '--max-entries'):
+            for bad in ('0', '-1', 'no'):
+                self.cli('collect', '--root', 'project=' + str(self.project), flag, bad,
+                         work=self.root / (flag + bad), code=2 if bad == 'no' else 1)
+        for bad in ('project', 'project=', 'invalid=*'):
+            self.cli('collect', '--root', 'project=' + str(self.project), '--exclude', bad,
+                     work=self.root / ('invalid' + str(len(bad))), code=1)
+        (self.project / 'PLAN.md').write_text('| D-1 | decision |')
+        for flag in ('--max-files', '--max-entries'):
+            self.cli('collect', '--root', 'project=' + str(self.project), flag, '1',
+                     work=self.root / flag, code=3)
+            got = P.load_dossier(self.root / flag / 'dossier.json')
+            self.assertTrue(any(flag[2:] in o['reason'] for o in got['omissions']))
+        self.cli('collect', '--root', 'project=' + str(self.project),
+                 '--max-files', '10001', '--max-entries', '200001')
+        help_text = self.cli('collect', '--help')
+        self.assertIn('exit 3', help_text)
+
+    def test_x_existing_byte_omission_exit(self):
+        with mock.patch.object(debrief.E, 'PER_FILE_BYTES', 4):
+            self.assertEqual(debrief.main(['collect', '--workdir', str(self.work),
+                '--root', 'project=' + str(self.project)]), 0)
+        self.assertTrue(P.load_dossier(self.work / 'dossier.json')['omissions'])
+
+    def test_x_exit_truncation(self):
+        (self.project / 'PLAN.md').write_text('| D-1 | decision |')
+        self.assertEqual(debrief.main(['collect', '--workdir', str(self.work),
+            '--root', 'project=' + str(self.project), '--max-files', '1']), 3)
+        P.load_dossier(self.work / 'dossier.json')
+
+    def test_x_existing_budget_mutation(self):
+        source = SCRIPT.read_text()
+        mutant = types.ModuleType('debrief_mutant')
+        mutant.__file__ = str(SCRIPT)
+        exec(compile(source.replace('over-budget: uninspected remainder', 'over-budget:'), str(SCRIPT), 'exec'), mutant.__dict__)
+        with mock.patch.dict(globals(), {'debrief': mutant}):
+            with self.assertRaises(AssertionError):
+                self.test_x_existing_byte_omission_exit()
+
+    def test_x_exit_mutation(self):
+        source = SCRIPT.read_text()
+        self.assertIn('return 3', source)
+        mutant = types.ModuleType('debrief_mutant')
+        mutant.__file__ = str(SCRIPT)
+        exec(compile(source.replace('return 3', 'return 0'), str(SCRIPT), 'exec'), mutant.__dict__)
+        with mock.patch.dict(globals(), {'debrief': mutant}):
+            with self.assertRaises(AssertionError):
+                self.test_x_exit_truncation()
 
 if __name__ == '__main__':
     unittest.main()
