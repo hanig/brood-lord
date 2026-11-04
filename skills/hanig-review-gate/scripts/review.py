@@ -1430,7 +1430,7 @@ def _post(url, payload, headers, timeout, retries=3, deadline=None):
                 return None, last
         except Exception as e:  # timeout, DNS, TLS reset
             reason = e.reason if isinstance(e, urllib.error.URLError) else e
-            if not isinstance(e, json.JSONDecodeError) and (connected or not isinstance(reason, socket.gaierror)):
+            if not isinstance(e, json.JSONDecodeError) and (connected or not isinstance(reason, (socket.gaierror, ConnectionRefusedError))):
                 REVIEW_BYTES += 1
             last = f"{type(e).__name__}: {redact(e)}"
         if attempt < retries:
