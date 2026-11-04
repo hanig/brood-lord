@@ -1161,7 +1161,8 @@ def verification_retry_guard(args, repo, snapshot):
         retrieving = (getattr(args, "retrieve_remote_evidence", False)
                       or RV.pending_problem(args.state_dir, binding["unit"], basis, rows))
         losses = [r for r in matching if r.get("result") == "incomplete"]
-        passed = {r["claim"] for r in matching if r.get("result") == "pass"}
+        passed = {r["claim"] for r in matching if r.get("result") == "pass"
+                  and not RV.execution_problem(r)}
         losses = [r for r in losses if r["claim"] not in passed]
         if losses and not retrieving:
             if any(r.get("result") == "fail" for r in matching):
