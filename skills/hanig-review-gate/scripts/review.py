@@ -74,6 +74,7 @@ import os
 import re
 import signal
 import stat
+import socket
 import subprocess
 import sys
 import tempfile
@@ -386,19 +387,22 @@ def ledger_json(dfd, name):
 def append_event(dfd, event):
     number = 1 + len([n for n in os.listdir(dfd) if n.startswith("event-")])
     name = f"event-{number}.json"
-    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dfd)
+    pending = ".pending-" + os.urandom(16).hex()
+    fd = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dfd)
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
         json.dump(event, stream, sort_keys=True)
         stream.write("\n")
         stream.flush()
         os.fsync(stream.fileno())
+    os.link(pending, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+    os.unlink(pending, dir_fd=dfd)
     os.fsync(dfd)
     return number
 
 
 def budget_history(dfd, identity):
     """Replay."""
-    names = set(os.listdir(dfd)) - {"lock"}
+    names = {n for n in os.listdir(dfd) if n != "lock" and not n.startswith(".pending-")}
     expected = {f"event-{n}.json" for n in range(1, len(names) + 1)}
     if names != expected:
         raise ValueError("BUDGET_EVENTS_INVALID")
@@ -432,25 +436,15 @@ def budget_history(dfd, identity):
 
 
 def legacy_imports(identity, plan_name, lineage, explicit):
-    remote = subprocess.check_output(["git", "remote", "get-url", "origin"]).decode(
-        "utf-8", "surrogateescape")[:-1]
-    commits = subprocess.check_output(["git", "rev-list", "--all", "--reflog"]).decode().splitlines()
-    candidates = {identity_hash([remote, base, ["plan-unit", plan_name, unit]])
-                  for base in commits for unit in lineage}
     if any(not valid_digest(x) for x in explicit):
         raise ValueError("--import-legacy-identity requires HEX sha256")
-    candidates.update(explicit)
-    branches = subprocess.check_output(["git", "for-each-ref", "--format=%(refname:short)",
-                                        "refs/heads"]).decode("utf-8", "surrogateescape").splitlines()
-    unrelated = {identity_hash([remote, base, ["branch", branch]])
-                 for base in commits for branch in branches}
     found, unknown, owners, histories = {}, [], {}, {}
     for path in sorted(round_ledger_root().iterdir()):
         if path.name == identity or not valid_digest(path.name):
             continue
         dfd = _open_directory_chain(path)
         try:
-            if any(n.startswith("event-") for n in os.listdir(dfd)):
+            if any(n.startswith(("event-", ".pending-")) for n in os.listdir(dfd)):
                 imported, _, _ = budget_history(dfd, path.name)
                 for key in imported:
                     if key in owners:
@@ -466,6 +460,28 @@ def legacy_imports(identity, plan_name, lineage, explicit):
                     histories[path.name] = (entries[-1]["cycle"] - 1) * MAX_ROUNDS + entries[-1]["round"]
         finally:
             os.close(dfd)
+    candidates, unrelated = set(explicit), set()
+    if set(histories) - candidates - set(owners):
+        remote = subprocess.check_output(["git", "remote", "get-url", "origin"]).decode(
+            "utf-8", "surrogateescape")[:-1]
+        commits = subprocess.check_output(["git", "rev-list", "--all", "--reflog"]).decode().splitlines()
+        for base in commits:
+            for unit in lineage:
+                key = identity_hash([remote, base, ["plan-unit", plan_name, unit]])
+                if key in histories:
+                    candidates.add(key)
+        remaining = set(histories) - candidates - set(owners)
+        if remaining:
+            branches = subprocess.check_output(["git", "for-each-ref", "--format=%(refname:short)",
+                                                "refs/heads"]).decode("utf-8", "surrogateescape").splitlines()
+            for base in commits:
+                if not remaining:
+                    break
+                for branch in branches:
+                    key = identity_hash([remote, base, ["branch", branch]])
+                    if key in remaining:
+                        unrelated.add(key)
+                        remaining.remove(key)
     for key, count in histories.items():
         if key in unrelated:
             continue
@@ -476,12 +492,10 @@ def legacy_imports(identity, plan_name, lineage, explicit):
             raise ValueError("LEGACY_MAPPING_CONFLICT: " + key)
         else:
             found[key] = count
-    if unknown:
-        raise ValueError(f"LEGACY_IDENTITY_AMBIGUOUS: {', '.join(unknown)}; attest provenance with --import-legacy-identity HEX; never delete history")
     missing = set(explicit) - set(found)
     if missing:
         raise ValueError("--import-legacy-identity missing ledger: " + ", ".join(sorted(missing)))
-    return found
+    return found, unknown
 
 
 def ledger_lock(dfd):
@@ -516,7 +530,7 @@ def managed_budget(identity, round_no=None, profile=None, plan_name=None,
                 append_event(dfd, {"type": "refund", "reservation": refund,
                                   "state": "REVIEW_UNAVAILABLE", "response_bytes": 0})
                 return None
-            found = legacy_imports(identity, plan_name, lineage, set(explicit) | set(imported))
+            found, unknown = legacy_imports(identity, plan_name, lineage, set(explicit) | set(imported))
             for key, count in found.items():
                 if key in imported:
                     if imported[key] != count:
@@ -524,6 +538,8 @@ def managed_budget(identity, round_no=None, profile=None, plan_name=None,
                     continue
                 append_event(dfd, {"type": "import", "legacy": key, "count": count})
                 imported[key] = count
+            if unknown:
+                raise ValueError(f"LEGACY_IDENTITY_AMBIGUOUS: {', '.join(unknown)}; attributable imports retained; run each legacy owner's --plan-name/--unit to map its history, then retry; use --import-legacy-identity HEX only for that owner's history; never delete history")
             charged = sum(imported.values()) + len(reserved) - len(refunded)
             if charged >= MAX_ROUNDS:
                 raise ValueError("MANAGED_BUDGET_EXHAUSTED: mandate committee step")
@@ -1372,8 +1388,10 @@ def _post(url, payload, headers, timeout, retries=3, deadline=None):
             timeout = min(timeout, max(1, int(left)))
         req = urllib.request.Request(url, data=json.dumps(payload).encode(),
                                      headers=headers)
+        connected = False
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
+                connected = True
                 chunks, total = [], 0
                 while True:
                     if deadline is not None and time.time() > deadline:
@@ -1411,7 +1429,8 @@ def _post(url, payload, headers, timeout, retries=3, deadline=None):
             if e.code < 500 and e.code != 429:
                 return None, last
         except Exception as e:  # timeout, DNS, TLS reset
-            if not isinstance(e, json.JSONDecodeError):
+            reason = e.reason if isinstance(e, urllib.error.URLError) else e
+            if not isinstance(e, json.JSONDecodeError) and (connected or not isinstance(reason, socket.gaierror)):
                 REVIEW_BYTES += 1
             last = f"{type(e).__name__}: {redact(e)}"
         if attempt < retries:
