@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -3938,6 +3939,33 @@ class TestInfrastructureClassification(unittest.TestCase):
                 self.assertEqual(V.outcome_result(out)['result'], want)
                 if want == 'incomplete':
                     self.assertIn('collect', out['incomplete_reason'])
+
+    def test_predeadline_exit_survives_delay_before_poll(self):
+        child = mock.Mock(returncode=0, pid=123)
+        child.poll.return_value = 0
+        child.communicate.return_value = ('', '')
+        with mock.patch.object(V.subprocess, 'Popen', return_value=child), \
+                mock.patch.object(V.time, 'monotonic', side_effect=[0, 2]), \
+                mock.patch.object(V.os, 'killpg'):
+            out = V._observe_execution(['already-completed'], 1, '.')
+        self.assertNotEqual(V.outcome_result(out)['result'], 'fail')
+
+    def test_predeadline_exit_survives_delay_after_collection(self):
+        real_popen = subprocess.Popen
+        class DelayedObservation(real_popen):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                assert self.wait(timeout=5) == 0
+            def communicate(self, *args, **kwargs):
+                result = super().communicate(*args, **kwargs)
+                if not getattr(self, '_paused', False):
+                    self._paused = True
+                    time.sleep(1.1)
+                return result
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(V.subprocess, 'Popen', DelayedObservation):
+            out = V._observe_execution([sys.executable, '-c', 'pass'], 1, tmp)
+        self.assertEqual(V.outcome_result(out)['result'], 'pass')
 
     def test_secondary_pending_accounting_is_provisional(self):
         for pending in (None, ['RUNNING', '0:0'], ['PENDING', '0:0']):
