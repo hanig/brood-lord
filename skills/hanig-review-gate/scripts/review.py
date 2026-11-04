@@ -409,7 +409,7 @@ def budget_history(dfd, identity):
             raise ValueError("BUDGET_EVENT_INVALID")
         if e.get("type") == "import" and set(e) == {"type", "legacy", "count"}:
             key, count = e["legacy"], e["count"]
-            if (not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{64}", key)
+            if (not valid_digest(key)
                     or type(count) is not int or count < 0 or key in imported):
                 raise ValueError("BUDGET_IMPORT_INVALID")
             imported[key] = count
@@ -422,7 +422,7 @@ def budget_history(dfd, identity):
         elif e.get("type") == "refund" and set(e) == {"type", "reservation", "state", "response_bytes"}:
             key = e["reservation"]
             if (type(key) is not int or key not in reserved or key in refunded
-                    or key != max(reserved) or e["state"] != "REVIEW_UNAVAILABLE"
+                    or e["state"] != "REVIEW_UNAVAILABLE"
                     or type(e["response_bytes"]) is not int or e["response_bytes"] != 0):
                 raise ValueError("BUDGET_REFUND_INVALID")
             refunded.add(key)
@@ -437,42 +437,45 @@ def legacy_imports(identity, plan_name, lineage, explicit):
     commits = subprocess.check_output(["git", "rev-list", "--all", "--reflog"]).decode().splitlines()
     candidates = {identity_hash([remote, base, ["plan-unit", plan_name, unit]])
                   for base in commits for unit in lineage}
-    if any(not re.fullmatch(r"[0-9a-f]{64}", x) for x in explicit):
+    if any(not valid_digest(x) for x in explicit):
         raise ValueError("--import-legacy-identity requires HEX sha256")
     candidates.update(explicit)
-    found, unknown, owners = {}, [], {}
-    paths = [p for p in sorted(round_ledger_root().iterdir())
-             if p.name != identity and re.fullmatch(r"[0-9a-f]{64}", p.name)]
-    for path in paths:
+    branches = subprocess.check_output(["git", "for-each-ref", "--format=%(refname:short)",
+                                        "refs/heads"]).decode("utf-8", "surrogateescape").splitlines()
+    unrelated = {identity_hash([remote, base, ["branch", branch]])
+                 for base in commits for branch in branches}
+    found, unknown, owners, histories = {}, [], {}, {}
+    for path in sorted(round_ledger_root().iterdir()):
+        if path.name == identity or not valid_digest(path.name):
+            continue
         dfd = _open_directory_chain(path)
         try:
             if any(n.startswith("event-") for n in os.listdir(dfd)):
                 imported, _, _ = budget_history(dfd, path.name)
                 for key in imported:
-                    if key in owners and owners[key] != path.name:
+                    if key in owners:
                         raise ValueError("LEGACY_MAPPING_CONFLICT: " + key)
                     owners[key] = path.name
+            else:
+                lock = ledger_lock(dfd)
+                try:
+                    entries = validate_round_history(dfd, path.name)
+                finally:
+                    os.close(lock)
+                if entries:
+                    histories[path.name] = (entries[-1]["cycle"] - 1) * MAX_ROUNDS + entries[-1]["round"]
         finally:
             os.close(dfd)
-    for path in paths:
-        dfd = _open_directory_chain(path)
-        try:
-            names = os.listdir(dfd)
-            if any(n.startswith("event-") for n in names):
-                continue
-            entries = validate_round_history(dfd, path.name)
-            if not entries:
-                continue
-            if path.name not in candidates:
-                if path.name in owners:
-                    continue
-                unknown.append(path.name)
-                continue
-            if path.name in owners:
-                raise ValueError("LEGACY_MAPPING_CONFLICT: " + path.name)
-            found[path.name] = (entries[-1]["cycle"] - 1) * MAX_ROUNDS + entries[-1]["round"]
-        finally:
-            os.close(dfd)
+    for key, count in histories.items():
+        if key in unrelated:
+            continue
+        if key not in candidates:
+            if key not in owners:
+                unknown.append(key)
+        elif key in owners:
+            raise ValueError("LEGACY_MAPPING_CONFLICT: " + key)
+        else:
+            found[key] = count
     if unknown:
         raise ValueError(f"LEGACY_IDENTITY_AMBIGUOUS: {', '.join(unknown)}; attest provenance with --import-legacy-identity HEX; never delete history")
     missing = set(explicit) - set(found)
@@ -481,22 +484,35 @@ def legacy_imports(identity, plan_name, lineage, explicit):
     return found
 
 
+def ledger_lock(dfd):
+    lock = os.open("lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
+                   0o600, dir_fd=dfd)
+    try:
+        if not stat.S_ISREG(os.fstat(lock).st_mode):
+            raise ValueError("lock: not a regular file")
+        acquire_round_lock(lock)
+        return lock
+    except BaseException:
+        os.close(lock)
+        raise
+
+
 def managed_budget(identity, round_no=None, profile=None, plan_name=None,
                    lineage=(), explicit=(), refund=None):
     dfd = _open_directory_chain(round_ledger_root() / identity)
     try:
-        lock = os.open("lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
-                       0o600, dir_fd=dfd)
+        root = _open_directory_chain(round_ledger_root())
         try:
-            if not stat.S_ISREG(os.fstat(lock).st_mode):
-                raise ValueError("lock: not a regular file")
-            acquire_round_lock(lock)
+            lock = ledger_lock(root)
+        finally:
+            os.close(root)
+        try:
             imported, reserved, refunded = budget_history(dfd, identity)
             if refund is not None:
                 if refund in refunded:
                     return None
-                if refund not in reserved or refund != max(reserved):
-                    raise ValueError("REFUND_NOT_LATEST")
+                if refund not in reserved:
+                    raise ValueError("REFUND_UNKNOWN")
                 append_event(dfd, {"type": "refund", "reservation": refund,
                                   "state": "REVIEW_UNAVAILABLE", "response_bytes": 0})
                 return None
