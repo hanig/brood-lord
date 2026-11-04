@@ -152,9 +152,9 @@ class TestCoverage(unittest.TestCase):
     self.assertEqual(self.c['coverage_disposition'], 'conflicts')
     cat = S.load_catalog()
     residual = copy.deepcopy(next(e for e in cat['entries'] if e['id'] == 'DB014'))
-    residual.update(id='DB017', what_broke='Existing debris remained.')
+    residual.update(id='DB999', what_broke='Existing debris remained.')
     cat['entries'].append(residual)
-    self.c.update(catalog_entry='DB017', coverage_disposition='unknown')
+    self.c.update(catalog_entry='DB999', coverage_disposition='unknown')
     self.assertEqual(C.classify(self.c, registry('DB014'), self.root,
                  catalog=cat, provenance=provenance(self.head)), 'not_found_in_snapshot')
   def test_unknown_markers_and_git_errors(self):
