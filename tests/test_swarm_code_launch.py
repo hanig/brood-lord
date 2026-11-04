@@ -138,7 +138,7 @@ class TestReviewLineageLaunch(unittest.TestCase):
         with paseo_resolvable():
             job, error = S._submit(units[-1], str(fixture.attempt("u-c", "chain")),
                                    False, {"units": {}}, str(fixture.tmp / "state"),
-                                   review_lineage=chain)
+                                   lineage_chain=chain)
         self.assertIsNone(error)
         self.assertTrue(job)
         argv = fixture.fake.launches[-1]
