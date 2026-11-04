@@ -1252,7 +1252,7 @@ def verify_integration(args, repo, snapshot):
     if any(evidence["result"] != "pass" for evidence in evidences):
         if any(evidence["result"] == "fail" for evidence in evidences):
             raise Refusal("candidate merge verifier failed; repair the candidate")
-        raise Refusal("INCONCLUSIVE verification; reconcile infrastructure loss before retry")
+        raise Refusal("candidate merge verification incomplete; rerun verification")
 
 
 def print_pending_close(args, plan):

@@ -1412,7 +1412,7 @@ def retrieve_records(run, call, save):
             and isinstance(lifecycle, dict) and lifecycle.get('stage') == run['stage']
             and lifecycle.get('quiescent') is True
             and slurm_quiescent(lifecycle, request)
-            and all(state[0] in INFRASTRUCTURE_LOSS
+            and any(state[0] in INFRASTRUCTURE_LOSS
                     for state in lifecycle['cleanup_sacct_states'].values())):
         loss_accounted = True
     ingest(run, response, loss_accounted=loss_accounted)

@@ -112,6 +112,7 @@ class TestMergeVerificationRouting(unittest.TestCase):
         with mock.patch.object(V, "_observe_execution", side_effect=observe):
             for attempt in range(3):
                 self.assertEqual(self.invoke(), 1)
+                self.assertIn("rerun verification", self.diagnostic)
                 self.assertEqual(len(directories), attempt + 1)
                 self.f.assert_refused(self.transport.admitted())
         self.assertEqual(len(set(directories)), 3)

@@ -1124,12 +1124,12 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
     if completed_failure is not None:
         outcome["exit_code"] = completed_failure
         outcome["stderr"] = (outcome["stderr"] + "\n" + reason)[-2000:]
-    elif timed_out:
+    elif timed_out and outcome["exit_code"] != 0:
         outcome["exit_code"] = outcome["exit_code"] or -signal.SIGKILL
         outcome["stderr"] = (outcome["stderr"] + "\n" + reason)[-2000:]
     elif reason:
         outcome["exit_code"] = None
-        outcome["incomplete_reason"] = reason
+        outcome["incomplete_reason"] = "exit time unattested" if timed_out else reason
     return outcome
 
 

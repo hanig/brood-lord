@@ -2390,6 +2390,24 @@ else:
         self.assertTrue(self.stage.exists())
         self.assertFalse(result['quiescent'])
 
+    def test_mixed_terminal_loss_reconciles(self):
+        self.configure({'321': 'NODE_FAIL', '322': 'COMPLETED'})
+        lifecycle = RV.cleanup(self.stage)
+        run = dict(request=self.request, launch_id=self.launch,
+                   stage=str(self.stage), receipts={}, execution={})
+        records = {'request-header': dict(basis=self.request['basis'],
+                   launch_id=self.launch, check_count=0), 'worker-complete': None,
+                   'supervision-finished': {'launch_id': self.launch},
+                   'cleanup.json': lifecycle}
+        with mock.patch.object(RV, 'read_remote_record',
+                side_effect=lambda call, stage, name, *args: records[name]):
+            RV.retrieve_records(run, None, lambda: None)
+        self.assertTrue(run['reconciled'])
+        run['published'] = True
+        self.assertFalse(RV.unresolved(run))
+        self.assertEqual(V.outcome_result(RV.incomplete('lost'), run['execution'])['result'],
+                         'incomplete')
+
     def test_all_jobs_need_terminal_accounting(self):
         self.configure({'321': 'COMPLETED', '322': 'RUNNING'})
         result = RV.cleanup(self.stage, self.ack())
@@ -3943,23 +3961,25 @@ class TestInfrastructureClassification(unittest.TestCase):
                 self.assertIn(reason, out['incomplete_reason'])
 
     def test_deadline_poll_evidence_matrix(self):
-        # At/after the deadline: 2 observation times x 4 child statuses.
-        for observed, status in itertools.product((1, 2), (None, 0, 3, -15)):
-            with self.subTest(observed=observed, status=status):
+        # Include natural zero exit racing termination after a running poll.
+        for observed, status, collected_status in itertools.product(
+                (1, 2), (None, 0, 3, -15), (0, -9)):
+            with self.subTest(observed=observed, status=status, collected=collected_status):
                 child = mock.Mock(returncode=status, pid=123)
                 child.poll.return_value = status
                 def collected(**kwargs):
                     if child.returncode is None:
-                        child.returncode = -9
+                        child.returncode = collected_status
                     return ('', '')
                 child.communicate.side_effect = collected
                 with mock.patch.object(V.subprocess, 'Popen', return_value=child), \
                         mock.patch.object(V.time, 'monotonic', side_effect=[0, observed]), \
                         mock.patch.object(V.os, 'killpg'):
                     out = V._observe_execution(['fixture'], 1, '.')
+                zero = status == 0 or (status is None and collected_status == 0)
                 self.assertEqual(V.outcome_result(out)['result'],
-                                 'incomplete' if status == 0 else 'fail')
-                if status == 0:
+                                 'incomplete' if zero else 'fail')
+                if zero:
                     self.assertIn('exit time unattested', out['incomplete_reason'])
 
     def test_predeadline_exit_survives_delay_before_poll(self):
