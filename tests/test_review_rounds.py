@@ -763,10 +763,10 @@ class TestManagedBudget(unittest.TestCase):
             self.assertIn("SWARM_REVIEW_LINEAGE missing", result[2])
             self.assertEqual(self.markers(), [])
 
-    def test_missing_environment_operator_checkout_uses_self_root(self):
+    def test_missing_environment_operator_checkout_uses_legacy(self):
         os.environ.pop("SWARM_REVIEW_LINEAGE")
         expected = review.identity_hash([
-            self.git("remote", "get-url", "origin"), ["plan-unit", "plan", "u"]])
+            self.git("remote", "get-url", "origin"), self.base, ["plan-unit", "plan", "u"]])
         # Exact branch matching: near-matches are ordinary operator branches.
         for branch in ("change", "swarm-0123456789abcdeF",
                        "swarm-0123456789abcdef-extra", "detached"):
@@ -776,16 +776,19 @@ class TestManagedBudget(unittest.TestCase):
                 elif branch != "change":
                     self.git("checkout", "-b", branch)
                 self.assertEqual(review.change_identity(plan_name="plan", unit="u"), expected)
-                self.assertEqual(review.review_lineage("u", "u"), ["u"])
-                with self.assertRaisesRegex(ValueError, "--lineage-root conflicts"):
-                    review.review_lineage("u", "other")
-                # Probe release permits the next fixture to reuse round 1.
-                result = self.invoke(extra=("--plan-name", "plan", "--unit", "u"),
-                                     offline=True)
-                self.assertEqual(result[0], 2, result[1:3])
-                self.assertIn("REVIEW_UNAVAILABLE", result[1])
-        result = self.invoke(extra=("--plan-name", "plan", "--unit", "u"))
-        self.assertEqual(result[0], 0, result[1:3])
+                self.assertIsNone(review.review_lineage("u"))
+                for explicit in ("u", "other"):
+                    with self.assertRaisesRegex(ValueError, "--lineage-root conflicts"):
+                        review.review_lineage("u", explicit)
+                flags = ("--plan-name", branch, "--unit", "u")
+                for number in (1, 2, 3):
+                    result = self.invoke(number, extra=flags)
+                    self.assertEqual(result[0], 0, result[1:3])
+                # A fourth charged review is round 1 of the successor cycle.
+                result = self.invoke(extra=flags + ("--fresh-cycle-from", "standard"))
+                self.assertEqual(result[0], 0, result[1:3])
+                self.assertEqual(len(result[3]), 2)
+                self.assertTrue(all(p.name.startswith("cycle-") for p in self.markers()))
 
     def test_legacy_continuation_keeps_old_accounting(self):
         os.environ["SWARM_REVIEW_LINEAGE"] = "legacy"
@@ -814,6 +817,26 @@ class TestManagedBudget(unittest.TestCase):
         self.assertEqual(len(result[3]), 2)
         for p, data in before.items():
             self.assertEqual(p.read_bytes(), data)
+
+    def test_late_probe_release_reuses_number_without_duplicate_charges(self):
+        first = self.reserve(1)
+        self.reserve(2)
+        before = {p: p.read_bytes() for p in self.markers()}
+        review.managed_budget(first["identity"], uncharge=first["event"])
+        retried = self.reserve(1)
+        self.assertNotEqual(retried["event"], first["event"])
+        for p, data in before.items():
+            self.assertEqual(p.read_bytes(), data)
+        with self.assertRaisesRegex(ValueError, "managed --round must be 3"):
+            self.reserve(2)
+        # Every operation replays persisted history, including the late release.
+        self.reserve(3)
+        with self.assertRaisesRegex(ValueError, "MANAGED_BUDGET_EXHAUSTED"):
+            self.reserve(1)
+        review.managed_budget(retried["identity"], uncharge=retried["event"])
+        self.reserve(1)
+        with self.assertRaisesRegex(ValueError, "MANAGED_BUDGET_EXHAUSTED"):
+            self.reserve(2)
 
     def test_outage_on_first_prompt_stays_charged(self):
         calls = []

@@ -171,9 +171,7 @@ def review_lineage(unit, explicit=None):
                 raise ValueError("SWARM_REVIEW_LINEAGE cannot inspect Git branch")
             if re.fullmatch(rb"refs/heads/swarm-[0-9a-f]{16}", branch.stdout[:-1]):
                 raise ValueError("SWARM_REVIEW_LINEAGE missing coordinator enrollment decision")
-        if explicit is not None and explicit != unit:
-            raise ValueError("--lineage-root conflicts with implicit unit root")
-        return [unit]
+        raw = "legacy"
     if raw == "legacy":
         if explicit is not None:
             raise ValueError("--lineage-root conflicts with legacy enrollment")
@@ -419,6 +417,12 @@ def append_event(dfd, event):
     return number
 
 
+def next_budget_round(reserved, uncharged):
+    """Use the first free number, including holes left by late probe releases."""
+    active = {e["round"] for key, e in reserved.items() if key not in uncharged}
+    return next(n for n in range(1, MAX_ROUNDS + 2) if n not in active)
+
+
 def budget_history(dfd, identity):
     """Replay."""
     names = {n for n in os.listdir(dfd) if n != "lock" and not n.startswith(".pending-")}
@@ -431,8 +435,8 @@ def budget_history(dfd, identity):
         if not isinstance(e, dict):
             raise ValueError("BUDGET_EVENT_INVALID")
         if e.get("type") == "reserve" and set(e) == {"type", "round", "profile", "identity"}:
-            charged = len(reserved) - len(uncharged)
-            if (e["identity"] != identity or type(e["round"]) is not int or e["round"] != charged + 1
+            expected_round = next_budget_round(reserved, uncharged)
+            if (e["identity"] != identity or type(e["round"]) is not int or e["round"] != expected_round
                     or e["round"] > MAX_ROUNDS or e["profile"] not in LADDER):
                 raise ValueError("BUDGET_RESERVATION_INVALID")
             reserved[number] = e
@@ -477,8 +481,9 @@ def managed_budget(identity, round_no=None, profile=None, uncharge=None):
             charged = len(reserved) - len(uncharged)
             if charged >= MAX_ROUNDS:
                 raise ValueError("MANAGED_BUDGET_EXHAUSTED: mandate committee step")
-            if round_no != charged + 1:
-                raise ValueError(f"managed --round must be {charged + 1}; charged {charged}")
+            expected_round = next_budget_round(reserved, uncharged)
+            if round_no != expected_round:
+                raise ValueError(f"managed --round must be {expected_round}; charged {charged}")
             event = append_event(dfd, {"type": "reserve", "round": round_no,
                                       "profile": profile, "identity": identity})
             return {"identity": identity, "event": event}
