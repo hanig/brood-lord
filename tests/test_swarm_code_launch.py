@@ -126,6 +126,15 @@ class TestCodeLaunchExtraction(unittest.TestCase):
 
 
 class TestReviewLineageLaunch(unittest.TestCase):
+    def test_dry_submit_without_state_does_not_enroll(self):
+        from tests.test_attempt_worktrees import TestPerAttemptWorktrees, code_unit
+        fixture = TestPerAttemptWorktrees()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        job, error = S._submit(code_unit(fixture.repo), str(fixture.attempt("code", "dry")), True)
+        self.assertIsNone(error)
+        self.assertTrue(job)
+
     def test_advance_records_full_chain_before_launch(self):
         from tests.test_attempt_worktrees import TestPerAttemptWorktrees, code_unit, paseo_resolvable
         fixture = TestPerAttemptWorktrees()

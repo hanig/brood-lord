@@ -1455,8 +1455,9 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
         return None, problem
     anchored_base = None
     if kind == "code":
-        _record_review_lineage(
-            state, lineage_chain if lineage_chain is not None else [u["id"]], unit_dir)
+        if state is not None and not dry_run:
+            _record_review_lineage(
+                state, lineage_chain if lineage_chain is not None else [u["id"]], unit_dir)
         # Capture only facts the coordinator can know before the agent exists.
         # The immutable base and generated path are durable before the
         # coordinator creates the worktree or asks Paseo to run in it.
