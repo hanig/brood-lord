@@ -1,6 +1,9 @@
-"""collect([{label, role, path}], budgets).
-Caps: per_file_bytes, files_per_root, total_bytes; max_depth defaults/caps at
-128 levels; every hit omitted. Roots resolve once; descendant symlinks are omitted.
+"""collect([{label, role, path}], budgets, exclusions=[(role, glob)]).
+BFS, files first, then ordinary directories, then dot-directories.
+Per-root files_per_root counts adapter candidates; entries_per_root bounds
+scandir enumeration (plus one lookahead). Both accept positive overrides.
+Other caps: per_file_bytes, total_bytes, max_depth (at most 128 levels).
+Every truncation is omitted. Roots resolve once; descendant symlinks are omitted.
 Only LF delimits lines; CR, including CRLF, is content (and a marker boundary).
 """
 from collections import deque
