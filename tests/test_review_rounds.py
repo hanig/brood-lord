@@ -695,7 +695,9 @@ class TestClosedRoundGrammar(unittest.TestCase):
 
 
 class TestManagedBudget(unittest.TestCase):
-    setUp = TestRoundReservations.setUp
+    def setUp(self):
+        TestRoundReservations.setUp(self)
+        os.environ.pop("SWARM_REVIEW_LINEAGE", None)
     git = TestRoundReservations.git
     fix = TestRoundReservations.fix
     invoke = TestRoundReservations.invoke
