@@ -937,7 +937,9 @@ def outcome_result(outcome, execution=None):
             return {"result": "incomplete", "incomplete_reason": "Slurm infrastructure loss: " + state}
     if outcome.get("incomplete_reason"):
         return {"result": "incomplete", "incomplete_reason": outcome["incomplete_reason"]}
-    if states and execution.get("sacct_state") not in RV.TERMINAL:
+    if states and (execution.get("sacct_state") not in RV.TERMINAL
+            or any(state is None or state[0] not in RV.TERMINAL
+                   for state in execution.get("cleanup_sacct_states", {}).values())):
         return {"result": "incomplete", "incomplete_reason": "Slurm accounting pending"}
     return {"result": "pass" if outcome["exit_code"] == 0 else "fail"}
 
@@ -1054,6 +1056,9 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
             # failure is still evidence when a descendant holds a pipe open;
             # the capture timeout must not launder it into a retryable result.
             finished = child.poll()
+            if timed_out and finished == 0:
+                timed_out = False
+                reason = "coordinator could not collect verifier output after {}s".format(timeout)
             if finished is not None and finished != 0:
                 completed_failure = finished
             # Kill the session even if its leader exited while descendants
