@@ -578,7 +578,12 @@ class TestTheProtocolRequiresReviewAndPush(unittest.TestCase):
                 "Commit all intended edits first and leave the worktree clean",
                 "Only exit 0 (REVIEW_PASS) permits opening a pull request",
                 "Reproduce each confirmed finding before acting on it.",
-                "If a reproduced failure remains, do NOT open a pull request",
+                "Repair the reproduced findings that fall inside the task's supported envelope and do not contradict the task.",
+                "gate the next round with --dispositions FILE",
+                "up to the round limit the task states",
+                "Only when a reproduced failure remains after the last permitted round",
+                "or a remaining finding needs an orchestrator decision",
+                "(out of envelope, or contradicting the task), do NOT open a pull request",
                 "RECOVERY, NOT READY:", "refs/heads/recovery/swarm-a1",
                 "without moving the anchored attempt ref",
                 "REVIEW_PASS means the panel failed to refute the claims, not proof."):

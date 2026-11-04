@@ -453,7 +453,7 @@ class SeedDispatchTests(unittest.TestCase):
 class UnseededCompatibilityTests(unittest.TestCase):
     def test_base_intent_prompt_and_plan_golden_digests(self):
         # Nondeterministic observations fixed; schema-6 intent recaptured for
-        # author_history. Prompt and plan retain their prior exact goldens.
+        # author_history. The plan retains its prior exact golden.
         unit = {"id": "code", "kind": "code", "repo": "/seed-compat/repo",
                 "target_branch": "main", "prompt": "Repair the implementation.",
                 "outputs": ["evidence.md"], "mode": "full-access"}
@@ -484,10 +484,10 @@ class UnseededCompatibilityTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(json.dumps(
             legacy, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
                          "6d17a37532381f9046afbe0656c139340bbc79b6fb28a8ae736b96eb4af7fbf3")
-        # Prompt golden re-captured for the scope-check instruction of ARC-2208,
-        # at 1bd0004; it and the plan golden remain unchanged here.
+        # Prompt golden re-captured from this test for the bounded repair-loop
+        # protocol, including its task-contradiction exception.
         self.assertEqual(hashlib.sha256(S._dispatch_prompt(unit, intent).encode()).hexdigest(),
-                         "783a78ec9fc762067863951a30a13c2c63016da4b7487b95abcc5a05a3d9cd1b")
+                         "7ada259c637f61cbb584147ceee405590638bb1628db5a9ed41812e946ffa41b")
         self.assertEqual(S.plan_digest({"name": "seed-compat", "units": [unit]}),
                          "55ce911fb07620734d54da3b6ef9cde709df04d099bc7d7ffd66aaf2d24db93a")
 

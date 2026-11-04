@@ -112,5 +112,69 @@ class TestCodeProtocolExtraction(unittest.TestCase):
                 self.test_standalone_offline_import()
 
 
+class TestRepairLoopProtocol(unittest.TestCase):
+    INTENT = {
+        "repo": "/fixture/project", "branch": "swarm-fixture",
+        "base_commit": "a" * 40, "target_branch": "main",
+        "repository_remote": "/fixture/origin.git",
+        "judgment_ref": "refs/heads/swarm-fixture",
+    }
+    STEPS = (
+        ("finding reproduction",
+         "Reproduce each confirmed finding before acting on it."),
+        ("in-envelope repair",
+         "Repair the reproduced findings that fall inside the task's supported envelope and do not contradict the task."),
+        ("repair round discipline",
+         "Mutation-check each repair, commit all intended edits, keep the worktree "
+         "clean, and gate the next round with --dispositions FILE, up to the round "
+         "limit the task states."),
+        ("exhausted or decision-bound review",
+         "Only when a reproduced failure remains after the last permitted round, "
+         "or a remaining finding needs an orchestrator decision (out of envelope, "
+         "or contradicting the task), do NOT open a pull request: follow the recovery "
+         "procedure below without moving the anchored attempt ref, then STOP AND "
+         "REPORT where it was preserved."),
+        ("passing review permission",
+         "Only exit 0 (REVIEW_PASS) permits opening a pull request"),
+    )
+
+    def test_dispatched_repair_sequence_in_order(self):
+        prompt = SCP._dispatch_prompt({"kind": "code", "prompt": "work"}, self.INTENT)
+        self.assertIsNone(SCP._code_protocol_problem(prompt, self.INTENT))
+        positions = []
+        for name, sentence in self.STEPS:
+            with self.subTest(step=name):
+                self.assertEqual(prompt.count(sentence), 1)
+                positions.append(prompt.index(sentence))
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("If a reproduced failure remains, do NOT open a pull request", prompt)
+        self.assertIn("unavailable, partial, incomplete, and failing reviews are not a pass", prompt)
+
+    def test_required_phrase_guard_rejects_task_contradicting_repair(self):
+        protocol = SCP._code_completion_protocol(self.INTENT)
+        unqualified = protocol.replace(
+            "supported envelope and do not contradict the task.",
+            "supported envelope.")
+        self.assertNotEqual(unqualified, protocol)
+        with mock.patch.object(SCP, "_code_completion_protocol",
+                               return_value=unqualified):
+            prompt = SCP._dispatch_prompt({"kind": "code"}, self.INTENT)
+            self.assertEqual(SCP._code_protocol_problem(prompt, self.INTENT),
+                             "missing in-envelope repair")
+
+    def test_required_phrase_guard_rejects_each_missing_step(self):
+        protocol = SCP._code_completion_protocol(self.INTENT)
+        for name, sentence in self.STEPS:
+            with self.subTest(step=name):
+                self.assertEqual(protocol.count(sentence), 1)
+                # Patch the producer too: otherwise the suffix check alone
+                # would reject the prompt without exercising the phrase table.
+                with mock.patch.object(SCP, "_code_completion_protocol",
+                                       return_value=protocol.replace(sentence, "")):
+                    prompt = SCP._dispatch_prompt({"kind": "code"}, self.INTENT)
+                    self.assertEqual(SCP._code_protocol_problem(prompt, self.INTENT),
+                                     "missing " + name)
+
+
 if __name__ == "__main__":
     unittest.main()
