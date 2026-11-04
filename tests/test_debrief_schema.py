@@ -1,8 +1,10 @@
 """Synthetic schema fixtures."""
 import ast
 import copy
+import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -44,9 +46,22 @@ class TestDebriefSchema(unittest.TestCase):
   def test_shipped_data(self):
     self.assertEqual(self.load(self.cat), self.cat)
     catalog = S.load_catalog()
-    self.assertEqual(len(catalog["entries"]), 16)
+    self.assertEqual(len(catalog["entries"]), 22)
     self.assertEqual(S.load_coverage(catalog=catalog), {
       "schema_version": "debrief_coverage.v1", "version": 1, "entries": []})
+
+  def test_legacy_catalog_bytes_and_versions_unchanged(self):
+    raw = (SCRIPT.parent.parent / "catalog.json").read_bytes()
+    self.assertTrue(raw.startswith(
+      b'{\n  "schema_version":"debrief_catalog.v1",\n  "version":1,\n  "entries":[\n'))
+    # Hash raw JSON objects, excluding only the surrounding list separators.
+    # Frozen at 63fd6e61e4384b566021f823e5e4d94b422e8138; no reserialization.
+    entries = re.findall(rb'^    (\{.*\}),?$', raw, re.M)
+    self.assertEqual(len(entries), 22)
+    self.assertEqual([json.loads(e)["id"] for e in entries[:16]],
+                     ["DB%03d" % n for n in range(1, 17)])
+    self.assertEqual(hashlib.sha256(b'\n'.join(entries[:16])).hexdigest(),
+      '29d4dfe7194b04d47c3f5c97164ab3a7a1d944b1ffae72cbec88ba7aebd83690')
 
   def test_valid_coverage_variants(self):
     self.cov["entries"][0]["references"] += [

@@ -9,6 +9,29 @@ import debrief_packet as P
 import debrief_schema as S
 
 
+# Exhaustive six-entry acceptance table, independent of the shipped catalog.
+NEW_LESSONS = (
+  ("DB017", "hanig-swarm", "Abandoned unit not redispatched.",
+   "Records showed an abandoned unit left dependents held without a successor.",
+   "Require a successor or explicit stop.", "units"),
+  ("DB018", "hanig-swarm", "Declared outputs mismatched contract.",
+   "Records showed a clean job judged incomplete because declared output names differed from the code contract.",
+   "Check outputs against the contract before allocation.", "units"),
+  ("DB019", "hanig-project", "Tracker request budget exhausted.",
+   "Records showed repeated drains or refiling exhausting the tracker request budget.",
+   "Budget and batch tracker operations.", "evidence_documents"),
+  ("DB020", "hanig-review-gate", "Review input truncated.",
+   "Records showed review input over the truncation limit producing partial reviews.",
+   "Split by whole files before review.", "units"),
+  ("DB021", "hanig-orchestrate", "Prompt contradicted completion protocol.",
+   "Records showed task text conflicting with the appended completion protocol and stopping the worker.",
+   "Check prompts against the protocol before dispatch.", "units"),
+  ("DB022", "hanig-project", "Scope missed shared inventory.",
+   "Records showed units stopped because a closed inventory file lay outside declared scope.",
+   "Derive scope from shared inventories.", "units"),
+)
+
+
 def dossier():
   return {"schema_version": S.DOSSIER_SCHEMA, "evidence": {"E001": {
     "source_root": "root", "locator": "event.json", "sha256": "a" * 64,
@@ -35,6 +58,39 @@ class TestDebriefPacket(unittest.TestCase):
 
   def refuses(self):
     return self.assertRaises(S.SchemaError)
+
+  def test_new_catalog_entries_exact_and_compile_public_literals(self):
+    expected_entries = []
+    for ident, skill, what, mechanism, change, population in NEW_LESSONS:
+      with self.subTest(entry=ident):
+        entry = dict(id=ident, skill=skill, what_broke=what, mechanism=mechanism,
+                     proposed_change=change,
+                     measures=[dict(measure="affected", population=population)])
+        expected_entries.append(entry)
+        d = dossier()
+        d["cohorts"]["C001"]["population"] = population
+        cand = d["candidates"][0]
+        cand.update(catalog_entry=ident, rationale="PRIVATE_SYNTHETIC_PROJECT")
+        cand["counts"][0]["population"] = population
+        d["evidence"]["E001"].update(source_root="PRIVATE_SYNTHETIC_HOST",
+          locator="private/synthetic/path", unit_id="PRIVATE_SYNTHETIC_PERSON")
+        d["provenance"] = {skill: "PRIVATE_SYNTHETIC_ACCOUNT"}
+        # Exercise the dossier loader and packet consumer with temporary files.
+        path = self.root / "dossier.json"
+        path.write_text(json.dumps(d), encoding="utf-8")
+        pkt = P.compile_packet(P.load_dossier(path), self.c)
+        expected = dict(id="L01", catalog_entry=ident, skill=skill,
+          what_broke=what, mechanism=mechanism, proposed_change=change,
+          mechanism_basis="reported", evidence_refs=["E001"], counts=[dict(
+            measure="affected", population=population, scope="inspected_set",
+            numerator=1, denominator=2, cohort_ref="C001")])
+        self.assertEqual(pkt["learnings"], [expected])
+        self.assertEqual(P.recount(d, pkt), pkt)
+        title, body = P.render(pkt)
+        self.assertNotIn("PRIVATE_SYNTHETIC", title + body)
+        self.assertNotIn("private/synthetic/path", title + body)
+        self.assertEqual(P.parse_body(body), pkt)
+    self.assertEqual(self.c["entries"][16:], expected_entries)
 
   def bad(self, base, validator, changes):
     for path, new in changes:
