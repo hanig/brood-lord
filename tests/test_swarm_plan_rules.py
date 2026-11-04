@@ -14,7 +14,7 @@ import swarm as S
 import swarm_plan_rules as SPR
 
 DEFINITIONS = (
-    "declared_seed", "declared_scope", "_norm_scope", "_scopes_overlap",
+    "review_lineage", "declared_seed", "declared_scope", "_norm_scope", "_scopes_overlap",
     "declared_account", "declared_partition", "_known_partitions",
     "partition_problems", "read_survey", "discover_survey", "_scheduler_facts",
     "surveyed_partition", "limit_state", "_account_names", "declared_memory",
@@ -90,7 +90,7 @@ class TestPlanRulesExtraction(unittest.TestCase):
         consumers = {n.attr for tree in trees for n in ast.walk(tree) if isinstance(n, ast.Attribute)
                      and isinstance(n.value, ast.Name) and n.value.id == "SPR"}
         self.assertEqual(consumers, {
-            "declared_partition", "declared_seed",
+            "review_lineage", "declared_partition", "declared_seed",
             "declared_scope", "resolve_promote_to", "partition_problems",
             "_known_partitions", "memory_flag_problems", "account_problems",
             "_scopes_overlap", "discover_survey", "read_survey",
@@ -155,6 +155,34 @@ class TestPlanRulesExtraction(unittest.TestCase):
             "assert not set(sys.modules).intersection(" + repr(runtime_forbidden) + ")"
         ), str(SCRIPTS)], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class TestReviewLineage(unittest.TestCase):
+    def test_enumerated_plan_lineages(self):
+        # Exhaustive requested structures, all synthetic; no random seed.
+        cases = [({}, ["u"]), ({"u": "v"}, ["v", "u"]),
+                 ({"u": "missing"}, "missing target"),
+                 ({"u": "batch"}, "non-code"), ({"u": "u"}, "self"),
+                 ({"u": "v", "v": "u"}, "cycle"),
+                 ({"u": "v", "v": "w", "w": "u"}, "cycle")]
+        for links, expected in cases:
+            with self.subTest(links=links):
+                units = [{"id": x, "kind": "code"} for x in ("u", "v", "w")]
+                units.append({"id": "batch", "kind": "slurm"})
+                for u in units:
+                    if u["id"] in links:
+                        u["continuation_of"] = links[u["id"]]
+                plan = {"units": units}
+                if isinstance(expected, list):
+                    self.assertEqual(SPR.review_lineage(plan, "u"), expected)
+                else:
+                    with self.assertRaisesRegex(S.PlanError, "continuation_of.*" + expected):
+                        S.validate_plan(plan)
+
+    def test_lineage_changes_dispatch_digest(self):
+        unit = {"id": "u", "kind": "code"}
+        self.assertNotEqual(SPR.plan_digest({"units": [unit]}),
+                            SPR.plan_digest({"units": [dict(unit, continuation_of="v")]}))
 
 
 if __name__ == "__main__":
