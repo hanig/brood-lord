@@ -17,6 +17,28 @@ import swarm_evidence as SE
 from swarm_types import PlanError
 
 
+def review_lineage(plan, unit):
+    """Resolve explicit coordinator plan links, never an id naming convention."""
+    units = {u.get("id"): u for u in plan["units"] if isinstance(u, dict)}
+    chain = []
+    current = unit
+    while True:
+        if not isinstance(current, str) or not current.strip() or current not in units:
+            raise PlanError("continuation_of missing target: {!r}".format(current))
+        if current in chain:
+            raise PlanError("continuation_of cycle: {}".format(chain + [current]))
+        node = units[current]
+        if node.get("kind") != "code":
+            raise PlanError("continuation_of non-code target: {!r}".format(current))
+        chain.append(current)
+        if "continuation_of" not in node:
+            return list(reversed(chain))
+        parent = node["continuation_of"]
+        if parent == current:
+            raise PlanError("continuation_of self: {!r}".format(current))
+        current = parent
+
+
 def declared_seed(u):
     """Validate optional code provenance without rewriting any deciding byte."""
     if "seed" not in u:

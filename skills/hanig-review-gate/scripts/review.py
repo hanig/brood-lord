@@ -104,10 +104,11 @@ MAX_ROUNDS = 3
 ROUND_LOCK_WAIT_SECONDS = 5
 
 
-def change_identity(target="origin/main", plan_name=None, unit=None):
+def change_identity(target="origin/main", plan_name=None, unit=None, lineage_root=None):
     """Hash exact Git identity bytes, never the changing diff or tip commit.
 
-    Fix commits preserve this identity while the target merge-base is unchanged.
+    Managed plan/unit identities omit the merge-base and use their lineage root.
+    Unmanaged fix commits preserve identity while the merge-base is unchanged.
     Renaming the branch, changing the remote, rebasing, or changing an explicit
     plan/unit declaration defines another identity; this is not a tamper barrier.
     """
@@ -130,6 +131,9 @@ def change_identity(target="origin/main", plan_name=None, unit=None):
             raise ValueError("--plan-name and --unit must be non-empty when given")
     remote = git("remote", "get-url", "origin",
                  fix="run in the intended Git checkout and configure its origin remote")
+    if plan_name is not None and unit is not None:
+        lineage = review_lineage(unit, lineage_root)
+        return identity_hash([remote, ["plan-unit", plan_name, lineage[0]]])
     target_head = git("rev-parse", "--verify", target + "^{commit}",
                       fix="fetch the target or pass --target REF naming an existing target commit")
     base = git("merge-base", "HEAD", target_head,
@@ -141,6 +145,33 @@ def change_identity(target="origin/main", plan_name=None, unit=None):
     payload = json.dumps([remote, base, subject], ensure_ascii=True,
                          separators=(",", ":"))
     return hashlib.sha256(payload.encode("ascii")).hexdigest()
+
+
+def identity_hash(payload):
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=True,
+                                    separators=(",", ":")).encode("ascii")).hexdigest()
+
+
+def review_lineage(unit, explicit=None):
+    if explicit is not None and (not isinstance(explicit, str) or not explicit.strip()):
+        raise ValueError("--lineage-root must be a nonempty unit")
+    raw = os.environ.get("SWARM_REVIEW_LINEAGE")
+    if raw is None:
+        return [explicit, unit] if explicit is not None and explicit != unit else [unit]
+    try:
+        chain = json.loads(raw)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("SWARM_REVIEW_LINEAGE malformed JSON") from exc
+    if (not isinstance(chain, list) or not chain
+            or any(not isinstance(x, str) or not x.strip() for x in chain)):
+        raise ValueError("SWARM_REVIEW_LINEAGE malformed: expected nonempty unit list")
+    if len(set(chain)) != len(chain):
+        raise ValueError("SWARM_REVIEW_LINEAGE cycle or duplicate unit")
+    if chain[-1] != unit:
+        raise ValueError("SWARM_REVIEW_LINEAGE missing/conflicting --unit endpoint")
+    if explicit is not None and explicit != chain[0]:
+        raise ValueError("--lineage-root conflicts with SWARM_REVIEW_LINEAGE")
+    return chain
 
 
 def round_ledger_root():
@@ -344,18 +375,172 @@ def reserve_round(identity, round_no, profile, fresh_from=None):
         os.close(directory)
 
 
+def ledger_json(directory, name):
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    with os.fdopen(fd, "r", encoding="utf-8") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("nonregular ledger record: " + name)
+        return json.load(stream, object_pairs_hook=reject_duplicate_keys)
+
+
+def append_budget_event(directory, event):
+    number = 1 + len([n for n in os.listdir(directory) if n.startswith("event-")])
+    name = "event-{}.json".format(number)
+    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(event, stream, sort_keys=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.fsync(directory)
+    return number
+
+
+def budget_history(directory):
+    """Replay append-only imports, reservations and zero-feedback refunds."""
+    names = set(os.listdir(directory)) - {"lock"}
+    expected = {"event-{}.json".format(n) for n in range(1, len(names) + 1)}
+    if names != expected:
+        raise ValueError("managed budget has malformed or missing event records")
+    imported, reservations, refunded = {}, {}, set()
+    for number in range(1, len(names) + 1):
+        e = ledger_json(directory, "event-{}.json".format(number))
+        if not isinstance(e, dict):
+            raise ValueError("managed budget malformed event")
+        if e.get("type") == "import" and set(e) == {"type", "legacy", "count"}:
+            key, count = e["legacy"], e["count"]
+            if (not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{64}", key)
+                    or type(count) is not int or count < 0 or key in imported):
+                raise ValueError("managed budget invalid legacy import")
+            imported[key] = count
+        elif e.get("type") == "reserve" and set(e) == {"type", "round", "profile"}:
+            charged = sum(imported.values()) + len(reservations) - len(refunded)
+            if (type(e["round"]) is not int or e["round"] != charged + 1
+                    or e["round"] > MAX_ROUNDS or e["profile"] not in LADDER):
+                raise ValueError("managed budget invalid reservation")
+            reservations[number] = e
+        elif e.get("type") == "refund" and set(e) == {"type", "reservation", "state", "response_bytes"}:
+            key = e["reservation"]
+            if (type(key) is not int or key not in reservations or key in refunded
+                    or key != max(reservations) or e["state"] != "REVIEW_UNAVAILABLE"
+                    or type(e["response_bytes"]) is not int or e["response_bytes"] != 0):
+                raise ValueError("managed budget invalid refund")
+            refunded.add(key)
+        else:
+            raise ValueError("managed budget unrecognized event")
+    return imported, reservations, refunded
+
+
+def legacy_budget_imports(identity, plan_name, lineage, explicit):
+    """Match old hash preimages against available Git history; unknowns refuse.
+
+    Explicit hashes are operator attestations, not inferred unit suffixes.
+    Old markers remain charged forever, including every predecessor cycle.
+    """
+    remote = subprocess.check_output(["git", "remote", "get-url", "origin"]).decode(
+        "utf-8", "surrogateescape")[:-1]
+    commits = subprocess.check_output(["git", "rev-list", "--all", "--reflog"]).decode().splitlines()
+    candidates = {identity_hash([remote, base, ["plan-unit", plan_name, unit]])
+                  for base in commits for unit in lineage}
+    if any(not re.fullmatch(r"[0-9a-f]{64}", x) for x in explicit):
+        raise ValueError("--import-legacy-identity requires HEX sha256")
+    candidates.update(explicit)
+    found, unknown = {}, []
+    root = round_ledger_root()
+    for path in sorted(root.iterdir()):
+        if path.name == identity or not re.fullmatch(r"[0-9a-f]{64}", path.name):
+            continue
+        directory = _open_directory_chain(path)
+        try:
+            names = os.listdir(directory)
+            if any(n.startswith("event-") for n in names):
+                continue
+            entries = validate_round_history(directory, path.name)
+            if not entries:
+                continue
+            if path.name not in candidates:
+                unknown.append(path.name)
+                continue
+            found[path.name] = (entries[-1]["cycle"] - 1) * MAX_ROUNDS + entries[-1]["round"]
+        finally:
+            os.close(directory)
+    if unknown:
+        raise ValueError("LEGACY_IDENTITY_AMBIGUOUS: {}; inspect provenance and attest with "
+                         "--import-legacy-identity HEX (repeatable); never delete history".format(
+                             ", ".join(unknown)))
+    missing = set(explicit) - set(found)
+    if missing:
+        raise ValueError("--import-legacy-identity missing reservation records: " + ", ".join(sorted(missing)))
+    return found
+
+
+def managed_budget(identity, round_no=None, profile=None, plan_name=None,
+                   lineage=(), explicit=(), refund=None):
+    directory = _open_directory_chain(round_ledger_root() / identity)
+    try:
+        lock = os.open("lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
+                       0o600, dir_fd=directory)
+        try:
+            if not stat.S_ISREG(os.fstat(lock).st_mode):
+                raise ValueError("lock: not a regular file")
+            acquire_round_lock(lock)
+            imported, reserved, refunded = budget_history(directory)
+            if refund is not None:
+                if refund in refunded:
+                    return None
+                if refund not in reserved or refund != max(reserved):
+                    raise ValueError("refund reservation is no longer the latest round")
+                append_budget_event(directory, {"type": "refund", "reservation": refund,
+                                               "state": "REVIEW_UNAVAILABLE", "response_bytes": 0})
+                return None
+            found = legacy_budget_imports(identity, plan_name, lineage, explicit)
+            for key, count in found.items():
+                if key in imported:
+                    if imported[key] != count:
+                        raise ValueError("LEGACY_HISTORY_CHANGED: " + key)
+                    continue
+                append_budget_event(directory, {"type": "import", "legacy": key, "count": count})
+                imported[key] = count
+            charged = sum(imported.values()) + len(reserved) - len(refunded)
+            if charged >= MAX_ROUNDS:
+                raise ValueError("MANAGED_BUDGET_EXHAUSTED: mandate committee step applies")
+            if round_no != charged + 1:
+                raise ValueError("managed --round must be {}; charged {}".format(charged + 1, charged))
+            event = append_budget_event(directory, {"type": "reserve", "round": round_no, "profile": profile})
+            return {"identity": identity, "event": event}
+        finally:
+            os.close(lock)
+    finally:
+        os.close(directory)
+
+
+def refund_review_round(args, state, response_bytes):
+    reservation = getattr(args, "budget_reservation", None)
+    if reservation and state == "REVIEW_UNAVAILABLE" and response_bytes == 0:
+        managed_budget(reservation["identity"], refund=reservation["event"])
+
+
 def reserve_review_round(args):
     """CLI boundary: ledger failure is a review error, never an audit warning."""
     try:
         identity = change_identity(
-            "origin/main" if args.target is None else args.target, args.plan_name, args.unit)
+            "origin/main" if args.target is None else args.target, args.plan_name, args.unit,
+            args.lineage_root)
     except (OSError, ValueError, RuntimeError) as exc:
         config_error("implementation identity required: {}. Pass a stable "
                      "--plan-name/--unit when branch identity is unavailable; "
                      "origin and a shared target commit are still required.".format(exc))
     try:
-        record = reserve_round(identity, args.round, args.selected_profile,
-                               args.fresh_cycle_from)
+        if args.plan_name is not None and args.unit is not None:
+            if args.fresh_cycle_from is not None:
+                raise ValueError("--fresh-cycle-from refused for managed identity; mandate committee step applies")
+            record = managed_budget(identity, args.round, args.selected_profile,
+                                    args.plan_name, review_lineage(args.unit, args.lineage_root),
+                                    args.import_legacy_identity)
+            args.budget_reservation = record
+        else:
+            record = reserve_round(identity, args.round, args.selected_profile,
+                                   args.fresh_cycle_from)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
         config_error("round reservation refused: {}. Inspect the enforcing ledger "
                      "and XDG_STATE_HOME/HOME; pass the next admissible round; do not delete "
@@ -1146,10 +1331,14 @@ def no_content_error(rev, text, *, finish_reason=None, reasoning_tokens=None,
         " (" + ", ".join(details) + ")" if details else "")
 
 
+REVIEW_RESPONSE_BYTES = 0
+
+
 def _post(url, payload, headers, timeout, retries=3, deadline=None):
     """POST with backoff on transient failures. A gateway hiccup must not
     silently remove a reviewer from the panel -- that would quietly shrink the
     quorum and make the gate weaker than it claims to be."""
+    global REVIEW_RESPONSE_BYTES
     last = None
     for attempt in range(1, retries + 1):
         if deadline is not None:
@@ -1170,6 +1359,7 @@ def _post(url, payload, headers, timeout, retries=3, deadline=None):
                     chunk = r.read(65536)
                     if not chunk:
                         break
+                    REVIEW_RESPONSE_BYTES += len(chunk)
                     chunks.append(chunk)
                     total += len(chunk)
                     if total > 64 * 1024 * 1024:
@@ -1187,6 +1377,7 @@ def _post(url, payload, headers, timeout, retries=3, deadline=None):
                     piece = e.read(8192)
                     if not piece:
                         break
+                    REVIEW_RESPONSE_BYTES += len(piece)
                     parts.append(piece)
                     got += len(piece)
             except Exception:
@@ -1197,6 +1388,8 @@ def _post(url, payload, headers, timeout, retries=3, deadline=None):
             if e.code < 500 and e.code != 429:
                 return None, last
         except Exception as e:  # timeout, DNS, TLS reset
+            # A failed read can conceal partial bytes; uncertainty stays charged.
+            REVIEW_RESPONSE_BYTES += 1
             last = f"{type(e).__name__}: {redact(e)}"
         if attempt < retries:
             nap = min(2 ** attempt, 15)
@@ -3071,6 +3264,7 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason, exc
             for m in members]
     args.plan_exchange = exchange
     disarm_watchdog()
+    refund_review_round(args, state, REVIEW_RESPONSE_BYTES)
     journal = record_review_round(args, completed, state)
     report = {"state": state, "checked_at": now(), "reviewed": label,
               "profile": "plan", "profile_reason": profile_reason, "escalated": False,
@@ -3143,6 +3337,8 @@ def build_parser():
     ap.add_argument("--target", metavar="REF",
                     help="identity merge-base target (default origin/main)")
     ap.add_argument("--plan-name", help="stable plan identity, paired with --unit when given")
+    ap.add_argument("--lineage-root", help="explicit root of managed unit lineage")
+    ap.add_argument("--import-legacy-identity", action="append", default=[], metavar="HEX")
     ap.add_argument("--unit", help="stable unit identity; plan/unit replaces branch identity")
     ap.add_argument("--timeout", type=int, default=1200,
                     help="per reviewer seconds (default 1200: at 64000 output "
@@ -3293,6 +3489,11 @@ def _main():
         if args.quorum > 2:
             config_error(f"--plan runs two reviewers, so quorum {args.quorum} "
                          f"can never be met. Pass --quorum 2, or drop --plan.")
+    if args.kind == "implementation" and args.plan_name is not None and args.unit is not None:
+        if args.fresh_cycle_from is not None:
+            config_error("--fresh-cycle-from refused for managed identity; mandate committee step applies")
+        if args.round is not None and args.round > MAX_ROUNDS:
+            config_error("MANAGED_BUDGET_EXHAUSTED: mandate committee step applies")
     if args.round is not None:
         if args.round < 1:
             config_error(f"--round must be 1 or more, got {args.round}.")
@@ -3424,6 +3625,8 @@ def _main():
     prompt = build_prompt(body, args.claim, truncated, args.context,
                           args.threat_model, dispositions, args.input_redactions)
 
+    global REVIEW_RESPONSE_BYTES
+    REVIEW_RESPONSE_BYTES = 0
     if args.kind == "implementation":
         reserve_review_round(args)
 
@@ -3441,6 +3644,7 @@ def _main():
 
     if not runnable:
         disarm_watchdog()
+        refund_review_round(args, "REVIEW_UNAVAILABLE", REVIEW_RESPONSE_BYTES)
         journal = record_review_round(args, [], "REVIEW_UNAVAILABLE")
         report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
                   "profile": profile, "profile_reason": profile_reason,
@@ -3477,6 +3681,7 @@ def _main():
             reviewers, prompt, args, truncated, label, len(body))
         if not completed and not failed:
             disarm_watchdog()
+            refund_review_round(args, "REVIEW_UNAVAILABLE", REVIEW_RESPONSE_BYTES)
             journal = record_review_round(args, [], "REVIEW_UNAVAILABLE")
             report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
                       "profile": profile, "profile_reason": profile_reason,

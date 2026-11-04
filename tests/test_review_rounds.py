@@ -4,6 +4,7 @@ from tests.watchdog_guard import guarded_main
 import concurrent.futures
 import importlib.util
 import io
+import itertools
 import json
 import os
 import stat
@@ -691,6 +692,118 @@ class TestClosedRoundGrammar(unittest.TestCase):
             elapsed = time.monotonic() - started
         self.assertGreaterEqual(elapsed, review.ROUND_LOCK_WAIT_SECONDS)
         self.assertLess(elapsed, 20)
+
+
+class TestManagedBudget(unittest.TestCase):
+    setUp = TestRoundReservations.setUp
+    git = TestRoundReservations.git
+    fix = TestRoundReservations.fix
+    invoke = TestRoundReservations.invoke
+    markers = TestRoundReservations.markers
+
+    def identity(self, unit="u", chain=None):
+        with patch.dict(os.environ, {"SWARM_REVIEW_LINEAGE": json.dumps(chain or [unit])}):
+            return review.change_identity(plan_name="plan", unit=unit)
+
+    def reserve(self, n, chain=("u",), explicit=()):
+        return review.managed_budget(self.identity(chain[-1], chain), n, "standard",
+                                     "plan", chain, explicit)
+
+    def test_rebase_changes_only_unmanaged_identity(self):
+        managed, unmanaged = self.identity(), review.change_identity()
+        self.git("checkout", "--detach", self.base)
+        self.fix()
+        main = self.git("rev-parse", "HEAD")
+        self.git("update-ref", "refs/remotes/origin/main", main)
+        self.git("checkout", "change")
+        self.git("rebase", "origin/main")
+        self.assertEqual(self.identity(), managed)
+        self.assertNotEqual(review.change_identity(), unmanaged)
+        remote = self.git("remote", "get-url", "origin")
+        self.assertEqual(managed, review.identity_hash([remote, ["plan-unit", "plan", "u"]]))
+
+    def test_continuations_share_three_rounds(self):
+        for n, chain in enumerate((("u",), ("u", "u-b"), ("u", "u-b", "u-c")), 1):
+            self.reserve(n, chain)
+        for n in (1, 2, 3, 4):
+            with self.assertRaisesRegex(ValueError, "MANAGED_BUDGET_EXHAUSTED.*committee"):
+                self.reserve(n, ("u", "u-b", "u-c"))
+
+    def test_managed_fresh_cycle_refused(self):
+        result = self.invoke(extra=("--plan-name", "plan", "--unit", "u",
+                                    "--fresh-cycle-from", "standard"))
+        self.assertEqual(result[0], 4, result[1:3])
+        self.assertIn("--fresh-cycle-from refused for managed", result[2])
+        self.assertEqual(result[3], [])
+
+    def test_lineage_refusals_and_explicit_root(self):
+        for raw, named in (("{}", "malformed"), ("[]", "malformed"),
+                           ('["u", "u"]', "cycle"), ('["v"]', "endpoint"),
+                           ('[null]', "malformed"), ('[', "malformed")):
+            with self.subTest(raw=raw), patch.dict(os.environ, {"SWARM_REVIEW_LINEAGE": raw}):
+                with self.assertRaisesRegex(ValueError, "SWARM_REVIEW_LINEAGE.*" + named):
+                    review.change_identity(plan_name="plan", unit="u")
+        with patch.dict(os.environ, {"SWARM_REVIEW_LINEAGE": '["root", "u"]'}):
+            with self.assertRaisesRegex(ValueError, "--lineage-root conflicts"):
+                review.change_identity(plan_name="plan", unit="u", lineage_root="other")
+            self.assertEqual(review.review_lineage("u", "root"), ["root", "u"])
+
+    def legacy(self, unit, count):
+        remote = self.git("remote", "get-url", "origin")
+        key = review.identity_hash([remote, self.base, ["plan-unit", "plan", unit]])
+        for n in range(1, count + 1):
+            review.reserve_round(key, n, "standard")
+        return key
+
+    def test_exhaustive_legacy_import_and_idempotence(self):
+        # Finite bound: none, one, two attributable ledgers, one ambiguous;
+        # itertools product of 0..3 charges per ledger, no random sampling.
+        for units in ((), ("u",), ("u", "u-b"), ("unknown",)):
+            for counts in itertools.product(range(4), repeat=len(units)):
+                with self.subTest(units=units, counts=counts), tempfile.TemporaryDirectory() as home:
+                    with patch.dict(os.environ, {"XDG_STATE_HOME": home}):
+                        keys = [self.legacy(u, n) for u, n in zip(units, counts)]
+                        chain = ("u", "u-b")
+                        total = sum(counts)
+                        if units == ("unknown",) and total:
+                            with self.assertRaisesRegex(ValueError, "LEGACY_IDENTITY_AMBIGUOUS.*--import-legacy-identity"):
+                                self.reserve(total + 1, chain)
+                            explicit = keys
+                        else:
+                            explicit = ()
+                        for _ in range(2):
+                            if total >= 3:
+                                with self.assertRaisesRegex(ValueError, "MANAGED_BUDGET_EXHAUSTED"):
+                                    self.reserve(total + 1, chain, explicit)
+                            elif _ == 0:
+                                self.reserve(total + 1, chain, explicit)
+                            else:
+                                with self.assertRaisesRegex(ValueError, "managed --round must be"):
+                                    self.reserve(total + 1, chain, explicit)
+                        ledger = review.round_ledger_root() / self.identity("u-b", chain)
+                        events = [json.loads(p.read_text()) for p in ledger.glob("event-*.json")]
+                        imports = [e for e in events if e["type"] == "import"]
+                        self.assertEqual(sum(e["count"] for e in imports), total)
+                        self.assertEqual(len(imports), sum(n > 0 for n in counts))
+
+    def test_refund_outcomes_bytes_and_persistent_retry(self):
+        from types import SimpleNamespace
+        for state, count in itertools.product(review.STATES, (0, 1)):
+            with self.subTest(state=state, response_bytes=count), tempfile.TemporaryDirectory() as home:
+                with patch.dict(os.environ, {"XDG_STATE_HOME": home}):
+                    record = self.reserve(1)
+                    args = SimpleNamespace(budget_reservation=record)
+                    review.refund_review_round(args, state, count)
+                    ledger = review.round_ledger_root() / record["identity"]
+                    if state == "REVIEW_UNAVAILABLE" and count == 0:
+                        before = {p.name: p.read_bytes() for p in ledger.glob("event-*.json")}
+                        self.reserve(1)
+                        self.assertTrue(any(json.loads(b)["type"] == "refund" for b in before.values()))
+                        for name, data in before.items():
+                            self.assertEqual((ledger / name).read_bytes(), data)
+                    else:
+                        with self.assertRaisesRegex(ValueError, "managed --round must be"):
+                            self.reserve(1)
 
 
 if __name__ == "__main__":

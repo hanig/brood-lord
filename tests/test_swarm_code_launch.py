@@ -1,6 +1,7 @@
 """Code-launch extraction preserves exports and patch delivery."""
 
 import ast
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -122,6 +123,29 @@ class TestCodeLaunchExtraction(unittest.TestCase):
             Path(directory, "sitecustomize.py").write_text("import ssl\n")
             with mock.patch.dict(os.environ, {"PYTHONPATH": directory}):
                 self.test_standalone_offline_import()
+
+
+class TestReviewLineageLaunch(unittest.TestCase):
+    def test_three_unit_chain_reaches_launch_environment(self):
+        from tests.test_attempt_worktrees import TestPerAttemptWorktrees, code_unit, paseo_resolvable
+        fixture = TestPerAttemptWorktrees()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        units = [code_unit(fixture.repo, uid) for uid in ("u", "u-b", "u-c")]
+        for index in (1, 2):
+            units[index]["continuation_of"] = units[index - 1]["id"]
+        chain = S.SPR.review_lineage({"units": units}, "u-c")
+        with paseo_resolvable():
+            job, error = S._submit(units[-1], str(fixture.attempt("u-c", "chain")),
+                                   False, {"units": {}}, str(fixture.tmp / "state"),
+                                   review_lineage=chain)
+        self.assertIsNone(error)
+        self.assertTrue(job)
+        argv = fixture.fake.launches[-1]
+        values = [argv[i + 1] for i, v in enumerate(argv) if v == "--env"]
+        lineage = [v.split("=", 1)[1] for v in values if v.startswith("SWARM_REVIEW_LINEAGE=")]
+        self.assertEqual([json.loads(v) for v in lineage], [["u", "u-b", "u-c"]])
+        self.assertIn("SWARM_UNIT_ID=u-c", values)
 
 
 if __name__ == "__main__":
