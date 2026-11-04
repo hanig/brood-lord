@@ -159,7 +159,6 @@ class TestPlanRulesExtraction(unittest.TestCase):
 
 class TestReviewLineage(unittest.TestCase):
     def test_enumerated_plan_lineages(self):
-        # Exhaustive requested structures, all synthetic; no random seed.
         cases = [({}, ["u"]), ({"u": "v"}, ["v", "u"]),
                  ({"u": "missing"}, "missing target"),
                  ({"u": "batch"}, "non-code"), ({"u": "u"}, "self"),
