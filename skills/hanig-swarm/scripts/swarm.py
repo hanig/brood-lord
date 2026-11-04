@@ -1862,7 +1862,15 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
                         else:
                             us.pop("attempt_codex_homes", None)
                     raise
-                CH.populate(home, auth)
+                try:
+                    CH.populate(home, auth)
+                except CH.HomeError:
+                    # This failure is before Paseo can receive the launch.
+                    # Its unused home can be cleaned while the worktree stays
+                    # retained for lack of an inspectable agent.
+                    home_meta["unlaunched"] = True
+                    SS.save_state(state_dir, state)
+                    raise
             except (CH.HomeError, CP.PathPolicyError) as exc:
                 return None, str(exc)
             argv += ["--env", f"CODEX_HOME={home}"]

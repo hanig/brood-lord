@@ -285,17 +285,25 @@ def _cleanup_codex_home(state, u, attempt, report, state_dir):
 
     Callers establish terminality (or retry a pending terminal cleanup).
     A missing workspace record needs no preservation; a recorded workspace
-    must have passed preserve-then-archive before its home can be discarded.
+    must have passed preserve-then-archive before its home can be discarded,
+    except an explicitly unlaunched home needs preservation only.
     """
     us = SS._unit_state(state, u["id"])
-    workspaces = us.get("attempt_workspaces") or {}
-    if u.get("kind") == "code" and attempt in workspaces:
-        workspace = workspaces[attempt]
-        if not isinstance(workspace, dict) or not workspace.get("archived"):
-            return
     meta = (us.get("attempt_codex_homes") or {}).get(attempt)
     if not isinstance(meta, dict) or meta.get("removed"):
         return
+    workspaces = us.get("attempt_workspaces") or {}
+    if u.get("kind") == "code" and attempt in workspaces:
+        workspace = workspaces[attempt]
+        if not isinstance(workspace, dict):
+            return
+        if not workspace.get("archived"):
+            # A home whose population failed before launch has no agent
+            # using it. Preserve the checkout, but allow this unused runtime
+            # home to follow its existing cleanup path.
+            if not (meta.get("unlaunched") is True
+                    and workspace.get("recovery_snapshot") == "restore-checked"):
+                return
     meta["cleanup_pending"] = True
     meta["cleanup_attempts"] = int(meta.get("cleanup_attempts") or 0) + 1
     if state_dir is None:

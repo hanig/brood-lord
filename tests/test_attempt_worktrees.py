@@ -762,7 +762,7 @@ class TestPerAttemptWorktrees(unittest.TestCase):
              "--unit", "code", "--attempt", attempt.name, "--agent", agent]])
         observed = [json.loads(line) for line in events.read_text().splitlines()]
         self.assertEqual([event["argv"][0] for event in observed],
-                         ["wait", "inspect"])
+                         ["wait", "inspect", "inspect"])
         self.assertTrue(all(event["pid"] != os.getpid() for event in observed))
         state = S.load_state(args.state_dir)
         self.assertEqual(
@@ -979,6 +979,27 @@ class TestPerAttemptWorktrees(unittest.TestCase):
             False, max_new=1)
         self.assertEqual(dispatched, 1, report)
         self.assertEqual(bind_calls, [(str(attempt), "job-1")])
+
+    def test_unlaunched_home_cleans_but_unknown_agent_worktree_is_retained(self):
+        attempt = self.attempt("code", "population-fails")
+        state = {"units": {}}
+        unit = code_unit(self.repo)
+        with mock.patch.object(S.CH, "populate", side_effect=S.CH.HomeError("cannot populate")):
+            job, error = self.submit(unit, attempt, False, state)
+        self.assertIsNone(job)
+        self.assertIn("cannot populate", error)
+        self.assertEqual(self.fake.launches, [])
+        state_dir = str(self.tmp / "state")
+        durable = S.load_state(state_dir)
+        us = durable["units"]["code"]
+        workspace = Path(us["attempt_workspaces"][attempt.name]["path"])
+        home = Path(us["attempt_codex_homes"][attempt.name]["path"])
+        (workspace / "untracked").write_text("keep this work")
+        S._archive_code_worktree(durable, unit, str(attempt), [], state_dir)
+        self.assertFalse(home.exists())
+        self.assertEqual((workspace / "untracked").read_text(), "keep this work")
+        self.assertIn("unknown", us["attempt_workspaces"][attempt.name]["cleanup_liveness"])
+        self.assertIn(attempt.name, us["attempt_recovery_snapshots"])
 
     def test_terminal_cleanup_preserves_then_removes_worktree_and_keeps_branch(self):
         attempt = self.attempt("code", "cleanup")
