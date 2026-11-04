@@ -790,6 +790,14 @@ class TestManagedBudget(unittest.TestCase):
         self.reserve(2, ("v",))
         self.reserve(1)
 
+    def test_uncertain_http_read_stays_charged(self):
+        error = review.urllib.error.HTTPError("https://example.invalid", 400, "fixture", {}, None)
+        review.REVIEW_BYTES = 0
+        with patch.object(error, "read", side_effect=OSError("uncertain")), \
+             patch.object(review.urllib.request, "urlopen", side_effect=error):
+            review._post("https://example.invalid", {}, {}, 1, retries=1)
+        self.assertGreater(review.REVIEW_BYTES, 0)
+
     def test_cli_refund_requires_zero_transport_bytes(self):
         flags = ("--plan-name", "plan", "--unit", "u")
         for _ in range(2):
@@ -801,7 +809,7 @@ class TestManagedBudget(unittest.TestCase):
                           side_effect=lambda *a, **kw: io.BytesIO(b"partial")):
             result = self.invoke(extra=flags, response=response)
         self.assertEqual(result[0], 2, result[1:3])
-        self.assertGreater(review.REVIEW_RESPONSE_BYTES, 0)
+        self.assertGreater(review.REVIEW_BYTES, 0)
         self.assertEqual(self.invoke(extra=flags, offline=True)[0], 4)
 
     def test_refund_outcomes_bytes_and_persistent_retry(self):
