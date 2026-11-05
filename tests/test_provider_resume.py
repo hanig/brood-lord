@@ -304,7 +304,8 @@ class ProviderResumeTests(Checks):
           if "flagged for possible cybersecurity risk" in cfg.get("message", "").lower():
             self.assertTrue(h.work.exists())
           else:
-            self.assertFalse(h.work.exists())
+            self.assertTrue(h.work.exists())
+            self.contains("cleanup_liveness", h.us()["attempt_workspaces"][h.attempt.name])
 
   def test_changed_observation(self):
     for stage in ("snapshot", "charge"):
@@ -315,7 +316,13 @@ class ProviderResumeTests(Checks):
                  else dict(change_at=2, fresh_status=status, fresh_message="invalid model"))
           h.cli(**cfg)
           h.failed()
-          self.assertFalse(h.work.exists())
+          # Snapshot-stage changes affect only the resume probe in this fake;
+          # the cleanup inspection still reads cfg.status (error). Charge-stage
+          # switches update cfg.status, so settled values permit cleanup.
+          retained = stage == "snapshot" or status in ("running", "unreadable", "error")
+          self.eq(h.work.exists(), retained)
+          if retained:
+            self.contains("cleanup_liveness", h.us()["attempt_workspaces"][h.attempt.name])
 
   def test_sigkill_boundaries(self):
     for boundary, lost, first in (("before_charge", 0, 0), ("after_charge", 1, 0), ("after_send", 1, 1)):

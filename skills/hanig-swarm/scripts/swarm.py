@@ -1862,7 +1862,12 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
                         else:
                             us.pop("attempt_codex_homes", None)
                     raise
-                CH.populate(home, auth)
+                try:
+                    CH.populate(home, auth)
+                except CH.HomeError:
+                    home_meta["unlaunched"] = True
+                    SS.save_state(state_dir, state)
+                    raise
             except (CH.HomeError, CP.PathPolicyError) as exc:
                 return None, str(exc)
             argv += ["--env", f"CODEX_HOME={home}"]
@@ -1890,6 +1895,9 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
         rec = SW._paseo_json(out) or {}
         agent = (rec.get("agentId") or rec.get("AgentId")
                  or rec.get("id") or rec.get("Id"))
+        if agent:
+            SS._unit_state(state, u["id"]).setdefault(
+                "attempt_cleanup_agents", {})[attempt] = str(agent)
         reported_workspace = rec.get("cwd") or rec.get("Cwd")
         workspace = reuse_workspace
         workspace_id = (SCL._paseo_workspace_id(out)
@@ -1998,6 +2006,9 @@ def maybe_continue(state_dir, uid, u, us, report, state=None):
                     and entry.get("status") == "pending"
                     and entry.get("sent") is None), None)
     if pending is not None:
+        if pending.get("agent_id") != str(agent):
+            report.append(f"{uid}: retained: continuation agent mismatch")
+            return False
         if pending.get("prompt_sha256") != prompt_digest:
             report.append(
                 f"{uid}: refusing to retry pending continuation "
@@ -2023,13 +2034,20 @@ def maybe_continue(state_dir, uid, u, us, report, state=None):
         # before the result is saved, Paseo offers no idempotency key, so a
         # retry can duplicate the prompt; exactly-once delivery is not
         # available across that boundary.
-        SS.save_state(state_dir, state)
+    ambiguous_retry = pending is not None
+    entry["delivery_unacknowledged"] = True
+    entry["active_since_send"] = False
+    entry["settled_since_send"] = False
+    entry["settle_recovered"] = False
+    SS.save_state(state_dir, state)
     rc, out, err = U.run(["paseo", "send", str(agent), prompt], timeout=120)
+    entry["delivery_unacknowledged"] = ambiguous_retry or rc != 0
     entry["sent"] = rc == 0
     entry["status"] = "sent" if rc == 0 else "failed"
     if rc != 0:
         entry["error"] = (err or out or "").strip()[:200]
     else:
+        us["incomplete_since"] = time.time()
         SS._set_unit_state(us, "RUNNING")
     SS.save_state(state_dir, state)
     if rc != 0:
@@ -2723,6 +2741,11 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
         # to settle, an attempt still lacking a verdict IS a failure -- of
         # evidence, which is a different thing from the command failing, so it
         # gets its own name rather than being called FAILED.
+        if u.get("kind") == "code" and rc == RUNNING:
+            for entry in us.get("continuations", []):
+                if (isinstance(entry, dict)
+                        and entry.get("agent_id") == str(us.get("job_id"))):
+                    entry["active_since_send"] = True
         if rc == NEEDS_HUMAN:
             # Nothing is wrong and nothing will progress until a person acts.
             # It must NOT accrue toward the settle window: turning "waiting for
@@ -2730,6 +2753,15 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
             # agent and its context because nobody was at the keyboard.
             us.pop("incomplete_since", None)
         if rc == INCOMPLETE:
+            # Recover the clock once for an unacknowledged send.
+            for entry in us.get("continuations", []):
+                if (isinstance(entry, dict)
+                        and entry.get("agent_id") == str(us.get("job_id"))
+                        and entry.get("status") == "pending"
+                        and entry.get("sent") is None
+                        and not entry.get("settle_recovered")):
+                    us["incomplete_since"] = time.time()
+                    entry["settle_recovered"] = True
             first = us.get("incomplete_since")
             if first is None:
                 us["incomplete_since"] = time.time()

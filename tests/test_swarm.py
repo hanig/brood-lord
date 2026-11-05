@@ -1235,5 +1235,85 @@ class TestTerminalWatchWaitsWithoutADeadline(unittest.TestCase):
             unit.run(["/bin/echo", "x"], timeout=30 * 24 * 60 * 60)
 
 
+
+class TestContinuationSettleClock(Base):
+    def test_successful_send_grants_a_full_new_settle_window(self):
+        self.check_window(False)
+
+    def test_crash_after_send_recovers_the_settle_window(self):
+        self.check_window(True)
+
+    def test_running_check_records_only_the_matching_continuation(self):
+        from unittest import mock
+        S = swarm
+        attempt = str(self.tmp / "attempt")
+        entries = [{"agent_id": agent, "sent": None}
+                   for agent in ("fixture-agent", "old-agent")]
+        us = {"state": "RUNNING", "attempt_dir": attempt,
+              "job_id": "fixture-agent", "attempts": [attempt],
+              "gpu_hours": 0, "continuations": entries}
+        state = {"schema_version": 1, "units": {"code": us}}
+        sd = str(self.tmp / "state")
+        self.assertTrue(S.acquire_lease(sd)[0])
+        self.addCleanup(S.release_lease, sd)
+        with mock.patch.object(S.SS, "trusted_launch_facts", return_value={"fixture": True}), \
+             mock.patch.object(S.SE, "_check", return_value=(S.RUNNING, "", "")):
+            S.advance({"name": "fixture", "units": [{"id": "code", "kind": "code"}]},
+                      state, sd, str(self.tmp / "runs"), False, max_new=0)
+        saved = S.load_state(sd)["units"]["code"]["continuations"]
+        self.assertTrue(saved[0]["active_since_send"])
+        self.assertNotIn("active_since_send", saved[1])
+
+    def check_window(self, crash):
+        from unittest import mock
+        S = swarm
+        u = {"id": "code", "kind": "code", "continuation": {"max": 1}}
+        attempt = str(self.tmp / "attempt")
+        us = {"state": "INCOMPLETE", "attempt_dir": attempt,
+              "job_id": "fixture-agent", "attempts": [attempt],
+              "gpu_hours": 0, "incomplete_since": 1}
+        state = {"schema_version": 1, "units": {"code": us}}
+        state_dir = str(self.tmp / "state")
+        self.assertTrue(S.acquire_lease(state_dir)[0])
+        self.addCleanup(S.release_lease, state_dir)
+        now = 100000
+        with mock.patch.object(S.U, "run", return_value=(0, "", "")), \
+             mock.patch.object(S.SS, "trusted_launch_facts",
+                               return_value={"fixture": True}), \
+             mock.patch.object(S.SE, "_receipt_reason",
+                               return_value=S.U.REASON_NO_OUTPUTS), \
+             mock.patch.object(S.SE, "_check",
+                               return_value=(S.INCOMPLETE, "", "")), \
+             mock.patch.object(S.time, "time", return_value=now) as clock:
+            if crash:
+                save = S.SS.save_state
+                def crash_after_send(*args):
+                    if us["continuations"][-1]["sent"] is True:
+                        raise RuntimeError("crash before saving send result")
+                    save(*args)
+                with mock.patch.object(S.SS, "save_state", side_effect=crash_after_send):
+                    with self.assertRaisesRegex(RuntimeError, "crash before saving"):
+                        S.maybe_continue(state_dir, "code", u, us, [], state)
+                state = S.load_state(state_dir)
+                us = state["units"]["code"]
+                S.U.run.return_value = (127, "", "retry send timed out")
+                now += 1
+                clock.return_value = now
+                S.advance({"name": "fixture", "units": [u]}, state,
+                              state_dir, str(self.tmp / "runs"), False, max_new=0)
+                self.assertEqual(us["state"], "INCOMPLETE")
+            else:
+                self.assertTrue(S.maybe_continue(state_dir, "code", u, us, [], state))
+                self.assertEqual(S.load_state(state_dir)["units"]["code"][
+                    "incomplete_since"], now)
+            for elapsed, expected in ((1, "INCOMPLETE"),
+                                      (S.SETTLE_S, "INCOMPLETE"),
+                                      (S.SETTLE_S + 1, "FAILED")):
+                clock.return_value = now + elapsed
+                observed = S.advance({"name": "fixture", "units": [u]}, state,
+                              state_dir, str(self.tmp / "runs"), False, max_new=0)
+                self.assertEqual(us["state"], expected, repr(observed))
+                self.assertEqual(len(us["continuations"]), 1)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
