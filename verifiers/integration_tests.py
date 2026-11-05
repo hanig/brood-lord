@@ -143,7 +143,7 @@ def run_suite(root, selected, workers=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, add_help=False)
     parser.add_argument('--workers', type=int, help='lower the affinity-bounded worker count')
     args = parser.parse_args()
     try:

@@ -55,8 +55,10 @@ class TestParallelVerifier(unittest.TestCase):
 
     def test_cli_cannot_report_success_without_executing_modules(self):
         self.write('tests/test_fail.py', PASS.replace('pass', 'self.fail("must execute")'))
-        result = self.run_verifier('--discover-only')
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        for option in ('--discover-only', '--help'):
+            with self.subTest(option=option):
+                result = self.run_verifier(option)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_discovery_exit_zero_before_manifest_is_failure(self):
         self.write('tests/test_a.py', 'raise SystemExit(0)\n')
