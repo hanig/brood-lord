@@ -2745,6 +2745,8 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
             for entry in us.get("continuations", []):
                 if (isinstance(entry, dict)
                         and entry.get("agent_id") == str(us.get("job_id"))):
+                    if not entry.get("active_since_send"):
+                        entry["settled_since_send"] = False
                     entry["active_since_send"] = True
         if rc == NEEDS_HUMAN:
             # Nothing is wrong and nothing will progress until a person acts.

@@ -1247,7 +1247,7 @@ class TestContinuationSettleClock(Base):
         from unittest import mock
         S = swarm
         attempt = str(self.tmp / "attempt")
-        entries = [{"agent_id": agent, "sent": None}
+        entries = [{"agent_id": agent, "sent": None, "settled_since_send": True}
                    for agent in ("fixture-agent", "old-agent")]
         us = {"state": "RUNNING", "attempt_dir": attempt,
               "job_id": "fixture-agent", "attempts": [attempt],
@@ -1262,6 +1262,7 @@ class TestContinuationSettleClock(Base):
                       state, sd, str(self.tmp / "runs"), False, max_new=0)
         saved = S.load_state(sd)["units"]["code"]["continuations"]
         self.assertTrue(saved[0]["active_since_send"])
+        self.assertFalse(saved[0]["settled_since_send"])
         self.assertNotIn("active_since_send", saved[1])
 
     def check_window(self, crash):

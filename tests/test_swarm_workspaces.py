@@ -276,12 +276,13 @@ class TestCleanupLiveness(unittest.TestCase):
 
     def test_unacknowledged_delivery_requires_active_then_settled(self):
         # Terra's queued-send counterexample: idle cannot exclude queued work.
-        # Finite bound: both ambiguous outcomes x six idle observations.
-        for sent in (None, False):
-            with self.subTest(sent=sent), tempfile.TemporaryDirectory() as d:
+        # Bound: three legacy send outcomes x six idle observations, plus stale settlement.
+        for sent, stale in ((None, False), (False, False), (True, False), (True, True)):
+            with self.subTest(sent=sent, stale=stale), tempfile.TemporaryDirectory() as d:
                 root = Path(d)
                 unit, attempt, tree, meta, us, state = self.continuation_fixture(root)
-                entry = {"agent_id": "agent", "sent": sent, "status": "pending"}
+                entry = {"agent_id": "agent", "sent": sent, "status": "pending",
+                         "settled_since_send": stale}
                 us["continuations"] = [entry]
                 status = ["idle"]
                 def service(argv, **kwargs):
@@ -294,7 +295,7 @@ class TestCleanupLiveness(unittest.TestCase):
                     SW._archive_code_worktree(state, unit, str(attempt), [],
                                               str(root / "state"))
                 with mock.patch.object(S.U, "run", side_effect=service):
-                    for _ in range(6):
+                    for _ in range(0 if stale else 6):
                         cleanup()
                         self.assertTrue(tree.exists())
                         self.assertFalse(entry.get("settled_since_send"))
@@ -302,8 +303,10 @@ class TestCleanupLiveness(unittest.TestCase):
                     status[0] = "running"
                     cleanup()
                     self.assertTrue(tree.exists())
+                    self.assertFalse(entry.get("settled_since_send"))
                     status[0] = "idle"
                     cleanup()
+                    self.assertTrue(tree.exists())
                     self.assertTrue(entry["settled_since_send"])
                     cleanup()
                     self.assertFalse(tree.exists())
@@ -337,14 +340,14 @@ class TestCleanupLiveness(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             unit, attempt, tree, meta, us, state = self.continuation_fixture(root)
-            for status in ("running", "error", "unknown"):
+            for status in ("running", "error", "unknown", ""):
                 with mock.patch.object(S.U, "run", return_value=(
-                        0, json.dumps({"status": status}), "")):
+                        0, json.dumps({"Status": status}), "")):
                     SW._archive_code_worktree(state, unit, str(attempt), [],
                                               str(root / "state"))
             observations = meta["cleanup_liveness_observations"]
             self.assertEqual([o["status"] for o in observations],
-                             ["running", "error", "unknown"])
+                             ["running", "error", "unknown", ""])
             self.assertTrue(all(o["agent_id"] == "agent" for o in observations))
             saved = S.load_state(str(root / "state"))["units"]["code"]
             self.assertEqual(saved["attempt_workspaces"]["attempt"]

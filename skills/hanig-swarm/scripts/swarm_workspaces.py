@@ -399,7 +399,7 @@ def _preserve_and_archive_code_worktree(state, u, unit_dir, report, state_dir=No
             rc, out, err = U.run(
                 ["paseo", "inspect", "--json", str(agent)], timeout=60)
             rec = _paseo_json(out) or {}
-            status = rec.get("Status") or rec.get("status")
+            status = rec.get("Status") if "Status" in rec else rec.get("status")
             settled = (rc == 0 and isinstance(status, str)
                        and status in U.PASEO_LIFECYCLE
                        and U.PASEO_LIFECYCLE[status] is None
@@ -409,15 +409,17 @@ def _preserve_and_archive_code_worktree(state, u, unit_dir, report, state_dir=No
                        if isinstance(entry, dict)
                        and (not entry.get("settled_since_send")
                             or ((entry.get("sent") is not True
-                                 or entry.get("delivery_unacknowledged"))
+                                 or entry.get("delivery_unacknowledged", True))
                                 and not entry.get("active_since_send")))]
             mismatch = any(entry.get("agent_id") != str(agent)
                            for entry in pending)
             if not mismatch and rc == 0 and status == "running":
                 for entry in pending:
+                    if not entry.get("active_since_send"):
+                        entry["settled_since_send"] = False
                     entry["active_since_send"] = True
             ambiguous = any((entry.get("sent") is not True
-                             or entry.get("delivery_unacknowledged"))
+                             or entry.get("delivery_unacknowledged", True))
                             and not entry.get("active_since_send")
                             for entry in pending)
             if mismatch:
