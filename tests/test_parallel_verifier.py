@@ -175,6 +175,13 @@ class TestParallelVerifier(unittest.TestCase):
         self.hook('1 if pattern else 2')
         result = self.passing_run()
         self.assertIn('Ran 2 tests', result.stderr)
+        self.write('tests/test_hook.py', PASS + HOOK +
+                   '    T.test_extra = T.test_ok\n'
+                   '    return loader.loadTestsFromTestCase(T) if pattern is None else suite\n')
+        self.passing_run()
+        self.write('tests/test_extra.py', 'import sys\n' + PASS +
+                   'if sys.argv[-1] == \"test_extra\": T.test_extra = T.test_ok\n')
+        self.assertNotEqual(self.run_verifier().returncode, 0)
 
     def test_bootstrap_dependencies_and_program_ownership(self):
         local_json = 'import json\n' + PASS.replace('pass', 'self.assertEqual(json.VALUE, 1)')

@@ -114,6 +114,10 @@ else:
     class ReportRunner(unittest.TextTestRunner):
         resultclass = ReportResult
         def run(self, suite):
+            def test_ids(test):
+                return [test.id()] if unittest.suite._isnotsuite(test) else [
+                    name for child in test for name in test_ids(child)]
+            extra = test_ids(suite) if callable(getattr(sys.modules.get(destination), 'load_tests', None)) else []
             output, stream = [], self.stream
             class Tee:
                 def write(self, text):
@@ -124,7 +128,7 @@ else:
             self.stream = unittest.runner._WritelnDecorator(Tee())
             result = super().run(suite)
             with open(report, 'w') as target:
-                target.write(ascii((''.join(output), result.recorded, result.fixture_skips)))
+                target.write(ascii((''.join(output), result.recorded, result.fixture_skips, extra)))
             return result
     def execute(program):
         if program is owner:
@@ -189,7 +193,7 @@ def run_module(root, module):
         report = Path(tmp) / 'summary.txt'
         child = subprocess.run([sys.executable, '-B', '-c', BOOTSTRAP, 'module', module, str(report)],
                                cwd=root, capture_output=True, text=True, errors='replace')
-        recorded = ast.literal_eval(report.read_text()) if report.exists() else ('', [], [])
+        recorded = ast.literal_eval(report.read_text()) if report.exists() else ('', [], [], [])
         return child, recorded
 
 
@@ -213,7 +217,7 @@ def run_suite(root, selected, workers=None):
             name = futures[future]
             completed.append(name)
             try:
-                child, (summary, recorded, fixture_skips) = future.result()
+                child, (summary, recorded, fixture_skips, extra) = future.result()
                 output = child.stdout + '\n' + child.stderr
                 print(name + ':\n' + output, file=sys.stderr)
                 counts = re.findall(r'^Ran (\d+) tests? in .+$', summary, re.MULTILINE)
@@ -222,7 +226,7 @@ def run_suite(root, selected, workers=None):
                 missing = unaccounted(selected, name, recorded, fixture_skips)
                 if missing:
                     print('ERROR: {}: unaccounted test ids: {!r}'.format(name, missing), file=sys.stderr)
-                if child.returncode or missing:
+                if child.returncode or missing or set(recorded) - set(selected.get(name, [])) - set(extra):
                     failures += 1
             except Exception as exc:
                 print('ERROR: {}: {}'.format(name, exc), file=sys.stderr)
