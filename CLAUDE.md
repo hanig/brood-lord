@@ -33,7 +33,11 @@ python3 tests/native_agent_validation.py         # release-time host harness, no
 The gate derives implementation identity from origin, target merge-base and branch;
 use `--target REF` for a target other than `origin/main`, or `--plan-name NAME
 --unit UNIT` for a detached checkout. Round 1 starts a new identity only; use the
-next round and `--dispositions FILE` for subsequent reviews.
+next round and `--dispositions FILE` for subsequent reviews. The gate counts
+per identity; the orchestrator tracks three substantive rounds per logical
+plan unit across attempts and continuations by hand in the plan's PLAN.md
+round ledger. A continuation branch is a new gate identity, not a fresh
+lineage budget; exhaustion invokes the mandate's committee step.
 
 `python3 -m unittest tests.test_review` and discovery that includes
 `test_review.py` run the whole review module through the supervised worker.
