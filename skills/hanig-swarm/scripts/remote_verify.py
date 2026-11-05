@@ -97,14 +97,17 @@ def read_policy(state_dir):
         if remote["executor"] == "slurm":
             cfg = remote.get("slurm")
             if (not isinstance(cfg, dict)
-                    or set(cfg) - {"poll_seconds"} != {"partition", "mem", "time"}):
+                    or set(cfg) - {"poll_seconds", "cpus"} != {"partition", "mem", "time"}):
                 raise ValueError("slurm requires partition, mem and time")
+            if "cpus" in cfg and (type(cfg["cpus"]) is not int
+                                  or not 1 <= cfg["cpus"] <= 256):
+                raise ValueError("slurm cpus must be an integer in [1, 256]")
             poll = cfg.get("poll_seconds", SLURM_POLL_SECONDS)
             if (isinstance(poll, bool) or not isinstance(poll, (int, float))
                     or not 0 < poll <= 60):
                 raise ValueError("slurm poll_seconds must be a number in (0, 60]")
             for key, value in cfg.items():
-                if key == "poll_seconds":
+                if key in ("poll_seconds", "cpus"):
                     continue
                 if (not isinstance(value, str) or not re.fullmatch(
                         r"[A-Za-z0-9][A-Za-z0-9_.:-]*", value)):
@@ -669,6 +672,7 @@ def supervise(stage):
             "--partition=" + cfg["partition"],
             "--mem=" + cfg["mem"], "--time=" + cfg["time"],
             "--output=" + str(stage / "job.out"), "--error=" + str(stage / "job.err"),
+            *(["--cpus-per-task=" + str(cfg["cpus"])] if "cpus" in cfg else []),
             str(script)])
         if rc or not re.fullmatch(r"[0-9]+(?:;[A-Za-z0-9_.-]+)?\n?", out):
             raise ValueError("Slurm submission unavailable: " + err[-1000:])

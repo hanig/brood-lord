@@ -3770,6 +3770,41 @@ class TestSlurmReconciliation(unittest.TestCase):
 
 
 class TestSlurmPolicy(unittest.TestCase):
+    def test_cpu_policy_and_submission(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stage = Path(tmp)
+            cfg = {'partition': 'fixture-cpu', 'mem': '2G', 'time': '00:05:00'}
+            policy = {'schema_version': 1, 'verification_host': {
+                'executor': 'slurm', 'ssh_alias': 'fixture-host', 'python': sys.executable,
+                'git': '/fixture/git', 'workdir_root': str(stage), 'slurm': cfg}}
+            path = stage / RV.POLICY
+            # Exhaustive finite boundary/type cases; no random sampling.
+            for value in (1, 256, 0, -1, 257, True, False, 1.0, '1', None):
+                cfg['cpus'] = value
+                path.write_text(json.dumps(policy))
+                with self.subTest(cpus=value):
+                    if type(value) is int and 1 <= value <= 256:
+                        self.assertEqual(RV.read_policy(stage)[0], policy)
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'cpus'):
+                            RV.read_policy(stage)
+            del cfg['cpus']
+            expected = ['sbatch', '--parsable', '--no-requeue',
+                        '--job-name=verify-' + hashlib.sha256(b'cpu-test').hexdigest(),
+                        '--partition=fixture-cpu', '--mem=2G', '--time=00:05:00',
+                        '--output=' + str(stage / 'job.out'),
+                        '--error=' + str(stage / 'job.err')]
+            for value in (None, 1, 256):
+                if value is not None:
+                    cfg['cpus'] = value
+                request = dict(policy, timeout=10, checks=[{}], basis={}, launch_id='cpu-test')
+                (stage / 'request.json').write_text(json.dumps(request))
+                with mock.patch.object(RV, '_command', return_value=(0, '321\n', '')) as submit, \
+                        mock.patch.object(RV, 'scheduler_state', return_value=('COMPLETED', '0:0')):
+                    RV.supervise(stage)
+                suffix = [] if value is None else ['--cpus-per-task=' + str(value)]
+                self.assertEqual(submit.call_args[0][0], expected + suffix + [str(stage / 'job.sh')])
+
     def test_poll_interval_defaults_to_two_seconds(self):
         def request(slurm):
             return {'verification_host': {'executor': 'slurm', 'slurm': slurm}}

@@ -451,6 +451,8 @@ scheduler or run this suite on a cluster login node. The remote root must exist.
 All paths are absolute operator declarations, with no inferred host or username.
 Configuration does not grant authorization. To use a scheduler, set
 `executor: "slurm"` and add a `slurm` object with `partition`, `mem` and `time`.
+Optional `cpus` must be an integer from 1 through 256 (not a boolean); it
+requests `--cpus-per-task=N`. Omitting it leaves the CPU allocation unchanged.
 All three are required plain string tokens; `mem` has no implicit default.
 For example, use `{"partition": "fixture-cpu", "mem": "2G", "time": "00:05:00"}`
 with operator-selected values in the private coordinator policy. The supervisor
