@@ -453,7 +453,9 @@ Configuration does not grant authorization. To use a scheduler, set
 All three are required plain string tokens; `mem` has no implicit default.
 For example, use `{"partition": "fixture-cpu", "mem": "2G", "time": "00:05:00"}`
 with operator-selected values in the private coordinator policy. The supervisor
-only submits and polls; the worker runs inside the allocation.
+only submits and polls; the worker runs inside the allocation. An optional
+`poll_seconds` (a number in (0, 60], default 2) sets the interval between
+scheduler polls; each poll is a squeue/sacct call on the login node.
 
 Local defaults use operator Python and prefer system Git, then absolute operator
 PATH directories. Git/SSH exclude relative entries and symlinks into operated

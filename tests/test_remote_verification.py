@@ -170,8 +170,11 @@ class TestRemoteVerification(unittest.TestCase):
         yield 'local'
 
     def slurm_policy(self):
+        # A short poll keeps the fixture fast; the scheduler fakes answer by
+        # call, not by elapsed time.
         self.policy['verification_host'].update(executor='slurm', slurm={
-            'partition': 'fixture-cpu', 'mem': '2G', 'time': '00:05:00'})
+            'partition': 'fixture-cpu', 'mem': '2G', 'time': '00:05:00',
+            'poll_seconds': 0.05})
         self.save_policy()
 
     def generic_verify(self, target):
@@ -3767,6 +3770,15 @@ class TestSlurmReconciliation(unittest.TestCase):
 
 
 class TestSlurmPolicy(unittest.TestCase):
+    def test_poll_interval_defaults_to_two_seconds(self):
+        def request(slurm):
+            return {'verification_host': {'executor': 'slurm', 'slurm': slurm}}
+        self.assertEqual(RV.SLURM_POLL_SECONDS, 2)
+        self.assertEqual(RV.slurm_poll_seconds(request({'partition': 'p'})), 2)
+        self.assertEqual(RV.slurm_poll_seconds(request({'poll_seconds': 0.05})), 0.05)
+        self.assertEqual(RV.slurm_poll_seconds({'verification_host': {'executor': 'direct'}}), 2)
+
+
     def test_slurm_requires_all_plain_tokens(self):
         with tempfile.TemporaryDirectory() as tmp:
             policy = {'schema_version': 1, 'verification_host': {
@@ -3789,6 +3801,18 @@ class TestSlurmPolicy(unittest.TestCase):
                         path.write_text(json.dumps(policy))
                         with self.assertRaises(ValueError):
                             RV.read_policy(tmp)
+            policy['verification_host']['slurm'] = original
+            for value in (0.25, 1, 60):
+                with self.subTest(poll_seconds=value):
+                    policy['verification_host']['slurm'] = dict(original, poll_seconds=value)
+                    path.write_text(json.dumps(policy))
+                    self.assertEqual(RV.read_policy(tmp)[0], policy)
+            for value in (0, -1, 61, True, '2', None, []):
+                with self.subTest(poll_seconds=value):
+                    policy['verification_host']['slurm'] = dict(original, poll_seconds=value)
+                    path.write_text(json.dumps(policy))
+                    with self.assertRaisesRegex(ValueError, 'poll_seconds'):
+                        RV.read_policy(tmp)
             policy['verification_host']['slurm'] = original
             policy['verification_host']['executor'] = 'direct'
             path.write_text(json.dumps(policy))
