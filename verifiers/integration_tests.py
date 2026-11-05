@@ -145,13 +145,9 @@ def run_suite(root, selected, workers=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workers', type=int, help='lower the affinity-bounded worker count')
-    parser.add_argument('--discover-only', action='store_true', help='emit selected ids as JSON')
     args = parser.parse_args()
     try:
         selected = discover(os.getcwd())
-        if args.discover_only:
-            print(json.dumps(selected, sort_keys=True))
-            return 0
         return run_suite(os.getcwd(), selected, args.workers)
     except (OSError, ValueError) as exc:
         print('ERROR: discovery: {}\nRan 0 tests\nFAILED (discovery=1)'.format(exc), file=sys.stderr)
