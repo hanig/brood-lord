@@ -51,7 +51,7 @@ A finding whose trigger is outside the declared envelope, whose failure is bound
 
 ## Standing rules
 
-- The repository is private, and its history was public until 2026-11-05. Never commit credentials, tokens or secrets; keep hostnames, account names and partition names out of PR titles, bodies and comments. <!-- declaration: delegation.preamble -->
+- The repository is private by owner decision (2026-11-05), and its history was public until then. Never commit credentials, tokens or secrets; keep hostnames, account names and partition names out of PR titles, bodies and comments. <!-- declaration: delegation.preamble -->
 - Never merge, approve or enable auto-merge. Open the PR only after a passing gate and stop; merge decisions belong to the orchestrator. <!-- declaration: delegation.preamble -->
 - Declare the author with `--author {{AUTHOR}}` on every `review.py` or `committee.py` run, and repeat the flag for any coauthors so none reviews its own work. <!-- declaration: delegation.preamble -->
 - Do not read or write the tracker. Do not weaken tests, guards or assertions. <!-- declaration: delegation.preamble -->
