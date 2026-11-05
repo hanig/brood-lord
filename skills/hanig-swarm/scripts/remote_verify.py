@@ -36,6 +36,9 @@ FILES = ("candidate.bundle", "request.json", "remote_verify.py", "verify.py",
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY",
             "NODE_FAIL", "PREEMPTED", "BOOT_FAIL", "DEADLINE", "REVOKED"}
 CLEANUP_RETRY_SECONDS = 20
+# Seconds between scheduler polls, unless the policy's slurm.poll_seconds says
+# otherwise. Each poll is a squeue/sacct call on the login node.
+SLURM_POLL_SECONDS = 2
 CLEANUP_MAX_RETRIES = 3
 
 # Only the fixed coordinator launchers use this private staged entry. Ordinary
@@ -93,9 +96,16 @@ def read_policy(state_dir):
             raise ValueError("remote executor must be direct or slurm")
         if remote["executor"] == "slurm":
             cfg = remote.get("slurm")
-            if not isinstance(cfg, dict) or set(cfg) != {"partition", "mem", "time"}:
+            if (not isinstance(cfg, dict)
+                    or set(cfg) - {"poll_seconds"} != {"partition", "mem", "time"}):
                 raise ValueError("slurm requires partition, mem and time")
+            poll = cfg.get("poll_seconds", SLURM_POLL_SECONDS)
+            if (isinstance(poll, bool) or not isinstance(poll, (int, float))
+                    or not 0 < poll <= 60):
+                raise ValueError("slurm poll_seconds must be a number in (0, 60]")
             for key, value in cfg.items():
+                if key == "poll_seconds":
+                    continue
                 if (not isinstance(value, str) or not re.fullmatch(
                         r"[A-Za-z0-9][A-Za-z0-9_.:-]*", value)):
                     raise ValueError("slurm " + key + " must be a plain token")
@@ -634,6 +644,12 @@ def output_tail(path, limit):
         return ""
 
 
+def slurm_poll_seconds(request):
+    """The policy's polling interval, or the default; read_policy validated it."""
+    return (request["verification_host"].get("slurm") or {}).get(
+        "poll_seconds", SLURM_POLL_SECONDS)
+
+
 def supervise(stage):
     request = json.loads((stage / "request.json").read_text())
     remote = request["verification_host"]
@@ -662,7 +678,8 @@ def supervise(stage):
             state = scheduler_state(job)
             if state or time.monotonic() >= deadline:
                 break
-            time.sleep(min(2, max(0, deadline - time.monotonic())))
+            time.sleep(min(slurm_poll_seconds(request),
+                           max(0, deadline - time.monotonic())))
     try:
         result = json.loads((stage / "result.json").read_text())
     except (OSError, ValueError):
@@ -839,13 +856,13 @@ def cleanup_slurm(stage, request, reconciled):
     # identities, supervision and cancellation history as well as accounting.
     observed = {"job_ids": evidence["job_ids"]}
     try:
-        time.sleep(2)
+        time.sleep(slurm_poll_seconds(request))
         observed = discover_slurm_jobs(request, evidence["job_ids"])
         if observed["scheduler_confirmed"]:
             settled = all(scheduler_state(job) is not None
                           for job in observed["job_ids"])
             if not settled or observed["queued_job_ids"]:
-                time.sleep(2)
+                time.sleep(slurm_poll_seconds(request))
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         observed = dict(observed, scheduler_confirmed=False, discovery_error=str(exc))
     return cleanup_slurm_locked(stage, request, reconciled, observed=observed)
