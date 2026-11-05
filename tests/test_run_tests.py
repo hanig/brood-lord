@@ -1,0 +1,207 @@
+"""scripts/run_tests.py runs the same modules discovery does, isolates each
+one, and fails the run when any module fails or runs nothing."""
+
+import contextlib
+import io
+import importlib.util
+import json
+import os
+import sys
+import tempfile
+import textwrap
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+_spec = importlib.util.spec_from_file_location("run_tests", ROOT / "scripts" / "run_tests.py")
+RT = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(RT)
+
+
+def write_tree(root, files):
+    for name, body in files.items():
+        path = Path(root) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(body))
+
+
+PASSING = '''
+    import unittest
+    class T(unittest.TestCase):
+        def test_ok(self):
+            pass
+        @unittest.skip("demo")
+        def test_skipped(self):
+            pass
+    if __name__ == "__main__":
+        unittest.main()
+'''
+FAILING = '''
+    import unittest
+    class T(unittest.TestCase):
+        def test_bad(self):
+            self.fail("boom")
+'''
+EMPTY = '''
+    import unittest
+'''
+# Fails unless the runner gave it a fresh, private HOME/TMPDIR and no
+# inherited variables.
+ISOLATED = '''
+    import os, tempfile, unittest
+    class T(unittest.TestCase):
+        def test_env(self):
+            self.assertNotIn("RUN_TESTS_LEAK", os.environ)
+            home = os.environ["HOME"]
+            self.assertTrue(tempfile.gettempdir().startswith(os.path.dirname(home)))
+            self.assertEqual(os.listdir(home), [])
+            open(os.path.join(home, "marker"), "w").close()
+'''
+
+
+class TestModuleSet(unittest.TestCase):
+    def test_matches_discovery_default_pattern(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write_tree(tmp, {"test_a.py": "", "testb.py": "", "helper.py": "",
+                             "test-c.py": "", "sub/test_d.py": ""})
+            self.assertEqual(RT.discover_modules(tmp), ["test_a", "testb"])
+
+    def test_tests_has_no_package_subdirectory_discovery_would_recurse_into(self):
+        packages = [str(p.parent.relative_to(ROOT))
+                    for p in (ROOT / "tests").glob("*/__init__.py")]
+        self.assertEqual(packages, [], "discover would load test modules from "
+                         "these packages, and run_tests.py would not")
+
+    def test_discovery_load_agrees_on_a_sample_tree(self):
+        names = set()
+        loader = unittest.TestLoader()
+        with tempfile.TemporaryDirectory() as tmp:
+            write_tree(tmp, {"test_x.py": PASSING, "testy.py": PASSING,
+                             "not_a_test.py": PASSING})
+            sys.path.insert(0, tmp)
+            try:
+                suite = loader.discover(tmp, top_level_dir=tmp)
+            finally:
+                sys.path.remove(tmp)
+                for name in ("test_x", "testy", "not_a_test"):
+                    sys.modules.pop(name, None)
+
+            def walk(s):
+                for item in s:
+                    if isinstance(item, unittest.TestSuite):
+                        walk(item)
+                    else:
+                        names.add(type(item).__module__)
+            walk(suite)
+            self.assertEqual(sorted(names), RT.discover_modules(tmp))
+
+
+class TestScheduling(unittest.TestCase):
+    def test_slowest_first_and_unknown_modules_first(self):
+        durations = {"test_fast": 1.0, "test_slow": 30.0, "test_mid": 5.0}
+        self.assertEqual(
+            RT.schedule(["test_fast", "test_new", "test_slow", "test_mid"], durations),
+            ["test_new", "test_slow", "test_mid", "test_fast"])
+
+    def test_bad_durations_file_means_no_durations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "d.json"
+            path.write_text("{not json")
+            self.assertEqual(RT.load_durations(path), {})
+            path.write_text(json.dumps({"test_a": 2, "test_b": "x"}))
+            self.assertEqual(RT.load_durations(path), {"test_a": 2.0})
+
+
+class TestParse(unittest.TestCase):
+    def test_summaries(self):
+        self.assertEqual(RT.parse_result("...\nRan 3 tests in 0.1s\n\nOK (skipped=2)\n"),
+                         (3, 2, "OK (skipped=2)"))
+        self.assertEqual(
+            RT.parse_result("Ran 1 test in 0.0s\n\nFAILED (failures=1, errors=2)\n"),
+            (1, 0, "FAILED (failures=1, errors=2)"))
+        self.assertEqual(RT.parse_result("Traceback ...\nImportError: x\n"), (0, 0, ""))
+
+
+class TestVerdict(unittest.TestCase):
+    def test_zero_tests_with_exit_zero_is_a_failure(self):
+        # Python 3.9 to 3.11 exit 0 for a module with no tests; 3.12 exits 5.
+        self.assertFalse(RT.module_ok(0, 0))
+        self.assertFalse(RT.module_ok(1, 4))
+        self.assertFalse(RT.module_ok(None, 4))
+        self.assertTrue(RT.module_ok(0, 4))
+
+
+class TestRunModule(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        write_tree(self.root / "tests", {"test_pass.py": PASSING, "test_fail.py": FAILING,
+                                         "test_empty.py": EMPTY, "test_iso.py": ISOLATED})
+
+    def test_outcomes(self):
+        ok = RT.run_module("test_pass", root=self.root)
+        self.assertTrue(ok["ok"], ok["output"])
+        self.assertEqual((ok["ran"], ok["skipped"]), (2, 1))
+        bad = RT.run_module("test_fail", root=self.root)
+        self.assertFalse(bad["ok"])
+        self.assertIn("boom", bad["output"])
+        empty = RT.run_module("test_empty", root=self.root)
+        self.assertFalse(empty["ok"], "a module that runs no tests must fail")
+
+    def test_each_run_gets_a_fresh_private_environment(self):
+        os.environ["RUN_TESTS_LEAK"] = "1"
+        self.addCleanup(os.environ.pop, "RUN_TESTS_LEAK", None)
+        for _ in range(2):  # the marker from the first run must not survive
+            result = RT.run_module("test_iso", root=self.root)
+            self.assertTrue(result["ok"], result["output"])
+
+    def test_timeout_fails_the_module(self):
+        write_tree(self.root / "tests", {"test_slow.py": '''
+            import time, unittest
+            class T(unittest.TestCase):
+                def test_sleep(self):
+                    time.sleep(30)
+        '''})
+        result = RT.run_module("test_slow", timeout=1, root=self.root)
+        self.assertFalse(result["ok"])
+        self.assertIn("timed out", result["output"])
+
+
+class TestMain(unittest.TestCase):
+    def run_main(self, root, argv):
+        saved = (RT.ROOT, RT.TESTS, RT.DURATIONS)
+        RT.ROOT, RT.TESTS = root, root / "tests"
+        RT.DURATIONS = RT.TESTS / "durations.json"
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                code = RT.main(argv)
+        finally:
+            RT.ROOT, RT.TESTS, RT.DURATIONS = saved
+        return code, out.getvalue()
+
+    def test_exit_status_and_durations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_tree(root / "tests", {"test_pass.py": PASSING, "test_fail.py": FAILING})
+            code, out = self.run_main(root, ["-j", "2", "test_pass"])
+            self.assertEqual(code, 0, out)
+            code, out = self.run_main(root, ["-j", "2", "--update-durations"])
+            self.assertEqual(code, 1, out)
+            self.assertIn("FAILED (1 modules: test_fail)", out)
+            self.assertIn("boom", out)
+            recorded = json.loads((root / "tests" / "durations.json").read_text())
+            self.assertEqual(sorted(recorded), ["test_fail", "test_pass"])
+
+    def test_unknown_module_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_tree(root / "tests", {"test_pass.py": PASSING})
+            with self.assertRaises(SystemExit):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.run_main(root, ["test_nope"])
+
+
+if __name__ == "__main__":
+    unittest.main()
