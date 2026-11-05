@@ -493,8 +493,10 @@ gawk-only constructs so it survives an old Linux login node.
 3. **Is andromeda Slurm?** Chimera and lambda both are; andromeda/gefion is
    unconfirmed. If not, `hanig-verified-workflow` needs a scheduler adapter seam
    from the start. `probe.sh` answers this.
-4. **Repository visibility — settled 2026-09-24.** This repository is public by
-   owner decision (2026-09-24). It carries cluster hostnames, partition and
+4. **Repository visibility — settled 2026-11-05.** This repository is private
+   by owner decision (2026-11-05). It was public by owner decision from
+   2026-09-24 until then, so treat everything already pushed as published. It
+   carries cluster hostnames, partition and
    account names, storage layouts and measured host probes; never commit
    credentials, tokens or secrets. Pull-request titles, bodies and comments
    must not add further cluster detail.
