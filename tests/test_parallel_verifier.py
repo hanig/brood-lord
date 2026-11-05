@@ -43,7 +43,9 @@ class TestParallelVerifier(unittest.TestCase):
         for body in (PASS.replace('pass', 'self.fail("intentional")'),
                      PASS.replace('pass', 'raise ValueError("intentional")'),
                      'import absent_r2_fixture_module\n',
-                     PASS.replace('pass', '__import__("sys").exit(0)')):
+                     PASS + '\ndef load_tests(loader, suite, pattern):\n'
+                     '    if pattern is None: __import__("sys").exit(0)\n'
+                     '    return suite\n'):
             with self.subTest(body=body):
                 self.write('tests/test_b.py', body)
                 result = self.run_verifier()
@@ -88,6 +90,20 @@ class TestParallelVerifier(unittest.TestCase):
         result = self.run_verifier()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Ran 2 tests', result.stderr)
+
+    def test_smaller_module_summary_fails(self):
+        self.write('tests/test_hook.py', PASS + '\ndef load_tests(loader, suite, pattern):\n'
+                   '    return unittest.TestSuite([T("test_ok")] * (2 if pattern else 1))\n')
+        result = self.run_verifier()
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Ran 1 test', result.stderr)
+
+    def test_cli_import_path_matches_discovery(self):
+        self.write('tests/test_path.py', 'import os, sys, unittest\n'
+                   'assert sys.path[:2] == [os.path.join(os.getcwd(), "tests"), os.getcwd()]\n'
+                   'assert os.environ["R2_ENV_WITNESS"] == "unchanged"\n' + PASS)
+        with mock.patch.dict(os.environ, {'R2_ENV_WITNESS': 'unchanged'}):
+            self.assertEqual(self.run_verifier().returncode, 0)
 
     def test_coverage_by_identity(self):
         self.write('tests/test_a.py', PASS)
