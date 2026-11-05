@@ -1022,9 +1022,20 @@ class TestAuthoredSkillShape(unittest.TestCase):
         text = next(e["normative_text"] for e in
                     DECLARATION_REGISTRY.load_registry(skill)
                     if e["id"] == "delegation.continuation")
-        for surface in (text, (skill / "references/delegation-evidence.md").read_text(),
-                        (SKILLS.parent / "README.md").read_text()):
+        for surface in (text, (skill / "references/delegation-evidence.md").read_text(encoding="utf-8"),
+                        (SKILLS.parent / "README.md").read_text(encoding="utf-8")):
             self.assertIn("Omit either flag when its update is not needed", surface)
+
+    def test_continuation_guidance_reads_utf8_under_ascii_locale(self):
+        from unittest import mock
+        original = Path.read_text
+        def read(path, *args, **kwargs):
+            if path.suffix == ".md":
+                return (path.read_bytes() + b"\n\xe2\x80\x94").decode(
+                    kwargs.get("encoding") or "ascii")
+            return original(path, *args, **kwargs)
+        with mock.patch.object(Path, "read_text", read):
+            self.test_continuation_guidance_allows_omitting_optional_updates()
 
     def test_g2_continuation_and_default_verification_guidance(self):
         skill = SKILLS / "hanig-orchestrate"
