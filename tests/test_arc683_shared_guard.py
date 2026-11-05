@@ -80,7 +80,9 @@ class TestSharedGuard(unittest.TestCase):
         self.install_policy()
         program = (ROOT / V.MERGE_VERIFIER_PATH).read_text()
         if root_discovery:
-            program = program.replace(', "-s", "tests"', '')
+            discovery = "sys.argv = ['unittest', 'discover', '-s', 'tests']"
+            self.assertIn(discovery, program, "root-discovery fixture must alter the pinned runner")
+            program = program.replace(discovery, "sys.argv = ['unittest', 'discover']")
         self.policy["verifiers"][0]["sha256"] = hashlib.sha256(program.encode()).hexdigest()
         self.target = self.precondition.target_commit({
             V.MERGE_VERIFIER_PATH: program, V.POLICY_FILE: json.dumps(self.policy)})
