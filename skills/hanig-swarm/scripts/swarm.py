@@ -1865,9 +1865,6 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
                 try:
                     CH.populate(home, auth)
                 except CH.HomeError:
-                    # This failure is before Paseo can receive the launch.
-                    # Its unused home can be cleaned while the worktree stays
-                    # retained for lack of an inspectable agent.
                     home_meta["unlaunched"] = True
                     SS.save_state(state_dir, state)
                     raise
@@ -2034,7 +2031,9 @@ def maybe_continue(state_dir, uid, u, us, report, state=None):
         # before the result is saved, Paseo offers no idempotency key, so a
         # retry can duplicate the prompt; exactly-once delivery is not
         # available across that boundary.
-        SS.save_state(state_dir, state)
+    entry["settled_since_send"] = False
+    entry["settle_recovered"] = False
+    SS.save_state(state_dir, state)
     rc, out, err = U.run(["paseo", "send", str(agent), prompt], timeout=120)
     entry["sent"] = rc == 0
     entry["status"] = "sent" if rc == 0 else "failed"
@@ -2042,7 +2041,6 @@ def maybe_continue(state_dir, uid, u, us, report, state=None):
         entry["error"] = (err or out or "").strip()[:200]
     else:
         us["incomplete_since"] = time.time()
-        entry["settled_since_send"] = False
         SS._set_unit_state(us, "RUNNING")
     SS.save_state(state_dir, state)
     if rc != 0:
@@ -2743,6 +2741,15 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
             # agent and its context because nobody was at the keyboard.
             us.pop("incomplete_since", None)
         if rc == INCOMPLETE:
+            # Recover the clock once for an unacknowledged send.
+            for entry in us.get("continuations", []):
+                if (isinstance(entry, dict)
+                        and entry.get("agent_id") == str(us.get("job_id"))
+                        and entry.get("status") == "pending"
+                        and entry.get("sent") is None
+                        and not entry.get("settle_recovered")):
+                    us["incomplete_since"] = time.time()
+                    entry["settle_recovered"] = True
             first = us.get("incomplete_since")
             if first is None:
                 us["incomplete_since"] = time.time()

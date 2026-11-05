@@ -1238,7 +1238,14 @@ class TestTerminalWatchWaitsWithoutADeadline(unittest.TestCase):
 
 class TestContinuationSettleClock(Base):
     def test_successful_send_grants_a_full_new_settle_window(self):
+        self.check_window(False)
+
+    def test_crash_after_send_recovers_the_settle_window(self):
+        self.check_window(True)
+
+    def check_window(self, crash):
         from unittest import mock
+        S = swarm
         u = {"id": "code", "kind": "code", "continuation": {"max": 1}}
         attempt = str(self.tmp / "attempt")
         us = {"state": "INCOMPLETE", "attempt_dir": attempt,
@@ -1246,25 +1253,43 @@ class TestContinuationSettleClock(Base):
               "gpu_hours": 0, "incomplete_since": 1}
         state = {"schema_version": 1, "units": {"code": us}}
         state_dir = str(self.tmp / "state")
-        self.assertTrue(swarm.acquire_lease(state_dir)[0])
-        self.addCleanup(swarm.release_lease, state_dir)
+        self.assertTrue(S.acquire_lease(state_dir)[0])
+        self.addCleanup(S.release_lease, state_dir)
         now = 100000
-        with mock.patch.object(swarm.U, "run", return_value=(0, "", "")), \
-             mock.patch.object(swarm.SS, "trusted_launch_facts",
+        with mock.patch.object(S.U, "run", return_value=(0, "", "")), \
+             mock.patch.object(S.SS, "trusted_launch_facts",
                                return_value={"fixture": True}), \
-             mock.patch.object(swarm.SE, "_receipt_reason",
-                               return_value=swarm.U.REASON_NO_OUTPUTS), \
-             mock.patch.object(swarm.SE, "_check",
-                               return_value=(swarm.INCOMPLETE, "", "")), \
-             mock.patch.object(swarm.time, "time", return_value=now) as clock:
-            self.assertTrue(swarm.maybe_continue(state_dir, "code", u, us, [], state))
-            self.assertEqual(swarm.load_state(state_dir)["units"]["code"][
-                "incomplete_since"], now)
+             mock.patch.object(S.SE, "_receipt_reason",
+                               return_value=S.U.REASON_NO_OUTPUTS), \
+             mock.patch.object(S.SE, "_check",
+                               return_value=(S.INCOMPLETE, "", "")), \
+             mock.patch.object(S.time, "time", return_value=now) as clock:
+            if crash:
+                save = S.SS.save_state
+                def crash_after_send(*args):
+                    if us["continuations"][-1]["sent"] is True:
+                        raise RuntimeError("crash before saving send result")
+                    save(*args)
+                with mock.patch.object(S.SS, "save_state", side_effect=crash_after_send):
+                    with self.assertRaisesRegex(RuntimeError, "crash before saving"):
+                        S.maybe_continue(state_dir, "code", u, us, [], state)
+                state = S.load_state(state_dir)
+                us = state["units"]["code"]
+                S.U.run.return_value = (127, "", "retry send timed out")
+                now += 1
+                clock.return_value = now
+                S.advance({"name": "fixture", "units": [u]}, state,
+                              state_dir, str(self.tmp / "runs"), False, max_new=0)
+                self.assertEqual(us["state"], "INCOMPLETE")
+            else:
+                self.assertTrue(S.maybe_continue(state_dir, "code", u, us, [], state))
+                self.assertEqual(S.load_state(state_dir)["units"]["code"][
+                    "incomplete_since"], now)
             for elapsed, expected in ((1, "INCOMPLETE"),
-                                      (swarm.SETTLE_S, "INCOMPLETE"),
-                                      (swarm.SETTLE_S + 1, "FAILED")):
+                                      (S.SETTLE_S, "INCOMPLETE"),
+                                      (S.SETTLE_S + 1, "FAILED")):
                 clock.return_value = now + elapsed
-                observed = swarm.advance({"name": "fixture", "units": [u]}, state,
+                observed = S.advance({"name": "fixture", "units": [u]}, state,
                               state_dir, str(self.tmp / "runs"), False, max_new=0)
                 self.assertEqual(us["state"], expected, repr(observed))
                 self.assertEqual(len(us["continuations"]), 1)
