@@ -13,6 +13,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location("run_tests", ROOT / "scripts" / "run_tests.py")
@@ -59,6 +60,38 @@ ISOLATED = '''
             self.assertEqual(os.listdir(home), [])
             open(os.path.join(home, "marker"), "w").close()
 '''
+
+
+class TestDefaultWorkers(unittest.TestCase):
+    def test_one_cpu_affinity_overrides_208_machine_cpus(self):
+        with mock.patch.object(os, "sched_getaffinity", create=True,
+                               return_value={7}) as affinity, \
+                mock.patch.object(os, "cpu_count", return_value=208) as count:
+            self.assertEqual(RT.default_workers(), 1)
+            affinity.assert_called_once_with(0)
+            count.assert_not_called()
+
+    def test_eight_cpu_affinity(self):
+        with mock.patch.object(os, "sched_getaffinity", create=True,
+                               return_value=set(range(8))), \
+                mock.patch.object(os, "cpu_count", return_value=208):
+            self.assertEqual(RT.default_workers(), 8)
+
+    def test_empty_affinity_still_gives_one_worker(self):
+        with mock.patch.object(os, "sched_getaffinity", create=True,
+                               return_value=set()):
+            self.assertEqual(RT.default_workers(), 1)
+
+    def test_without_affinity_uses_cpu_count_with_positive_floor(self):
+        with mock.patch.object(os, "sched_getaffinity", create=True) as affinity:
+            del os.sched_getaffinity
+            try:
+                for count, expected in ((4, 4), (None, 1), (0, 1), (-1, 1)):
+                    with self.subTest(cpu_count=count), \
+                            mock.patch.object(os, "cpu_count", return_value=count):
+                        self.assertEqual(RT.default_workers(), expected)
+            finally:
+                os.sched_getaffinity = affinity
 
 
 class TestModuleSet(unittest.TestCase):
@@ -245,6 +278,43 @@ class TestRunModule(unittest.TestCase):
 
 
 class TestMain(unittest.TestCase):
+    def test_default_and_explicit_jobs_reach_the_pool(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_tree(root / "tests", {"test_%s.py" % name: PASSING
+                                       for name in ("a", "b", "c")})
+            for argv, expected in (([], 1), (["-j", "3"], 3), (["--jobs", "3"], 3)):
+                with self.subTest(argv=argv), \
+                        mock.patch.object(os, "sched_getaffinity", create=True,
+                                          return_value={7}), \
+                        mock.patch.object(os, "cpu_count", return_value=208), \
+                        mock.patch.object(RT.concurrent.futures, "ThreadPoolExecutor",
+                                          wraps=RT.concurrent.futures.ThreadPoolExecutor) as pool:
+                    code, out = self.run_main(root, argv)
+                    self.assertEqual(code, 0, out)
+                    pool.assert_called_once_with(expected)
+
+    def test_nonpositive_jobs_are_usage_errors(self):
+        for flag in ("-j", "--jobs"):
+            for jobs in ("0", "-1", "-208"):
+                with self.subTest(flag=flag, jobs=jobs):
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err), \
+                            mock.patch.object(RT, "discover_modules", return_value=[]), \
+                            self.assertRaises(SystemExit) as exc:
+                        RT.main([flag, jobs])
+                    self.assertEqual(exc.exception.code, 2)
+                    self.assertIn("--jobs must be at least 1", err.getvalue())
+
+    def test_help_explains_default(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as exc:
+            RT.main(["--help"])
+        self.assertEqual(exc.exception.code, 0)
+        help_text = " ".join(out.getvalue().split())
+        self.assertIn("len(os.sched_getaffinity(0))", help_text)
+        self.assertIn("otherwise os.cpu_count() or 1; minimum 1", help_text)
+
     def run_main(self, root, argv, split=None):
         saved = (RT.ROOT, RT.TESTS, RT.DURATIONS, RT.SPLIT, RT.SLOW, RT.SLOW_SECONDS)
         RT.SPLIT = split or {}
