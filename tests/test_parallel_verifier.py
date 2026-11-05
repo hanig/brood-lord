@@ -1,8 +1,6 @@
-"""Whole-module verifier fixtures; candidate code runs only in temporary trees."""
 import contextlib
 import importlib.util
 import io
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -18,6 +16,7 @@ spec = importlib.util.spec_from_file_location('parallel_verifier', VERIFIER)
 P = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(P)
 PASS = 'import unittest\nclass T(unittest.TestCase):\n    def test_ok(self): pass\n'
+HOOK = '\ndef load_tests(loader, suite, pattern):\n'
 
 
 class TestParallelVerifier(unittest.TestCase):
@@ -36,14 +35,27 @@ class TestParallelVerifier(unittest.TestCase):
         return subprocess.run([sys.executable, str(VERIFIER)] + list(args),
                               cwd=self.root, capture_output=True, text=True, timeout=30)
 
+    def serial(self, *args):
+        return subprocess.run([sys.executable, '-B', '-m', 'unittest', 'discover', '-s', 'tests'] + list(args),
+                              cwd=self.root, capture_output=True, text=True)
+
+    def passing_run(self):
+        result = self.run_verifier()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
+    def hook(self, count):
+        self.write('tests/test_hook.py', PASS + HOOK +
+                   '    return unittest.TestSuite([T("test_ok")] * (' + count + '))\n')
+
     def test_failure_kinds_and_candidate_cannot_steer(self):
         self.write('scripts/run_tests.py', "from pathlib import Path\nPath('steered').touch()\n")
         self.write('tests/test_a.py', PASS)
-        # Exhaustive four failure kinds plus both reserved failure-id tokens.
+        # Exhaustive failure kinds (4) and reserved ids (2).
         for body in (PASS.replace('pass', 'self.fail("intentional")'),
                      PASS.replace('pass', 'raise ValueError("intentional")'),
                      'import absent_r2_fixture_module\n',
-                     PASS + '\ndef load_tests(loader, suite, pattern):\n'
+                     PASS + HOOK +
                      '    if pattern is None: __import__("sys").exit(0)\n'
                      '    return suite\n',
                      PASS + 'T.id = lambda self: \"unittest.loader.ModuleImportFailure.broken\"\n',
@@ -55,14 +67,14 @@ class TestParallelVerifier(unittest.TestCase):
                 self.assertFalse((self.root / 'steered').exists())
                 self.assertRegex(result.stderr, r'(?m)^Ran .+\nFAILED \(')
 
-    def test_cli_cannot_report_success_without_executing_modules(self):
+    def test_cli_requires_execution(self):
         self.write('tests/test_fail.py', PASS.replace('pass', 'self.fail("must execute")'))
         for option in ('--discover-only', '--help'):
             with self.subTest(option=option):
                 result = self.run_verifier(option)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_discovery_exit_zero_before_manifest_is_failure(self):
+    def test_discovery_requires_manifest(self):
         self.write('tests/test_a.py', 'raise SystemExit(0)\n')
         self.assertNotEqual(self.run_verifier().returncode, 0)
 
@@ -72,8 +84,7 @@ class TestParallelVerifier(unittest.TestCase):
         self.write('tests/test_import.py', 'from helper import T\n')
         self.write('tests/pkg/__init__.py', '')
         self.write('tests/pkg/test_nested.py', PASS)
-        self.write('tests/test_hook.py', PASS + '\ndef load_tests(loader, suite, pattern):\n'
-                   '    return unittest.TestSuite([T("test_ok"), T("test_ok")])\n')
+        self.hook('2')
         self.write('tests/test_special.py', 'import test_empty, unittest\n'
                    'class T(unittest.TestCase):\n'
                    '    @unittest.skip("fixture")\n    def test_skip(self): pass\n'
@@ -84,19 +95,16 @@ class TestParallelVerifier(unittest.TestCase):
             'test_hook': ['test_hook.T.test_ok', 'test_hook.T.test_ok'],
             'test_import': ['helper.T.test_ok'],
             'test_special': ['test_special.T.test_expected', 'test_special.T.test_skip']})
-        serial = subprocess.run([sys.executable, '-B', '-m', 'unittest', 'discover', '-s',
-                                 'tests', '-v'], cwd=self.root, capture_output=True, text=True)
+        serial = self.serial('-v')
         self.assertEqual(serial.returncode, 0, serial.stderr)
         self.assertIn('Ran 6 tests', serial.stderr)
-        result = self.run_verifier()
-        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.passing_run()
         self.assertIn('Ran 6 tests', result.stderr)
         self.assertNotIn('test_empty:', result.stderr)
 
-    def test_import_time_suite_loading_is_not_an_extra_discovered_module(self):
+    def test_cached_suite_ownership(self):
         self.write('tests/helper.py', PASS)
-        # Exhaustive two cases: discard an internally loaded suite, or return
-        # it from the module hook. Only discovery's returned suite is selected.
+        # Exhaustive cache hook: off/on.
         for hook in (False, True):
             with self.subTest(hook=hook):
                 source = ('import unittest, helper\n'
@@ -106,8 +114,7 @@ class TestParallelVerifier(unittest.TestCase):
                 selected = P.discover(self.root)
                 self.assertEqual(selected, {'test_cached': [
                     'helper.T.test_ok' if hook else 'test_cached.T.test_ok']})
-                result = self.run_verifier()
-                self.assertEqual(result.returncode, 0, result.stderr)
+                result = self.passing_run()
                 self.assertIn('Ran 1 test', result.stderr)
 
     def test_package_hook_owns_nested_discovery_suite(self):
@@ -119,42 +126,58 @@ class TestParallelVerifier(unittest.TestCase):
                    '                           top_level_dir=str(here.parent))\n')
         self.write('tests/pkg/test_child.py', PASS)
         self.assertEqual(P.discover(self.root), {'pkg': ['pkg.test_child.T.test_ok']})
-        result = self.run_verifier()
-        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.passing_run()
         self.assertIn('Ran 1 test', result.stderr)
 
     def test_literal_module_names_and_import_skips(self):
-        # Finite CLI-boundary cases, each also accepted by serial discovery.
+        # Exhaustive CLI forms: package, dash, import skip.
         for name, source in (
                 ('discover', PASS + '\ndef load_tests(loader, tests, pattern): return tests\n'),
                 ('-package', PASS),
                 ('test_skip', 'import unittest\nraise unittest.SkipTest("fixture")\n')):
             with self.subTest(name=name):
                 self.write('tests/' + (name + '.py' if name == 'test_skip' else name + '/__init__.py'), source)
-                serial = subprocess.run([sys.executable, '-B', '-m', 'unittest', 'discover', '-s', 'tests'],
-                                        cwd=self.root, capture_output=True, text=True)
+                serial = self.serial()
                 self.assertEqual(serial.returncode, 0, serial.stderr)
                 self.assertIn(name, P.discover(self.root))
-                result = self.run_verifier()
-                self.assertEqual(result.returncode, 0, result.stderr)
+                self.passing_run()
 
-    def test_failure_marker_substrings_are_valid_test_names(self):
+    def test_valid_failure_marker_names(self):
         for name in ('TestModuleImportFailure', 'Test_FailedTest'):
             with self.subTest(name=name):
                 self.write('tests/test_names.py', PASS.replace('class T', 'class ' + name))
+                self.passing_run()
+
+    def test_review_counterexamples(self):
+        # Exhaustive five distinct round-1 counterexamples.
+        cases = (
+            ('base', PASS + HOOK +
+             '    return unittest.BaseTestSuite([T("test_ok")])\n', 0),
+            ('import_name', PASS.replace('class T', 'class ModuleImportFailure'), 0),
+            ('failed_name', PASS.replace('class T', 'class _FailedTest'), 0),
+            ('nested', PASS.replace('pass', 'self.fail("selected")') +
+             'def load_tests(loader, suite, pattern):\n'
+             '    if pattern is None:\n'
+             '        unittest.TextTestRunner().run(unittest.TestSuite([unittest.FunctionTestCase(lambda: None)]))\n'
+             '        raise SystemExit(0)\n'
+             '    return suite\n', 1),
+            ('shutdown', 'import atexit, sys\n'
+             'atexit.register(lambda: print("Ran 0 tests in 0.000s", file=sys.stderr))\n' + PASS, 0))
+        for name, source, expected in cases:
+            with self.subTest(name=name):
+                self.write('tests/test_case.py', source)
+                serial = self.serial()
+                self.assertEqual(serial.returncode, expected, serial.stderr)
                 result = self.run_verifier()
-                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.returncode, expected, result.stderr)
 
     def test_whole_module_can_select_more_tests(self):
-        self.write('tests/test_hook.py', PASS + '\ndef load_tests(loader, suite, pattern):\n'
-                   '    return unittest.TestSuite([T("test_ok")] * (1 if pattern else 2))\n')
-        result = self.run_verifier()
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.hook('1 if pattern else 2')
+        result = self.passing_run()
         self.assertIn('Ran 2 tests', result.stderr)
 
     def test_smaller_module_summary_fails(self):
-        self.write('tests/test_hook.py', PASS + '\ndef load_tests(loader, suite, pattern):\n'
-                   '    return unittest.TestSuite([T("test_ok")] * (2 if pattern else 1))\n')
+        self.hook('2 if pattern else 1')
         result = self.run_verifier()
         self.assertNotEqual(result.returncode, 0, result.stderr)
         self.assertIn('Ran 1 test', result.stderr)
@@ -196,8 +219,7 @@ class TestParallelVerifier(unittest.TestCase):
         self.write('tests/test_a.py', 'import os\nos.environ["R2_POLLUTION"]="yes"\n' + PASS)
         self.write('tests/test_b.py', PASS.replace('pass',
                    'self.assertNotIn("R2_POLLUTION", __import__("os").environ)'))
-        serial = subprocess.run([sys.executable, '-B', '-m', 'unittest', 'discover', '-s', 'tests'],
-                                cwd=self.root, capture_output=True, text=True)
+        serial = self.serial()
         parallel = self.run_verifier()
         self.assertNotEqual(serial.returncode, 0, serial.stderr)
         self.assertEqual(parallel.returncode, 0, parallel.stderr)

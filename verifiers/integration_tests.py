@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Run the candidate suite as whole modules using only these pinned bytes.
+"""Run whole discovered modules in parallel from pinned bytes.
 
-Tests and implementation are candidate bytes: this is integration validation,
-not an immutable test-corpus guarantee or an OS security boundary. Modules
-share the checkout and environment. Per-module processes lose detection of
-cross-module pollution; accepted 2026-11-05 because required CI retains serial
-shared-process discovery on the merge ref. The coordinator's process-group
-kill and overall deadline cover discovery and every module child.
+Accepted limit (2026-11-05): per-module isolation loses cross-module pollution
+detection; required CI retains shared-process discovery on the merge ref.
+Children share checkout/environment and the coordinator's process group and
+overall deadline. Candidate tests are not an immutable corpus or OS boundary.
 """
 import argparse
 from collections import Counter
@@ -21,13 +19,9 @@ import tempfile
 import time
 
 
-# Both modes invoke unittest's CLI. Discovery replaces only execution with
-# enumeration. Capturing by the imported module (not test.id's prefix) also
-# handles imported TestCases and load_tests returning tests defined elsewhere.
 BOOTSTRAP = r'''
 import json, os, runpy, sys, unittest
-mode, destination = sys.argv[1:]
-# -m starts with the absolute cwd, whereas -c starts with the empty string.
+mode, destination = sys.argv[1:3]
 sys.path[0] = os.getcwd()
 if mode == 'discover':
     loader = unittest.defaultTestLoader
@@ -36,16 +30,15 @@ if mode == 'discover':
     groups = {}
     frames = []
     def ids(suite):
-        if isinstance(suite, unittest.TestSuite):
+        if not unittest.suite._isnotsuite(suite):
             return [name for child in suite for name in ids(child)]
         name = suite.id()
-        if isinstance(suite, unittest.loader._FailedTest) or 'ModuleImportFailure' in name.split('.'):
+        if isinstance(suite, unittest.loader._FailedTest) or name.startswith(
+                ('unittest.loader._FailedTest.', 'unittest.loader.ModuleImportFailure.')):
             raise ValueError('discovery failure: ' + name)
         return [name]
     def imported(name):
-        # The first import made by _find_test_path owns its returned suite.
-        # Imports and internal suite loads inside candidate hooks are not
-        # extra modules selected by discovery.
+        # Attribute the returned suite to its first discovery import.
         if frames and frames[-1] is None:
             frames[-1] = name
         return original_import(name)
@@ -76,13 +69,30 @@ if mode == 'discover':
     unittest.TestProgram.runTests = enumerate_only
     sys.argv = ['unittest', 'discover', '-s', 'tests']
 else:
-    # discover('tests') defaults top_level_dir to the start directory and
-    # inserts it ahead of cwd, unless already present. Do the identical step.
+    report = sys.argv[3]
+    # Capture only the CLI runner's stream, excluding nested runners and atexit.
+    class ReportRunner(unittest.TextTestRunner):
+        def run(self, suite):
+            output, stream = [], self.stream
+            class Tee:
+                def write(self, text):
+                    output.append(text)
+                    return stream.write(text)
+                def __getattr__(self, name):
+                    return getattr(stream, name)
+            self.stream = unittest.runner._WritelnDecorator(Tee())
+            result = super().run(suite)
+            with open(report, 'w') as target:
+                json.dump(''.join(output), target)
+            return result
+    original_run = unittest.TestProgram.runTests
+    def execute(program):
+        program.testRunner = ReportRunner
+        return original_run(program)
+    unittest.TestProgram.runTests = execute
     top = os.path.abspath('tests')
     if top not in sys.path:
         sys.path.insert(0, top)
-    # Discovery represents an import-level SkipTest as one skipped test.
-    # Keep that representation when the CLI loads the same module by name.
     load_name = unittest.defaultTestLoader.loadTestsFromName
     def load_module(name, module=None):
         try:
@@ -97,7 +107,6 @@ runpy.run_module('unittest', run_name='__main__', alter_sys=True)
 
 
 def discover(root):
-    """Collect in one disposable child; a missing manifest is never success."""
     with tempfile.TemporaryDirectory(prefix='integration-discovery-') as tmp:
         manifest = Path(tmp) / 'selected.json'
         child = subprocess.run([sys.executable, '-B', '-c', BOOTSTRAP,
@@ -110,8 +119,8 @@ def discover(root):
         if (not isinstance(selected, dict) or any(
                 not isinstance(module, str) or not module or not isinstance(names, list)
                 or not names or any(not isinstance(name, str) or not name
-                                   or any(part in ('_FailedTest', 'ModuleImportFailure')
-                                          for part in name.split('.'))
+                                   or name.startswith(('unittest.loader._FailedTest.',
+                                                       'unittest.loader.ModuleImportFailure.'))
                                    for name in names)
                 for module, names in selected.items())):
             raise ValueError('invalid discovery module manifest')
@@ -129,8 +138,12 @@ def scheduled_modules(selected):
 
 
 def run_module(root, module):
-    return subprocess.run([sys.executable, '-B', '-c', BOOTSTRAP, 'module', module],
-                          cwd=root, capture_output=True, text=True, errors='replace')
+    with tempfile.TemporaryDirectory(prefix='integration-module-') as tmp:
+        report = Path(tmp) / 'summary.json'
+        child = subprocess.run([sys.executable, '-B', '-c', BOOTSTRAP, 'module', module, str(report)],
+                               cwd=root, capture_output=True, text=True, errors='replace')
+        summary = json.loads(report.read_text()) if report.exists() else ''
+        return child, summary
 
 
 def run_suite(root, selected, workers=None):
@@ -143,10 +156,10 @@ def run_suite(root, selected, workers=None):
             name = futures[future]
             completed.append(name)
             try:
-                child = future.result()
+                child, summary = future.result()
                 output = child.stdout + '\n' + child.stderr
                 print(name + ':\n' + output, file=sys.stderr)
-                counts = re.findall(r'^Ran (\d+) tests? in .+$', output, re.MULTILINE)
+                counts = re.findall(r'^Ran (\d+) tests? in .+$', summary, re.MULTILINE)
                 count = int(counts[-1]) if counts else 0
                 total += count
                 if child.returncode or not counts or count < len(selected.get(name, [])):

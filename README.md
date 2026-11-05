@@ -542,12 +542,11 @@ restarts cannot replace receipts. Same-UID writers and live descendants remain
 outside this trusted-writer storage convention.
 
 
-The designated `merge-precondition` verifier uses unittest's `discover -s tests`
-selection in the candidate tree, then runs each selected module once in parallel
-through its pinned bootstrap. CPU affinity bounds concurrency; each child must
-exit zero and report at least its discovered test count. Module isolation loses
-cross-module pollution detection; required CI retains shared-process discovery.
-Its policy and program must first exist on the trusted target; missing policy or mismatched
+The pinned `merge-precondition` verifier uses unittest discovery and runs whole
+modules in parallel, bounded by CPU affinity. Each child must exit zero and
+report at least its discovered count. Module isolation loses cross-module
+pollution detection; required CI retains shared-process discovery.
+Its policy and program must exist on the trusted target; missing policy or mismatched
 program bytes refuse. Reading target policy lets attempts whose launch bases
 predate installation use the new precondition without allowing a candidate
 to authorize itself. This merge-only authorization leaves ordinary
