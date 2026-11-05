@@ -176,6 +176,32 @@ class TestParallelVerifier(unittest.TestCase):
         result = self.passing_run()
         self.assertIn('Ran 2 tests', result.stderr)
 
+    def test_bootstrap_dependencies_and_program_ownership(self):
+        local_json = 'import json\n' + PASS.replace('pass', 'self.assertEqual(json.VALUE, 1)')
+        nested = "unittest.main(module=helper, argv=['nested'], exit=False)"
+        # Exhaustive three serialization and two nested-program cases.
+        cases = (
+            ('root_manifest', 'json.py', "def dump(obj, stream): stream.write('{}')\n",
+             PASS.replace('pass', 'self.fail("selected")'), 1),
+            ('root_helper', 'json.py', 'VALUE = 1\n', local_json, 0),
+            ('tests_helper', 'tests/json.py', 'VALUE = 1\n', local_json, 0),
+            ('nested_exit', 'tests/helper.py', PASS,
+             'import helper\n' + PASS.replace('pass', 'self.fail("selected")') + HOOK +
+             '    if pattern is None:\n        ' + nested + '\n        raise SystemExit(0)\n'
+             '    return suite\n', 1),
+            ('nested_discovery', 'tests/helper.py', PASS,
+             'import helper\n' + PASS + HOOK + '    ' + nested + '\n    return suite\n', 0))
+        for name, path, helper, source, expected in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp, \
+                    mock.patch.object(self, 'root', Path(tmp)), mock.patch.dict(os.environ):
+                os.environ.pop('PYTHONPATH', None)
+                self.write(path, helper)
+                self.write('tests/test_case.py', source)
+                serial = self.serial()
+                self.assertEqual(serial.returncode, expected, serial.stderr)
+                result = self.run_verifier()
+                self.assertEqual(result.returncode, expected, result.stderr)
+
     def test_smaller_module_summary_fails(self):
         self.hook('2 if pattern else 1')
         result = self.run_verifier()

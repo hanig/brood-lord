@@ -7,9 +7,9 @@ Children share checkout/environment and the coordinator's process group and
 overall deadline. Candidate tests are not an immutable corpus or OS boundary.
 """
 import argparse
+import ast
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import json
 import os
 from pathlib import Path
 import re
@@ -20,9 +20,18 @@ import time
 
 
 BOOTSTRAP = r'''
-import json, os, runpy, sys, unittest
+import os, runpy, sys, unittest
 mode, destination = sys.argv[1:3]
 sys.path[0] = os.getcwd()
+owner = None
+original_init = unittest.TestProgram.__init__
+original_run = unittest.TestProgram.runTests
+def initialize(program, *args, **kwargs):
+    global owner
+    if owner is None:
+        owner = program
+    original_init(program, *args, **kwargs)
+unittest.TestProgram.__init__ = initialize
 if mode == 'discover':
     loader = unittest.defaultTestLoader
     original_path = loader._find_test_path
@@ -58,6 +67,8 @@ if mode == 'discover':
     loader._get_module_from_name = imported
     loader._find_test_path = capture_path
     def enumerate_only(program):
+        if program is not owner:
+            return original_run(program)
         selected = ids(program.test)
         if loader.errors:
             raise ValueError('\n'.join(loader.errors))
@@ -65,7 +76,7 @@ if mode == 'discover':
         if Counter(selected) != Counter(name for names in groups.values() for name in names):
             raise ValueError('discovery module accounting differs from selected suite')
         with open(destination, 'w') as stream:
-            json.dump(groups, stream)
+            stream.write(ascii(groups))
     unittest.TestProgram.runTests = enumerate_only
     sys.argv = ['unittest', 'discover', '-s', 'tests']
 else:
@@ -83,11 +94,11 @@ else:
             self.stream = unittest.runner._WritelnDecorator(Tee())
             result = super().run(suite)
             with open(report, 'w') as target:
-                json.dump(''.join(output), target)
+                target.write(ascii(''.join(output)))
             return result
-    original_run = unittest.TestProgram.runTests
     def execute(program):
-        program.testRunner = ReportRunner
+        if program is owner:
+            program.testRunner = ReportRunner
         return original_run(program)
     unittest.TestProgram.runTests = execute
     top = os.path.abspath('tests')
@@ -108,14 +119,14 @@ runpy.run_module('unittest', run_name='__main__', alter_sys=True)
 
 def discover(root):
     with tempfile.TemporaryDirectory(prefix='integration-discovery-') as tmp:
-        manifest = Path(tmp) / 'selected.json'
+        manifest = Path(tmp) / 'selected.txt'
         child = subprocess.run([sys.executable, '-B', '-c', BOOTSTRAP,
                                 'discover', str(manifest)], cwd=root,
                                capture_output=True, text=True, errors='replace')
         if child.returncode:
             raise ValueError('discovery exited {}\n{}{}'.format(
                 child.returncode, child.stdout, child.stderr))
-        selected = json.loads(manifest.read_text())
+        selected = ast.literal_eval(manifest.read_text())
         if (not isinstance(selected, dict) or any(
                 not isinstance(module, str) or not module or not isinstance(names, list)
                 or not names or any(not isinstance(name, str) or not name
@@ -139,10 +150,10 @@ def scheduled_modules(selected):
 
 def run_module(root, module):
     with tempfile.TemporaryDirectory(prefix='integration-module-') as tmp:
-        report = Path(tmp) / 'summary.json'
+        report = Path(tmp) / 'summary.txt'
         child = subprocess.run([sys.executable, '-B', '-c', BOOTSTRAP, 'module', module, str(report)],
                                cwd=root, capture_output=True, text=True, errors='replace')
-        summary = json.loads(report.read_text()) if report.exists() else ''
+        summary = ast.literal_eval(report.read_text()) if report.exists() else ''
         return child, summary
 
 
@@ -183,7 +194,7 @@ def main():
     try:
         selected = discover(os.getcwd())
         return run_suite(os.getcwd(), selected, args.workers)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, SyntaxError) as exc:
         print('ERROR: discovery: {}\nRan 0 tests\nFAILED (discovery=1)'.format(exc), file=sys.stderr)
         return 1
 
