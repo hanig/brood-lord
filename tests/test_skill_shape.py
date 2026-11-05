@@ -1009,6 +1009,23 @@ class TestAuthoredSkillShape(unittest.TestCase):
             for phrase in ("orchestrator", "across attempts and continuations", "budget"):
                 self.assertIn(phrase, text)
 
+    def test_continuation_guidance_allows_omitting_optional_updates(self):
+        from tests.test_continue_command import ContinueCommandTests
+        fixture = ContinueCommandTests()
+        self.addCleanup(fixture.doCleanups)
+        fixture.setUp()
+        self.assertEqual(fixture.continuation().returncode, 0)
+        self.assertEqual(fixture.continuation(
+            "--repoint-dependents", "--tickets",
+            str(fixture.tmp / "absent.json")).returncode, 1)
+        skill = SKILLS / "hanig-orchestrate"
+        text = next(e["normative_text"] for e in
+                    DECLARATION_REGISTRY.load_registry(skill)
+                    if e["id"] == "delegation.continuation")
+        for surface in (text, (skill / "references/delegation-evidence.md").read_text(),
+                        (SKILLS.parent / "README.md").read_text()):
+            self.assertIn("Omit either flag when its update is not needed", surface)
+
     def test_g2_continuation_and_default_verification_guidance(self):
         skill = SKILLS / "hanig-orchestrate"
         entries = {e["id"]: e["normative_text"]
