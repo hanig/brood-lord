@@ -8,10 +8,11 @@ Portable coding-agent skills for dispatching autonomous work onto HPC clusters
 and refusing to call it done without evidence. Installable across laptops and
 login nodes with one script.
 
-This repository is public by owner decision (2026-09-24). It carries cluster
-hostnames, partition and account names, storage layouts and measured host
-probes; never commit credentials, tokens or secrets. Pull-request titles,
-bodies and comments must not add further cluster detail.
+This repository is private by owner decision (2026-11-05); it was public from
+2026-09-24 until then, so treat everything already pushed as published. It
+carries cluster hostnames, partition and account names, storage layouts and
+measured host probes; never commit credentials, tokens or secrets.
+Pull-request titles, bodies and comments must not add further cluster detail.
 
 ---
 

@@ -108,7 +108,7 @@ Keep separate identities for the judged PR head, tested integration candidate, a
 
 I did not establish that this public repository has access to GitHub’s native queue; its documented availability depends on repository ownership and plan. If unavailable, serializing the authorized merge path and validating the exact candidate is a narrower alternative, provided target movement is prevented or detected before acceptance. A local read-then-merge sequence alone does not close that race.
 
-Visibility correction (2026-09-24): this repository is public by owner decision. The credential and publication rules in [CLAUDE.md](../../CLAUDE.md) apply.
+Visibility correction (2026-09-24): this repository is public by owner decision. The credential and publication rules in [CLAUDE.md](../../CLAUDE.md) apply. Since 2026-11-05 it is private by owner decision; the same rules still apply.
 
 **What the evidence does not establish.**
 
