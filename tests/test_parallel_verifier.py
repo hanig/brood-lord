@@ -208,6 +208,76 @@ class TestParallelVerifier(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stderr)
         self.assertIn('Ran 1 test', result.stderr)
 
+    def test_fixture_skips_account_for_selected_tests(self):
+        skipped = ('import unittest\nclass T(unittest.TestCase):\n'
+                   '    @classmethod\n    def setUpClass(cls): raise unittest.SkipTest("fixture")\n'
+                   '    def test_one(self): self.fail("skipped")\n'
+                   '    def test_two(self): self.fail("skipped")\n')
+        # Exhaustive five skip forms and a custom test recording its own result.
+        cases = (
+            ('class', skipped, 0),
+            ('module', 'def setUpModule(): raise unittest.SkipTest("fixture")\n' + PASS, 0),
+            ('mixed', skipped + PASS.replace('class T', 'class Other'), 1),
+            ('decorator', PASS.replace('class T', '@unittest.skip("fixture")\nclass T'), 1),
+            ('nested_class', skipped + 'T.__qualname__ = "Outer.T"\n', 0),
+            ('custom_result', PASS +
+             '    def run(self, result):\n        result.testsRun += 1\n        result.addSuccess(self)\n', 1))
+        for name, source, count in cases:
+            with self.subTest(name=name):
+                self.write('tests/test_case.py', source)
+                serial = self.serial()
+                self.assertEqual(serial.returncode, 0, serial.stderr)
+                result = self.passing_run()
+                self.assertIn('Ran {} test'.format(count), result.stderr)
+
+    def test_accounting_uses_ids_and_fixture_scope(self):
+        skipped = ('class T(unittest.TestCase):\n'
+                   '    @classmethod\n    def setUpClass(cls): raise unittest.SkipTest("fixture")\n'
+                   '    def test_one(self): pass\n')
+        # Exhaustive omissions: replacement id, neighboring class, neighboring module.
+        cases = (
+            PASS + HOOK + '    T.test_other = T.test_ok\n'
+            '    return unittest.TestSuite([T("test_ok" if pattern else "test_other")])\n',
+            'import unittest\n' + skipped + PASS.replace('class T', 'class TExtra') + HOOK +
+            '    return suite if pattern else loader.loadTestsFromTestCase(T)\n',
+            'import unittest, helper, helper_extra\n' + HOOK +
+            '    return unittest.TestSuite([loader.loadTestsFromModule(helper)] +\n'
+            '        ([loader.loadTestsFromModule(helper_extra)] if pattern else []))\n')
+        self.write('tests/helper.py', 'def setUpModule(): raise unittest.SkipTest("fixture")\n' + PASS)
+        self.write('tests/helper_extra.py', PASS)
+        for source in cases:
+            with self.subTest(source=source):
+                self.write('tests/test_case.py', source)
+                result = self.run_verifier()
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+        # A skip of a package module must not cover its omitted child module.
+        (self.root / 'tests/helper.py').unlink()
+        self.write('tests/helper/__init__.py',
+                   'def setUpModule(): raise unittest.SkipTest("fixture")\n' + PASS)
+        self.write('tests/helper/child.py', PASS)
+        self.write('tests/test_case.py', cases[-1].replace('helper_extra', 'helper.child'))
+        result = self.run_verifier()
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+
+    def test_subtest_dispositions_and_fixture_errors(self):
+        # Exhaustive subtest outcomes: pass, skip, failure, error; both fixture errors.
+        for action, expected in (('pass', 0), ('self.skipTest("fixture")', 0),
+                                 ('self.fail("fixture")', 1), ('raise ValueError("fixture")', 1)):
+            with self.subTest(action=action):
+                self.write('tests/test_case.py', PASS.replace('pass',
+                           '\n        for value in range(2):\n'
+                           '            with self.subTest(value=value): ' + action))
+                result = self.run_verifier()
+                self.assertEqual(result.returncode, expected, result.stderr)
+        for fixture in ('setUpModule', 'setUpClass'):
+            with self.subTest(fixture=fixture):
+                source = ('def setUpModule(): raise ValueError("fixture")\n' + PASS
+                          if fixture == 'setUpModule' else PASS +
+                          '    @classmethod\n    def setUpClass(cls): raise ValueError("fixture")\n')
+                self.write('tests/test_case.py', source)
+                result = self.run_verifier()
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+
     def test_cli_import_path_matches_discovery(self):
         self.write('tests/test_path.py', 'import os, sys, unittest\n'
                    'assert sys.path[:2] == [os.path.join(os.getcwd(), "tests"), os.getcwd()]\n'

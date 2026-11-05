@@ -544,7 +544,8 @@ outside this trusted-writer storage convention.
 
 The pinned `merge-precondition` verifier uses unittest discovery and runs whole
 modules in parallel, bounded by CPU affinity. Each child must exit zero and
-report at least its discovered count. Module isolation loses cross-module
+account for every selected test ID through its recorded result or a matching
+class/module fixture skip. Module isolation loses cross-module
 pollution detection; required CI retains shared-process discovery.
 Its policy and program must exist on the trusted target; missing policy or mismatched
 program bytes refuse. Reading target policy lets attempts whose launch bases

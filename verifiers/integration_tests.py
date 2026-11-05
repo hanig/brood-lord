@@ -37,6 +37,7 @@ if mode == 'discover':
     original_path = loader._find_test_path
     original_import = loader._get_module_from_name
     groups = {}
+    scopes = {}
     frames = []
     def ids(suite):
         if not unittest.suite._isnotsuite(suite):
@@ -45,6 +46,7 @@ if mode == 'discover':
         if isinstance(suite, unittest.loader._FailedTest) or name.startswith(
                 ('unittest.loader._FailedTest.', 'unittest.loader.ModuleImportFailure.')):
             raise ValueError('discovery failure: ' + name)
+        scopes[name] = (suite.__class__.__module__, unittest.util.strclass(suite.__class__))
         return [name]
     def imported(name):
         # Attribute the returned suite to its first discovery import.
@@ -76,13 +78,41 @@ if mode == 'discover':
         if Counter(selected) != Counter(name for names in groups.values() for name in names):
             raise ValueError('discovery module accounting differs from selected suite')
         with open(destination, 'w') as stream:
-            stream.write(ascii(groups))
+            stream.write(ascii((groups, scopes)))
     unittest.TestProgram.runTests = enumerate_only
     sys.argv = ['unittest', 'discover', '-s', 'tests']
 else:
     report = sys.argv[3]
+    class ReportResult(unittest.TextTestResult):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.recorded, self.fixture_skips, self.active = [], [], {}
+            def wrap(method):
+                def record(test, *args, **kwargs):
+                    if (method.__name__ == 'addSkip'
+                            and isinstance(test, unittest.suite._ErrorHolder)):
+                        self.fixture_skips.append(test.id())
+                    subject = test.test_case if isinstance(test, unittest.case._SubTest) else test
+                    if id(subject) in self.active:
+                        self.active[id(subject)][1] = True
+                    elif not isinstance(test, unittest.suite._ErrorHolder):
+                        self.recorded.append(subject.id())
+                    return method(test, *args, **kwargs)
+                return record
+            for name in ('addSuccess', 'addFailure', 'addError', 'addSkip',
+                         'addExpectedFailure', 'addUnexpectedSuccess', 'addSubTest'):
+                setattr(self, name, wrap(getattr(self, name)))
+        def startTest(self, test):
+            self.active[id(test)] = [test.id(), False]
+            super().startTest(test)
+        def stopTest(self, test):
+            name, accounted = self.active.pop(id(test))
+            if accounted:
+                self.recorded.append(name)
+            super().stopTest(test)
     # Capture only the CLI runner's stream, excluding nested runners and atexit.
     class ReportRunner(unittest.TextTestRunner):
+        resultclass = ReportResult
         def run(self, suite):
             output, stream = [], self.stream
             class Tee:
@@ -94,7 +124,7 @@ else:
             self.stream = unittest.runner._WritelnDecorator(Tee())
             result = super().run(suite)
             with open(report, 'w') as target:
-                target.write(ascii(''.join(output)))
+                target.write(ascii((''.join(output), result.recorded, result.fixture_skips)))
             return result
     def execute(program):
         if program is owner:
@@ -117,6 +147,12 @@ runpy.run_module('unittest', run_name='__main__', alter_sys=True)
 '''
 
 
+class Selection(dict):
+    def __init__(self, groups, scopes):
+        super().__init__(groups)
+        self.scopes = scopes
+
+
 def discover(root):
     with tempfile.TemporaryDirectory(prefix='integration-discovery-') as tmp:
         manifest = Path(tmp) / 'selected.txt'
@@ -126,7 +162,7 @@ def discover(root):
         if child.returncode:
             raise ValueError('discovery exited {}\n{}{}'.format(
                 child.returncode, child.stdout, child.stderr))
-        selected = ast.literal_eval(manifest.read_text())
+        selected, scopes = ast.literal_eval(manifest.read_text())
         if (not isinstance(selected, dict) or any(
                 not isinstance(module, str) or not module or not isinstance(names, list)
                 or not names or any(not isinstance(name, str) or not name
@@ -135,7 +171,7 @@ def discover(root):
                                    for name in names)
                 for module, names in selected.items())):
             raise ValueError('invalid discovery module manifest')
-        return selected
+        return Selection(selected, scopes)
 
 
 def worker_count(requested=None):
@@ -153,8 +189,18 @@ def run_module(root, module):
         report = Path(tmp) / 'summary.txt'
         child = subprocess.run([sys.executable, '-B', '-c', BOOTSTRAP, 'module', module, str(report)],
                                cwd=root, capture_output=True, text=True, errors='replace')
-        summary = ast.literal_eval(report.read_text()) if report.exists() else ''
-        return child, summary
+        recorded = ast.literal_eval(report.read_text()) if report.exists() else ('', [], [])
+        return child, recorded
+
+
+def unaccounted(selected, module, recorded, fixture_skips):
+    missing = Counter(selected.get(module, [])) - Counter(recorded)
+    for name in list(missing):
+        test_module, test_class = selected.scopes[name]
+        if ('setUpClass ({})'.format(test_class) in fixture_skips
+                or 'setUpModule ({})'.format(test_module) in fixture_skips):
+            del missing[name]
+    return missing
 
 
 def run_suite(root, selected, workers=None):
@@ -167,13 +213,16 @@ def run_suite(root, selected, workers=None):
             name = futures[future]
             completed.append(name)
             try:
-                child, summary = future.result()
+                child, (summary, recorded, fixture_skips) = future.result()
                 output = child.stdout + '\n' + child.stderr
                 print(name + ':\n' + output, file=sys.stderr)
                 counts = re.findall(r'^Ran (\d+) tests? in .+$', summary, re.MULTILINE)
                 count = int(counts[-1]) if counts else 0
                 total += count
-                if child.returncode or not counts or count < len(selected.get(name, [])):
+                missing = unaccounted(selected, name, recorded, fixture_skips)
+                if missing:
+                    print('ERROR: {}: unaccounted test ids: {!r}'.format(name, missing), file=sys.stderr)
+                if child.returncode or missing:
                     failures += 1
             except Exception as exc:
                 print('ERROR: {}: {}'.format(name, exc), file=sys.stderr)
