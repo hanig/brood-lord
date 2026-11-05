@@ -1,11 +1,13 @@
 """scripts/run_tests.py runs the same modules discovery does, isolates each
 one, and fails the run when any module fails or runs nothing."""
 
+import ast
 import contextlib
 import io
 import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 import textwrap
@@ -112,6 +114,46 @@ class TestScheduling(unittest.TestCase):
             self.assertEqual(RT.load_durations(path), {"test_a": 2.0})
 
 
+MANY = '''
+    import unittest
+    class T(unittest.TestCase):
+        def test_a(self): __import__('time').sleep(0.6)
+        def test_b(self): __import__('time').sleep(0.6)
+        def test_c(self): pass
+        def test_d(self): self.fail("chunk boom")
+        def test_e(self): pass
+'''
+
+
+class TestSplit(unittest.TestCase):
+    def test_chunks_cover_every_id_once(self):
+        ids = ["t%d" % i for i in range(11)]
+        parts = RT.chunk(ids, 4)
+        self.assertEqual(len(parts), 4)
+        self.assertEqual(sorted(sum(parts, [])), sorted(ids))
+        self.assertEqual(RT.chunk(ids[:2], 6), [["t0"], ["t1"]])
+
+    def test_split_modules_share_no_state_across_tests(self):
+        for module in RT.SPLIT:
+            path = ROOT / "tests" / (module + ".py")
+            self.assertTrue(path.is_file(), module)
+            tree = ast.parse(path.read_text())
+            shared = sorted({n.name for n in ast.walk(tree)
+                             if isinstance(n, ast.FunctionDef)
+                             and n.name in ("setUpClass", "tearDownClass", "load_tests")})
+            self.assertEqual(shared, [], "%s cannot be split by test id" % module)
+
+    def test_unlistable_split_module_runs_whole_and_reports_its_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_tree(root / "tests", {"test_broken.py": "import no_such_module_x\n"})
+            plan = RT.plan_jobs(["test_broken"], {}, split={"test_broken": 3}, root=root)
+            self.assertEqual([(j[0], j[2]) for j in plan], [("test_broken", None)])
+            result = RT.run_module("test_broken", root=root)
+            self.assertFalse(result["ok"])
+            self.assertIn("no_such_module_x", result["output"])
+
+
 class TestParse(unittest.TestCase):
     def test_summaries(self):
         self.assertEqual(RT.parse_result("...\nRan 3 tests in 0.1s\n\nOK (skipped=2)\n"),
@@ -169,8 +211,9 @@ class TestRunModule(unittest.TestCase):
 
 
 class TestMain(unittest.TestCase):
-    def run_main(self, root, argv):
-        saved = (RT.ROOT, RT.TESTS, RT.DURATIONS)
+    def run_main(self, root, argv, split=None):
+        saved = (RT.ROOT, RT.TESTS, RT.DURATIONS, RT.SPLIT)
+        RT.SPLIT = split or {}
         RT.ROOT, RT.TESTS = root, root / "tests"
         RT.DURATIONS = RT.TESTS / "durations.json"
         out = io.StringIO()
@@ -178,7 +221,7 @@ class TestMain(unittest.TestCase):
             with contextlib.redirect_stdout(out):
                 code = RT.main(argv)
         finally:
-            RT.ROOT, RT.TESTS, RT.DURATIONS = saved
+            RT.ROOT, RT.TESTS, RT.DURATIONS, RT.SPLIT = saved
         return code, out.getvalue()
 
     def test_exit_status_and_durations(self):
@@ -193,6 +236,26 @@ class TestMain(unittest.TestCase):
             self.assertIn("boom", out)
             recorded = json.loads((root / "tests" / "durations.json").read_text())
             self.assertEqual(sorted(recorded), ["test_fail", "test_pass"])
+
+    def test_split_module_runs_every_test_and_fails_with_its_chunk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_tree(root / "tests", {"test_many.py": MANY})
+            code, out = self.run_main(root, ["-j", "2", "--update-durations"],
+                                      split={"test_many": 2})
+            self.assertEqual(code, 1, out)
+            self.assertIn("test_many[1/2]", out)
+            self.assertIn("test_many[2/2]", out)
+            self.assertIn("Ran 5 tests in 1 modules (2 processes)", out)
+            self.assertIn("FAILED (1 modules: test_many)", out)
+            self.assertIn("chunk boom", out)
+            recorded = json.loads((root / "tests" / "durations.json").read_text())
+            self.assertEqual(list(recorded), ["test_many"])
+            chunks = [float(m) for m in re.findall(r"\s([\d.]+)s  test_many\[", out)]
+            self.assertEqual(len(chunks), 2, out)
+            self.assertAlmostEqual(recorded["test_many"], sum(chunks), delta=0.15)
+            code, out = self.run_main(root, ["--no-split"], split={"test_many": 2})
+            self.assertIn("Ran 5 tests in 1 modules (1 processes)", out)
 
     def test_unknown_module_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:

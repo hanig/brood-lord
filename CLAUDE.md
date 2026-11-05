@@ -34,15 +34,19 @@ python3 tests/native_agent_validation.py         # release-time host harness, no
 
 `scripts/run_tests.py` runs exactly the modules discovery loads, each in its
 own process with a fresh HOME, XDG_CONFIG_HOME and TMPDIR and no other
-inherited environment, slowest first by `tests/durations.json`. A module fails
-the run if it fails, errors or collects no tests. Refresh the durations with
+inherited environment, slowest first by `tests/durations.json`. Modules listed
+in its `SPLIT` run as several processes over interleaved test ids; only a
+module whose tests share no state may be listed. A module fails the run if it
+fails, errors or collects no tests. Refresh the durations with
 `--update-durations` after adding or slowing a module.
 
 Measured 2026-11-05 on a 4-vCPU cloud VM at bc85f28 plus this runner: serial
-discovery 32.0 min; `scripts/run_tests.py` with 4 workers 11.0 min, all passing.
-The slowest module, `test_remote_verification`, takes about 9.5 min on its own
-under that load, so more workers cannot bring a full run below it until that
-module is split.
+discovery 32.0 min; `scripts/run_tests.py` with 4 workers 11.0 min, all
+passing, with or without splitting. On 4 vCPUs the run is bound by total work
+(about 44 min of module time divided by 4 workers); splitting
+`test_remote_verification` and `test_project` lowered the longest single
+process from about 9.5 min to about 2.3 min, which only shortens runs on hosts
+with more cores. To go faster here, the tests themselves must do less work.
 
 The gate derives implementation identity from origin, target merge-base and branch;
 use `--target REF` for a target other than `origin/main`, or `--plan-name NAME
