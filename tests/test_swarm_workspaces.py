@@ -132,20 +132,21 @@ class TestWorkspacesExtraction(unittest.TestCase):
 
 
 class TestCleanupLiveness(unittest.TestCase):
-    # Finite exhaustive bound: 5 states x 6 results x 2 pending values x
-    # 2 call sites x 2 ownership modes = 240 cases. No randomness.
-    def test_both_advance_sites_require_fresh_settlement(self):
+    def code_unit(self, root):
         from tests import test_attempt_worktrees as fixtures
-        class ReachedCleanup(BaseException):
-            pass
+        repo = fixtures.repo_at(root / "repo")
+        fixtures.git(repo, "branch", "-M", "main")
+        fixtures.git(repo, "init", "-q", "--bare", str(root / "origin.git"))
+        fixtures.git(repo, "remote", "add", "origin", str(root / "origin.git"))
+        fixtures.git(repo, "push", "-q", "origin", "main")
+        return fixtures.code_unit(repo)
+
+    # Finite exhaustive bound: 5 states x 6 results x 3 pending values x
+    # 2 call sites x 2 ownership modes = 360 cases. No randomness.
+    def test_both_advance_sites_require_fresh_settlement(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            repo = fixtures.repo_at(root / "repo")
-            fixtures.git(repo, "branch", "-M", "main")
-            fixtures.git(repo, "init", "-q", "--bare", str(root / "origin.git"))
-            fixtures.git(repo, "remote", "add", "origin", str(root / "origin.git"))
-            fixtures.git(repo, "push", "-q", "origin", "main")
-            unit = fixtures.code_unit(repo)
+            unit = self.code_unit(root)
             unit["max_attempts"] = 2
             attempt = root / "runs" / "attempt"
             attempt.mkdir(parents=True)
@@ -157,102 +158,114 @@ class TestCleanupLiveness(unittest.TestCase):
             for target, result, pending, site, owner in itertools.product(
                     sorted(S.WORKTREE_CLEANUP_STATES),
                     ("running", "idle", "done", "error", "timeout", "unknown"),
-                    (False, True), ("pre", "post"), ("coordinator", "paseo")):
+                    (False, True, "unacknowledged"),
+                    ("pre", "post"), ("coordinator", "paseo")):
                 with self.subTest(state=target, result=result, pending=pending,
                                   site=site, owner=owner):
-                    workspace = root / "checkout"
-                    workspace.mkdir(exist_ok=True)
-                    (workspace / "work.txt").write_text("must survive")
-                    meta = {"path": str(workspace), "workspace_owner": owner,
-                            "workspace_id": "fixture-workspace"}
-                    us = {"state": target if site == "pre" else "SUBMITTED",
-                          "job_id": "fixture-agent", "attempt_dir": str(attempt),
-                          "attempts": [str(attempt)], "gpu_hours": 0,
-                          "incomplete_since": 0,
-                          "attempt_cleanup_agents": {"attempt": "fixture-agent"},
-                          "attempt_launch_intents": {"attempt": launch["intent"]},
-                          "attempt_workspaces": {"attempt": meta},
-                          "continuations": ([{"agent_id": "fixture-agent",
-                                             "sent": True, "status": "sent"}]
-                                            if pending else [])}
-                    state = {"schema_version": 1, "units": {"code": us}}
-                    state_dir = root / "state"
-                    events = []
-                    def service(argv, **kwargs):
-                        if argv[:2] == ["paseo", "inspect"]:
-                            self.assertEqual(argv, ["paseo", "inspect", "--json",
-                                                    "fixture-agent"])
-                            self.assertEqual(kwargs["timeout"], 60)
-                            events.append("inspect")
-                            if result == "timeout":
-                                return 127, "", "timed out after 60s"
-                            return 0, json.dumps({"status": result}), ""
-                        if (argv[:3] == ["paseo", "workspace", "archive"]
-                                or (argv[0] == "git" and "remove" in argv)):
-                            events.append("remove")
-                            self.assertEqual(events[-2], "inspect")
-                            shutil.rmtree(workspace)
-                            return 0, "", ""
-                        self.fail("unexpected service call: " + repr(argv))
-                    original = SW._archive_code_worktree
-                    def cleanup(*args):
-                        if site == "post":
-                            self.assertEqual(us["state"], target)
-                        original(*args)
-                        raise ReachedCleanup()
-                    rc = {"FAILED": S.FAILED, "FAILED_EVIDENCE": S.INCOMPLETE,
-                          "PREEMPTED": S.PREEMPTED}.get(target, S.DONE)
-                    head = "a" * 40 if rc == S.DONE else None
-                    def produced_head(*args):
-                        self.assertEqual(site, "post",
-                                         "pre-pass cleanup must precede judgment")
-                        return head
-                    merge = ({"merged_as": "b" * 40, "pr": "fixture"}, None)
-                    with mock.patch.object(S.U, "run", side_effect=service), \
-                         mock.patch.object(SW, "_archive_code_worktree", side_effect=cleanup), \
-                         mock.patch.object(S.SS, "trusted_launch_facts", return_value={"fixture": True}), \
-                         mock.patch.object(S.SE, "_check", return_value=(rc, "", "")), \
-                         mock.patch.object(S.SE, "trusted_produced_head", side_effect=produced_head), \
-                         mock.patch.object(S.SE, "_receipt_reason", return_value=None), \
-                         mock.patch.object(S.W, "validate_pinned_head", return_value=None), \
-                         mock.patch.object(S.SE, "admit_merge", return_value=(
-                             merge if target == "DONE" else (None, "not merged"))):
-                        with self.assertRaises(ReachedCleanup):
-                            observed = S.advance({"name": "fixture", "units": [unit]}, state,
-                                      str(state_dir), str(root / "runs"), False,
-                                      max_new=0)
-                            self.fail(repr(observed))
-                    self.assertEqual(events.count("inspect"), 1)
-                    removed = result in ("idle", "done") and not pending
-                    self.assertEqual("remove" in events, removed)
-                    self.assertEqual(workspace.exists(), not removed)
-                    durable = S.load_state(str(state_dir))["units"]["code"]
-                    saved = durable["attempt_workspaces"]["attempt"]
-                    if not removed:
-                        self.assertIn("cleanup_liveness", saved)
-                        self.assertEqual(saved["cleanup_attempts"], 0)
-                        self.assertEqual((workspace / "work.txt").read_text(),
-                                         "must survive")
-                        shutil.rmtree(workspace)
-                    self.assertIn("attempt", durable["attempt_recovery_snapshots"])
+                    self.cleanup_case(root, unit, attempt, launch,
+                                      target, result, pending, site, owner)
+
+    def cleanup_case(self, root, unit, attempt, launch,
+                     target, result, pending, site, owner):
+        class ReachedCleanup(BaseException):
+            pass
+        tree = root / "checkout"
+        tree.mkdir(exist_ok=True)
+        (tree / "work.txt").write_text("must survive")
+        meta = {"path": str(tree), "workspace_owner": owner,
+                "workspace_id": "fixture-workspace"}
+        us = {"state": target if site == "pre" else "SUBMITTED",
+              "job_id": "agent", "attempt_dir": str(attempt),
+              "attempts": [str(attempt)], "gpu_hours": 0,
+              "incomplete_since": 0,
+              "attempt_cleanup_agents": {"attempt": "agent"},
+              "attempt_launch_intents": {"attempt": launch["intent"]},
+              "attempt_workspaces": {"attempt": meta},
+              "continuations": ([{"agent_id": "agent",
+                                 "sent": True, "status": "sent"}]
+                                if pending else [])}
+        state = {"schema_version": 1, "units": {"code": us}}
+        state_dir = root / "state"
+        if pending == "unacknowledged":
+            us["continuations"] = []
+            with mock.patch.object(S.U, "run", return_value=(127, "", "send timed out")), \
+                 mock.patch.object(S.SE, "_receipt_reason", return_value=S.U.REASON_NO_OUTPUTS):
+                for retry in (False, True):
+                    if retry:
+                        us["continuations"][0].update(
+                            sent=None, status="pending", settled_since_send=True)
+                    self.assertFalse(S.maybe_continue(
+                        str(state_dir), "code", dict(unit, continuation={"max": 1}),
+                        us, [], state))
+            self.assertFalse(us["continuations"][0]["sent"])
+        events = []
+        def service(argv, **kwargs):
+            if argv[:2] == ["paseo", "inspect"]:
+                self.assertEqual(argv, ["paseo", "inspect", "--json", "agent"])
+                self.assertEqual(kwargs["timeout"], 60)
+                events.append("inspect")
+                if result == "timeout":
+                    return 127, "", "timed out after 60s"
+                return 0, json.dumps({"status": result}), ""
+            if (argv[:3] == ["paseo", "workspace", "archive"]
+                    or (argv[0] == "git" and "remove" in argv)):
+                events.append("remove")
+                self.assertEqual(events[-2], "inspect")
+                shutil.rmtree(tree)
+                return 0, "", ""
+            self.fail("unexpected service call: " + repr(argv))
+        original = SW._archive_code_worktree
+        def cleanup(*args):
+            if site == "post":
+                self.assertEqual(us["state"], target)
+            original(*args)
+            raise ReachedCleanup()
+        rc = {"FAILED": S.FAILED, "FAILED_EVIDENCE": S.INCOMPLETE,
+              "PREEMPTED": S.PREEMPTED}.get(target, S.DONE)
+        head = "a" * 40 if rc == S.DONE else None
+        def produced_head(*args):
+            self.assertEqual(site, "post",
+                             "pre-pass cleanup must precede judgment")
+            return head
+        merge = ({"merged_as": "b" * 40, "pr": "fixture"}, None)
+        with mock.patch.object(S.U, "run", side_effect=service), \
+             mock.patch.object(SW, "_archive_code_worktree", side_effect=cleanup), \
+             mock.patch.object(S.SS, "trusted_launch_facts", return_value={"fixture": True}), \
+             mock.patch.object(S.W, "validate_pinned_head", return_value=None), \
+             mock.patch.multiple(S.SE,
+                 _check=mock.Mock(return_value=(rc, "", "")),
+                 trusted_produced_head=mock.Mock(side_effect=produced_head),
+                 _receipt_reason=mock.Mock(return_value=None),
+                 admit_merge=mock.Mock(return_value=(
+                     merge if target == "DONE" else (None, "not merged")))):
+            with self.assertRaises(ReachedCleanup):
+                observed = S.advance({"name": "fixture", "units": [unit]}, state,
+                                     str(state_dir), str(root / "runs"), False, max_new=0)
+                self.fail(repr(observed))
+        self.assertEqual(events.count("inspect"), 1)
+        removed = result in ("idle", "done") and not pending
+        self.assertEqual("remove" in events, removed)
+        self.assertEqual(tree.exists(), not removed)
+        durable = S.load_state(str(state_dir))["units"]["code"]
+        saved = durable["attempt_workspaces"]["attempt"]
+        if not removed:
+            self.assertIn("cleanup_liveness", saved)
+            self.assertEqual(saved["cleanup_attempts"], 0)
+            self.assertEqual((tree / "work.txt").read_text(),
+                             "must survive")
+            shutil.rmtree(tree)
+        self.assertIn("attempt", durable["attempt_recovery_snapshots"])
 
     def test_unknown_historical_agent_never_uses_current_agent(self):
-        # Exercise the same helper with a real restore-checked snapshot.
-        from tests import test_attempt_worktrees as fixtures
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            repo = fixtures.repo_at(root / "repo")
-            fixtures.git(repo, "branch", "-M", "main")
-            fixtures.git(repo, "init", "-q", "--bare", str(root / "origin.git"))
-            fixtures.git(repo, "remote", "add", "origin", str(root / "origin.git"))
-            fixtures.git(repo, "push", "-q", "origin", "main")
-            unit = fixtures.code_unit(repo)
+            unit = self.code_unit(root)
             error, launch = S._capture_code_launch(str(root / "old"), unit)
             self.assertIsNone(error)
-            workspace = root / "workspace"
-            workspace.mkdir()
-            (workspace / "work").write_text("old work")
-            meta = {"path": str(workspace), "workspace_owner": "coordinator"}
+            tree = root / "workspace"
+            tree.mkdir()
+            (tree / "work").write_text("old work")
+            meta = {"path": str(tree), "workspace_owner": "coordinator"}
             state = {"units": {"code": {
                 "attempt_dir": str(root / "new"), "job_id": "new-agent",
                 "attempt_launch_intents": {"old": launch["intent"]},
@@ -261,7 +274,7 @@ class TestCleanupLiveness(unittest.TestCase):
                 SW._archive_code_worktree(state, unit, str(root / "old"), [],
                                           str(root / "state"))
             run.assert_not_called()
-            self.assertTrue(workspace.exists())
+            self.assertTrue(tree.exists())
             self.assertIn("unknown", meta["cleanup_liveness"])
 
 if __name__ == "__main__":

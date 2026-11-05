@@ -96,7 +96,7 @@ class FakePaseo:
 
     def __call__(self, argv, **kwargs):
         if argv[:2] == ["paseo", "inspect"]:
-            return 0, json.dumps({"status": "idle"}), ""
+            return 0, '{"status":"idle"}', ""
         if argv[:2] != ["paseo", "run"]:
             return self.real_run(argv, **kwargs)
         self.launches.append(list(argv))
@@ -148,6 +148,37 @@ class TestPerAttemptWorktrees(unittest.TestCase):
             "attempt_bases": {attempt.name: anchored["base"]},
             "attempt_launch_intents": {attempt.name: anchored["intent"]},
         }}}
+
+    def test_live_snapshot_races_do_not_exhaust_cleanup(self):
+        attempt = self.attempt("code", "racing")
+        unit, state = self.intent_state(attempt)
+        _, error = self.submit(unit, attempt, False, state)
+        self.assertIsNone(error)
+        meta = state["units"]["code"]["attempt_workspaces"][attempt.name]
+        workspace = Path(meta["path"])
+        state_dir = str(self.tmp / "state")
+        status = "running"
+        def service(argv, **kwargs):
+            if argv[:2] == ["paseo", "inspect"]:
+                return 0, json.dumps({"status": status}), ""
+            return self.real_run(argv, **kwargs)
+        preserve = S.SW.R.preserve_worktree
+        def racing(*args, **kwargs):
+            result = preserve(*args, **kwargs)
+            with (workspace / "live.txt").open("a") as stream:
+                stream.write("new work\n")
+            return result
+        with mock.patch.object(S.U, "run", side_effect=service):
+            S._archive_code_worktree(state, unit, str(attempt), [], state_dir)
+            with mock.patch.object(S.SW.R, "preserve_worktree", side_effect=racing):
+                for _ in range(S.WORKTREE_ARCHIVE_MAX_ATTEMPTS):
+                    S._archive_code_worktree(state, unit, str(attempt), [], state_dir)
+            self.assertTrue(workspace.exists())
+            status = "idle"
+            S._archive_code_worktree(state, unit, str(attempt), [], state_dir)
+        self.assertFalse(meta.get("cleanup_gave_up"))
+        self.assertFalse(workspace.exists())
+        self.assertTrue(meta["archived"])
 
     def test_dispatch_argv_uses_routing_provider_and_plan_model_override(self):
         import importlib.util
@@ -1610,7 +1641,7 @@ class TestPerAttemptWorktrees(unittest.TestCase):
 
         def failing_archive(argv, **kwargs):
             if argv[:2] == ["paseo", "inspect"]:
-                return 0, json.dumps({"status": "idle"}), ""
+                return 0, '{"status":"idle"}', ""
             if (argv[:2] == ["git", "-C"]
                     and "worktree" in argv and "remove" in argv):
                 return 1, "", "archive unavailable"
@@ -1657,7 +1688,7 @@ class TestPerAttemptWorktrees(unittest.TestCase):
 
         def failing_archive(argv, **_kwargs):
             if argv[:2] == ["paseo", "inspect"]:
-                return 0, json.dumps({"status": "idle"}), ""
+                return 0, '{"status":"idle"}', ""
             if argv[:3] == ["paseo", "workspace", "archive"]:
                 calls.append(list(argv))
                 return 1, "", "archive unavailable"
@@ -1694,7 +1725,7 @@ class TestPerAttemptWorktrees(unittest.TestCase):
 
         def crash_during_archive(argv, **_kwargs):
             if argv[:2] == ["paseo", "inspect"]:
-                return 0, json.dumps({"status": "idle"}), ""
+                return 0, '{"status":"idle"}', ""
             if argv[:3] == ["paseo", "workspace", "archive"]:
                 raise Crash()
             return self.real_run(argv, **_kwargs)
@@ -1734,7 +1765,7 @@ class TestPerAttemptWorktrees(unittest.TestCase):
 
         def failing_archive(argv, **_kwargs):
             if argv[:2] == ["paseo", "inspect"]:
-                return 0, json.dumps({"status": "idle"}), ""
+                return 0, '{"status":"idle"}', ""
             if argv[:3] == ["paseo", "workspace", "archive"]:
                 return 1, "", "archive unavailable"
             return self.real_run(argv, **_kwargs)
