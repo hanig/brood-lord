@@ -308,12 +308,22 @@ class TestMain(unittest.TestCase):
 
     def test_help_explains_default(self):
         out = io.StringIO()
-        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as exc:
+        # Keep argparse from splitting API names inside words on narrow terminals.
+        with mock.patch.dict(os.environ, {"COLUMNS": "200"}), \
+                contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as exc:
             RT.main(["--help"])
         self.assertEqual(exc.exception.code, 0)
         help_text = " ".join(out.getvalue().split())
-        self.assertIn("len(os.sched_getaffinity(0))", help_text)
-        self.assertIn("otherwise os.cpu_count() or 1; minimum 1", help_text)
+        self.assertIn("parallel workers (default: len(os.sched_getaffinity(0)) "
+                      "where available, otherwise os.cpu_count() or 1; minimum 1)",
+                      help_text)
+
+    def test_help_description_is_independent_of_terminal_width(self):
+        # Exhaustive regression cases: narrow, conventional and wide terminals.
+        for width in (30, 80, 200):
+            with self.subTest(columns=width), \
+                    mock.patch.dict(os.environ, {"COLUMNS": str(width)}):
+                self.test_help_explains_default()
 
     def run_main(self, root, argv, split=None):
         saved = (RT.ROOT, RT.TESTS, RT.DURATIONS, RT.SPLIT, RT.SLOW, RT.SLOW_SECONDS)
