@@ -50,6 +50,8 @@ Before a new merge, at least one CI check must exist and every check must report
 
 The command never resubmits an unresolved merge request: a queued request, a lost response, or a crash between intent persistence and transmission leaves a durable operation for inspection. Rerun after GitHub reports MERGED to record and advance, or explicitly abandon the investigated OPEN request using the recorded path above. Neither action deletes the intent. Abandonment attests an OPEN observation; it cannot prove an earlier queued request will never execute, so the named operator retains responsibility for investigating that uncertainty. The intent and abandonment journals retain the same-node trusted-writer boundary. The local coordinator lease is released before advance acquires it; advancement can still halt or retain a unit for its existing verification policy. A successful advance does not assert that every unit closed. <!-- declaration: limit.merge-command -->
 
+Lambda Slurm verification through `STATE_DIR/verification-execution.json` is the default merge-verification route. <!-- declaration: merge.requirements -->
+
 ## Declaring a Slurm verification host
 
 In the external coordinator state's `verification-execution.json`, declare

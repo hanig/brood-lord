@@ -99,7 +99,7 @@ CLOSED_DECLARATIONS = {
         role.supervision delegation.whole-loop delegation.prompt
         delegation.preamble delegation.contract
         delegation.configuration delegation.continuation retry.boundary
-        evidence.checkable evidence.authority review.panel-source
+        evidence.checkable evidence.detector-ledger evidence.authority review.panel-source
         review.author-exclusion review.claims review.honesty review.cost
         review.effort review.rounds adjudication.matrix
         adjudication.concurrence adjudication.envelope adjudication.record
