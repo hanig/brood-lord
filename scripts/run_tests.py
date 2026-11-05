@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the unittest suite in parallel, one process per test module.
 
-    python3 scripts/run_tests.py                 # whole suite, one worker per CPU
+    python3 scripts/run_tests.py                 # whole suite, one worker per usable CPU
     python3 scripts/run_tests.py -j 2            # two workers
     python3 scripts/run_tests.py test_outbox test_contract
     python3 scripts/run_tests.py --update-durations
@@ -237,12 +237,20 @@ def run_module(module, timeout=None, root=None, python=sys.executable, ids=None,
             "timings": parse_timings(output) if timings else {}}
 
 
+def default_workers():
+    """CPUs available to this process, with a positive machine-count fallback."""
+    if hasattr(os, "sched_getaffinity"):
+        return max(1, len(os.sched_getaffinity(0)))
+    return max(1, os.cpu_count() or 1)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("modules", nargs="*",
                         help="test modules to run (default: all of tests/test*.py)")
-    parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 1,
-                        help="parallel workers (default: CPU count)")
+    parser.add_argument("-j", "--jobs", type=int, default=None,
+                        help="parallel workers (default: len(os.sched_getaffinity(0)) "
+                        "where available, otherwise os.cpu_count() or 1; minimum 1)")
     parser.add_argument("--timeout", type=float, default=None,
                         help="seconds allowed per module (default: none)")
     parser.add_argument("--no-split", action="store_true",
@@ -253,6 +261,10 @@ def main(argv=None):
                         help="record module times in tests/durations.json and "
                         "slow tests in tests/slow_tests.json")
     args = parser.parse_args(argv)
+    if args.jobs is None:
+        args.jobs = default_workers()
+    elif args.jobs < 1:
+        parser.error("--jobs must be at least 1")
     if args.fast and args.update_durations:
         parser.error("--update-durations needs the slow tests; drop --fast")
 
