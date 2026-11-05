@@ -6,6 +6,7 @@
     python3 scripts/run_tests.py test_outbox test_contract
     python3 scripts/run_tests.py --update-durations
     python3 scripts/run_tests.py --no-split      # never split a module
+    python3 scripts/run_tests.py --fast          # leave out tests/slow_tests.json
 
 The module set is what `python3 -m unittest discover -s tests` loads: every
 top-level `tests/test*.py` whose name is a valid module name, discovery's
@@ -26,6 +27,13 @@ module no longer sets the floor for the whole run. Its module fixtures
 across tests may be listed; tests/test_run_tests.py refuses a listed module
 that defines setUpClass or load_tests. If a split module's tests cannot be
 listed, it runs whole, so an import error is still reported.
+
+--fast leaves out the tests listed in tests/slow_tests.json (each took at
+least SLOW_SECONDS when last measured) and runs everything else; modules whose
+tests are all slow are skipped. It is for an agent's inner loop. Only the full
+run, without --fast, is evidence that the suite passes.
+--update-durations records per-test times with unittest's --durations, which
+needs Python 3.12 or later; on older Pythons it updates module times only.
 
 Workers take the slowest modules and chunks first, using tests/durations.json (seconds
 of wall time per module, written by --update-durations). A module missing from
@@ -50,6 +58,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / "tests"
 DURATIONS = TESTS / "durations.json"
+SLOW = TESTS / "slow_tests.json"
+SLOW_SECONDS = 5.0
 # Module -> number of processes. Keep each chunk near 100 s on a 4-vCPU host.
 SPLIT = {"test_remote_verification": 6, "test_project": 3}
 LIST_TESTS = (
@@ -64,6 +74,7 @@ LIST_TESTS = (
     "if any(type(t).__name__ in ('_FailedTest', 'ModuleImportFailure') for t in tests):\n"
     "    sys.exit(3)\n"
     "print('\\n'.join(t.id() for t in tests))\n")
+TIMED = re.compile(r"^\s*([\d.]+)s\s+\S+\s+\(([\w.]+)\)\s*$", re.M)
 RAN = re.compile(r"^Ran (\d+) tests? in ", re.M)
 SKIPPED = re.compile(r"skipped=(\d+)")
 STATUS = re.compile(r"^(?:OK|FAILED|NO TESTS RAN)\b.*$", re.M)
@@ -84,6 +95,22 @@ def load_durations(path=None):
         return {}
     return {k: float(v) for k, v in data.items()
             if isinstance(k, str) and isinstance(v, (int, float))}
+
+
+def parse_timings(output):
+    """{test id: seconds} from unittest --durations output (Python 3.12+)."""
+    marker = output.rfind("Slowest test durations")
+    if marker < 0:
+        return {}
+    return {test: float(sec) for sec, test in TIMED.findall(output[marker:])}
+
+
+def slow_entries(timed, modules):
+    """Timed ids at or over SLOW_SECONDS that --fast can leave out: ids of a
+    test module (a delegated worker's own id, say, cannot be selected)."""
+    modules = set(modules)
+    return {t: round(v, 1) for t, v in timed.items()
+            if v >= SLOW_SECONDS and t.split(".")[0] in modules}
 
 
 def schedule(modules, durations):
@@ -148,27 +175,37 @@ def list_tests(module, root=None, python=sys.executable):
     return ids if proc.returncode == 0 and ids else None
 
 
-def plan_jobs(modules, durations, split=None, root=None):
-    """(label, module, test ids or None, weight) per process, slowest first."""
+def plan_jobs(modules, durations, split=None, root=None, exclude=()):
+    """(label, module, test ids or None, weight) per process, slowest first,
+    and how many listed tests `exclude` removed."""
     split = SPLIT if split is None else split
+    exclude = frozenset(exclude)
     slowest = max(durations.values(), default=0.0) + 1
-    jobs = []
+    jobs, removed = [], 0
     for module in schedule(modules, durations):
         weight = durations.get(module, slowest)
         parts = split.get(module, 1)
-        ids = list_tests(module, root=root) if parts > 1 else None
+        excluding = any(t.startswith(module + ".") for t in exclude)
+        ids = list_tests(module, root=root) if parts > 1 or excluding else None
+        if ids and excluding:
+            kept = [t for t in ids if t not in exclude]
+            removed += len(ids) - len(kept)
+            if not kept:
+                continue
+            weight *= len(kept) / len(ids)
+            ids = kept
         chunks = chunk(ids, parts) if ids else []
-        if len(chunks) < 2:
+        if not chunks or (len(chunks) == 1 and not excluding):
             jobs.append((module, module, None, weight))
             continue
         for i, part in enumerate(chunks):
-            jobs.append(("%s[%d/%d]" % (module, i + 1, len(chunks)), module, part,
-                         weight * len(part) / len(ids)))
-    return sorted(jobs, key=lambda j: (-j[3], j[0]))
+            label = module if len(chunks) == 1 else "%s[%d/%d]" % (module, i + 1, len(chunks))
+            jobs.append((label, module, part, weight * len(part) / len(ids)))
+    return sorted(jobs, key=lambda j: (-j[3], j[0])), removed
 
 
 def run_module(module, timeout=None, root=None, python=sys.executable, ids=None,
-               label=None):
+               label=None, timings=False):
     """Run one module, or the given test ids from it, in its own clean
     environment; returns a result dict."""
     root = ROOT if root is None else Path(root)
@@ -177,7 +214,9 @@ def run_module(module, timeout=None, root=None, python=sys.executable, ids=None,
     try:
         try:
             proc = subprocess.run(
-                [python, "-B", "-m", "unittest"] + list(ids or [module]), cwd=str(root),
+                [python, "-B", "-m", "unittest"]
+                + (["--durations", "0"] if timings and sys.version_info >= (3, 12) else [])
+                + list(ids or [module]), cwd=str(root),
                 env=module_env(scratch, root=root), stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                 timeout=timeout)
@@ -194,7 +233,8 @@ def run_module(module, timeout=None, root=None, python=sys.executable, ids=None,
     return {"label": label or module, "module": module, "ok": ok, "code": code,
             "ran": ran,
             "skipped": skipped, "status": status or "no unittest summary",
-            "seconds": round(time.monotonic() - started, 1), "output": output}
+            "seconds": round(time.monotonic() - started, 1), "output": output,
+            "timings": parse_timings(output) if timings else {}}
 
 
 def main(argv=None):
@@ -207,9 +247,14 @@ def main(argv=None):
                         help="seconds allowed per module (default: none)")
     parser.add_argument("--no-split", action="store_true",
                         help="run every module as one process")
+    parser.add_argument("--fast", action="store_true",
+                        help="leave out the tests in tests/slow_tests.json")
     parser.add_argument("--update-durations", action="store_true",
-                        help="record each module's wall time in tests/durations.json")
+                        help="record module times in tests/durations.json and "
+                        "slow tests in tests/slow_tests.json")
     args = parser.parse_args(argv)
+    if args.fast and args.update_durations:
+        parser.error("--update-durations needs the slow tests; drop --fast")
 
     available = discover_modules()
     modules = args.modules or available
@@ -217,18 +262,23 @@ def main(argv=None):
     if unknown:
         parser.error("not a tests/test*.py module: %s" % ", ".join(unknown))
     durations = load_durations()
-    plan = plan_jobs(modules, durations, split={} if args.no_split else None,
-                     root=ROOT)
+    slow = load_durations(SLOW)
+    plan, removed = plan_jobs(modules, durations, split={} if args.no_split else None,
+                              root=ROOT, exclude=slow if args.fast else ())
+    if not plan:
+        print("run_tests: nothing to run")
+        return 1
     jobs = max(1, min(args.jobs, len(plan)))
-    print("run_tests: %d modules in %d processes, %d workers" % (
-        len(modules), len(plan), jobs), flush=True)
+    print("run_tests: %d modules in %d processes, %d workers%s" % (
+        len(modules), len(plan), jobs,
+        ", --fast leaves out %d slow tests" % removed if args.fast else ""), flush=True)
 
     lock = threading.Lock()
     results = []
     started = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(jobs) as pool:
         futures = [pool.submit(run_module, module, args.timeout, ROOT, ids=ids,
-                               label=label)
+                               label=label, timings=args.update_durations)
                    for label, module, ids, _ in plan]
         for future in concurrent.futures.as_completed(futures):
             result = future.result()
@@ -252,7 +302,8 @@ def main(argv=None):
         ran, len(modules), len(results), wall, jobs,
         "OK" if not failed else "FAILED (%d modules: %s)" % (
             len(failed_modules), ", ".join(failed_modules))) +
-        (" (skipped=%d)" % skipped if skipped else ""))
+        (" (skipped=%d)" % skipped if skipped else "") +
+        (" [--fast: %d slow tests not run]" % removed if args.fast else ""))
 
     if args.update_durations:
         merged = dict(durations)
@@ -263,6 +314,18 @@ def main(argv=None):
         merged = {k: merged[k] for k in sorted(merged) if k in set(available)}
         DURATIONS.write_text(json.dumps(merged, indent=1, sort_keys=True) + "\n")
         print("run_tests: wrote %s" % DURATIONS)
+        timed = {}
+        for r in results:
+            timed.update(r["timings"])
+        if timed:
+            ran_modules = {r["module"] for r in results}
+            kept = {t: v for t, v in slow.items() if t.split(".")[0] not in ran_modules}
+            kept.update(slow_entries(timed, available))
+            SLOW.write_text(json.dumps(kept, indent=1, sort_keys=True) + "\n")
+            print("run_tests: wrote %s (%d tests of %.0fs or more)" % (
+                SLOW, len(kept), SLOW_SECONDS))
+        else:
+            print("run_tests: per-test times need Python 3.12+; %s unchanged" % SLOW)
     return 1 if failed else 0
 
 

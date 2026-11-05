@@ -21,6 +21,7 @@ documents reference this floor and keep their count-shaped prose advisory.
 ```sh
 python3 scripts/run_tests.py                     # full suite in parallel, one process per module
 python3 scripts/run_tests.py test_outbox         # chosen modules, same isolation
+python3 scripts/run_tests.py --fast              # inner loop: leaves out tests/slow_tests.json
 python3 -m unittest discover -s tests            # full suite, serial
 python3 -m unittest tests.test_swarm             # one module
 python3 skills/hanig-swarm/scripts/swarm.py schema           # every unit field, before writing a plan
@@ -37,12 +38,15 @@ own process with a fresh HOME, XDG_CONFIG_HOME and TMPDIR and no other
 inherited environment, slowest first by `tests/durations.json`. Modules listed
 in its `SPLIT` run as several processes over interleaved test ids; only a
 module whose tests share no state may be listed. A module fails the run if it
-fails, errors or collects no tests. Refresh the durations with
-`--update-durations` after adding or slowing a module.
+fails, errors or collects no tests. `--fast` leaves out the tests in
+`tests/slow_tests.json` (5 s or more when last measured) and is for an
+agent's inner loop only; a change is verified by the full run. Refresh both
+files with `--update-durations` (per-test times need Python 3.12+) after
+adding or slowing tests.
 
 Measured 2026-11-05 on a 4-vCPU cloud VM at bc85f28 plus this runner: serial
 discovery 32.0 min; `scripts/run_tests.py` with 4 workers 11.0 min, all
-passing, with or without splitting. On 4 vCPUs the run is bound by total work
+passing, with or without splitting; `--fast` 7.0 min, leaving out 101 tests. On 4 vCPUs the run is bound by total work
 (about 44 min of module time divided by 4 workers); splitting
 `test_remote_verification` and `test_project` lowered the longest single
 process from about 9.5 min to about 2.3 min, which only shortens runs on hosts

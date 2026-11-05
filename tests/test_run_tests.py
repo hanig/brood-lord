@@ -119,7 +119,7 @@ MANY = '''
     class T(unittest.TestCase):
         def test_a(self): __import__('time').sleep(0.6)
         def test_b(self): __import__('time').sleep(0.6)
-        def test_c(self): pass
+        def test_c(self): __import__('time').sleep(0.1)
         def test_d(self): self.fail("chunk boom")
         def test_e(self): pass
 '''
@@ -147,11 +147,45 @@ class TestSplit(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_tree(root / "tests", {"test_broken.py": "import no_such_module_x\n"})
-            plan = RT.plan_jobs(["test_broken"], {}, split={"test_broken": 3}, root=root)
+            plan, removed = RT.plan_jobs(["test_broken"], {}, split={"test_broken": 3},
+                                         root=root)
+            self.assertEqual(removed, 0)
             self.assertEqual([(j[0], j[2]) for j in plan], [("test_broken", None)])
             result = RT.run_module("test_broken", root=root)
             self.assertFalse(result["ok"])
             self.assertIn("no_such_module_x", result["output"])
+
+
+class TestFast(unittest.TestCase):
+    def test_excluded_tests_are_left_out_and_counted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_tree(root / "tests", {"test_many.py": MANY, "test_pass.py": PASSING})
+            slow = {"test_many.T.test_a", "test_many.T.test_b"}
+            plan, removed = RT.plan_jobs(["test_many", "test_pass"], {}, split={},
+                                         root=root, exclude=slow)
+            self.assertEqual(removed, 2)
+            by_label = {j[0]: j[2] for j in plan}
+            self.assertEqual(by_label["test_pass"], None)
+            self.assertEqual(sorted(by_label["test_many"]),
+                             ["test_many.T.test_c", "test_many.T.test_d", "test_many.T.test_e"])
+            every = {"test_many.T.test_" + c for c in "abcde"}
+            plan, removed = RT.plan_jobs(["test_many"], {}, split={}, root=root,
+                                         exclude=every)
+            self.assertEqual((plan, removed), ([], 5))
+
+    def test_only_selectable_slow_ids_are_recorded(self):
+        timed = {"test_m.T.test_slow": 9.0, "test_m.T.test_quick": 0.2,
+                 "tests.review_sandbox_worker.DelegatedReviewTests.runTest": 30.0}
+        self.assertEqual(RT.slow_entries(timed, ["test_m"]), {"test_m.T.test_slow": 9.0})
+
+    def test_parse_timings(self):
+        out = ("Slowest test durations\n" + "-" * 70 + "\n"
+               "52.507s    test_x (test_m.TestX.test_x)\n"
+               "0.100s     test_y (test_m.TestX.test_y)\n\nRan 2 tests in 52.6s\n")
+        self.assertEqual(RT.parse_timings(out),
+                         {"test_m.TestX.test_x": 52.507, "test_m.TestX.test_y": 0.1})
+        self.assertEqual(RT.parse_timings("Ran 2 tests in 0.1s\nOK\n"), {})
 
 
 class TestParse(unittest.TestCase):
@@ -212,8 +246,10 @@ class TestRunModule(unittest.TestCase):
 
 class TestMain(unittest.TestCase):
     def run_main(self, root, argv, split=None):
-        saved = (RT.ROOT, RT.TESTS, RT.DURATIONS, RT.SPLIT)
+        saved = (RT.ROOT, RT.TESTS, RT.DURATIONS, RT.SPLIT, RT.SLOW, RT.SLOW_SECONDS)
         RT.SPLIT = split or {}
+        RT.SLOW = root / "tests" / "slow_tests.json"
+        RT.SLOW_SECONDS = 0.5
         RT.ROOT, RT.TESTS = root, root / "tests"
         RT.DURATIONS = RT.TESTS / "durations.json"
         out = io.StringIO()
@@ -221,7 +257,7 @@ class TestMain(unittest.TestCase):
             with contextlib.redirect_stdout(out):
                 code = RT.main(argv)
         finally:
-            RT.ROOT, RT.TESTS, RT.DURATIONS, RT.SPLIT = saved
+            RT.ROOT, RT.TESTS, RT.DURATIONS, RT.SPLIT, RT.SLOW, RT.SLOW_SECONDS = saved
         return code, out.getvalue()
 
     def test_exit_status_and_durations(self):
@@ -256,6 +292,32 @@ class TestMain(unittest.TestCase):
             self.assertAlmostEqual(recorded["test_many"], sum(chunks), delta=0.15)
             code, out = self.run_main(root, ["--no-split"], split={"test_many": 2})
             self.assertIn("Ran 5 tests in 1 modules (1 processes)", out)
+
+    def test_fast_runs_everything_but_the_recorded_slow_tests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_tree(root / "tests", {"test_many.py": MANY})
+            (root / "tests" / "slow_tests.json").write_text(
+                json.dumps({"test_many.T.test_d": 9.0}))
+            code, out = self.run_main(root, ["--fast"])
+            self.assertEqual(code, 0, out)  # test_d, the failing one, was left out
+            self.assertIn("Ran 4 tests", out)
+            self.assertIn("[--fast: 1 slow tests not run]", out)
+            with self.assertRaises(SystemExit):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.run_main(root, ["--fast", "--update-durations"])
+
+    @unittest.skipIf(sys.version_info < (3, 12), "unittest --durations needs 3.12")
+    def test_update_durations_records_slow_tests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_tree(root / "tests", {"test_many.py": MANY})
+            (root / "tests" / "slow_tests.json").write_text(
+                json.dumps({"test_many.T.test_gone": 9.0, "test_other.T.test_x": 7.0}))
+            self.run_main(root, ["--update-durations"])
+            slow = json.loads((root / "tests" / "slow_tests.json").read_text())
+            self.assertEqual(sorted(slow), ["test_many.T.test_a", "test_many.T.test_b",
+                                            "test_other.T.test_x"])
 
     def test_unknown_module_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
