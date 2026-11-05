@@ -39,7 +39,7 @@ if mode == 'discover':
         if isinstance(suite, unittest.TestSuite):
             return [name for child in suite for name in ids(child)]
         name = suite.id()
-        if isinstance(suite, unittest.loader._FailedTest) or 'ModuleImportFailure' in name:
+        if isinstance(suite, unittest.loader._FailedTest) or 'ModuleImportFailure' in name.split('.'):
             raise ValueError('discovery failure: ' + name)
         return [name]
     def imported(name):
@@ -81,7 +81,17 @@ else:
     top = os.path.abspath('tests')
     if top not in sys.path:
         sys.path.insert(0, top)
-    sys.argv = ['unittest', destination]
+    # Discovery represents an import-level SkipTest as one skipped test.
+    # Keep that representation when the CLI loads the same module by name.
+    load_name = unittest.defaultTestLoader.loadTestsFromName
+    def load_module(name, module=None):
+        try:
+            return load_name(name, module)
+        except unittest.SkipTest as exc:
+            return unittest.loader._make_skipped_test(
+                name, exc, unittest.defaultTestLoader.suiteClass)
+    unittest.defaultTestLoader.loadTestsFromName = load_module
+    sys.argv = ['unittest', '--', destination]
 runpy.run_module('unittest', run_name='__main__', alter_sys=True)
 '''
 
@@ -100,7 +110,8 @@ def discover(root):
         if (not isinstance(selected, dict) or any(
                 not isinstance(module, str) or not module or not isinstance(names, list)
                 or not names or any(not isinstance(name, str) or not name
-                                   or '_FailedTest' in name or 'ModuleImportFailure' in name
+                                   or any(part in ('_FailedTest', 'ModuleImportFailure')
+                                          for part in name.split('.'))
                                    for name in names)
                 for module, names in selected.items())):
             raise ValueError('invalid discovery module manifest')

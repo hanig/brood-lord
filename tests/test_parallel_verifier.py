@@ -39,13 +39,15 @@ class TestParallelVerifier(unittest.TestCase):
     def test_failure_kinds_and_candidate_cannot_steer(self):
         self.write('scripts/run_tests.py', "from pathlib import Path\nPath('steered').touch()\n")
         self.write('tests/test_a.py', PASS)
-        # Exhaustive enumeration of four specified failure kinds.
+        # Exhaustive four failure kinds plus both reserved failure-id tokens.
         for body in (PASS.replace('pass', 'self.fail("intentional")'),
                      PASS.replace('pass', 'raise ValueError("intentional")'),
                      'import absent_r2_fixture_module\n',
                      PASS + '\ndef load_tests(loader, suite, pattern):\n'
                      '    if pattern is None: __import__("sys").exit(0)\n'
-                     '    return suite\n'):
+                     '    return suite\n',
+                     PASS + 'T.id = lambda self: \"unittest.loader.ModuleImportFailure.broken\"\n',
+                     PASS + 'T.id = lambda self: \"unittest.loader._FailedTest.broken\"\n'):
             with self.subTest(body=body):
                 self.write('tests/test_b.py', body)
                 result = self.run_verifier()
@@ -120,6 +122,28 @@ class TestParallelVerifier(unittest.TestCase):
         result = self.run_verifier()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Ran 1 test', result.stderr)
+
+    def test_literal_module_names_and_import_skips(self):
+        # Finite CLI-boundary cases, each also accepted by serial discovery.
+        for name, source in (
+                ('discover', PASS + '\ndef load_tests(loader, tests, pattern): return tests\n'),
+                ('-package', PASS),
+                ('test_skip', 'import unittest\nraise unittest.SkipTest("fixture")\n')):
+            with self.subTest(name=name):
+                self.write('tests/' + (name + '.py' if name == 'test_skip' else name + '/__init__.py'), source)
+                serial = subprocess.run([sys.executable, '-B', '-m', 'unittest', 'discover', '-s', 'tests'],
+                                        cwd=self.root, capture_output=True, text=True)
+                self.assertEqual(serial.returncode, 0, serial.stderr)
+                self.assertIn(name, P.discover(self.root))
+                result = self.run_verifier()
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_failure_marker_substrings_are_valid_test_names(self):
+        for name in ('TestModuleImportFailure', 'Test_FailedTest'):
+            with self.subTest(name=name):
+                self.write('tests/test_names.py', PASS.replace('class T', 'class ' + name))
+                result = self.run_verifier()
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_whole_module_can_select_more_tests(self):
         self.write('tests/test_hook.py', PASS + '\ndef load_tests(loader, suite, pattern):\n'
