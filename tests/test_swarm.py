@@ -1243,6 +1243,27 @@ class TestContinuationSettleClock(Base):
     def test_crash_after_send_recovers_the_settle_window(self):
         self.check_window(True)
 
+    def test_running_check_records_only_the_matching_continuation(self):
+        from unittest import mock
+        S = swarm
+        attempt = str(self.tmp / "attempt")
+        entries = [{"agent_id": agent, "sent": None}
+                   for agent in ("fixture-agent", "old-agent")]
+        us = {"state": "RUNNING", "attempt_dir": attempt,
+              "job_id": "fixture-agent", "attempts": [attempt],
+              "gpu_hours": 0, "continuations": entries}
+        state = {"schema_version": 1, "units": {"code": us}}
+        sd = str(self.tmp / "state")
+        self.assertTrue(S.acquire_lease(sd)[0])
+        self.addCleanup(S.release_lease, sd)
+        with mock.patch.object(S.SS, "trusted_launch_facts", return_value={"fixture": True}), \
+             mock.patch.object(S.SE, "_check", return_value=(S.RUNNING, "", "")):
+            S.advance({"name": "fixture", "units": [{"id": "code", "kind": "code"}]},
+                      state, sd, str(self.tmp / "runs"), False, max_new=0)
+        saved = S.load_state(sd)["units"]["code"]["continuations"]
+        self.assertTrue(saved[0]["active_since_send"])
+        self.assertNotIn("active_since_send", saved[1])
+
     def check_window(self, crash):
         from unittest import mock
         S = swarm

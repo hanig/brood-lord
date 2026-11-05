@@ -394,6 +394,7 @@ def _preserve_and_archive_code_worktree(state, u, unit_dir, report, state_dir=No
             if agent:
                 agents[attempt] = agent
         reason = "attempt agent is unknown"
+        status, rc = None, None
         if agent:
             rc, out, err = U.run(
                 ["paseo", "inspect", "--json", str(agent)], timeout=60)
@@ -406,9 +407,24 @@ def _preserve_and_archive_code_worktree(state, u, unit_dir, report, state_dir=No
                                 or rec.get("pendingPermissions")))
             pending = [entry for entry in us.get("continuations", [])
                        if isinstance(entry, dict)
-                       and entry.get("agent_id") == str(agent)
-                       and not entry.get("settled_since_send")]
-            if settled and pending:
+                       and (not entry.get("settled_since_send")
+                            or ((entry.get("sent") is not True
+                                 or entry.get("delivery_unacknowledged"))
+                                and not entry.get("active_since_send")))]
+            mismatch = any(entry.get("agent_id") != str(agent)
+                           for entry in pending)
+            if not mismatch and rc == 0 and status == "running":
+                for entry in pending:
+                    entry["active_since_send"] = True
+            ambiguous = any((entry.get("sent") is not True
+                             or entry.get("delivery_unacknowledged"))
+                            and not entry.get("active_since_send")
+                            for entry in pending)
+            if mismatch:
+                reason = "continuation agent mismatch"
+            elif ambiguous:
+                reason = "continuation delivery unacknowledged"
+            elif settled and pending:
                 for entry in pending:
                     entry["settled_since_send"] = True
                 reason = "continuation pending; first settlement since send"
@@ -433,6 +449,10 @@ def _preserve_and_archive_code_worktree(state, u, unit_dir, report, state_dir=No
                           "agent is not settled or has pending permissions")
         meta["cleanup_attempts"] = tries
         meta["cleanup_liveness"] = reason
+        meta.setdefault("cleanup_liveness_observations", []).append({
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "agent_id": agent, "status": status, "returncode": rc,
+            "reason": reason})
         report.append(f"{u['id']}: retained worktree {workspace_path}: {reason}")
         SS.save_state(state_dir, state)
         return False

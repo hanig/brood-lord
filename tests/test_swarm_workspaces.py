@@ -193,11 +193,13 @@ class TestCleanupLiveness(unittest.TestCase):
                 for retry in (False, True):
                     if retry:
                         us["continuations"][0].update(
-                            sent=None, status="pending", settled_since_send=True)
+                            sent=None, status="pending", settled_since_send=True,
+                            active_since_send=True)
                     self.assertFalse(S.maybe_continue(
                         str(state_dir), "code", dict(unit, continuation={"max": 1}),
                         us, [], state))
             self.assertFalse(us["continuations"][0]["sent"])
+            self.assertFalse(us["continuations"][0]["active_since_send"])
         events = []
         def service(argv, **kwargs):
             if argv[:2] == ["paseo", "inspect"]:
@@ -255,6 +257,98 @@ class TestCleanupLiveness(unittest.TestCase):
                              "must survive")
             shutil.rmtree(tree)
         self.assertIn("attempt", durable["attempt_recovery_snapshots"])
+
+    def continuation_fixture(self, root):
+        unit = self.code_unit(root)
+        attempt = root / "attempt"
+        error, launch = S._capture_code_launch(str(attempt), unit)
+        self.assertIsNone(error)
+        tree = root / "checkout"
+        tree.mkdir()
+        (tree / "work").write_text("preserve this")
+        meta = {"path": str(tree), "workspace_owner": "coordinator"}
+        us = {"job_id": "agent", "attempt_dir": str(attempt),
+              "attempt_cleanup_agents": {"attempt": "agent"},
+              "attempt_launch_intents": {"attempt": launch["intent"]},
+              "attempt_workspaces": {"attempt": meta}}
+        state = {"units": {"code": us}}
+        return unit, attempt, tree, meta, us, state
+
+    def test_unacknowledged_delivery_requires_active_then_settled(self):
+        # Terra's queued-send counterexample: idle cannot exclude queued work.
+        # Finite bound: both ambiguous outcomes x six idle observations.
+        for sent in (None, False):
+            with self.subTest(sent=sent), tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                unit, attempt, tree, meta, us, state = self.continuation_fixture(root)
+                entry = {"agent_id": "agent", "sent": sent, "status": "pending"}
+                us["continuations"] = [entry]
+                status = ["idle"]
+                def service(argv, **kwargs):
+                    if argv[:2] == ["paseo", "inspect"]:
+                        return 0, json.dumps({"status": status[0]}), ""
+                    self.assertIn("remove", argv)
+                    shutil.rmtree(tree)
+                    return 0, "", ""
+                def cleanup():
+                    SW._archive_code_worktree(state, unit, str(attempt), [],
+                                              str(root / "state"))
+                with mock.patch.object(S.U, "run", side_effect=service):
+                    for _ in range(6):
+                        cleanup()
+                        self.assertTrue(tree.exists())
+                        self.assertFalse(entry.get("settled_since_send"))
+                        self.assertIn("delivery unacknowledged", meta["cleanup_liveness"])
+                    status[0] = "running"
+                    cleanup()
+                    self.assertTrue(tree.exists())
+                    status[0] = "idle"
+                    cleanup()
+                    self.assertTrue(entry["settled_since_send"])
+                    cleanup()
+                    self.assertFalse(tree.exists())
+
+    def test_pending_identity_never_sends_to_or_settles_another_agent(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            unit, attempt, tree, meta, us, state = self.continuation_fixture(root)
+            unit["continuation"] = {"max": 1, "prompt": "continue"}
+            entry = {"n": 1, "agent_id": "old-agent", "sent": None,
+                     "status": "pending",
+                     "prompt_sha256": hashlib.sha256(b"continue").hexdigest()[:16]}
+            us["continuations"] = [entry]
+            with mock.patch.object(S.SE, "_receipt_reason", return_value=S.U.REASON_NO_OUTPUTS), \
+                 mock.patch.object(S.U, "run", return_value=(0, '{"status":"idle"}', "")) as run:
+                report = []
+                self.assertFalse(S.maybe_continue(str(root / "state"), "code",
+                                                  unit, us, report, state))
+                run.assert_not_called()
+                self.assertIn("agent mismatch", " ".join(report))
+                for status in ("running", "idle", "idle"):
+                    run.return_value = (0, json.dumps({"status": status}), "")
+                    SW._archive_code_worktree(state, unit, str(attempt), [],
+                                              str(root / "state"))
+                    self.assertTrue(tree.exists())
+                    self.assertFalse(entry.get("settled_since_send"))
+                    self.assertIn("agent mismatch", meta["cleanup_liveness"])
+
+    def test_unsettled_observations_keep_their_own_status(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            unit, attempt, tree, meta, us, state = self.continuation_fixture(root)
+            for status in ("running", "error", "unknown"):
+                with mock.patch.object(S.U, "run", return_value=(
+                        0, json.dumps({"status": status}), "")):
+                    SW._archive_code_worktree(state, unit, str(attempt), [],
+                                              str(root / "state"))
+            observations = meta["cleanup_liveness_observations"]
+            self.assertEqual([o["status"] for o in observations],
+                             ["running", "error", "unknown"])
+            self.assertTrue(all(o["agent_id"] == "agent" for o in observations))
+            saved = S.load_state(str(root / "state"))["units"]["code"]
+            self.assertEqual(saved["attempt_workspaces"]["attempt"]
+                             ["cleanup_liveness_observations"], observations)
 
     def test_unknown_historical_agent_never_uses_current_agent(self):
         with tempfile.TemporaryDirectory() as directory:
