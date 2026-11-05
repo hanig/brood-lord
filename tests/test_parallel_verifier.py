@@ -108,6 +108,19 @@ class TestParallelVerifier(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn('Ran 1 test', result.stderr)
 
+    def test_package_hook_owns_nested_discovery_suite(self):
+        self.write('tests/pkg/__init__.py',
+                   'from pathlib import Path\n'
+                   'def load_tests(loader, suite, pattern):\n'
+                   '    here = Path(__file__).parent\n'
+                   '    return loader.discover(str(here), pattern=pattern or "test*.py",\n'
+                   '                           top_level_dir=str(here.parent))\n')
+        self.write('tests/pkg/test_child.py', PASS)
+        self.assertEqual(P.discover(self.root), {'pkg': ['pkg.test_child.T.test_ok']})
+        result = self.run_verifier()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Ran 1 test', result.stderr)
+
     def test_whole_module_can_select_more_tests(self):
         self.write('tests/test_hook.py', PASS + '\ndef load_tests(loader, suite, pattern):\n'
                    '    return unittest.TestSuite([T("test_ok")] * (1 if pattern else 2))\n')
