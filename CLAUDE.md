@@ -44,6 +44,7 @@ agent's inner loop only; a change is verified by the full run. Refresh both
 files with `--update-durations` (per-test times need Python 3.12+) after
 adding or slowing tests.
 
+<!-- docs-truth:historical -->
 Measured 2026-11-05 on a 4-vCPU cloud VM at bc85f28 plus this runner: serial
 discovery 32.0 min; `scripts/run_tests.py` with 4 workers 11.0 min, all
 passing, with or without splitting; `--fast` 7.0 min, leaving out 101 tests. On 4 vCPUs the run is bound by total work
