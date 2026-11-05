@@ -14,6 +14,8 @@ Every requirement names an owner decision, an observed failure with evidence, or
 - Acceptance tests: "Run the summary test on a two-record fixture and assert a count of 2." <!-- declaration: plan.unit-contract -->
 - Requirement provenance: "Count and input scope: owner decision in PLAN.md; malformed-input error: committee decision in the ledger." <!-- declaration: plan.unit-contract -->
 
+Before writing a contract for a unit that parses, walks, budgets or reads real project data, the orchestrator runs a read-only probe on the real data. Each task records that unit's cardinalities, match counts and accepted grammar as acceptance cases. Committed fixtures are synthetic reconstructions, never redacted copies. <!-- declaration: plan.unit-contract -->
+
 ## Kind boundaries
 
 For `slurm`, the command is the work. Nesting `sbatch --wrap` submits an inner

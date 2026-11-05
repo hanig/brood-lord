@@ -143,6 +143,7 @@ ORCHESTRATE_DECLARATIONS = (
     "delegation.continuation",
     "retry.boundary",
     "evidence.checkable",
+    "evidence.detector-ledger",
     "evidence.authority",
     "review.panel-source",
     "review.author-exclusion",
@@ -313,7 +314,7 @@ REFERENCE_ELABORATION_INVENTORIES = {
         ('references/unit-contract.md', 'code.write-scopes', 2),
         ('references/unit-contract.md', 'outputs.attempt-relative', 3),
         ('references/unit-contract.md', 'placement.reference-elaboration', 1),
-        ('references/unit-contract.md', 'plan.unit-contract', 7),
+        ('references/unit-contract.md', 'plan.unit-contract', 8),
         ('references/unit-contract.md', 'slurm.array-outputs', 2),
         ('references/unit-contract.md', 'slurm.command-boundary', 2),
     ),
@@ -365,17 +366,18 @@ REFERENCE_ELABORATION_INVENTORIES = {
         ("references/authority-adjudication.md", "authority.source", 1),
         ("references/authority-adjudication.md", "review.rounds", 1),
         ("references/delegation-evidence.md", "delegation.configuration", 1),
-        ("references/delegation-evidence.md", "delegation.continuation", 1),
+        ("references/delegation-evidence.md", "delegation.continuation", 2),
         ("references/delegation-evidence.md", "delegation.prompt", 6),
         ("references/delegation-evidence.md", "delegation.whole-loop", 1),
         ("references/delegation-evidence.md", "evidence.checkable", 1),
+        ("references/delegation-evidence.md", "evidence.detector-ledger", 1),
         ("references/delegation-evidence.md", "retry.boundary", 1),
         ("references/delegation-evidence.md", "review.cost", 1),
         ("references/delegation-evidence.md", "review.effort", 1),
         ("references/delegation-evidence.md", "review.honesty", 1),
         ("references/delegation-evidence.md", "review.panel-source", 1),
         ("references/dispatch-preamble.md", "delegation.contract", 2),
-        ("references/dispatch-preamble.md", "delegation.preamble", 27),
+        ("references/dispatch-preamble.md", "delegation.preamble", 29),
         ("references/handoff-takeover.md", "handoff.contents", 2),
         ("references/handoff-takeover.md", "handoff.transfer", 1),
         ("references/handoff-takeover.md", "limit.session-liveness", 1),
@@ -383,7 +385,7 @@ REFERENCE_ELABORATION_INVENTORIES = {
         ("references/operating-loop.md", "dispatch.mechanics", 1),
         ("references/operating-loop.md", "loop.advance", 1),
         ("references/operating-loop.md", "loop.quiescence", 1),
-        ("references/operating-loop.md", "merge.requirements", 1),
+        ("references/operating-loop.md", "merge.requirements", 2),
         ("references/operating-loop.md", "code.merge-command", 2),
         ("references/operating-loop.md", "limit.merge-command", 2),
         ("references/operating-loop.md", "preservation.before-cleanup", 1),
@@ -959,6 +961,94 @@ class TestAuthoredSkillShape(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
         self.assertIn(text, (skill / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_project_contract_requires_real_probe_and_synthetic_cases(self):
+        skill = SKILLS / "hanig-project"
+        declarations = DECLARATION_REGISTRY.load_registry(skill)
+        text = next(e["normative_text"] for e in declarations
+                    if e["id"] == "plan.unit-contract")
+        for phrase in (
+                "Before writing a contract", "parses, walks, budgets or reads real project data",
+                "orchestrator runs a read-only probe on the real data",
+                "cardinalities, match counts and accepted grammar as acceptance cases",
+                "synthetic reconstructions, never redacted copies"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+        self.assertIn(text, (skill / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_detector_ledger_fields_and_detectors_reach_reference(self):
+        skill = SKILLS / "hanig-orchestrate"
+        declarations = DECLARATION_REGISTRY.load_registry(skill)
+        text = next(e["normative_text"] for e in declarations
+                    if e["id"] == "evidence.detector-ledger")
+        reference = (skill / "references/delegation-evidence.md").read_text(
+            encoding="utf-8")
+        ledger = reference.split("## Detector ledger", 1)[1].split("## ", 1)[0]
+        for surface in (text, ledger):
+            for phrase in (
+                    "private", "detector-ledger.jsonl", "beside the plan",
+                    "one record per consequential finding",
+                    "lineage, attempt, round, detector, evidence, outcome and disposition",
+                    "probe, property, review-r1, review-r2, review-r3, merge-verifier, ci or real-run",
+                    "grants no authority"):
+                with self.subTest(surface=surface, phrase=phrase):
+                    self.assertIn(phrase, surface)
+        self.assertIn(text, (skill / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_g2_dispatch_testing_and_lineage_guidance(self):
+        reference = (SKILLS / "hanig-orchestrate/references/dispatch-preamble.md").read_text(
+            encoding="utf-8")
+        for phrase in ("exhaustive `itertools`", "declared finite bounds",
+                       "seeded `random.Random(SEED)`", "no third-party libraries",
+                       "seed (or exhaustive enumeration) and bound in the test and in `evidence.md`",
+                       "{{HOST_TEST_LOCK}} {{CURRENT_PYTHON}} -m unittest MODULE",
+                       "every test module that imports the coordinator or reads its state"):
+            self.assertIn(phrase, reference)
+        for step in ("5. ", "6. "):
+            text = next(line for line in reference.splitlines() if line.startswith(step))
+            for phrase in ("orchestrator", "across attempts and continuations", "budget"):
+                self.assertIn(phrase, text)
+
+    def test_continuation_guidance_allows_omitting_optional_updates(self):
+        from tests.test_continue_command import ContinueCommandTests
+        fixture = ContinueCommandTests()
+        self.addCleanup(fixture.doCleanups)
+        fixture.setUp()
+        self.assertEqual(fixture.continuation().returncode, 0)
+        self.assertEqual(fixture.continuation(
+            "--repoint-dependents", "--tickets",
+            str(fixture.tmp / "absent.json")).returncode, 1)
+        skill = SKILLS / "hanig-orchestrate"
+        text = next(e["normative_text"] for e in
+                    DECLARATION_REGISTRY.load_registry(skill)
+                    if e["id"] == "delegation.continuation")
+        for surface in (text, (skill / "references/delegation-evidence.md").read_text(encoding="utf-8"),
+                        (SKILLS.parent / "README.md").read_text(encoding="utf-8")):
+            self.assertIn("Omit either flag when its update is not needed", surface)
+
+    def test_continuation_guidance_reads_utf8_under_ascii_locale(self):
+        from unittest import mock
+        original = Path.read_text
+        def read(path, *args, **kwargs):
+            if path.suffix == ".md":
+                return (path.read_bytes() + b"\n\xe2\x80\x94").decode(
+                    kwargs.get("encoding") or "ascii")
+            return original(path, *args, **kwargs)
+        with mock.patch.object(Path, "read_text", read):
+            self.test_continuation_guidance_allows_omitting_optional_updates()
+
+    def test_g2_continuation_and_default_verification_guidance(self):
+        skill = SKILLS / "hanig-orchestrate"
+        entries = {e["id"]: e["normative_text"]
+                   for e in DECLARATION_REGISTRY.load_registry(skill)}
+        for text in (entries["delegation.continuation"],
+                     (SKILLS.parent / "README.md").read_text(encoding="utf-8")):
+            self.assertIn("swarm.py continue --repoint-dependents --tickets DRAFT", text)
+            self.assertIn("recorded attempts", text)
+        reference = (skill / "references/operating-loop.md").read_text(encoding="utf-8")
+        for text in (entries["merge.requirements"], reference):
+            self.assertIn("Lambda Slurm verification through `STATE_DIR/verification-execution.json` "
+                          "is the default merge-verification route", text)
 
     def test_orchestrate_report_timezone_reaches_the_generated_body(self):
         skill = SKILLS / "hanig-orchestrate"

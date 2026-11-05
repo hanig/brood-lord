@@ -127,7 +127,7 @@
     },
     {
       "id": "plan.unit-contract",
-      "normative_text": "Each code unit's prompt carries a contract under the headings Claims, Supported envelope and accepted limits, Non-goals, Acceptance tests, and Requirement provenance; each requirement's provenance is an owner decision, an observed failure with its evidence, or the committee, and a requirement without provenance is removed.",
+      "normative_text": "Each code unit's prompt carries a contract under the headings Claims, Supported envelope and accepted limits, Non-goals, Acceptance tests, and Requirement provenance; each requirement's provenance is an owner decision, an observed failure with its evidence, or the committee, and a requirement without provenance is removed. Before writing a contract for a unit that parses, walks, budgets or reads real project data, the orchestrator runs a read-only probe on the real data. Each task records that unit's cardinalities, match counts and accepted grammar as acceptance cases. Committed fixtures are synthetic reconstructions, never redacted copies.",
       "references": [
         "references/unit-contract.md"
       ]
