@@ -31,9 +31,10 @@ mode, destination = sys.argv[1:]
 sys.path[0] = os.getcwd()
 if mode == 'discover':
     loader = unittest.defaultTestLoader
-    original = loader.loadTestsFromModule
+    original_path = loader._find_test_path
+    original_import = loader._get_module_from_name
     groups = {}
-    depth = 0
+    frames = []
     def ids(suite):
         if isinstance(suite, unittest.TestSuite):
             return [name for child in suite for name in ids(child)]
@@ -41,19 +42,28 @@ if mode == 'discover':
         if isinstance(suite, unittest.loader._FailedTest) or 'ModuleImportFailure' in name:
             raise ValueError('discovery failure: ' + name)
         return [name]
-    def capture(module, *args, **kwargs):
-        global depth
-        depth += 1
+    def imported(name):
+        # The first import made by _find_test_path owns its returned suite.
+        # Imports and internal suite loads inside candidate hooks are not
+        # extra modules selected by discovery.
+        if frames and frames[-1] is None:
+            frames[-1] = name
+        return original_import(name)
+    def capture_path(*args, **kwargs):
+        frames.append(None)
         try:
-            suite = original(module, *args, **kwargs)
-            if depth == 1:
-                selected = ids(suite)
+            result = original_path(*args, **kwargs)
+            if len(frames) == 1 and result[0] is not None:
+                selected = ids(result[0])
                 if selected:
-                    groups.setdefault(module.__name__, []).extend(selected)
-            return suite
+                    if frames[-1] is None:
+                        raise ValueError('selected suite has no discovery module')
+                    groups.setdefault(frames[-1], []).extend(selected)
+            return result
         finally:
-            depth -= 1
-    loader.loadTestsFromModule = capture
+            frames.pop()
+    loader._get_module_from_name = imported
+    loader._find_test_path = capture_path
     def enumerate_only(program):
         selected = ids(program.test)
         if loader.errors:

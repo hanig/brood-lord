@@ -91,6 +91,23 @@ class TestParallelVerifier(unittest.TestCase):
         self.assertIn('Ran 6 tests', result.stderr)
         self.assertNotIn('test_empty:', result.stderr)
 
+    def test_import_time_suite_loading_is_not_an_extra_discovered_module(self):
+        self.write('tests/helper.py', PASS)
+        # Exhaustive two cases: discard an internally loaded suite, or return
+        # it from the module hook. Only discovery's returned suite is selected.
+        for hook in (False, True):
+            with self.subTest(hook=hook):
+                source = ('import unittest, helper\n'
+                          'cached = unittest.defaultTestLoader.loadTestsFromModule(helper)\n')
+                source += ('def load_tests(loader, tests, pattern): return cached\n' if hook else PASS)
+                self.write('tests/test_cached.py', source)
+                selected = P.discover(self.root)
+                self.assertEqual(selected, {'test_cached': [
+                    'helper.T.test_ok' if hook else 'test_cached.T.test_ok']})
+                result = self.run_verifier()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('Ran 1 test', result.stderr)
+
     def test_whole_module_can_select_more_tests(self):
         self.write('tests/test_hook.py', PASS + '\ndef load_tests(loader, suite, pattern):\n'
                    '    return unittest.TestSuite([T("test_ok")] * (1 if pattern else 2))\n')
