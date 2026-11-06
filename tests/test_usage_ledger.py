@@ -60,6 +60,34 @@ class TestUsageLedger(unittest.TestCase):
     def read(self):
         return json.loads(self.path.read_text())
 
+    def test_coordinator_refuses_aliased_internal_state_before_writing(self):
+        repo = self.base / "operated"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True,
+                       capture_output=True)
+        alias = self.base / "alias"
+        alias.symlink_to(repo, target_is_directory=True)
+        plan = self.base / "alias-plan.json"
+        plan.write_text(json.dumps({"name": "fixture", "units": [{
+            "id": "job", "kind": "slurm", "runtime": "none",
+            "command": "true", "outputs": ["out"]}]}))
+        runs = self.base / "alias-runs"
+        before = sorted(str(p.relative_to(repo)) for p in repo.rglob("*"))
+        # Exhaustive enumeration of both public advance entry points.
+        for command in ("run", "advance"):
+            with self.subTest(command=command):
+                proc = subprocess.run([
+                    sys.executable, str(SCRIPTS / "swarm.py"), command,
+                    str(plan), "--state-dir", str(alias / "state"),
+                    "--root", str(runs)], cwd=repo, capture_output=True,
+                    text=True, timeout=30)
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn("resolves inside operated Git worktree", proc.stderr)
+                self.assertFalse((repo / "state").exists())
+                self.assertFalse(runs.exists())
+                self.assertEqual(before, sorted(
+                    str(p.relative_to(repo)) for p in repo.rglob("*")))
+
     def test_sums_and_no_content(self):
         one = rollout(self.home)
         rollout(self.home, "two", "fixture-b", 11)
