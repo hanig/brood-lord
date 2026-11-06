@@ -96,6 +96,7 @@ def harvest(codex_home):
                             bad_format = True
                     except (ValueError, TypeError, AttributeError, RecursionError):
                         pass
+    result["format_unknown"] = bad_format
     if files:
         result["status"] = "unknown" if bad_format or not result["events"] else "ok"
     return result
@@ -149,8 +150,9 @@ def record(state_dir, unit, attempt, home, terminal_state=None):
                         saved = old["models"].setdefault(model, dict(counts))
                         for key in COUNTERS:
                             saved[key] = max(saved[key], counts[key])
-                old["status"] = ("unknown" if current["status"] == "unknown"
-                                 else "regressed")
+                old["status"] = (
+                    "regressed" if same and lower and not current.get("format_unknown")
+                    else "unknown" if current["status"] == "unknown" else "regressed")
                 if "error" in current:
                     old["error"] = current["error"]
                 current = old
