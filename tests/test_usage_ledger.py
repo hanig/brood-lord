@@ -178,10 +178,15 @@ class TestUsageLedger(unittest.TestCase):
         self.assertEqual(rep["grand_total"]["calls"], 0)
 
     def test_known_terminal_state_survives_later_refresh(self):
-        rollout(self.home)
-        L.record(self.state_dir, "code", "attempt", self.home, "FAILED")
-        L.record(self.state_dir, "code", "attempt", self.home, "RUNNING")
-        self.assertEqual(self.read()["terminal_state"], "FAILED")
+        # Exhaustive terminal-state cases over the coordinator cleanup set.
+        for terminal in ("DONE", "FAILED", "FAILED_EVIDENCE", "PREEMPTED",
+                         "READY_FOR_PR", "ABANDONED", "SUPERSEDED"):
+            with self.subTest(terminal=terminal):
+                self.path.unlink(missing_ok=True)
+                rollout(self.home)
+                L.record(self.state_dir, "code", "attempt", self.home, terminal)
+                L.record(self.state_dir, "code", "attempt", self.home, "RUNNING")
+                self.assertEqual(self.read()["terminal_state"], terminal)
 
     def test_atomic_write_fsync_before_replace(self):
         rollout(self.home)
