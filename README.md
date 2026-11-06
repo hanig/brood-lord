@@ -1570,17 +1570,14 @@ but cannot dispatch. Neither repo has the combination.
 person whose project it is. Consensus between AI drafts does not get written
 into MEMORY.md as premise.
 
-Code-attempt usage is an audit-only token ledger under the external coordinator
-state directory (`usage/<attempt-id>.json`). Each real advance refreshes surviving
-Codex homes, and cleanup harvests before deletion. Read it without changing state:
+Code-attempt usage is an audit-only ledger in external coordinator state:
+`usage/<attempt-id>.json`. Advance refreshes Codex homes; cleanup harvests them.
+Read totals by unit, attempt, model and day (UTC or `HANIG_REPORT_TZ`):
 
 ```sh
 python3 skills/hanig-swarm/scripts/swarm.py usage PLAN --state-dir DIR --json
 ```
 
-The report groups measured counters by unit, attempt, model and day (UTC, or
-`HANIG_REPORT_TZ`), with a grand total. Unknown and regressed measurements are
-listed separately from totals. Other code providers are named as unmeasured.
-The ledger contains counters, model names and event times, never conversation or
-tool content; it cannot reconstruct already-deleted homes. Same-user edits to
-rollouts are not detectable, and ledger failures never decide run transitions.
+Unknown/regressed records are separate; other providers are unmeasured. Only
+counters, model and time persist. Deleted homes cannot be backfilled; same-user
+rollout edits are undetectable. Ledger errors never decide run transitions.
