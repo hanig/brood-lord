@@ -154,6 +154,9 @@ def record(state_dir, unit, attempt, home, terminal_state=None):
                 if "error" in current:
                     old["error"] = current["error"]
                 current = old
+        if terminal_state not in ("DONE", "FAILED", "CANCELLED", "ABANDONED",
+                                  "SUPERSEDED", "READY_FOR_PR", "NEEDS_HUMAN"):
+            terminal_state = (previous or {}).get("terminal_state")
         current.update(unit_id=unit, attempt_id=attempt,
                        terminal_state=terminal_state,
                        harvested_at=datetime.now(timezone.utc).isoformat())
