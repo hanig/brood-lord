@@ -59,6 +59,7 @@ import verify as V  # noqa: E402
 import converge as CV  # noqa: E402  the declared-convergence gate
 import coordinator_paths as CP  # noqa: E402
 import recovery as R  # noqa: E402  audit-only worktree preservation
+import usage_ledger as UL
 import codex_home as CH  # noqa: E402  local filesystem only
 
 KINDS = U.KINDS
@@ -1855,6 +1856,7 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
                     # Metadata may not exist yet. Use allocation's identity,
                     # and restore memory even if a replacement refuses cleanup.
                     try:
+                        UL.record(state_dir, u["id"], attempt, home)
                         CH.remove(state_dir, attempt, str(home), home_identity)
                     finally:
                         if had_homes:
@@ -2110,6 +2112,8 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
                      f"Use a throwaway state directory instead:",
                      f"    swarm.py run <plan> --dry-run --state-dir "
                      f"$(mktemp -d)/state --root $(mktemp -d)/runs"], 0, None)
+    if not dry_run:
+        UL.refresh(state_dir, state)
     before_states = {uid: (SS._unit_state(state, uid) or {}).get("state")
                      for uid in units}
 
@@ -5036,6 +5040,16 @@ def status_report(plan, state, state_dir, observed_at=None):
     }
 
 
+def cmd_usage(args):
+    plan, err = U.read_json(args.plan)
+    if err:
+        sys.exit("error: no readable plan")
+    _prepare_command_paths(args, plan=plan, read_only=True)
+    result = UL.report(args.state_dir, plan, SR.DEFAULT_AGENT_PROVIDER)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return EXIT_OK
+
+
 def cmd_status(args):
     plan, err = U.read_json(args.plan)
     if err:
@@ -5352,6 +5366,12 @@ def main():
                    help="reserved for compatibility; use drain_contract.py "
                         "with a complete observation file")
     o.set_defaults(fn=cmd_outbox)
+
+    usage = sub.add_parser("usage", help="read audit-only code token usage")
+    usage.add_argument("plan")
+    usage.add_argument("--state-dir", default=None)
+    usage.add_argument("--json", action="store_true")
+    usage.set_defaults(fn=cmd_usage)
 
     s = sub.add_parser("status", help="what every unit is doing")
     s.add_argument("--json", action="store_true",
