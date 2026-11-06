@@ -47,6 +47,10 @@ jobs:
             echo "::error::$variable version $actual differs from $PYTHON_VERSION"
             exit 1
           fi
+          # Symlink targets are resolved from python_bin, so anchor relative paths here.
+          if [[ "$interpreter" != /* ]]; then
+            interpreter="$PWD/$interpreter"
+          fi
           "$interpreter" --version
           python_bin=$(mktemp -d "$RUNNER_TEMP/brood-python.XXXXXX")
           ln -s "$interpreter" "$python_bin/python"
@@ -148,6 +152,10 @@ jobs:
           if [[ "$actual" != "$PYTHON_VERSION" ]]; then
             echo "::error::$variable version $actual differs from $PYTHON_VERSION"
             exit 1
+          fi
+          # Symlink targets are resolved from python_bin, so anchor relative paths here.
+          if [[ "$interpreter" != /* ]]; then
+            interpreter="$PWD/$interpreter"
           fi
           "$interpreter" --version
           python_bin=$(mktemp -d "$RUNNER_TEMP/brood-python.XXXXXX")

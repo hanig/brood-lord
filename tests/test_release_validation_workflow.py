@@ -374,6 +374,28 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
                 # Reverting the version check admits the wrong interpreter.
                 self.assertEqual(self.run_shell(mutated, mismatch).returncode, 0)
 
+    def test_relative_interpreter_path_remains_executable_after_selection(self):
+        # Reviewer counterexample; exhaustive two-job bound, synthetic symlink only.
+        for job in ("regression", "native-discovery"):
+            step = self.named_step(self.workflow, job, "Select preinstalled macOS Python")
+            with tempfile.TemporaryDirectory(prefix="brood relative ", dir=str(ROOT)) as directory:
+                root = Path(directory)
+                source = root / "source-python"
+                source.symlink_to(sys.executable)
+                runner_temp = root / "runner-temp"
+                runner_temp.mkdir()
+                path_file = root / "path"
+                version = "%d.%d" % sys.version_info[:2]
+                env = {"PATH": os.defpath, "RUNNER_TEMP": str(runner_temp),
+                       "GITHUB_PATH": str(path_file), "PYTHON_VERSION": version,
+                       "BROOD_PY_" + version.replace(".", "_"): os.path.relpath(str(source), str(ROOT))}
+                result = self.run_shell(self.script(step), env)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                for name in ("python", "python3"):
+                    selected = Path(path_file.read_text().strip()) / name
+                    self.assertTrue(os.access(str(selected), os.X_OK), str(selected))
+                    self.assertEqual(selected.resolve(), Path(sys.executable).resolve())
+
     def assert_isolation(self, workflow, job):
         denied = runpy.run_path(str(ROOT / "skills/hanig-swarm/scripts/child_environment.py"))["DENIED_ENV_NAMES"]
         homes = ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR")
