@@ -1,6 +1,9 @@
 """Policy checks for the release-validation GitHub Actions workflow."""
 
 import ast
+import itertools
+import json
+import re
 import unittest
 from pathlib import Path
 
@@ -108,6 +111,57 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
 
     def test_main_push_and_supported_python_versions_are_covered(self):
         self.assert_trigger_and_python_matrices(self.workflow)
+
+    def assert_event_os_matrices(self, workflow):
+        jobs = mapping_block(workflow, "jobs", 0)
+        regression = mapping_block(jobs, "regression", 2)
+        matrix = mapping_block(mapping_block(regression, "strategy", 4), "matrix", 6)
+        expression = yaml_scalar(matrix, "os", 8)
+        # Parse only this declared expression grammar, never eval workflow text.
+        parsed = re.fullmatch(
+            r"\$\{\{ fromJSON\(github\.event_name == 'push' && '(\[[^']+\])'"
+            r" \|\| '(\[[^']+\])'\) \}\}", expression,
+        )
+        self.assertIsNotNone(parsed, "Regression OS must be event-conditional fromJSON")
+        push_json, other_json = parsed.groups()
+        # GitHub &&/|| selects the first string for push; it must be truthy.
+        self.assertTrue(push_json)
+        native = mapping_block(jobs, "native-discovery", 2)
+        native_matrix = mapping_block(mapping_block(native, "strategy", 4), "matrix", 6)
+        self.assertEqual(yaml_sequence(native_matrix, "os", 8),
+                         ["ubuntu-22.04", "macos-15"])
+        # Exhaustive finite bound: 3 events x 2 jobs x 3 Python versions = 18.
+        for event, job, python in itertools.product(
+                ("push", "pull_request", "workflow_dispatch"),
+                ("regression", "native-discovery"), EXPECTED_PYTHONS):
+            with self.subTest(event=event, job=job, python=python):
+                block = mapping_block(jobs, job, 2)
+                title = "Regression" if job == "regression" else "Native discovery"
+                self.assertEqual(yaml_scalar(block, "name", 4),
+                                 title + " (${{ matrix.os }}, Python ${{ matrix.python-version }})")
+                self.assertEqual(yaml_scalar(block, "runs-on", 4), "${{ matrix.os }}")
+                oses = (json.loads(push_json if event == "push" else other_json)
+                        if job == "regression" else yaml_sequence(native_matrix, "os", 8))
+                expected = (["ubuntu-22.04"] if event == "push" and job == "regression"
+                            else ["ubuntu-22.04", "macos-15"])
+                self.assertEqual(oses, expected)
+        self.assert_trigger_and_python_matrices(workflow)
+        events = mapping_block(workflow, "on", 0)
+        for event in ("pull_request", "workflow_dispatch"):
+            mapping_block(events, event, 2)
+
+    def test_event_os_matrices_and_check_names(self):
+        self.assert_event_os_matrices(self.workflow)
+
+    def test_static_two_os_regression_matrix_is_rejected(self):
+        matrix = mapping_block(mapping_block(mapping_block(
+            mapping_block(self.workflow, "jobs", 0), "regression", 2), "strategy", 4),
+            "matrix", 6)
+        original = "        os: " + yaml_scalar(matrix, "os", 8)
+        mutated = self.workflow.replace(original, "        os: [ubuntu-22.04, macos-15]", 1)
+        self.assertNotEqual(mutated, self.workflow)
+        with self.assertRaises(AssertionError):
+            self.assert_event_os_matrices(mutated)
 
     def assert_regression_timeout(self, workflow):
         jobs_block = mapping_block(workflow, "jobs", 0)

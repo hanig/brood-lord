@@ -19,7 +19,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-15]
+        # Main loses post-merge macOS Regression coverage (owner accepted 2026-11-06):
+        # the PR merge-ref passed the full matrix and the serial verifier checked the candidate merge.
+        os: ${{ fromJSON(github.event_name == 'push' && '["ubuntu-22.04"]' || '["ubuntu-22.04", "macos-15"]') }}
         python-version: ['3.9', '3.10', '3.12']
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
