@@ -149,7 +149,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
             "standard": {"terra", "kimi-k2.7-code", "sonnet-5.5"},
             "deep": {"terra", "kimi-k2.7-code", "sonnet-5.5", "sol", "astra"},
             "plan": {"luna", "kimi-k3"},
-            "planning": {"gemini-argon", "muse-wonder"},
+            "planning": {"terra", "gemini-argon", "muse-wonder"},
             "committee": {"deepseek-v4-pro", "gemini-argon", "sonnet-5.5"},
             "tiebreak": {"astra-tiebreak"},
         }
@@ -201,13 +201,14 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
                 else:
                     self.assertEqual(payload["reasoning"], {"effort": seat["effort"]})
 
-    def test_planning_selects_exactly_two_members_on_openrouter(self):
+    def test_planning_selects_exactly_three_members_across_two_providers(self):
         import committee
         members = committee.pick_members([], profile="planning")
         self.assertEqual({m["name"] for m in members},
-                         {"gemini-argon", "muse-wonder"})
-        self.assertEqual(len(members), 2)
-        self.assertEqual({m["provider"] for m in members}, {"openrouter"})
+                         {"terra", "gemini-argon", "muse-wonder"})
+        self.assertEqual(len(members), 3)
+        self.assertEqual({m["provider"] for m in members},
+                         {"openai", "openrouter"})
         muse = next(m for m in members if m["name"] == "muse-wonder")
         self.assertEqual(muse["profiles"], ["planning"])
         self.assertEqual(muse["family"], {
@@ -218,6 +219,16 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
         self.assertEqual(record["effort"], muse["effort"])
         self.assertIsInstance(record["response_id"], str)
         self.assertTrue(record["response_id"].strip())
+
+    def test_planning_without_terra_reproduces_provider_guard_refusal(self):
+        import committee
+        roster = R.load_reviewers()
+        for seat in roster:
+            if seat["name"] == "terra":
+                seat["profiles"] = [p for p in seat["profiles"] if p != "planning"]
+        with patch.object(committee.R, "load_reviewers", return_value=roster):
+            with self.assertRaisesRegex(SystemExit, "every member uses provider 'openrouter'"):
+                committee.pick_members([], profile="planning")
 
     def test_default_committee_selects_three_independent_members(self):
         import committee
@@ -622,7 +633,7 @@ class TestAuthorExclusion(unittest.TestCase):
             "--profile", "deep", "--fresh-cycle-from", "deep",
             "--author", "codex/gpt-6.1-sol", "--json")
         self.assertEqual(code, R.STATES["REVIEW_UNAVAILABLE"], output)
-        self.assertEqual(json.loads(output)["quorum"], 4)
+        self.assertEqual(json.loads(output)["quorum"], 5)
         self.assertEqual(called, [])
 
     def test_plan_cannot_drop_its_author_and_pass_with_one(self):

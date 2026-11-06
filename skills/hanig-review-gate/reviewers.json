@@ -8,7 +8,7 @@
   "deep": "2026-11-06: standard + sol + astra. Final --escalate tier or fixed --profile deep. Sol now writes the code; an author does not review or tiebreak its own work, so author exclusion removes sol on Sol-authored units.",
   "committee": "committee.py members, separate from gate profiles. Owner decision 2026-10-13: deepseek-v4-pro, gemini-argon and sonnet-5.5, three model makers. DeepSeek sits in no gate profile.",
   "tiebreak": "2026-11-06: astra-tiebreak, the ONE enabled reviewer whose profiles are exactly [\"tiebreak\"]. Selected by profile, never name or model. Sol now writes the code; an author does not review or tiebreak its own work. sol-tiebreak is disabled.",
-  "planning": "2026-11-06: gemini-argon and muse-wonder. Astra leaves planning and gains deep and tiebreak seats because Sol now writes the code; an author does not review or tiebreak its own work. The tiebreak seat must not rule among its own committee members."
+  "planning": "2026-11-06: gemini-argon, muse-wonder and terra (orchestrator amendment: OpenRouter and OpenAI providers). Astra leaves planning and gains deep and tiebreak seats because Sol now writes the code; an author does not review or tiebreak its own work. The tiebreak seat must not rule among its own committee members."
  },
  "reviewers": [
   {
@@ -122,7 +122,8 @@
    "effort": "xhigh",
    "profiles": [
     "standard",
-    "deep"
+    "deep",
+    "planning"
    ],
    "enabled": true,
    "_cost": null,
@@ -150,7 +151,8 @@
     "completed_replies": 171,
     "observed_in": "Bench: /Users/hani/.local/state/hanig-swarm/orchestrator/bench/score-terra-effort/; 57 completed xhigh replies per seat run, 171 total at a 128000 cap. The max-effort measurement above remains historical evidence."
    },
-   "_comment": "Owner decision 2026-10-28: overrules m2 adoption: Terra replaces Luna in standard/deep; fast/plan unchanged. Frozen corpus-v2, bench/score-terra, terra-20261027: Terra-for-Luna recall 27/51 = 53% [40, 66] versus 45% [32, 59]; held-out 9/18 versus 6/18; clean-control false-finding trials 2/9 versus 1/9 (fails adoption by one); 0/171 Terra replies unavailable; median about 10 minutes versus Luna's 6."
+   "_comment": "Owner decision 2026-10-28: overrules m2 adoption: Terra replaces Luna in standard/deep; fast/plan unchanged. Frozen corpus-v2, bench/score-terra, terra-20261027: Terra-for-Luna recall 27/51 = 53% [40, 66] versus 45% [32, 59]; held-out 9/18 versus 6/18; clean-control false-finding trials 2/9 versus 1/9 (fails adoption by one); 0/171 Terra replies unavailable; median about 10 minutes versus Luna's 6.",
+   "_note": "2026-11-06 orchestrator amendment: joins planning with gemini-argon and muse-wonder, retaining standard/deep and xhigh. Provides OpenAI transport contrast while Astra leaves planning to tiebreak independently of its members."
   },
   {
    "name": "kimi-k2.7-code",
@@ -548,7 +550,7 @@
     "major": 0,
     "named_version": "wonder"
    },
-   "_note": "Owner decision 2026-11-03: Muse Wonder joins the planning committee through OpenRouter; astra and gemini-argon stay.",
+   "_note": "Owner decision 2026-11-03: Muse Wonder joins the planning committee through OpenRouter; astra and gemini-argon stay. Amended 2026-11-06: planning is gemini-argon, muse-wonder and terra; Astra leaves to tiebreak independently.",
    "_max_output_tokens": "MEASURED through review.PROVIDERS with review.SYSTEM and input ping at the configured effort and 128000 cap. Establishes budget acceptance and usable output, not capacity for every review.",
    "_max_output_tokens_accepted": {
     "max_output_tokens": 128000,

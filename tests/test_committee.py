@@ -721,17 +721,17 @@ class TestCommitteeAuthorMembers(unittest.TestCase):
                 guarded_main(committee.main)
         return stopped.exception.code, output.getvalue(), ask.call_count
 
-    def test_planning_profile_selects_shipped_pair_and_retains_members(self):
+    def test_planning_profile_selects_shipped_trio_and_retains_members(self):
         code, output, calls = self.invoke(
             "open", "--profile", "planning", "--author", "codex/fixture-author",
             "--problem", "Which design?")
         self.assertEqual(code, 0, output)
-        self.assertEqual(calls, 2)
+        self.assertEqual(calls, 3)
         members = committee.load_session("authors")["members"]
-        self.assertEqual(set(members), {"gemini-argon", "muse-wonder"})
+        self.assertEqual(set(members), {"terra", "gemini-argon", "muse-wonder"})
         code, output, calls = self.invoke("ask", "--prompt", "Clarify the design")
         self.assertEqual(code, 0, output)
-        self.assertEqual(calls, 2)
+        self.assertEqual(calls, 3)
         self.assertEqual(set(committee.load_session("authors")["members"]), set(members))
 
     def test_default_open_still_selects_committee_profile(self):
