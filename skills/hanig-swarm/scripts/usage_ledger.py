@@ -6,7 +6,7 @@ Python 3.8+ (zoneinfo is loaded only by reporting on Python 3.9+).
 import hashlib
 import json
 import os
-import tempfile
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,14 +30,17 @@ def _add(target, source):
         target[key] = target.get(key, 0) + source[key]
 
 
-def harvest(codex_home):
-    """Read rollout counters without retaining any other event payload.
+def _walk_error(error):
+    raise error
 
-    Missing optional counters mean zero in the observed format. Missing input
-    or output counts, model, or timestamp makes measurement unknown.
-    """
+
+def harvest(codex_home):
+    """Read counters; missing input/output, model or time makes usage unknown."""
     home = Path(codex_home)
-    files = sorted((home / "sessions").glob("**/rollout-*.jsonl"))
+    sessions = home / "sessions"
+    files = sorted(Path(d) / n for d, _, names in os.walk(
+        sessions, onerror=_walk_error) for n in names
+        if n.startswith("rollout-") and n.endswith(".jsonl")) if sessions.exists() else []
     result = {"status": "none", "models": {}, "events": [],
               "skipped_lines": 0, "rollout_files": len(files),
               "rollout_set": hashlib.sha256(json.dumps([
@@ -46,13 +49,17 @@ def harvest(codex_home):
     for path in files:
         model = None
         seen = set()
-        with path.open("rb") as handle:
+        fd = os.open(str(path), os.O_RDONLY | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                raise ValueError("nonregular rollout")
             for line in handle:
                 try:
                     event = json.loads(line)
                     kind = event.get("type")
                     payload = event.get("payload")
                     if kind == "turn_context":
+                        model = None
                         model = payload.get("model")
                         if not isinstance(model, str) or not model:
                             model = None
@@ -85,10 +92,8 @@ def harvest(codex_home):
                         total["rollout_files"] += 1
                         seen.add(model)
                     result["events"].append(dict(counts, model=model, timestamp=stamp))
-                except (ValueError, TypeError, AttributeError, KeyError, RecursionError):
+                except (ValueError, TypeError, AttributeError, KeyError, OverflowError, RecursionError):
                     result["skipped_lines"] += 1
-                    # Syntactically malformed lines are skipped. An identifiable
-                    # usage event with another schema cannot be guessed.
                     try:
                         probe = json.loads(line)
                         if (probe.get("type") == "event_msg"
@@ -104,22 +109,24 @@ def harvest(codex_home):
 
 def _atomic(path, record):
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=".usage-", dir=str(path.parent))
+    directory = os.open(str(path.parent), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    temporary = ".usage-" + os.urandom(16).hex()
     try:
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(record, handle, sort_keys=True)
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        directory = os.open(str(path.parent), os.O_RDONLY)
+        os.replace(temporary, path.name, src_dir_fd=directory, dst_dir_fd=directory)
+        os.fsync(directory)
+    finally:
         try:
-            os.fsync(directory)
+            os.unlink(temporary, dir_fd=directory)
+        except FileNotFoundError:
+            pass
         finally:
             os.close(directory)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
 
 
 def record(state_dir, unit, attempt, home, terminal_state=None):
@@ -142,8 +149,7 @@ def record(state_dir, unit, attempt, home, terminal_state=None):
             lower = any(current.get("models", {}).get(m, {}).get(k, 0) < v[k]
                         for m, v in previous["models"].items() for k in COUNTERS)
             if current["status"] in ("none", "unknown") or (same and lower):
-                # Retain the last measurement even if a home vanished or the
-                # reader failed. Unknown never becomes a zero measurement.
+                # Preserve the last measurement on reader failure.
                 old = dict(previous)
                 if same and lower:
                     for model, counts in current.get("models", {}).items():
@@ -165,7 +171,6 @@ def record(state_dir, unit, attempt, home, terminal_state=None):
                        harvested_at=datetime.now(timezone.utc).isoformat())
         _atomic(path, current)
     except Exception:
-        # Audit storage must never block dispatch, judging, merge or cleanup.
         pass
 
 
@@ -187,8 +192,11 @@ def refresh(state_dir, state):
 
 def report(state_dir, plan, default_provider):
     """Read durable measurements only; never create or refresh any files."""
-    from zoneinfo import ZoneInfo
-    tz = ZoneInfo(os.environ.get("HANIG_REPORT_TZ", "UTC"))
+    name = os.environ.get("HANIG_REPORT_TZ") or "UTC"
+    tz = timezone.utc
+    if name != "UTC":
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(name)
     result = {"units": {}, "models": {}, "days": {}, "grand_total": _zero(),
               "unknown": [], "regressed": [], "unmeasured": []}
     for unit in plan.get("units", []):
@@ -203,6 +211,14 @@ def report(state_dir, plan, default_provider):
             uid, attempt = rec["unit_id"], rec["attempt_id"]
             if uid not in {u["id"] for u in plan.get("units", [])}:
                 continue
+            days = {}
+            for event in rec["events"]:
+                day = datetime.fromisoformat(_time(event["timestamp"])).astimezone(tz).date().isoformat()
+                _add(days.setdefault(day, _zero()), event)
+            for counts in rec["models"].values():
+                for key in COUNTERS:
+                    if type(counts[key]) is not int or counts[key] < 0:
+                        raise ValueError("invalid counter")
             unit = result["units"].setdefault(uid, {"attempts": {}, "models": {}, "total": _zero()})
             unit["attempts"][attempt] = rec
             for model, counts in rec["models"].items():
@@ -210,10 +226,9 @@ def report(state_dir, plan, default_provider):
                 _add(result["models"].setdefault(model, _zero()), counts)
                 _add(unit["total"], counts)
                 _add(result["grand_total"], counts)
-            for event in rec["events"]:
-                day = datetime.fromisoformat(event["timestamp"]).astimezone(tz).date().isoformat()
-                _add(result["days"].setdefault(day, _zero()), event)
-        except (OSError, ValueError, KeyError, TypeError):
+            for day, counts in days.items():
+                _add(result["days"].setdefault(day, _zero()), counts)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
             result["unknown"].append({"status": "unknown", "error": "UnreadableRecord"})
     result["timezone"] = str(tz)
     return result

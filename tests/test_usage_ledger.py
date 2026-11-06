@@ -63,7 +63,6 @@ class TestUsageLedger(unittest.TestCase):
     def test_sums_and_no_content(self):
         one = rollout(self.home)
         rollout(self.home, "two", "fixture-b", 11)
-        # Two models also occur within a single rollout.
         with one.open("a") as handle:
             handle.write(json.dumps({"type": "turn_context", "payload": {"model": "fixture-b"}}) + "\n")
             handle.write((self.home / "sessions/nested/rollout-two.jsonl").read_text().splitlines()[-1] + "\n")
@@ -107,7 +106,6 @@ class TestUsageLedger(unittest.TestCase):
         self.assertEqual(self.read()["error"], "RuntimeError")
         self.assertNotIn("models", self.read())
         self.assertNotIn(SENTINEL, self.path.read_text())
-        # Storage failure is also nonblocking, even while removing a home.
         self.home.mkdir()
         info = self.home.stat()
         self.state["units"]["code"]["attempt_codex_homes"]["attempt"] = {
@@ -118,7 +116,6 @@ class TestUsageLedger(unittest.TestCase):
 
     def test_advance_refresh_survives_manual_deletion(self):
         rollout(self.home)
-        # Halted coordinator still refreshes surviving live homes, without dispatch.
         self.state["halted"] = "fixture"
         self.state["units"]["code"]["state"] = "RUNNING"
         with mock.patch.object(SW, "reconcile_orphan", return_value=(None, None)):
@@ -178,7 +175,6 @@ class TestUsageLedger(unittest.TestCase):
         self.assertEqual(rep["grand_total"]["calls"], 0)
 
     def test_known_terminal_state_survives_later_refresh(self):
-        # Exhaustive terminal-state cases over the coordinator cleanup set.
         for terminal in ("DONE", "FAILED", "FAILED_EVIDENCE", "PREEMPTED",
                          "READY_FOR_PR", "ABANDONED", "SUPERSEDED"):
             with self.subTest(terminal=terminal):
@@ -195,14 +191,66 @@ class TestUsageLedger(unittest.TestCase):
         def synced(fd):
             order.append("fsync")
             fsync(fd)
-        def replaced(source, destination):
+        def replaced(source, destination, **kwargs):
             order.append("replace")
-            self.assertEqual(json.loads(Path(source).read_text())["status"], "ok")
-            replace(source, destination)
+            with os.fdopen(os.open(source, os.O_RDONLY, dir_fd=kwargs.get("src_dir_fd"))) as f:
+                self.assertEqual(json.load(f)["status"], "ok")
+            replace(source, destination, **kwargs)
         with mock.patch.object(L.os, "fsync", side_effect=synced), mock.patch.object(L.os, "replace", side_effect=replaced):
             L.record(self.state_dir, "code", "attempt", self.home)
         self.assertEqual(order, ["fsync", "replace", "fsync"])
         self.assertEqual(list(self.path.parent.glob(".usage-*")), [])
+
+    def test_review_fifo(self):
+        os.mkfifo(self.home / "pipe")
+        sessions = self.home / "sessions"
+        sessions.mkdir()
+        (self.home / "pipe").rename(sessions / "rollout-pipe.jsonl")
+        cmd = [sys.executable, "-c", "import sys; sys.path.insert(0,sys.argv[1]); import usage_ledger as l; l.record(sys.argv[2],'u','a',sys.argv[3])", str(SCRIPTS), str(self.state_dir), str(self.home)]
+        subprocess.run(cmd, timeout=3, check=True)
+        self.assertEqual(json.loads((self.state_dir / "usage/a.json").read_text())["status"], "unknown")
+
+    def test_review_symlink(self):
+        work = self.base / "work"; work.mkdir()
+        target = work / "attempt.json"; target.write_text(SENTINEL)
+        (self.state_dir / "usage").symlink_to(work)
+        L.record(self.state_dir, "code", "attempt", self.home)
+        self.assertEqual(target.read_text(), SENTINEL)
+
+    def test_review_unreadable(self):
+        rollout(self.home)
+        hidden = self.home / "sessions/hidden"; hidden.mkdir()
+        rollout(self.home, "two").rename(hidden / "rollout-two.jsonl")
+        L.record(self.state_dir, "code", "attempt", self.home)
+        hidden.chmod(0)
+        try:
+            L.record(self.state_dir, "code", "attempt", self.home)
+        finally:
+            hidden.chmod(0o700)
+        self.assertEqual(self.read()["status"], "unknown")
+        self.assertEqual(self.read()["models"]["fixture-a"]["input_tokens"], 14)
+
+    def test_review_context(self):
+        path = rollout(self.home)
+        with path.open("a") as f:
+            f.write(json.dumps({"type":"turn_context","payload":None}) + "\n")
+            f.write(path.read_text().splitlines()[2] + "\n")
+        rec = L.harvest(self.home)
+        self.assertEqual(rec["status"], "unknown")
+        self.assertEqual(rec["models"]["fixture-a"]["calls"], 1)
+
+    def test_review_partial_report(self):
+        rollout(self.home)
+        L.record(self.state_dir, "code", "attempt", self.home)
+        rec = self.read(); rec["events"][0]["timestamp"] = "invalid"
+        self.path.write_text(json.dumps(rec))
+        rep = L.report(self.state_dir, {"units":[self.unit]}, "codex/fixture")
+        self.assertEqual(len(rep["unknown"]), 1)
+        self.assertEqual(rep["grand_total"]["calls"], 0)
+
+    def test_review_utc_without_zoneinfo(self):
+        with mock.patch.dict(sys.modules, {"zoneinfo": None}), mock.patch.dict(os.environ, {"HANIG_REPORT_TZ":"UTC"}):
+            self.assertEqual(L.report(self.state_dir, {"units":[]}, "codex/fixture")["timezone"], "UTC")
 
 
 if __name__ == "__main__":
