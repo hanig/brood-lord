@@ -158,11 +158,12 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
             mapping_block(workflow, "jobs", 0), "regression", 2), "strategy", 4),
             "matrix", 6)
         original = "        os: " + yaml_scalar(matrix, "os", 8)
-        lines = workflow.splitlines(keepends=True)
-        target = original + "\n"
-        self.assertEqual(lines.count(target), 1)
-        mutated = "".join("        os: [ubuntu-22.04, macos-15]\n"
-                          if line == target else line for line in lines)
+        regression = mapping_block(mapping_block(workflow, "jobs", 0), "regression", 2)
+        lines = regression.splitlines()
+        self.assertEqual(lines.count(original), 1)
+        mutated_regression = "\n".join("        os: [ubuntu-22.04, macos-15]"
+                                       if line == original else line for line in lines)
+        mutated = workflow.replace(regression, mutated_regression, 1)
         self.assertNotEqual(mutated, workflow)
         with self.assertRaises(AssertionError):
             self.assert_event_os_matrices(mutated)
@@ -175,6 +176,14 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
         line = next(line for line in self.workflow.splitlines()
                     if line.startswith("        os: ${{ fromJSON("))
         self.assert_static_two_os_rejected("#" + line + "\n" + self.workflow)
+
+    def test_mutation_targets_regression_with_identical_unrelated_matrix(self):
+        line = next(line for line in self.workflow.splitlines()
+                    if line.startswith("        os: ${{ fromJSON("))
+        unrelated = ("\n  checkout-check:\n    strategy:\n      matrix:\n" + line
+                     + "\n    runs-on: ${{ matrix.os }}\n    steps:\n"
+                     "      - uses: actions/checkout@v4\n")
+        self.assert_static_two_os_rejected(self.workflow + unrelated)
 
     def assert_regression_timeout(self, workflow):
         jobs_block = mapping_block(workflow, "jobs", 0)
