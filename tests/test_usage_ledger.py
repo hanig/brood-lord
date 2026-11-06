@@ -177,6 +177,12 @@ class TestUsageLedger(unittest.TestCase):
         self.assertEqual(len(rep["regressed"]), 1)
         self.assertEqual(rep["grand_total"]["calls"], 0)
 
+    def test_known_terminal_state_survives_later_refresh(self):
+        rollout(self.home)
+        L.record(self.state_dir, "code", "attempt", self.home, "FAILED")
+        L.record(self.state_dir, "code", "attempt", self.home, "RUNNING")
+        self.assertEqual(self.read()["terminal_state"], "FAILED")
+
     def test_atomic_write_fsync_before_replace(self):
         rollout(self.home)
         order = []

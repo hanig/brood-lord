@@ -308,7 +308,9 @@ def _cleanup_codex_home(state, u, attempt, report, state_dir):
         report.append(f"{u['id']}: {meta['cleanup_problem']}")
         return
     SS.save_state(state_dir, state)
-    UL.record(state_dir, u["id"], attempt, meta.get("path"), us.get("state"))
+    terminal = (us.get("state")
+                if Path(us.get("attempt_dir") or "").name == attempt else None)
+    UL.record(state_dir, u["id"], attempt, meta.get("path"), terminal)
     try:
         CH.remove(state_dir, attempt, meta.get("path"), meta.get("identity"))
     except Exception as exc:
