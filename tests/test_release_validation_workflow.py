@@ -12,6 +12,7 @@ import tempfile
 import textwrap
 import re
 import unittest
+import venv
 from pathlib import Path
 
 
@@ -342,11 +343,22 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
             steps = self.job_steps(self.workflow, job)
             setup = next(step for step in steps if "- uses: actions/setup-python@" in step)
             self.assertEqual(yaml_scalar(setup, "if", 8),
-                             "runner.environment != 'self-hosted' || runner.os != 'macOS'")
-            step = self.named_step(self.workflow, job, "Select preinstalled macOS Python")
+                             "runner.environment != 'self-hosted'")
+            step = self.named_step(self.workflow, job, "Select preinstalled Python")
             self.assertEqual(yaml_scalar(step, "if", 8),
-                             "runner.environment == 'self-hosted' && runner.os == 'macOS'")
+                             "runner.environment == 'self-hosted'")
             self.assertEqual(yaml_scalar(step, "PYTHON_VERSION", 10), "${{ matrix.python-version }}")
+            # Exhaustive bound per job: 2 OSes x 3 values for each variable.
+            block = mapping_block(mapping_block(self.workflow, "jobs", 0), job, 2)
+            self.assert_runner_selection(block)
+            for os_name, mac, linux in itertools.product(
+                    ("macos-15", "ubuntu-22.04"), ("", "self-hosted", "other"),
+                    ("", "self-hosted", "other")):
+                selected = (mac if os_name == "macos-15" else linux) == "self-hosted"
+                environment = "self-hosted" if selected else "github-hosted"
+                # Interpret the exact conditions asserted above, for either OS.
+                self.assertEqual(environment == "self-hosted", selected)
+                self.assertEqual(environment != "self-hosted", not selected)
             script = self.script(step)
             # Exhaustive bound per job: unset, nonexecutable, mismatched, valid.
             with tempfile.TemporaryDirectory() as directory:
@@ -369,16 +381,85 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
                     self.assertEqual((python_bin / name).resolve(), Path(sys.executable).resolve())
                 mismatch = dict(base, PYTHON_VERSION="0.0", BROOD_PY_0_0=sys.executable)
                 self.assertNotEqual(self.run_shell(script, mismatch).returncode, 0)
-                start = script.index('if [[ "$actual" != "$PYTHON_VERSION" ]]; then')
+                start = script.index('if [[ "$actual" != ')
                 end = script.index("fi", start) + 2
                 mutated = script[:start] + script[end:]
                 # Reverting the version check admits the wrong interpreter.
                 self.assertEqual(self.run_shell(mutated, mismatch).returncode, 0)
 
-    def test_relative_interpreter_path_remains_executable_after_selection(self):
+    def test_probe_ignores_printing_startup_hooks(self):
+        # Exhaustive: both jobs, usercustomize and sitecustomize, two flag states.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            home.mkdir()
+            target = root / "venv"
+            venv.EnvBuilder(with_pip=False, symlinks=True).create(str(target))
+            interpreter = str(target / "bin/python3")
+            site_dir = subprocess.check_output(
+                [interpreter, "-I", "-c", "import site; print(site.getsitepackages()[0])"],
+                text=True).strip()
+            # Put the synthetic site ahead of distributor sitecustomize.
+            Path(site_dir, "probe.pth").write_text(
+                "import sys; sys.path.insert(0, %r)\n" % site_dir)
+            Path(site_dir, "sitecustomize.py").write_text("print('SITE NOTICE')\n")
+            user_env = {"HOME": str(home), "PYTHONUSERBASE": str(root / "user")}
+            user_site = subprocess.check_output(
+                [sys.executable, "-c", "import site; print(site.getusersitepackages())"],
+                env=user_env, text=True).strip()
+            Path(user_site).mkdir(parents=True)
+            Path(user_site, "usercustomize.py").write_text("print('USER NOTICE')\n")
+            control = subprocess.check_output(
+                [sys.executable, "-c", "pass"], env=user_env, text=True)
+            self.assertIn("USER NOTICE", control)
+            for job in ("regression", "native-discovery"):
+                script = self.script(self.named_step(self.workflow, job, "Select preinstalled Python"))
+                version = "%d.%d" % sys.version_info[:2]
+                env = dict(user_env, PATH=os.defpath, RUNNER_TEMP=directory,
+                           GITHUB_PATH=str(root / "path"), PYTHON_VERSION=version)
+                key = "BROOD_PY_" + version.replace(".", "_")
+                # Matching real Python with a printing user hook still selects.
+                env[key] = sys.executable
+                self.assertEqual(self.run_shell(script, env).returncode, 0)
+                env[key] = interpreter
+                self.assertEqual(self.run_shell(script, env).returncode, 0)
+                # Removing -S admits the venv's site hook, contaminating stdout.
+                mutated = script.replace(" -S", "", 1)
+                self.assertNotEqual(mutated, script)
+                result = self.run_shell(mutated, env)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("SITE NOTICE", result.stdout)
+
+    def test_probe_requires_empty_environment_flags_and_exact_stdout(self):
+        # Exhaustive: 2 jobs x 5 stdout shapes, synthetic wrapper only.
+        version = "%d.%d" % sys.version_info[:2]
+        for job in ("regression", "native-discovery"):
+            script = self.script(self.named_step(self.workflow, job, "Select preinstalled Python"))
+            self.assertIn('env -i "$interpreter" -I -S -c ', script)
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                wrapper = root / "python"
+                env = {"HOME": directory, "PATH": os.defpath, "RUNNER_TEMP": directory,
+                       "GITHUB_PATH": str(root / "path"), "PYTHON_VERSION": version,
+                       "BROOD_PY_" + version.replace(".", "_"): str(wrapper),
+                       "B5_PROBE_LEAK": "synthetic"}
+                for output in (version + "\n", version, version + "\n\n",
+                               "NOTICE\n" + version + "\n", version + "x\n"):
+                    wrapper.write_text("#!/bin/sh\n"
+                                       'test "$1" = --version && exit 0\n'
+                                       'test -z "${B5_PROBE_LEAK:-}" || exit 7\n'
+                                       "printf %s " + shlex.quote(output) + "\n")
+                    wrapper.chmod(0o755)
+                    result = self.run_shell(script, env)
+                    self.assertEqual(result.returncode == 0, output == version + "\n", result.stdout)
+                    if output == version + "\n":
+                        mutated = script.replace("env -i ", "", 1)
+                        self.assertNotEqual(self.run_shell(mutated, env).returncode, 0)
+
+    def test_relative_interpreter_path_is_refused(self):
         # Reviewer counterexample; exhaustive two-job bound, synthetic symlink only.
         for job in ("regression", "native-discovery"):
-            step = self.named_step(self.workflow, job, "Select preinstalled macOS Python")
+            step = self.named_step(self.workflow, job, "Select preinstalled Python")
             with tempfile.TemporaryDirectory(prefix="brood relative ", dir=str(ROOT)) as directory:
                 root = Path(directory)
                 source = root / "source-python"
@@ -391,11 +472,8 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
                        "GITHUB_PATH": str(path_file), "PYTHON_VERSION": version,
                        "BROOD_PY_" + version.replace(".", "_"): os.path.relpath(str(source), str(ROOT))}
                 result = self.run_shell(self.script(step), env)
-                self.assertEqual(result.returncode, 0, result.stdout)
-                for name in ("python", "python3"):
-                    selected = Path(path_file.read_text().strip()) / name
-                    self.assertTrue(os.access(str(selected), os.X_OK), str(selected))
-                    self.assertEqual(selected.resolve(), Path(sys.executable).resolve())
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertFalse(path_file.exists())
 
     def write_python_probe(self, path, interpreter):
         source = "import os; print(repr(dict(os.environ)))"
@@ -417,12 +495,13 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
                 self.write_python_probe(probe_bin / "python3", str(interpreter))
                 path = str(probe_bin) + os.pathsep + str(Path(sys.executable).parent) + os.pathsep + os.defpath
                 result = subprocess.run(
-                    ["/usr/bin/env", "-i", "PATH=" + path, "BROOD_PROBE_MARKER=synthetic",
+                    ["/usr/bin/env", "-i", "HOME=" + directory, "PATH=" + path, "BROOD_PROBE_MARKER=synthetic",
                      "python3", "-c", "print('FALLBACK')"], text=True,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                 self.assertEqual(result.returncode, 0, result.stdout)
                 self.assertNotIn("FALLBACK", result.stdout)
                 self.assertEqual(ast.literal_eval(result.stdout)["BROOD_PROBE_MARKER"], "synthetic")
+                self.assertEqual(ast.literal_eval(result.stdout)["HOME"], directory)
 
     def assert_isolation(self, workflow, job):
         denied = runpy.run_path(str(ROOT / "skills/hanig-swarm/scripts/child_environment.py"))["DENIED_ENV_NAMES"]
