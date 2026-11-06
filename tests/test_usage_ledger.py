@@ -144,7 +144,7 @@ class TestUsageLedger(unittest.TestCase):
                 self.assertEqual(self.read()["status"], "regressed" if after < before else "ok")
                 path.write_text("")
                 L.record(self.state_dir, "code", "attempt", self.home)
-                self.assertEqual(self.read()["status"], "unknown")
+                self.assertEqual(self.read()["status"], "regressed")
                 self.assertEqual(self.read()["models"]["fixture-a"]["input_tokens"], max(before, after))
 
     def test_report_cli_days_totals_and_exclusions(self):
