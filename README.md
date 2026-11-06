@@ -304,7 +304,7 @@ and the generated `adjudication.matrix` and `adjudication.concurrence`
 [declarations](skills/hanig-orchestrate/SKILL.md) govern dispositions. An
 orchestrator that did not author the affected design or implementation may
 make reproduced findings nonblocking when unlikely to change design or outcome,
-consulting Sol only when unsure; otherwise the existing concurrence rule applies.
+consulting Astra only when unsure; otherwise the existing concurrence rule applies.
 Writing a unit's task specification is not authorship of its implementation.
 The mandate's non-overridable limits, evidence record and green merge checks
 still bind; a disposition never relabels a failing review as a pass.

@@ -81,7 +81,7 @@ mandate; do not generalise a tool's gate into a standing obligation to consult.
 - Run the review gate, and reproduce any finding before acting on it.
 - Open pull requests from an anchored attempt ref.
 - Merge pull requests that satisfy the adjudication policy below.
-- Use orchestrator judgment under the policy below; consult Sol only when unsure.
+- Use orchestrator judgment under the policy below; consult Astra only when unsure.
 - Defer a reproduced finding outside a task's declared supported envelope, without concurrence, under *Findings outside the supported envelope* below.
 - Record merge receipts, advance the DAG, drain tracker intents.
 - File, update and close issues in this project.
@@ -97,17 +97,23 @@ mandate; do not generalise a tool's gate into a standing obligation to consult.
   subject or report the failure.
 - No action outside this repository and this project.
 
-**There is no spend ceiling, and its absence is deliberate.** The owner removed
-it on 2026-09-24: "I'm okay with the spend being whatever it is." Do not treat
-cost as a reason to stop, to narrow a review panel, to skip a committee, or to
-prefer a cheaper reviewer over the right one. This is recorded rather than left
-as a silent gap because a reader who finds no bound here would otherwise be
-right to wonder whether one was lost, and might restore it.
+**Cost is a legitimate factor, by owner decision on 2026-11-06.** This
+replaces the 2026-09-24 instruction that there was no spend ceiling. A budget
+analysis that day found two things:
+orchestrator cache rewrites after watcher waits were 62% of the
+orchestrator's modelled cost, and code-agent spend was unattributed because
+attempt logs are deleted at cleanup. The repository had also just become
+private, so CI minutes are billed. When two routes meet the same bar, prefer
+the cheaper one. That covers the authoring model, wake cadence, CI scope and
+test scope. Cost is still not a reason to narrow a review panel, to skip a
+committee, or to prefer a cheaper reviewer over the right one; the planning
+committee rejected those economies on 2026-11-06.
 
-It also was never enforced. ARC-691 measured that the previous `$50/day` line
-was honoured by no program: `budget.gpu_hours` is the only ceiling any code
-applies, and it is unaffected by this. What changed is the standing
-instruction, not a control — so nothing that used to stop will now fail to.
+There is no daily cap yet. The owner sets per-bucket caps after two weeks of
+usage-ledger data. A cap stops new dispatches only: it never kills in-flight
+verification and never marks paused work complete. The earlier `$50/day`
+line was honoured by no program (ARC-691), and `budget.gpu_hours` is still the
+only ceiling any code applies. A cap counts only once a program enforces it.
 
 ## Always stop and ask
 
@@ -147,31 +153,32 @@ Orchestrator judgment is available only to an orchestrator that did not author t
 
 Task specifications the orchestrator writes for a unit are not authorship of that unit's implementation; authorship means the orchestrator wrote the code or design under review.
 
-It may make confirmed, reproduced findings nonblocking on its own judgment when unlikely to change design or outcome, including owner-accepted tradeoffs, consulting Sol only when unsure. Otherwise the existing concurrence rule applies unchanged.
+It may make confirmed, reproduced findings nonblocking on its own judgment when unlikely to change design or outcome, including owner-accepted tradeoffs, consulting Astra only when unsure. Otherwise the existing concurrence rule applies unchanged.
 
 A confirmed finding may then be dispositioned nonblocking only when **the
-orchestrator and GPT-Sol (the `sol` reviewer in `reviewers.json`) agree that
+orchestrator and GPT-Astra (the `astra` reviewer in `reviewers.json`) agree that
 it is not a deal breaker**. If they disagree, the change goes through another
 review cycle rather than merging. The one exception is *Findings outside the supported envelope*, below.
 
-Two things keep this honest rather than ceremonial. Sol must be asked to
+Two things keep this honest rather than ceremonial. Astra must be asked to
 assess the finding and its impact, never asked to ratify a conclusion the
 orchestrator has already framed as correct; the question put to it must state
 the finding, the evidence, and the reason for believing it irrelevant, and must
 invite refutation. And the second party is named in advance, so an
 inconvenient answer cannot be routed to a friendlier reviewer.
 
-The second party is never the author of the change under disposition. Sol
-replaced GPT-Astra here on 2026-09-25, because Astra became the code author of
-every unit and an author does not accept its own rebuttal. If Sol authored the
+The second party is never the author of the change under disposition. Astra
+returned here on 2026-11-06, by owner decision, because Sol became the code
+author of every unit; Sol had replaced Astra on 2026-09-25 for the same reason,
+since an author does not accept its own rebuttal. If Astra authored the
 change, the disposition goes to the owner.
 
-When Sol is consulted, deadlock fails toward more work, not toward shipping.
+When Astra is consulted, deadlock fails toward more work, not toward shipping.
 
 Judgment cannot waive the never-overridable classes; "Never overridable, whatever the relevance" remains binding.
 Honesty, reproduce-before-acting, green CI and merge checks remain binding.
 Every judgment disposition records the five answers below and
-"decided by orchestrator judgment, Sol not consulted".
+"decided by orchestrator judgment, Astra not consulted".
 
 Fast progress is an explicit goal: within these bounds, prefer disposition and
 merge over repair when findings would not change design or outcome.
