@@ -153,15 +153,28 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
     def test_event_os_matrices_and_check_names(self):
         self.assert_event_os_matrices(self.workflow)
 
-    def test_static_two_os_regression_matrix_is_rejected(self):
+    def assert_static_two_os_rejected(self, workflow):
         matrix = mapping_block(mapping_block(mapping_block(
-            mapping_block(self.workflow, "jobs", 0), "regression", 2), "strategy", 4),
+            mapping_block(workflow, "jobs", 0), "regression", 2), "strategy", 4),
             "matrix", 6)
         original = "        os: " + yaml_scalar(matrix, "os", 8)
-        mutated = self.workflow.replace(original, "        os: [ubuntu-22.04, macos-15]", 1)
-        self.assertNotEqual(mutated, self.workflow)
+        lines = workflow.splitlines(keepends=True)
+        target = original + "\n"
+        self.assertEqual(lines.count(target), 1)
+        mutated = "".join("        os: [ubuntu-22.04, macos-15]\n"
+                          if line == target else line for line in lines)
+        self.assertNotEqual(mutated, workflow)
         with self.assertRaises(AssertionError):
             self.assert_event_os_matrices(mutated)
+
+    def test_static_two_os_regression_matrix_is_rejected(self):
+        self.assert_static_two_os_rejected(self.workflow)
+
+    def test_mutation_targets_matrix_when_comment_copies_expression(self):
+        # Reviewer counterexample: a prior comment must not absorb the mutation.
+        line = next(line for line in self.workflow.splitlines()
+                    if line.startswith("        os: ${{ fromJSON("))
+        self.assert_static_two_os_rejected("#" + line + "\n" + self.workflow)
 
     def assert_regression_timeout(self, workflow):
         jobs_block = mapping_block(workflow, "jobs", 0)
