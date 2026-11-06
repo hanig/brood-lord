@@ -159,7 +159,7 @@ design is wrong, which is the point of asking.
 After challenging the members, run
 `python3 "$HANIG_REVIEW_GATE_DIR/scripts/committee.py" synthesize SESSION --author PROVIDER/MODEL`.
 Convergence produces a unified plan; divergence automatically calls the
-one enabled reviewer whose profiles are exactly `["tiebreak"]` (sol-tiebreak).
+one enabled reviewer whose profiles are exactly `["tiebreak"]` (astra-tiebreak since 2026-11-06; Sol now writes the code).
 For an already identified split, use `tiebreak SESSION --author PROVIDER/MODEL` directly.
 It receives the question and every member's final position verbatim and saves
 a RULING adopting a named position with the deciding evidence, not a fresh plan.
@@ -171,7 +171,7 @@ with `--stop-and-ask REASON`, which refuses without calling a provider and is
 retained in the session. Semantic classification otherwise rests on the model
 and an honest caller; a ruling supplies analysis, never additional authority.
 An unavailable, empty, truncated or malformed answer routes to OWNER (exit 1)
-with a persisted reason. Any Sol coauthor (`--author codex/gpt-6.1-sol`, also
+with a persisted reason. Any Astra coauthor (`--author codex/gpt-6-astra`, also
 recognized by its legacy bare model and configured aliases) refuses the
 tie-break using the same model exclusion rule as membership. Missing or conflicting author
 declarations also route to the owner; existing sessions can declare their author
@@ -200,7 +200,7 @@ It grants no merge authority and never changes a recorded verdict: `REVIEW_FAIL`
 python3 "$HANIG_REVIEW_GATE_DIR/scripts/review.py" --open-findings --head SHA
 python3 "$HANIG_REVIEW_GATE_DIR/scripts/review.py" --adjudicate FINDING_DIGEST \
   --head SHA --accepted-by OWNER_OR_ORCHESTRATOR --reason "Evidence and rationale" \
-  --decision overruled --author codex/gpt-6-astra
+  --decision overruled --author codex/gpt-6.1-sol
 ```
 
 Both commands are offline and emit JSON. Review input flags, including `--file`,

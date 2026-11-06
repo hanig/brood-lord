@@ -1792,7 +1792,13 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
         # isolation; the daemon must itself be launched without ambient keys.
         argv = ["paseo", "run", "--background", "--json",
                 "--cwd", str(reuse_workspace)]
-        argv += ["--provider", u.get("provider") or SR.DEFAULT_AGENT_PROVIDER,
+        provider = u.get("provider") or SR.DEFAULT_AGENT_PROVIDER
+        default_model = None
+        if not u.get("provider"):
+            provider, separator, default_model = provider.partition("/")
+            if not separator:
+                default_model = None
+        argv += ["--provider", provider,
                 # The title carries the ATTEMPT id, mirroring the Slurm job
                 # name, so an agent created just before a crash can be found
                 # again and is never confused with a later attempt of the same
@@ -1810,8 +1816,8 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
         # the user's behalf would be a worse bug than a stalled unit.
         if u.get("mode"):
             argv += ["--mode", str(u["mode"])]
-        if u.get("model"):
-            argv += ["--model", str(u["model"])]
+        if u.get("model") or default_model:
+            argv += ["--model", str(u.get("model") or default_model)]
         # Reasoning effort. Declared per unit, else the project default. Passed
         # for whatever provider is in use: an unknown thinking id makes paseo
         # return an errored agent rather than quietly ignoring it, so a wrong

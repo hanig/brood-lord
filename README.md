@@ -304,7 +304,7 @@ and the generated `adjudication.matrix` and `adjudication.concurrence`
 [declarations](skills/hanig-orchestrate/SKILL.md) govern dispositions. An
 orchestrator that did not author the affected design or implementation may
 make reproduced findings nonblocking when unlikely to change design or outcome,
-consulting Sol only when unsure; otherwise the existing concurrence rule applies.
+consulting Astra only when unsure; otherwise the existing concurrence rule applies.
 Writing a unit's task specification is not authorship of its implementation.
 The mandate's non-overridable limits, evidence record and green merge checks
 still bind; a disposition never relabels a failing review as a pass.
@@ -859,7 +859,7 @@ the `enabled`, `profiles` and `effort` fields in
 | `plan` | luna `max`, kimi-k3 `xhigh` | acceptance criteria and designs, before code exists |
 | `fast` | luna `max`, haiku-5.5 `max` | cheapest implementation panel, first tier of `--escalate` |
 | `standard` | terra `xhigh`, kimi-k2.7-code `null`, sonnet-5.5 `high` | the usual implementation panel |
-| `deep` | terra `xhigh`, kimi-k2.7-code `null`, sonnet-5.5 `high`, sol `xhigh` | final escalation tier or explicit `--profile deep` |
+| `deep` | terra `xhigh`, kimi-k2.7-code `null`, sonnet-5.5 `high`, sol `xhigh`, astra `xhigh` | final escalation tier or explicit `--profile deep` |
 
 Owner decision 2026-10-19 put Luna in plan with Kimi K3. The 2026-10-28
 changes seated Terra in standard and deep and then set its effort to `xhigh`,

@@ -1,5 +1,5 @@
 {
-  "_comment": "Static model registry for routing. Intelligence and coding index values were seeded once from the Artificial Analysis Intelligence Index / Coding Agent Index (Aug 2026) — treat them as settled; do not re-verify per task. Edit by hand when you deliberately update scores. Live signals (quota, load, observed tok/s) are merged by `bus models` at read time.",
+  "_comment": "Static model registry for routing. Intelligence and coding index values were seeded once from the Artificial Analysis Intelligence Index / Coding Agent Index (Aug 2026) \u2014 treat them as settled; do not re-verify per task. Edit by hand when you deliberately update scores. Live signals (quota, load, observed tok/s) are merged by `bus models` at read time.",
   "models": [
     {
       "id": "claude/opus",
@@ -12,12 +12,12 @@
         "image"
       ],
       "cost_tier": "plan-high",
-      "quota": "claude plan; no local API — /usage in Claude Code TUI",
+      "quota": "claude plan; no local API \u2014 /usage in Claude Code TUI",
       "notes": "UI/design/artistic judgment and planning agents per orchestration preferences. AA Coding Index ~78.0, essentially tied with Sol. Opus 5.5 is NOT reachable through Paseo yet: on 2026-09-28 `paseo run --provider claude --model claude-opus-5-5 --thinking high` inspected as Model claude-opus-5 without an error, and `paseo provider models claude` lists no 5.5. Pin 5.5 here only after an inspected agent reports it."
     },
     {
-      "id": "codex/gpt-6-sol",
-      "label": "GPT-6 Sol",
+      "id": "codex/gpt-6.1-sol",
+      "label": "GPT-6.1 Sol",
       "intelligence_index": null,
       "intelligence_index_source": "6-series not measured here; prior-release August 2026 scores are retained in _previous_release_measurements",
       "coding_index": null,
@@ -27,7 +27,7 @@
       ],
       "cost_tier": "plan-high",
       "quota": "codex plan; live rate-limit windows read from codex rollouts",
-      "notes": "Upgraded by owner decision on 2026-09-25. Deep-tier review gate (left plan by owner decision 2026-10-12), committee tie-breaker and mandate concurrence party, all at xhigh; optional code dispatch at high. API budget acceptance is recorded in reviewers.json; Paseo dispatch of this release was not measured here. Prior-release scores and qualitative notes remain dated history, not measurements of this release.",
+      "notes": "2026-11-06: default code author at high. Orchestrator canary inspected Provider codex, Model gpt-6.1-sol, Thinking high, and answered SOL61-OK. Keeps deep review at xhigh with author exclusion; no longer the committee tiebreak or concurrence party. Prior-release scores remain dated history, not measurements of this release.",
       "_previous_release_measurements": {
         "id": "codex/gpt-5.6-sol",
         "date": "2026-08",
@@ -48,7 +48,7 @@
       ],
       "cost_tier": "unmeasured",
       "quota": "codex plan; live rate-limit windows read from codex rollouts",
-      "notes": "Default code-unit driver since 2026-09-24 by owner decision. Dispatch verified live on the coordinator host: paseo inspect read Provider codex, Model gpt-6-astra, Thinking high, and the agent answered. Both indexes are deliberately null: nothing here measured them, and a plausible number would be fabricated evidence."
+      "notes": "2026-11-06: deep reviewer, committee tiebreak and mandate concurrence party at xhigh. Leaves planning because its tiebreak seat must not rule among its own committee members. Sol now writes the code, and an author does not review or tiebreak its own work. Historical canary on 2026-09-24 inspected Provider codex, Model gpt-6-astra, Thinking high. Indexes remain null because nothing here measured them."
     },
     {
       "id": "codex/gpt-6-luna",

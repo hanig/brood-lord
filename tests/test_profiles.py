@@ -147,11 +147,11 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
         expected = {
             "fast": {"luna", "haiku-5.5"},
             "standard": {"terra", "kimi-k2.7-code", "sonnet-5.5"},
-            "deep": {"terra", "kimi-k2.7-code", "sonnet-5.5", "sol"},
+            "deep": {"terra", "kimi-k2.7-code", "sonnet-5.5", "sol", "astra"},
             "plan": {"luna", "kimi-k3"},
-            "planning": {"astra", "gemini-argon", "muse-wonder"},
+            "planning": {"gemini-argon", "muse-wonder"},
             "committee": {"deepseek-v4-pro", "gemini-argon", "sonnet-5.5"},
-            "tiebreak": {"sol-tiebreak"},
+            "tiebreak": {"astra-tiebreak"},
         }
         for profile, names in expected.items():
             with self.subTest(profile=profile):
@@ -177,6 +177,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
             "sonnet-5.5": ("anthropic", "claude-sonnet-5-5", "high"),
             "deepseek-v4-pro": ("openrouter", "deepseek/deepseek-v4-pro", None),
             "sol": ("openai", "gpt-6.1-sol", "xhigh"),
+            "astra-tiebreak": ("openai", "gpt-6-astra", "xhigh"),
             "sol-tiebreak": ("openai", "gpt-6.1-sol", "xhigh"),
         }
         self.assertEqual({r["name"]: (r["provider"], r["model"], r["effort"])
@@ -200,14 +201,13 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
                 else:
                     self.assertEqual(payload["reasoning"], {"effort": seat["effort"]})
 
-    def test_planning_selects_exactly_three_members_across_two_providers(self):
+    def test_planning_selects_exactly_two_members_on_openrouter(self):
         import committee
         members = committee.pick_members([], profile="planning")
         self.assertEqual({m["name"] for m in members},
-                         {"astra", "gemini-argon", "muse-wonder"})
-        self.assertEqual(len(members), 3)
-        self.assertEqual({m["provider"] for m in members},
-                         {"openai", "openrouter"})
+                         {"gemini-argon", "muse-wonder"})
+        self.assertEqual(len(members), 2)
+        self.assertEqual({m["provider"] for m in members}, {"openrouter"})
         muse = next(m for m in members if m["name"] == "muse-wonder")
         self.assertEqual(muse["profiles"], ["planning"])
         self.assertEqual(muse["family"], {
@@ -536,7 +536,7 @@ class TestAuthorExclusion(unittest.TestCase):
             "--profile", "deep", "--quorum", "3",
             "--author", "codex/gpt-6.1-sol")
         self.assertNotIn("sol", called)
-        self.assertEqual(set(called), {"terra", "sonnet-5.5", "kimi-k2.7-code"})
+        self.assertEqual(set(called), {"terra", "sonnet-5.5", "kimi-k2.7-code", "astra"})
         self.assertEqual(code, R.STATES["REVIEW_PASS"], output)
         self.assertIn("sol excluded: authored this change", output)
 
@@ -546,7 +546,7 @@ class TestAuthorExclusion(unittest.TestCase):
             "--author", "codex/gpt-6.1-terra", "--json")
         report = json.loads(output)
         self.assertEqual(code, R.STATES["REVIEW_PASS"], output)
-        self.assertEqual(set(called), {"sol", "sonnet-5.5", "kimi-k2.7-code"})
+        self.assertEqual(set(called), {"sol", "sonnet-5.5", "kimi-k2.7-code", "astra"})
         self.assertEqual([r["name"] for r in report["excluded"]], ["terra"])
         self.assertEqual(report["quorum"], 3)
 
@@ -562,15 +562,15 @@ class TestAuthorExclusion(unittest.TestCase):
 
     def test_exclusion_below_quorum_is_unavailable_before_any_call(self):
         for flags in (["--profile", "deep"], ["--escalate"],
-                      ["--only", "sol,terra,kimi-k2.7-code,sonnet-5.5"]):
+                      ["--only", "sol,terra,kimi-k2.7-code,sonnet-5.5,astra"]):
             with self.subTest(flags=flags):
                 code, output, _err, called = self.invoke(
-                    *flags, "--quorum", "4", "--author", "codex/gpt-6.1-sol",
+                    *flags, "--quorum", "5", "--author", "codex/gpt-6.1-sol",
                     "--json")
                 self.assertEqual(code, R.STATES["REVIEW_UNAVAILABLE"], output)
                 report = json.loads(output)
-                self.assertEqual(report["quorum"], 4)
-                self.assertIn("author exclusion leaves 3", report["reason"])
+                self.assertEqual(report["quorum"], 5)
+                self.assertIn("author exclusion leaves 4", report["reason"])
                 self.assertEqual(report["excluded"][0]["name"], "sol")
                 self.assertEqual(called, [])
 
@@ -579,7 +579,7 @@ class TestAuthorExclusion(unittest.TestCase):
             "--escalate", "--quorum", "3", "--author", "codex/gpt-6.1-sol",
             "--json")
         self.assertEqual(code, 0, output)
-        self.assertEqual(set(called), {"terra", "sonnet-5.5", "kimi-k2.7-code"})
+        self.assertEqual(set(called), {"terra", "sonnet-5.5", "kimi-k2.7-code", "astra"})
         self.assertEqual(json.loads(output)["excluded"][0]["name"], "sol")
 
     def test_repeatable_authors_preserve_nested_model_ids(self):
@@ -587,7 +587,7 @@ class TestAuthorExclusion(unittest.TestCase):
             "--profile", "deep", "--author", "codex/gpt-6.1-sol",
             "--author", "openrouter/moonshotai/kimi-k2.7-code", "--json")
         self.assertEqual(code, 0, output)
-        self.assertEqual(set(called), {"terra", "sonnet-5.5"})
+        self.assertEqual(set(called), {"terra", "sonnet-5.5", "astra"})
         self.assertEqual({r["name"] for r in json.loads(output)["excluded"]},
                          {"sol", "kimi-k2.7-code"})
 
@@ -603,12 +603,12 @@ class TestAuthorExclusion(unittest.TestCase):
 
     def test_different_effort_seats_of_same_model_are_both_excluded(self):
         code, output, _err, called = self.invoke(
-            "--only", "sol,sol-tiebreak,luna,kimi-k2.7-code",
-            "--author", "codex/gpt-6.1-sol", "--json")
+            "--only", "astra,astra-tiebreak,luna,kimi-k2.7-code",
+            "--author", "codex/gpt-6-astra", "--json")
         self.assertEqual(code, 0, output)
         self.assertEqual(set(called), {"luna", "kimi-k2.7-code"})
         self.assertEqual({r["name"] for r in json.loads(output)["excluded"]},
-                         {"sol", "sol-tiebreak"})
+                         {"astra", "astra-tiebreak"})
 
     def test_all_selected_authors_cannot_run_even_with_singleton_override(self):
         code, output, _err, called = self.invoke(
