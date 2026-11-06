@@ -394,10 +394,14 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
             home = root / "home"
             home.mkdir()
             target = root / "venv"
-            venv.EnvBuilder(with_pip=False, symlinks=True).create(str(target))
+            # Enable user startup explicitly, even when the suite is in a venv.
+            venv.EnvBuilder(with_pip=False, symlinks=True,
+                            system_site_packages=True).create(str(target))
             interpreter = str(target / "bin/python3")
             site_dir = subprocess.check_output(
-                [interpreter, "-I", "-c", "import site; print(site.getsitepackages()[0])"],
+                [interpreter, "-I", "-S", "-c",
+                 "import site,sys; print(site.getsitepackages([sys.argv[1]])[0])",
+                 str(target)],
                 text=True).strip()
             # Put the synthetic site ahead of distributor sitecustomize.
             Path(site_dir, "probe.pth").write_text(
@@ -405,12 +409,12 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
             Path(site_dir, "sitecustomize.py").write_text("print('SITE NOTICE')\n")
             user_env = {"HOME": str(home), "PYTHONUSERBASE": str(root / "user")}
             user_site = subprocess.check_output(
-                [sys.executable, "-c", "import site; print(site.getusersitepackages())"],
+                [interpreter, "-S", "-c", "import site; print(site.getusersitepackages())"],
                 env=user_env, text=True).strip()
             Path(user_site).mkdir(parents=True)
             Path(user_site, "usercustomize.py").write_text("print('USER NOTICE')\n")
             control = subprocess.check_output(
-                [sys.executable, "-c", "pass"], env=user_env, text=True)
+                [interpreter, "-c", "pass"], env=user_env, text=True)
             self.assertIn("USER NOTICE", control)
             for job in ("regression", "native-discovery"):
                 script = self.script(self.named_step(self.workflow, job, "Select preinstalled Python"))
