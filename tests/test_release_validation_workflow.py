@@ -5,6 +5,7 @@ import itertools
 import json
 import os
 import runpy
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -396,6 +397,33 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
                     self.assertTrue(os.access(str(selected), os.X_OK), str(selected))
                     self.assertEqual(selected.resolve(), Path(sys.executable).resolve())
 
+    def write_python_probe(self, path, interpreter):
+        source = "import os; print(repr(dict(os.environ)))"
+        path.write_text("#!/bin/sh\nexec " + shlex.quote(interpreter) + " -c " +
+                        shlex.quote(source) + "\n", encoding="utf-8")
+        path.chmod(0o755)
+
+    def test_python_probe_accepts_interpreter_path_with_spaces(self):
+        # Reviewer counterexample: harmless fallback, never recurse into discovery.
+        # Exhaustive finite bound: plain and spaced interpreter paths.
+        for name in ("python", "runner temp/python"):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                interpreter = root / name
+                interpreter.parent.mkdir(exist_ok=True)
+                interpreter.symlink_to(sys.executable)
+                probe_bin = root / "probe"
+                probe_bin.mkdir()
+                self.write_python_probe(probe_bin / "python3", str(interpreter))
+                path = str(probe_bin) + os.pathsep + str(Path(sys.executable).parent) + os.pathsep + os.defpath
+                result = subprocess.run(
+                    ["/usr/bin/env", "-i", "PATH=" + path, "BROOD_PROBE_MARKER=synthetic",
+                     "python3", "-c", "print('FALLBACK')"], text=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertNotIn("FALLBACK", result.stdout)
+                self.assertEqual(ast.literal_eval(result.stdout)["BROOD_PROBE_MARKER"], "synthetic")
+
     def assert_isolation(self, workflow, job):
         denied = runpy.run_path(str(ROOT / "skills/hanig-swarm/scripts/child_environment.py"))["DENIED_ENV_NAMES"]
         homes = ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR")
@@ -439,9 +467,7 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
             probe_bin = root / "bin"
             probe_bin.mkdir()
             probe_python = probe_bin / "python3"
-            probe_python.write_text("#!" + sys.executable + "\nimport os\nprint(repr(dict(os.environ)))\n",
-                                    encoding="utf-8")
-            probe_python.chmod(0o755)
+            self.write_python_probe(probe_python, sys.executable)
             env.update(PATH=str(probe_bin) + os.pathsep + env["PATH"],
                        RUNNER_ENVIRONMENT="self-hosted")
             result = self.run_shell(self.script(consumer), env)
