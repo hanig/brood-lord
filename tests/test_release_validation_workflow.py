@@ -3,6 +3,12 @@
 import ast
 import itertools
 import json
+import os
+import runpy
+import subprocess
+import sys
+import tempfile
+import textwrap
 import re
 import unittest
 from pathlib import Path
@@ -139,7 +145,7 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
                 title = "Regression" if job == "regression" else "Native discovery"
                 self.assertEqual(yaml_scalar(block, "name", 4),
                                  title + " (${{ matrix.os }}, Python ${{ matrix.python-version }})")
-                self.assertEqual(yaml_scalar(block, "runs-on", 4), "${{ matrix.os }}")
+                self.assert_runner_selection(block)
                 oses = (json.loads(push_json if event == "push" else other_json)
                         if job == "regression" else yaml_sequence(native_matrix, "os", 8))
                 expected = (["ubuntu-22.04"] if event == "push" and job == "regression"
@@ -278,6 +284,170 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
                 yaml_scalar(job_block, "name", 10),
                 f"{job_name}-{suffix}",
             )
+
+
+    def job_steps(self, workflow, job):
+        block = mapping_block(mapping_block(workflow, "jobs", 0), job, 2)
+        return ["      - " + part for part in block.split("      - ")[1:]]
+
+    def named_step(self, workflow, job, name):
+        steps = [step for step in self.job_steps(workflow, job)
+                 if step.splitlines()[0] == "      - name: " + name]
+        self.assertEqual(len(steps), 1)
+        return steps[0]
+
+    def script(self, step):
+        return textwrap.dedent(step.split("        run: |\n", 1)[1])
+
+    def assert_runner_selection(self, job):
+        expression = yaml_scalar(job, "runs-on", 4)
+        parsed = re.fullmatch(
+            r"\$\{\{ matrix\.os == 'macos-15' && vars\.BROOD_MAC_RUNNER == 'self-hosted'"
+            r" && fromJSON\('([^']+)'\) \|\| matrix\.os == 'ubuntu-22.04'"
+            r" && vars\.BROOD_LINUX_RUNNER == 'self-hosted' && fromJSON\('([^']+)'\)"
+            r" \|\| matrix\.os \}\}", expression)
+        self.assertIsNotNone(parsed, "runs-on must preserve both variable switches and fallback")
+        mac, linux = map(json.loads, parsed.groups())
+        self.assertEqual(mac, ["self-hosted", "macOS", "ARM64", "brood-mac"])
+        self.assertEqual(linux, ["self-hosted", "Linux", "X64", "brood-chimera"])
+        # Exhaustive bound: 2 OSes x 3 Mac values x 3 Linux values = 18.
+        for os_name, mac_var, linux_var in itertools.product(
+                ("macos-15", "ubuntu-22.04"), ("", "self-hosted", "other"),
+                ("", "self-hosted", "other")):
+            actual = (mac if os_name == "macos-15" and mac_var == "self-hosted" else
+                      linux if os_name == "ubuntu-22.04" and linux_var == "self-hosted" else os_name)
+            variable = mac_var if os_name == "macos-15" else linux_var
+            expected = (mac if os_name == "macos-15" else linux) if variable == "self-hosted" else os_name
+            self.assertEqual(actual, expected)
+
+    def test_runner_switches_and_static_runner_mutation(self):
+        for job in ("regression", "native-discovery"):
+            block = mapping_block(mapping_block(self.workflow, "jobs", 0), job, 2)
+            self.assert_runner_selection(block)
+            expression = yaml_scalar(block, "runs-on", 4)
+            with self.assertRaises(AssertionError):
+                self.assert_runner_selection(block.replace(expression, "${{ matrix.os }}", 1))
+        concurrency = mapping_block(self.workflow, "concurrency", 0)
+        self.assertEqual(yaml_scalar(concurrency, "group", 2), "release-validation-${{ github.ref }}")
+        self.assertEqual(yaml_scalar(concurrency, "cancel-in-progress", 2), "true")
+
+    def run_shell(self, script, environment):
+        return subprocess.run(["/bin/bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+                              cwd=str(ROOT), env=environment, text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    def test_preinstalled_interpreter_conditions_and_failure_paths(self):
+        for job in ("regression", "native-discovery"):
+            steps = self.job_steps(self.workflow, job)
+            setup = next(step for step in steps if "- uses: actions/setup-python@" in step)
+            self.assertEqual(yaml_scalar(setup, "if", 8),
+                             "runner.environment != 'self-hosted' || runner.os != 'macOS'")
+            step = self.named_step(self.workflow, job, "Select preinstalled macOS Python")
+            self.assertEqual(yaml_scalar(step, "if", 8),
+                             "runner.environment == 'self-hosted' && runner.os == 'macOS'")
+            self.assertEqual(yaml_scalar(step, "PYTHON_VERSION", 10), "${{ matrix.python-version }}")
+            script = self.script(step)
+            # Exhaustive bound per job: unset, nonexecutable, mismatched, valid.
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                path_file = root / "path"
+                bad = root / "nonexecutable"
+                bad.write_text("not executable", encoding="utf-8")
+                version = "%d.%d" % sys.version_info[:2]
+                key = "BROOD_PY_" + version.replace(".", "_")
+                base = {"PATH": os.defpath, "RUNNER_TEMP": directory, "GITHUB_PATH": str(path_file),
+                        "PYTHON_VERSION": version}
+                for value in (None, str(bad), sys.executable):
+                    env = dict(base)
+                    if value is not None:
+                        env[key] = value
+                    result = self.run_shell(script, env)
+                    self.assertEqual(result.returncode, 0 if value == sys.executable else 1, result.stdout)
+                python_bin = Path(path_file.read_text().strip())
+                for name in ("python", "python3"):
+                    self.assertEqual((python_bin / name).resolve(), Path(sys.executable).resolve())
+                mismatch = dict(base, PYTHON_VERSION="0.0", BROOD_PY_0_0=sys.executable)
+                self.assertNotEqual(self.run_shell(script, mismatch).returncode, 0)
+                start = script.index('if [[ "$actual" != "$PYTHON_VERSION" ]]; then')
+                end = script.index("fi", start) + 2
+                mutated = script[:start] + script[end:]
+                # Reverting the version check admits the wrong interpreter.
+                self.assertEqual(self.run_shell(mutated, mismatch).returncode, 0)
+
+    def assert_isolation(self, workflow, job):
+        denied = runpy.run_path(str(ROOT / "skills/hanig-swarm/scripts/child_environment.py"))["DENIED_ENV_NAMES"]
+        homes = ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR")
+        prepare = self.named_step(workflow, job, "Isolate self-hosted test environment")
+        check = self.named_step(workflow, job, "Check self-hosted test isolation")
+        for step in (prepare, check):
+            self.assertEqual(yaml_scalar(step, "if", 8), "runner.environment == 'self-hosted'")
+        steps = self.job_steps(workflow, job)
+        consumer_name = ("Run full suite without user configuration or credentials" if job == "regression"
+                         else "Validate native loaders and installed helper without accounts")
+        consumer = self.named_step(workflow, job, consumer_name)
+        self.assertLess(steps.index(prepare), steps.index(check))
+        self.assertLess(steps.index(check), steps.index(consumer))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # Synthetic values only; do not pass this process's credentials.
+            env = dict.fromkeys(denied, "synthetic")
+            env.update(PATH=str(Path(sys.executable).parent) + os.pathsep + os.defpath,
+                       RUNNER_TEMP=directory, GITHUB_ENV=str(root / "env"))
+            result = self.run_shell(self.script(prepare), env)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            exports = dict(line.split("=", 1) for line in (root / "env").read_text().splitlines())
+            self.assertEqual(set(exports), set(homes) | {"BASH_ENV"})
+            self.assertEqual(set(Path(exports["BASH_ENV"]).read_text().split()[1:]), denied)
+            for name in homes:
+                self.assertTrue(Path(exports[name]).is_relative_to(root))
+                self.assertEqual(list(Path(exports[name]).iterdir()), [])
+            env.update(exports)
+            result = self.run_shell(self.script(check), env)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            # Consume BASH_ENV exactly as subsequent Actions bash steps do.
+            probe = "import os; print(repr(dict(os.environ)))"
+            result = self.run_shell("python3 -B -c " + repr(probe), env)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            received = ast.literal_eval(result.stdout)
+            self.assertFalse(denied.intersection(received))
+            self.assertEqual({name: received[name] for name in homes},
+                             {name: exports[name] for name in homes})
+            # Run the real test-step shell with a probe replacing only Python.
+            # This checks the environment delivered through Regression's env -i too.
+            probe_bin = root / "bin"
+            probe_bin.mkdir()
+            probe_python = probe_bin / "python3"
+            probe_python.write_text("#!" + sys.executable + "\nimport os\nprint(repr(dict(os.environ)))\n",
+                                    encoding="utf-8")
+            probe_python.chmod(0o755)
+            env.update(PATH=str(probe_bin) + os.pathsep + env["PATH"],
+                       RUNNER_ENVIRONMENT="self-hosted")
+            result = self.run_shell(self.script(consumer), env)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            output = (result.stdout if job == "regression" else
+                      (root / "native-agent-validation.json").read_text())
+            received = ast.literal_eval(output)
+            self.assertFalse(denied.intersection(received))
+            for name in homes:
+                directory_path = Path(received[name])
+                self.assertTrue(directory_path.resolve().is_relative_to(root.resolve()))
+                self.assertEqual(list(directory_path.iterdir()), [])
+            # The check itself refuses a credential surviving startup.
+            bad_env = dict(env)
+            bad_env.pop("BASH_ENV")
+            bad_env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + os.defpath
+            self.assertNotEqual(self.run_shell(self.script(check), bad_env).returncode, 0)
+
+    def test_self_hosted_isolation_and_dropped_variable_mutation(self):
+        for job in ("regression", "native-discovery"):
+            self.assert_isolation(self.workflow, job)
+            step = self.named_step(self.workflow, job, "Isolate self-hosted test environment")
+            mutated = step.replace('"XDG_STATE_HOME", ', '', 1)
+            with self.assertRaises(AssertionError):
+                block = mapping_block(mapping_block(self.workflow, "jobs", 0), job, 2)
+                changed = block.replace(step, mutated, 1)
+                header = "\n  " + job + ":\n"
+                self.assert_isolation(self.workflow.replace(header + block, header + changed, 1), job)
 
 
 if __name__ == "__main__":
