@@ -8,6 +8,7 @@ import os
 import time
 from pathlib import Path
 
+import usage_ledger as UL
 import codex_home as CH
 import paseo_io as PIO
 import recovery as R
@@ -307,6 +308,7 @@ def _cleanup_codex_home(state, u, attempt, report, state_dir):
         report.append(f"{u['id']}: {meta['cleanup_problem']}")
         return
     SS.save_state(state_dir, state)
+    UL.record(state_dir, u["id"], attempt, meta.get("path"), us.get("state"))
     try:
         CH.remove(state_dir, attempt, meta.get("path"), meta.get("identity"))
     except Exception as exc:

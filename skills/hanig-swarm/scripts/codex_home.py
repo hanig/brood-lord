@@ -11,6 +11,7 @@ import stat
 from pathlib import Path
 
 import coordinator_paths as CP
+import usage_ledger as UL
 
 
 class HomeError(ValueError):
@@ -133,6 +134,7 @@ def allocate(state_dir, attempt, unit_dir, unit):
                                     "directory identity changed")
                 # No links have been populated yet. Never recursively remove
                 # unexpected contents or a replacement at the allocated path.
+                UL.record(state_dir, unit["id"], attempt, home)
                 home.rmdir()
             except FileNotFoundError:
                 pass
