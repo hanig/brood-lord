@@ -453,7 +453,8 @@ class SeedDispatchTests(unittest.TestCase):
 class UnseededCompatibilityTests(unittest.TestCase):
     def test_base_intent_prompt_and_plan_golden_digests(self):
         # Nondeterministic observations fixed; schema-6 intent recaptured for
-        # author_history. The plan retains its prior exact golden.
+        # author_history, then the 2026-11-06 default-author routing change.
+        # Only intent.provider changes; the plan retains its prior exact golden.
         unit = {"id": "code", "kind": "code", "repo": "/seed-compat/repo",
                 "target_branch": "main", "prompt": "Repair the implementation.",
                 "outputs": ["evidence.md"], "mode": "full-access"}
@@ -478,16 +479,16 @@ class UnseededCompatibilityTests(unittest.TestCase):
         self.assertNotIn("seed", intent)
         encoded = json.dumps(intent, sort_keys=True, separators=(",", ":")).encode()
         self.assertEqual(hashlib.sha256(encoded).hexdigest(),
-                         "dea077f54d8b1139f018c68dc39ffc813fc1e5a5d858af5865fa3717d40eb741")
+                         "6d33128fca751532b66dbdcf9f2ad7c23bb5c524946b35fc1e7f32d43e9aa9fa")
         legacy = dict(intent, schema_version=5)
         self.assertEqual(legacy.pop("author_history"), [])
         self.assertEqual(hashlib.sha256(json.dumps(
             legacy, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
-                         "6d17a37532381f9046afbe0656c139340bbc79b6fb28a8ae736b96eb4af7fbf3")
+                         "36f790e93fa13224fcdb21ef26f0df39ffba0fc1f69bfbae4d950d5d28e52215")
         # Prompt golden re-captured from this test for the bounded repair-loop
         # protocol, including its task-contradiction exception.
         self.assertEqual(hashlib.sha256(S._dispatch_prompt(unit, intent).encode()).hexdigest(),
-                         "5f34e84881f5558c92c69c288a21c7beddba27e4eff9880e111ddf7fbe3b9d82")
+                         "2d5b232effc7948adb15a4a83f18dff8dbe658418705c8825004f962f59c2957")
         self.assertEqual(S.plan_digest({"name": "seed-compat", "units": [unit]}),
                          "55ce911fb07620734d54da3b6ef9cde709df04d099bc7d7ffd66aaf2d24db93a")
 
