@@ -154,7 +154,8 @@ def record(state_dir, unit, attempt, home, terminal_state=None):
                 if "error" in current:
                     old["error"] = current["error"]
                 current = old
-        if terminal_state not in ("DONE", "FAILED", "CANCELLED", "ABANDONED",
+        if terminal_state not in ("DONE", "FAILED", "FAILED_EVIDENCE", "PREEMPTED",
+                                  "CANCELLED", "ABANDONED",
                                   "SUPERSEDED", "READY_FOR_PR", "NEEDS_HUMAN"):
             terminal_state = (previous or {}).get("terminal_state")
         current.update(unit_id=unit, attempt_id=attempt,
@@ -174,7 +175,7 @@ def refresh(state_dir, state):
                 if isinstance(meta, dict) and not meta.get("removed"):
                     terminal = None
                     if (str(us.get("attempt_dir", "")).endswith("/" + attempt)
-                            and us.get("state") in ("DONE", "FAILED", "CANCELLED",
+                            and us.get("state") in ("DONE", "FAILED", "FAILED_EVIDENCE", "PREEMPTED", "CANCELLED",
                                 "ABANDONED", "SUPERSEDED", "READY_FOR_PR", "NEEDS_HUMAN")):
                         terminal = us["state"]
                     record(state_dir, uid, attempt, meta.get("path"), terminal)
