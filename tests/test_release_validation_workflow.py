@@ -163,7 +163,8 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
         self.assertEqual(lines.count(original), 1)
         mutated_regression = "\n".join("        os: [ubuntu-22.04, macos-15]"
                                        if line == original else line for line in lines)
-        mutated = workflow.replace(regression, mutated_regression, 1)
+        header = "\n  regression:\n"
+        mutated = workflow.replace(header + regression, header + mutated_regression, 1)
         self.assertNotEqual(mutated, workflow)
         with self.assertRaises(AssertionError):
             self.assert_event_os_matrices(mutated)
@@ -184,6 +185,12 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
                      + "\n    runs-on: ${{ matrix.os }}\n    steps:\n"
                      "      - uses: actions/checkout@v4\n")
         self.assert_static_two_os_rejected(self.workflow + unrelated)
+        regression = mapping_block(mapping_block(self.workflow, "jobs", 0), "regression", 2)
+        clone = "\n  checkout-check:\n" + regression + "\n"
+        # Exhaust both placements of an identical job body: before and after.
+        for workflow in (self.workflow + clone,
+                         self.workflow.replace("\n  regression:", clone + "\n  regression:", 1)):
+            self.assert_static_two_os_rejected(workflow)
 
     def assert_regression_timeout(self, workflow):
         jobs_block = mapping_block(workflow, "jobs", 0)
