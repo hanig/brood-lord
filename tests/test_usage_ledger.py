@@ -206,9 +206,12 @@ class TestUsageLedger(unittest.TestCase):
         sessions = self.home / "sessions"
         sessions.mkdir()
         (self.home / "pipe").rename(sessions / "rollout-pipe.jsonl")
+        self.assertEqual(self.child_record()["status"], "unknown")
+
+    def child_record(self):
         cmd = [sys.executable, "-c", "import sys; sys.path.insert(0,sys.argv[1]); import usage_ledger as l; l.record(sys.argv[2],'u','a',sys.argv[3])", str(SCRIPTS), str(self.state_dir), str(self.home)]
         subprocess.run(cmd, timeout=3, check=True)
-        self.assertEqual(json.loads((self.state_dir / "usage/a.json").read_text())["status"], "unknown")
+        return json.loads((self.state_dir / "usage/a.json").read_text())
 
     def test_review_symlink(self):
         work = self.base / "work"; work.mkdir()
@@ -251,6 +254,48 @@ class TestUsageLedger(unittest.TestCase):
     def test_review_utc_without_zoneinfo(self):
         with mock.patch.dict(sys.modules, {"zoneinfo": None}), mock.patch.dict(os.environ, {"HANIG_REPORT_TZ":"UTC"}):
             self.assertEqual(L.report(self.state_dir, {"units":[]}, "codex/fixture")["timezone"], "UTC")
+
+    def test_round2_ledger_fifo(self):
+        folder = self.state_dir / "usage"; folder.mkdir()
+        os.mkfifo(folder / "a.json")
+        self.assertEqual(self.child_record()["status"], "none")
+
+    def test_round2_missing_home(self):
+        rollout(self.home)
+        shutil.rmtree(self.home)
+        L.refresh(self.state_dir, self.state)
+        self.assertEqual(self.read()["status"], "unknown")
+
+    def test_round2_unknown_fields(self):
+        path = rollout(self.home)
+        path.write_text(path.read_text().replace("cached_input_tokens", "cache_read_input_tokens"))
+        self.assertEqual(L.harvest(self.home)["status"], "unknown")
+
+    def test_round2_corrupt_previous(self):
+        for bad in ('"garbage"', '{"models":{"fixture-a":{}}}'):
+            with self.subTest(bad=bad):
+                rollout(self.home)
+                info = self.home.stat()
+                self.state["units"]["code"]["attempt_codex_homes"]["attempt"] = {
+                    "path":str(self.home), "identity":{"device":info.st_dev,"inode":info.st_ino}}
+                self.path.parent.mkdir(exist_ok=True)
+                self.path.write_text(bad)
+                SW._cleanup_codex_home(self.state, self.unit, "attempt", [], str(self.state_dir))
+                self.assertFalse(self.home.exists())
+                self.assertEqual(self.read()["models"]["fixture-a"]["input_tokens"], 7)
+
+    def test_round2_regressed_view(self):
+        path = rollout(self.home, count=10)
+        L.record(self.state_dir, "code", "attempt", self.home)
+        rollout(self.home, count=5)
+        path.write_text(path.read_text().replace('"output_tokens": 3', '"output_tokens": 10'))
+        L.record(self.state_dir, "code", "attempt", self.home)
+        rec = self.read()
+        self.assertEqual(rec["status"], "regressed")
+        self.assertEqual(rec["models"]["fixture-a"]["output_tokens"], 10)
+        self.assertEqual(rec["models"]["fixture-a"]["input_tokens"], 10)
+        # Counterwise maxima have no attributable event view. Do not invent one.
+        self.assertNotIn("events", rec)
 
 
 if __name__ == "__main__":

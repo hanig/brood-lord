@@ -34,9 +34,19 @@ def _walk_error(error):
     raise error
 
 
+def _regular(path):
+    handle = os.fdopen(os.open(str(path), os.O_RDONLY | os.O_NONBLOCK), "rb")
+    if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+        handle.close()
+        raise ValueError("nonregular usage file")
+    return handle
+
+
 def harvest(codex_home):
     """Read counters; missing input/output, model or time makes usage unknown."""
     home = Path(codex_home)
+    if not home.is_dir():
+        raise FileNotFoundError("missing Codex home")
     sessions = home / "sessions"
     files = sorted(Path(d) / n for d, _, names in os.walk(
         sessions, onerror=_walk_error) for n in names
@@ -49,10 +59,7 @@ def harvest(codex_home):
     for path in files:
         model = None
         seen = set()
-        fd = os.open(str(path), os.O_RDONLY | os.O_NONBLOCK)
-        with os.fdopen(fd, "rb") as handle:
-            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                raise ValueError("nonregular rollout")
+        with _regular(path) as handle:
             for line in handle:
                 try:
                     event = json.loads(line)
@@ -76,6 +83,8 @@ def harvest(codex_home):
                     stamp = _time(event["timestamp"])
                     if model is None or not isinstance(usage, dict):
                         raise ValueError("unrecognized usage")
+                    if usage.keys() - set(COUNTERS[1:]) - {"total_tokens"}:
+                        raise ValueError("unrecognized counter")
                     counts = {key: usage.get(key, 0) for key in COUNTERS[1:]}
                     if not all(type(v) is int and v >= 0 for v in counts.values()):
                         raise ValueError("invalid counter")
@@ -141,9 +150,15 @@ def record(state_dir, unit, attempt, home, terminal_state=None):
             current = {"status": "unknown", "error": type(exc).__name__}
         previous = None
         try:
-            previous = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            pass
+            with _regular(path) as handle:
+                previous = json.load(handle)
+            if not isinstance(previous, dict):
+                raise ValueError("non-object record")
+            for counts in previous.get("models", {}).values():
+                if any(type(counts[k]) is not int or counts[k] < 0 for k in COUNTERS):
+                    raise ValueError("invalid previous counter")
+        except (OSError, ValueError, AttributeError, TypeError, KeyError):
+            previous = None
         if previous and previous.get("models"):
             same = previous.get("rollout_set") == current.get("rollout_set")
             lower = any(current.get("models", {}).get(m, {}).get(k, 0) < v[k]
@@ -161,6 +176,10 @@ def record(state_dir, unit, attempt, home, terminal_state=None):
                     else "unknown" if current["status"] == "unknown" else "regressed")
                 if "error" in current:
                     old["error"] = current["error"]
+                    if current["error"] == "FileNotFoundError":
+                        old["status"] = "regressed"
+                if old["status"] == "regressed":
+                    old.pop("events", None)  # Maxima cannot be attributed to events.
                 current = old
         if terminal_state not in ("DONE", "FAILED", "FAILED_EVIDENCE", "PREEMPTED",
                                   "CANCELLED", "ABANDONED",
@@ -204,7 +223,8 @@ def report(state_dir, plan, default_provider):
             result["unmeasured"].append(unit["id"])
     for path in sorted((Path(state_dir) / "usage").glob("*.json")):
         try:
-            rec = json.loads(path.read_text(encoding="utf-8"))
+            with _regular(path) as handle:
+                rec = json.load(handle)
             if rec["status"] in ("unknown", "regressed"):
                 result[rec["status"]].append(rec)
                 continue
