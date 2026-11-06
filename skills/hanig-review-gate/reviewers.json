@@ -5,10 +5,10 @@
   "plan": "TWO contrasting models, never escalated. For acceptance criteria and designs, BEFORE code exists. Owner decision 2026-10-19: luna and kimi-k3, OpenAI and Moonshot, chosen by the spec-case benchmark tie rule because the candidate pairs were not separated and Luna had 33% measured code-review recall.",
   "fast": "luna and haiku-5.5; cheapest implementation panel, the first tier of --escalate (owner decision 2026-10-12).",
   "standard": "terra, kimi-k2.7-code and sonnet-5.5; the usual fixed implementation panel. Escalating from fast retains its verdicts and adds these three seats.",
-  "deep": "standard + sol. Final --escalate tier, or a fixed --profile deep panel. astra is NOT here since 2026-09-24: it writes the code now, and an author does not review itself.",
+  "deep": "2026-11-06: standard + sol + astra. Final --escalate tier or fixed --profile deep. Sol now writes the code; an author does not review or tiebreak its own work, so author exclusion removes sol on Sol-authored units.",
   "committee": "committee.py members, separate from gate profiles. Owner decision 2026-10-13: deepseek-v4-pro, gemini-argon and sonnet-5.5, three model makers. DeepSeek sits in no gate profile.",
-  "tiebreak": "Committee divergence only: the ONE enabled reviewer whose only profile is tiebreak rules on existing positions. committee.py selects it by this profile, never by name or model. Not a gate tier or a committee membership profile. sol-tiebreak since 2026-09-28, replacing astra-xhigh because astra authors the code it would rule on (ARC-755).",
-  "planning": "committee.py open --profile planning, for the hanig-project design step. Owner decision 2026-10-18: astra and gemini-argon. Separate from the step-back committee because committee.py refuses a session whose member authored the work, and astra writes the code."
+  "tiebreak": "2026-11-06: astra-tiebreak, the ONE enabled reviewer whose profiles are exactly [\"tiebreak\"]. Selected by profile, never name or model. Sol now writes the code; an author does not review or tiebreak its own work. sol-tiebreak is disabled.",
+  "planning": "2026-11-06: gemini-argon, muse-wonder and terra (orchestrator amendment: OpenRouter and OpenAI providers). Astra leaves planning and gains deep and tiebreak seats because Sol now writes the code; an author does not review or tiebreak its own work. The tiebreak seat must not rule among its own committee members."
  },
  "reviewers": [
   {
@@ -122,7 +122,8 @@
    "effort": "xhigh",
    "profiles": [
     "standard",
-    "deep"
+    "deep",
+    "planning"
    ],
    "enabled": true,
    "_cost": null,
@@ -150,7 +151,8 @@
     "completed_replies": 171,
     "observed_in": "Bench: /Users/hani/.local/state/hanig-swarm/orchestrator/bench/score-terra-effort/; 57 completed xhigh replies per seat run, 171 total at a 128000 cap. The max-effort measurement above remains historical evidence."
    },
-   "_comment": "Owner decision 2026-10-28: overrules m2 adoption: Terra replaces Luna in standard/deep; fast/plan unchanged. Frozen corpus-v2, bench/score-terra, terra-20261027: Terra-for-Luna recall 27/51 = 53% [40, 66] versus 45% [32, 59]; held-out 9/18 versus 6/18; clean-control false-finding trials 2/9 versus 1/9 (fails adoption by one); 0/171 Terra replies unavailable; median about 10 minutes versus Luna's 6."
+   "_comment": "Owner decision 2026-10-28: overrules m2 adoption: Terra replaces Luna in standard/deep; fast/plan unchanged. Frozen corpus-v2, bench/score-terra, terra-20261027: Terra-for-Luna recall 27/51 = 53% [40, 66] versus 45% [32, 59]; held-out 9/18 versus 6/18; clean-control false-finding trials 2/9 versus 1/9 (fails adoption by one); 0/171 Terra replies unavailable; median about 10 minutes versus Luna's 6.",
+   "_note": "2026-11-06 orchestrator amendment: joins planning with gemini-argon and muse-wonder, retaining standard/deep and xhigh. Provides OpenAI transport contrast while Astra leaves planning to tiebreak independently of its members."
   },
   {
    "name": "kimi-k2.7-code",
@@ -257,9 +259,9 @@
    },
    "effort": "xhigh",
    "profiles": [
-    "planning"
+    "deep"
    ],
-   "_profiles_note": "Left the plan profile by owner decision 2026-10-19 because astra authors plans; retains planning, with no implementation or tiebreak profile. Author exclusion applies, including explicit committee selection.",
+   "_profiles_note": "2026-11-06: gains deep and leaves planning. Sol now writes the code; an author does not review or tiebreak its own work. Astra leaves planning so its tiebreak seat cannot rule among its own committee members.",
    "enabled": true,
    "max_output_tokens": 128000,
    "_max_output_tokens": "MEASURED through review.PROVIDERS with review.SYSTEM and input ping at the configured effort and 128000 cap. Establishes budget acceptance and usable output, not capacity for every review.",
@@ -276,7 +278,7 @@
     "response_id": "resp_0ee27d2357c076a3006acd9c8f8c0c87d0a42f0969fc2c18ad",
     "observed_in": "g1-panel-roster live preflight via zsh -ic and review.PROVIDERS; observed 2026-10-13T02:51:12.716668+00:00"
    },
-   "_note": "Owner decision 2026-10-12: the existing OpenAI seat joins plan at xhigh, accepted live by the coordinator on 2026-10-12. Plans are written by a Claude orchestrator; declared authors are still excluded.",
+   "_note": "2026-11-06: gains deep and leaves planning. Sol now writes the code; an author does not review or tiebreak its own work. Astra leaves planning so its tiebreak seat cannot rule among its own committee members.",
    "_max_output_tokens_history": [
     {
      "date": "2026-09-21",
@@ -325,7 +327,7 @@
     "in": 2.0,
     "out": 10.0
    },
-   "_note": "deep-tier reviewer since 2026-09-24 and plan reviewer since 2026-09-28. Owner decision: astra became the code driver, so it left the deep tier (an author does not review itself) and sol, which had been disabled only because IT was the driver, took the seat. The ladder reaches deep both when the cheaper tiers came up clean and when they could not fill quorum, and skips it only when a finding already has quorum behind it. Moved to gpt-6.1-sol by owner decision on 2026-09-30; the Paseo route codex/gpt-6-sol is unchanged because paseo lists no 6.1 yet. Owner decision 2026-10-12: leaves plan, retaining deep at xhigh; the separate sol-tiebreak seat is unchanged.",
+   "_note": "2026-11-06: Sol now writes the code at codex/gpt-6.1-sol high. Keeps deep at xhigh; author exclusion removes it from every unit it wrote. An author does not review or tiebreak its own work; astra gains deep and astra-tiebreak replaces sol-tiebreak.",
    "_max_output_tokens_history": [
     {
      "date": "2026-09-26",
@@ -352,6 +354,40 @@
    ]
   },
   {
+   "name": "astra-tiebreak",
+   "provider": "openai",
+   "model": "gpt-6-astra",
+   "family": {
+    "listing": "openai",
+    "vendor": "",
+    "prefix": "gpt-",
+    "separator": ".",
+    "suffix": "-astra",
+    "major": 6
+   },
+   "effort": "xhigh",
+   "profiles": [
+    "tiebreak"
+   ],
+   "enabled": true,
+   "max_output_tokens": 128000,
+   "_max_output_tokens": "MEASURED, a REPETITION of astra's recorded 2026-10-13 budget acceptance at the identical provider, model, effort and cap; no new probe.",
+   "_max_output_tokens_accepted": {
+    "date": "2026-10-13",
+    "max_output_tokens": 128000,
+    "provider": "openai",
+    "model": "gpt-6-astra",
+    "effort": "xhigh",
+    "outcome": "completed",
+    "input_tokens": 904,
+    "output_tokens": 800,
+    "reasoning_tokens": 739,
+    "response_id": "resp_0ee27d2357c076a3006acd9c8f8c0c87d0a42f0969fc2c18ad",
+    "observed_in": "g1-panel-roster live preflight via zsh -ic and review.PROVIDERS; observed 2026-10-13T02:51:12.716668+00:00; repetition for astra-tiebreak on 2026-11-06, not a new measurement"
+   },
+   "_note": "2026-11-06: replaces sol-tiebreak because Sol now writes the code, and an author does not review or tiebreak its own work. Separate from planning and committee."
+  },
+  {
    "name": "sol-tiebreak",
    "provider": "openai",
    "model": "gpt-6.1-sol",
@@ -367,8 +403,8 @@
    "profiles": [
     "tiebreak"
    ],
-   "enabled": true,
-   "_note": "Committee tie-breaker since 2026-09-28, replacing astra-xhigh: astra authors the code it would rule on. sol also holds the concurrence seat in docs/orchestrator-mandate.md. A change sol authored cannot be tie-broken here; committee.py routes it to the owner.",
+   "enabled": false,
+   "_note": "Disabled 2026-11-06: Sol now writes the code, and an author does not review or tiebreak its own work. Replaced by astra-tiebreak.",
    "max_output_tokens": 128000,
    "_max_output_tokens": "MEASURED for this model: same model, effort and cap as the sol reviewer, whose 2026-09-30 gpt-6.1-sol acceptance this repeats.",
    "_max_output_tokens_accepted": {
@@ -514,7 +550,7 @@
     "major": 0,
     "named_version": "wonder"
    },
-   "_note": "Owner decision 2026-11-03: Muse Wonder joins the planning committee through OpenRouter; astra and gemini-argon stay.",
+   "_note": "Owner decision 2026-11-03: Muse Wonder joins the planning committee through OpenRouter; astra and gemini-argon stay. Amended 2026-11-06: planning is gemini-argon, muse-wonder and terra; Astra leaves to tiebreak independently.",
    "_max_output_tokens": "MEASURED through review.PROVIDERS with review.SYSTEM and input ping at the configured effort and 128000 cap. Establishes budget acceptance and usable output, not capacity for every review.",
    "_max_output_tokens_accepted": {
     "max_output_tokens": 128000,

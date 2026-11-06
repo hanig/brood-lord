@@ -859,7 +859,7 @@ the `enabled`, `profiles` and `effort` fields in
 | `plan` | luna `max`, kimi-k3 `xhigh` | acceptance criteria and designs, before code exists |
 | `fast` | luna `max`, haiku-5.5 `max` | cheapest implementation panel, first tier of `--escalate` |
 | `standard` | terra `xhigh`, kimi-k2.7-code `null`, sonnet-5.5 `high` | the usual implementation panel |
-| `deep` | terra `xhigh`, kimi-k2.7-code `null`, sonnet-5.5 `high`, sol `xhigh` | final escalation tier or explicit `--profile deep` |
+| `deep` | terra `xhigh`, kimi-k2.7-code `null`, sonnet-5.5 `high`, sol `xhigh`, astra `xhigh` | final escalation tier or explicit `--profile deep` |
 
 Owner decision 2026-10-19 put Luna in plan with Kimi K3. The 2026-10-28
 changes seated Terra in standard and deep and then set its effort to `xhigh`,

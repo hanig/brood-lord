@@ -187,9 +187,10 @@ class TestPerAttemptWorktrees(unittest.TestCase):
         seen = []
         # Load a fresh owner module through its real initialization. The JSON
         # loader is the only changed input; no derived default is patched.
-        for index, provider in enumerate(("codex/fixture-987", "claude/fixture-988")):
-            data = {"default": {"provider": provider, "thinking": "high"},
-                    "thinking_by_model": {provider: "high"}}
+        for index, provider in enumerate(("codex/gpt-6.1-sol", "codex/fixture-987", "claude/fixture-988")):
+            data = (real_loads(original) if index == 0 else
+                    {"default": {"provider": provider, "thinking": "high"},
+                     "thinking_by_model": {provider: "high"}})
             spec = importlib.util.spec_from_file_location("routing_fixture", SR.__file__)
             routing = importlib.util.module_from_spec(spec)
             def load(raw, *args, **kwargs):
@@ -205,8 +206,8 @@ class TestPerAttemptWorktrees(unittest.TestCase):
                     unit = code_unit(self.repo, uid)
                     if split:
                         # The provider defaults to routing data; an explicit
-                        # plan provider overrides it. --model comes only from
-                        # the plan, so use a value distinct from routing data.
+                        # plan provider and model override routing data.
+                        # Use a model distinct from the routing default.
                         unit["provider"] = provider.split("/", 1)[0]
                         unit["model"] = "unit-override-%s" % index
                     state = {"units": {}}
@@ -217,16 +218,17 @@ class TestPerAttemptWorktrees(unittest.TestCase):
                     argv = self.fake.launches[-1]
                     expected_provider = provider.split("/", 1)[0]
                     actual_provider = argv[argv.index("--provider") + 1]
-                    self.assertEqual(actual_provider, expected_provider if split else provider)
+                    self.assertEqual(actual_provider, expected_provider)
                     if split:
                         self.assertEqual(argv[argv.index("--model") + 1], unit["model"])
                     else:
-                        self.assertNotIn("--model", argv)
+                        self.assertEqual(argv[argv.index("--model") + 1],
+                                         provider.split("/", 1)[1])
                     self.assertEqual(argv[argv.index("--thinking") + 1], "high")
                     intent = state["units"][uid]["attempt_launch_intents"][attempt.name]
                     self.assertEqual(intent["provider"], unit.get("provider") or provider)
                     seen.append(actual_provider)
-        self.assertEqual(len(set(seen)), 4)
+        self.assertEqual(set(seen), {"codex", "claude"})
 
     def test_remote_attempt_branch_collision_refuses_without_local_tracking_ref(self):
         attempt = self.attempt("code", "remote-collision")
