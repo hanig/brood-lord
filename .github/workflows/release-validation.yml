@@ -30,26 +30,22 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Select preinstalled macOS Python
-        if: runner.environment == 'self-hosted' && runner.os == 'macOS'
+      - name: Select preinstalled Python
+        if: runner.environment == 'self-hosted'
         shell: bash
         env:
           PYTHON_VERSION: ${{ matrix.python-version }}
         run: |
           variable="BROOD_PY_${PYTHON_VERSION//./_}"
           interpreter="${!variable:-}"
-          if [[ -z "$interpreter" || ! -x "$interpreter" ]]; then
-            echo "::error::$variable must name an executable interpreter"
+          if [[ "$interpreter" != /* || ! -x "$interpreter" ]]; then
+            echo "::error::$variable must name an absolute executable interpreter"
             exit 1
           fi
-          actual=$("$interpreter" -c 'import sys; print("%d.%d" % sys.version_info[:2])')
-          if [[ "$actual" != "$PYTHON_VERSION" ]]; then
+          actual=$(env -i "$interpreter" -I -S -c 'import sys; print("%d.%d" % sys.version_info[:2])' && printf '.')
+          if [[ "$actual" != "$PYTHON_VERSION"$'\n.' ]]; then
             echo "::error::$variable version $actual differs from $PYTHON_VERSION"
             exit 1
-          fi
-          # Symlink targets are resolved from python_bin, so anchor relative paths here.
-          if [[ "$interpreter" != /* ]]; then
-            interpreter="$PWD/$interpreter"
           fi
           "$interpreter" --version
           python_bin=$(mktemp -d "$RUNNER_TEMP/brood-python.XXXXXX")
@@ -57,7 +53,7 @@ jobs:
           ln -s "$interpreter" "$python_bin/python3"
           echo "$python_bin" >> "$GITHUB_PATH"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        if: runner.environment != 'self-hosted' || runner.os != 'macOS'
+        if: runner.environment != 'self-hosted'
         with:
           python-version: ${{ matrix.python-version }}
       # Same-UID trusted PR code: this isolates configuration, not a sandbox.
@@ -136,26 +132,22 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Select preinstalled macOS Python
-        if: runner.environment == 'self-hosted' && runner.os == 'macOS'
+      - name: Select preinstalled Python
+        if: runner.environment == 'self-hosted'
         shell: bash
         env:
           PYTHON_VERSION: ${{ matrix.python-version }}
         run: |
           variable="BROOD_PY_${PYTHON_VERSION//./_}"
           interpreter="${!variable:-}"
-          if [[ -z "$interpreter" || ! -x "$interpreter" ]]; then
-            echo "::error::$variable must name an executable interpreter"
+          if [[ "$interpreter" != /* || ! -x "$interpreter" ]]; then
+            echo "::error::$variable must name an absolute executable interpreter"
             exit 1
           fi
-          actual=$("$interpreter" -c 'import sys; print("%d.%d" % sys.version_info[:2])')
-          if [[ "$actual" != "$PYTHON_VERSION" ]]; then
+          actual=$(env -i "$interpreter" -I -S -c 'import sys; print("%d.%d" % sys.version_info[:2])' && printf '.')
+          if [[ "$actual" != "$PYTHON_VERSION"$'\n.' ]]; then
             echo "::error::$variable version $actual differs from $PYTHON_VERSION"
             exit 1
-          fi
-          # Symlink targets are resolved from python_bin, so anchor relative paths here.
-          if [[ "$interpreter" != /* ]]; then
-            interpreter="$PWD/$interpreter"
           fi
           "$interpreter" --version
           python_bin=$(mktemp -d "$RUNNER_TEMP/brood-python.XXXXXX")
@@ -163,7 +155,7 @@ jobs:
           ln -s "$interpreter" "$python_bin/python3"
           echo "$python_bin" >> "$GITHUB_PATH"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        if: runner.environment != 'self-hosted' || runner.os != 'macOS'
+        if: runner.environment != 'self-hosted'
         with:
           python-version: ${{ matrix.python-version }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
