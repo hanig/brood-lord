@@ -206,8 +206,8 @@ class TestPerAttemptWorktrees(unittest.TestCase):
                     unit = code_unit(self.repo, uid)
                     if split:
                         # The provider defaults to routing data; an explicit
-                        # plan provider overrides it. --model comes only from
-                        # the plan, so use a value distinct from routing data.
+                        # plan provider and model override routing data.
+                        # Use a model distinct from the routing default.
                         unit["provider"] = provider.split("/", 1)[0]
                         unit["model"] = "unit-override-%s" % index
                     state = {"units": {}}
