@@ -1,12 +1,12 @@
 {
-  "base": "c2556ad4039f72948a059ab5e6e2b776b0ab4d38",
+  "base": "409928e3f8774b8b1c9f2ebc96e75dd1c38e1f85",
   "sections": {
     "Granted, without asking": [
       "- Dispatch and re-dispatch units within the plan.",
       "- Run the review gate, and reproduce any finding before acting on it.",
       "- Open pull requests from an anchored attempt ref.",
       "- Merge pull requests that satisfy the adjudication policy below.",
-      "- Use orchestrator judgment under the policy below; consult Sol only when unsure.",
+      "- Use orchestrator judgment under the policy below; consult Astra only when unsure.",
       "- Defer a reproduced finding outside a task's declared supported envelope, without concurrence, under *Findings outside the supported envelope* below.",
       "- Record merge receipts, advance the DAG, drain tracker intents.",
       "- File, update and close issues in this project.",
@@ -20,27 +20,33 @@
       "- No weakening of a test, guard or assertion to make something pass. Fix the",
       "  subject or report the failure.",
       "- No action outside this repository and this project.",
-      "**There is no spend ceiling, and its absence is deliberate.** The owner removed",
-      "it on 2026-09-24: \"I'm okay with the spend being whatever it is.\" Do not treat",
-      "cost as a reason to stop, to narrow a review panel, to skip a committee, or to",
-      "prefer a cheaper reviewer over the right one. This is recorded rather than left",
-      "as a silent gap because a reader who finds no bound here would otherwise be",
-      "right to wonder whether one was lost, and might restore it.",
-      "It also was never enforced. ARC-691 measured that the previous `$50/day` line",
-      "was honoured by no program: `budget.gpu_hours` is the only ceiling any code",
-      "applies, and it is unaffected by this. What changed is the standing",
-      "instruction, not a control \u2014 so nothing that used to stop will now fail to."
+      "**Cost is a legitimate factor, by owner decision on 2026-11-06.** This",
+      "replaces the 2026-09-24 instruction that there was no spend ceiling. A budget",
+      "analysis that day found two things:",
+      "orchestrator cache rewrites after watcher waits were 62% of the",
+      "orchestrator's modelled cost, and code-agent spend was unattributed because",
+      "attempt logs are deleted at cleanup. The repository had also just become",
+      "private, so CI minutes are billed. When two routes meet the same bar, prefer",
+      "the cheaper one. That covers the authoring model, wake cadence, CI scope and",
+      "test scope. Cost is still not a reason to narrow a review panel, to skip a",
+      "committee, or to prefer a cheaper reviewer over the right one; the planning",
+      "committee rejected those economies on 2026-11-06.",
+      "There is no daily cap yet. The owner sets per-bucket caps after two weeks of",
+      "usage-ledger data. A cap stops new dispatches only: it never kills in-flight",
+      "verification and never marks paused work complete. The earlier `$50/day`",
+      "line was honoured by no program (ARC-691), and `budget.gpu_hours` is still the",
+      "only ceiling any code applies. A cap counts only once a program enforces it."
     ],
     "Always stop and ask": [
       "This list is complete. Nothing outside it is a reason to stop a confirmed run.",
       "- Any decision that requires reinterpreting or changing the owner's goal.",
       "- Anything exceeding approved scope, budget, risk or permissions.",
-      "- An outward action whose approval is missing \u2014 missing, not merely unrepeated.",
+      "- An outward action whose approval is missing — missing, not merely unrepeated.",
       "  A power named in the grant has its approval already.",
       "- Evidence that stays inconclusive after bounded investigation. Investigate",
       "  first; an unread log is not inconclusive evidence.",
       "- Any change to this file."
     ]
   },
-  "adjudication_sha256": "0d0fa0e5b1c475b25cd57681bd7076ee7ba11e7bde8fa6c94f02cc46c117c428"
+  "adjudication_sha256": "63e4ff3c8edd93310e0cfdfbb698d15b3146103ae9be11b2053244031605903e"
 }
