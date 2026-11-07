@@ -229,13 +229,11 @@ class TestRawUsage(unittest.TestCase):
         target = self.capture()
         import shutil
         shutil.rmtree(self.home)
-        plan = self.root / 'plan.json'
-        plan.write_text(json.dumps({'name': 'fixture', 'units': [{'id': 'u', 'kind': 'code'}]}))
         (self.state / 'swarm-state.json').write_text(json.dumps({'units': {'u': {
             'attempts': ['/run/a'], 'attempt_codex_homes': {'a': {'finished_at': 1793925000}}}}}))
         before = {str(p): p.read_bytes() for p in self.state.rglob('*') if p.is_file()}
         result = subprocess.run([sys.executable, '-B', str(Path(U.__file__).with_name('swarm.py')),
-            'usage', str(plan), '--state-dir', str(self.state), '--json'],
+            'usage', '--state-dir', str(self.state), '--json'],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)['totals']['total_tokens'], 3)
