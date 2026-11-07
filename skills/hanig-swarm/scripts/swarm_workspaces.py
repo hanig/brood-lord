@@ -306,9 +306,12 @@ def _cleanup_codex_home(state, u, attempt, report, state_dir):
         meta["cleanup_problem"] = "Codex home cleanup requires coordinator state_dir"
         report.append(f"{u['id']}: {meta['cleanup_problem']}")
         return
+    meta.setdefault("finished_at", time.time())
     SS.save_state(state_dir, state)
     try:
-        CH.remove(state_dir, attempt, meta.get("path"), meta.get("identity"))
+        kwargs = ({"abandon_capture": True} if meta["cleanup_attempts"] >=
+                  WORKTREE_ARCHIVE_MAX_ATTEMPTS else {})
+        CH.remove(state_dir, attempt, meta.get("path"), meta.get("identity"), **kwargs)
     except Exception as exc:
         # Cleanup failures must not block independent dispatch. Unexpected
         # exceptions get a bounded diagnostic without arbitrary file bytes.

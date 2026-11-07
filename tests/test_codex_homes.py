@@ -988,6 +988,78 @@ class TestCodexHomes(unittest.TestCase):
                         self.assertNotIn(KEY.encode(), file.read_bytes(), str(file))
         self.assertNotIn(KEY, capture.read_text())
 
+    def test_usage_captured_before_terminal_deletion_and_retry_limit(self):
+        from tests.test_usage_raw import event
+        for terminal in ("DONE", "FAILED", "PREEMPTED"):
+            with self.subTest(terminal=terminal):
+                unit = F.code_unit(self.repo)
+                attempt = self.attempt("code", terminal)
+                home, identity = CH.allocate(self.state_dir, attempt.name, attempt, unit)
+                (home / "sessions").mkdir()
+                (home / "sessions/rollout-a.jsonl").write_bytes(event(4))
+                state = {"units": {"code": {
+                    "state": terminal, "attempt_dir": str(attempt),
+                    "attempts": [str(attempt)], "gpu_hours": 0,
+                    "attempt_codex_homes": {attempt.name: self.home_record(home)}}}}
+                S.save_state(str(self.state_dir), state)
+                original = CH.shutil.rmtree
+                def remove(path, *args, **kwargs):
+                    if Path(path) == home:
+                        result = CH.UR.attempt_usage(self.state_dir, attempt.name)
+                        self.assertEqual(result['status'], 'ok', result)
+                        self.assertEqual(result['totals']['total_tokens'], 4)
+                    return original(path, *args, **kwargs)
+                with mock.patch.object(CH.shutil, "rmtree", side_effect=remove):
+                    S.advance({"units": [unit]}, state, str(self.state_dir),
+                              str(self.tmp / "runs"), False, max_new=0)
+                self.assertFalse(home.exists())
+
+        unit = F.code_unit(self.repo)
+        attempt = self.attempt("code", "capture-retry")
+        home, _ = CH.allocate(self.state_dir, attempt.name, attempt, unit)
+        state = {"units": {"code": {"state": "FAILED", "attempt_dir": str(attempt),
+                 "attempts": [str(attempt)], "gpu_hours": 0,
+                 "attempt_codex_homes": {attempt.name: self.home_record(home)},
+                 "launch_recovery_problem": "fixture terminal"}}}
+        S.save_state(str(self.state_dir), state)
+        with mock.patch.object(CH.UR, "capture", side_effect=OSError("fixture capture error")):
+            for retry in range(1, S.SW.WORKTREE_ARCHIVE_MAX_ATTEMPTS + 1):
+                S.advance({"units": [unit]}, state, str(self.state_dir),
+                          str(self.tmp / "runs"), False, max_new=0)
+                target = self.state_dir / "usage-raw" / attempt.name / "manifest.jsonl"
+                abandoned = target.exists() and 'capture_abandoned' in target.read_text()
+                self.assertEqual(abandoned, retry == S.SW.WORKTREE_ARCHIVE_MAX_ATTEMPTS, state)
+                self.assertEqual(home.exists(), retry < S.SW.WORKTREE_ARCHIVE_MAX_ATTEMPTS)
+
+    def test_dispatch_rollback_captures_before_home_removal(self):
+        from tests.test_usage_raw import event
+        attempt = self.attempt("code", "rollback-capture")
+        state = {"units": {}}
+        allocate = CH.allocate
+        def allocated(*args, **kwargs):
+            home, identity = allocate(*args, **kwargs)
+            (home / "sessions").mkdir()
+            (home / "sessions/rollout-a.jsonl").write_bytes(event(5))
+            return home, identity
+        original = S.save_state
+        def fail_save(path, value):
+            if value['units'].get('code', {}).get('attempt_codex_homes'):
+                raise OSError('fixture save error')
+            return original(path, value)
+        remove = CH.shutil.rmtree
+        observed = []
+        def checked(path, *args, **kwargs):
+            if Path(path) == CH.home_path(self.state_dir, attempt.name):
+                self.assertEqual(CH.UR.attempt_usage(self.state_dir, attempt.name)['status'], 'ok')
+                observed.append(True)
+            return remove(path, *args, **kwargs)
+        with mock.patch.object(CH, 'allocate', side_effect=allocated), \
+                mock.patch.object(S.SS, 'save_state', side_effect=fail_save), \
+                mock.patch.object(CH.shutil, 'rmtree', side_effect=checked):
+            with self.assertRaisesRegex(OSError, 'fixture save error'):
+                self.submit(F.code_unit(self.repo), attempt, False, state)
+        self.assertEqual(observed, [True])
+
     def test_doctor_reports_source_readiness_without_key(self):
         tools = self.tmp / "doctor-tools"
         path = closed_bin(tools, tools=("sh", "perl"))
