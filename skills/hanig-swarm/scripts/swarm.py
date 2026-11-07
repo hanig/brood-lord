@@ -5044,10 +5044,7 @@ def status_report(plan, state, state_dir, observed_at=None):
 
 def cmd_usage(args):
     import usage_raw
-    plan, err = U.read_json(args.plan)
-    if err:
-        sys.exit("error: no readable plan")
-    _prepare_command_paths(args, plan=plan, read_only=True)
+    _prepare_command_paths(args, read_only=True)
     result = usage_raw.report(args.state_dir, SS.load_state(args.state_dir),
                               args.unit, args.since, args.tz)
     if args.json:
@@ -5379,7 +5376,6 @@ def main():
     o.set_defaults(fn=cmd_outbox)
 
     usage = sub.add_parser("usage", help="usage from preserved local rollouts")
-    usage.add_argument("plan")
     usage.add_argument("--state-dir", default=None)
     usage.add_argument("--unit")
     usage.add_argument("--since", help="inclusive finish date, YYYY-MM-DD")
