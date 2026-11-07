@@ -23,23 +23,90 @@ jobs:
         # the PR merge-ref passed the full matrix and the serial verifier checked the candidate merge.
         os: ${{ fromJSON(github.event_name == 'push' && '["ubuntu-22.04"]' || '["ubuntu-22.04", "macos-15"]') }}
         python-version: ['3.9', '3.10', '3.12']
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && vars.BROOD_MAC_RUNNER == 'self-hosted' && fromJSON('["self-hosted", "macOS", "ARM64", "brood-mac"]') || matrix.os == 'ubuntu-22.04' && vars.BROOD_LINUX_RUNNER == 'self-hosted' && fromJSON('["self-hosted", "Linux", "X64", "brood-chimera"]') || matrix.os }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Select preinstalled Python
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        env:
+          PYTHON_VERSION: ${{ matrix.python-version }}
+        run: |
+          variable="BROOD_PY_${PYTHON_VERSION//./_}"
+          interpreter="${!variable:-}"
+          if [[ "$interpreter" != /* || ! -x "$interpreter" ]]; then
+            echo "::error::$variable must name an absolute executable interpreter"
+            exit 1
+          fi
+          actual=$(env -i "$interpreter" -I -S -c 'import sys; print("%d.%d" % sys.version_info[:2])' && printf '.')
+          if [[ "$actual" != "$PYTHON_VERSION"$'\n.' ]]; then
+            echo "::error::$variable version $actual differs from $PYTHON_VERSION"
+            exit 1
+          fi
+          "$interpreter" --version
+          python_bin=$(mktemp -d "$RUNNER_TEMP/brood-python.XXXXXX")
+          ln -s "$interpreter" "$python_bin/python"
+          ln -s "$interpreter" "$python_bin/python3"
+          echo "$python_bin" >> "$GITHUB_PATH"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: runner.environment != 'self-hosted'
         with:
           python-version: ${{ matrix.python-version }}
+      # Same-UID trusted PR code: this isolates configuration, not a sandbox.
+      - name: Isolate self-hosted test environment
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          python3 -B - <<'PYTHON'
+          import os
+          import runpy
+          import tempfile
+          from pathlib import Path
+          root = Path(tempfile.mkdtemp(prefix="brood-tests-", dir=os.environ["RUNNER_TEMP"]))
+          homes = ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR")
+          denied = runpy.run_path("skills/hanig-swarm/scripts/child_environment.py")["DENIED_ENV_NAMES"]
+          startup = root / "isolation.bash"
+          startup.write_text("unset " + " ".join(sorted(denied)) + "\n", encoding="utf-8")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as out:
+              for name in homes:
+                  directory = root / name
+                  directory.mkdir()
+                  out.write("%s=%s\n" % (name, directory))
+              out.write("BASH_ENV=%s\n" % startup)
+          PYTHON
+      - name: Check self-hosted test isolation
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          python3 -B - <<'PYTHON'
+          import os
+          import runpy
+          from pathlib import Path
+          denied = runpy.run_path("skills/hanig-swarm/scripts/child_environment.py")["DENIED_ENV_NAMES"]
+          remaining = sorted(denied.intersection(os.environ))
+          if remaining:
+              raise SystemExit("Credential environment still set: " + ", ".join(remaining))
+          for name in ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR"):
+              directory = Path(os.environ[name])
+              if not directory.is_dir() or any(directory.iterdir()):
+                  raise SystemExit("Test directory is missing or not empty: " + name)
+              directory.relative_to(Path(os.environ["RUNNER_TEMP"]))
+          PYTHON
       - name: Run full suite without user configuration or credentials
         shell: bash
         run: |
           test_root=$(mktemp -d "$RUNNER_TEMP/arc-274-tests.XXXXXX")
           test_root=$(cd "$test_root" && pwd -P)
           mkdir -p "$test_root/home" "$test_root/config" "$test_root/tmp"
-          env -i HOME="$test_root/home" XDG_CONFIG_HOME="$test_root/config" \
+          isolation_env=()
+          if [[ "${RUNNER_ENVIRONMENT:-}" == 'self-hosted' ]]; then
+            isolation_env=(XDG_STATE_HOME="$XDG_STATE_HOME" XDG_CACHE_HOME="$XDG_CACHE_HOME" XDG_DATA_HOME="$XDG_DATA_HOME")
+          fi
+          env -i "${isolation_env[@]}" HOME="$test_root/home" XDG_CONFIG_HOME="$test_root/config" \
             TMPDIR="$test_root/tmp" PATH="$PATH" PYTHONDONTWRITEBYTECODE=1 \
             python3 -B -u -m unittest discover -s tests -v \
             2>&1 | tee "$RUNNER_TEMP/regression.log"
@@ -58,19 +125,82 @@ jobs:
       matrix:
         os: [ubuntu-22.04, macos-15]
         python-version: ['3.9', '3.10', '3.12']
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && vars.BROOD_MAC_RUNNER == 'self-hosted' && fromJSON('["self-hosted", "macOS", "ARM64", "brood-mac"]') || matrix.os == 'ubuntu-22.04' && vars.BROOD_LINUX_RUNNER == 'self-hosted' && fromJSON('["self-hosted", "Linux", "X64", "brood-chimera"]') || matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Select preinstalled Python
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        env:
+          PYTHON_VERSION: ${{ matrix.python-version }}
+        run: |
+          variable="BROOD_PY_${PYTHON_VERSION//./_}"
+          interpreter="${!variable:-}"
+          if [[ "$interpreter" != /* || ! -x "$interpreter" ]]; then
+            echo "::error::$variable must name an absolute executable interpreter"
+            exit 1
+          fi
+          actual=$(env -i "$interpreter" -I -S -c 'import sys; print("%d.%d" % sys.version_info[:2])' && printf '.')
+          if [[ "$actual" != "$PYTHON_VERSION"$'\n.' ]]; then
+            echo "::error::$variable version $actual differs from $PYTHON_VERSION"
+            exit 1
+          fi
+          "$interpreter" --version
+          python_bin=$(mktemp -d "$RUNNER_TEMP/brood-python.XXXXXX")
+          ln -s "$interpreter" "$python_bin/python"
+          ln -s "$interpreter" "$python_bin/python3"
+          echo "$python_bin" >> "$GITHUB_PATH"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: runner.environment != 'self-hosted'
         with:
           python-version: ${{ matrix.python-version }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '26.7.0'
+      # Same-UID trusted PR code: this isolates configuration, not a sandbox.
+      - name: Isolate self-hosted test environment
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          python3 -B - <<'PYTHON'
+          import os
+          import runpy
+          import tempfile
+          from pathlib import Path
+          root = Path(tempfile.mkdtemp(prefix="brood-tests-", dir=os.environ["RUNNER_TEMP"]))
+          homes = ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR")
+          denied = runpy.run_path("skills/hanig-swarm/scripts/child_environment.py")["DENIED_ENV_NAMES"]
+          startup = root / "isolation.bash"
+          startup.write_text("unset " + " ".join(sorted(denied)) + "\n", encoding="utf-8")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as out:
+              for name in homes:
+                  directory = root / name
+                  directory.mkdir()
+                  out.write("%s=%s\n" % (name, directory))
+              out.write("BASH_ENV=%s\n" % startup)
+          PYTHON
+      - name: Check self-hosted test isolation
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          python3 -B - <<'PYTHON'
+          import os
+          import runpy
+          from pathlib import Path
+          denied = runpy.run_path("skills/hanig-swarm/scripts/child_environment.py")["DENIED_ENV_NAMES"]
+          remaining = sorted(denied.intersection(os.environ))
+          if remaining:
+              raise SystemExit("Credential environment still set: " + ", ".join(remaining))
+          for name in ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR"):
+              directory = Path(os.environ[name])
+              if not directory.is_dir() or any(directory.iterdir()):
+                  raise SystemExit("Test directory is missing or not empty: " + name)
+              directory.relative_to(Path(os.environ["RUNNER_TEMP"]))
+          PYTHON
       - name: Install exact official agent releases in job-local prefix
         shell: bash
         run: |
