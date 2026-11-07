@@ -178,11 +178,10 @@ def remove(state_dir, attempt, recorded_path, recorded_identity, abandon_capture
         try:
             info = expected.lstat()
         except FileNotFoundError:
-            UR.finish(state_dir, attempt, expected)
-            return
-        if not stat.S_ISDIR(info.st_mode):
+            info = None
+        if info is not None and not stat.S_ISDIR(info.st_mode):
             raise HomeError("refusing Codex home replacement: not a real directory")
-        if (not isinstance(recorded_identity, dict)
+        if info is not None and (not isinstance(recorded_identity, dict)
                 or (info.st_dev, info.st_ino) != (
                     recorded_identity.get("device"), recorded_identity.get("inode"))):
             raise HomeError("refusing Codex home replacement: device/inode does not match coordinator state")
@@ -192,7 +191,8 @@ def remove(state_dir, attempt, recorded_path, recorded_identity, abandon_capture
             if not abandon_capture:
                 raise CaptureError('usage capture failed; home retained for retry') from exc
             UR.append(UR.archive(state_dir, attempt), {'type': 'capture_abandoned'})
-        shutil.rmtree(expected)
+        if info is not None:
+            shutil.rmtree(expected)
     except OSError:
         raise HomeError("Codex home removal failed; will retry next advance") from None
 

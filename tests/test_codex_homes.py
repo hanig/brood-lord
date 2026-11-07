@@ -1082,5 +1082,24 @@ class TestCodexHomes(unittest.TestCase):
             self.assertNotIn(KEY, result.stdout + result.stderr)
 
 
+
+    def test_missing_home_capture_failure_abandons_at_coordinator_limit(self):
+        unit = F.code_unit(self.repo)
+        attempt = self.attempt("code", "missing-retry")
+        home, _ = CH.allocate(self.state_dir, attempt.name, attempt, unit)
+        state = {"units": {"code": {"state": "FAILED", "attempt_dir": str(attempt),
+                 "attempts": [str(attempt)], "gpu_hours": 0,
+                 "attempt_codex_homes": {attempt.name: self.home_record(home)},
+                 "launch_recovery_problem": "fixture terminal"}}}
+        home.rmdir()
+        S.save_state(str(self.state_dir), state)
+        with mock.patch.object(CH.UR, "capture", side_effect=OSError("fixture")):
+            for retry in range(1, S.SW.WORKTREE_ARCHIVE_MAX_ATTEMPTS + 1):
+                S.advance({"units": [unit]}, state, str(self.state_dir),
+                          str(self.tmp / "runs"), False, max_new=0)
+                manifest = self.state_dir / "usage-raw" / attempt.name / "manifest.jsonl"
+                abandoned = manifest.exists() and 'capture_abandoned' in manifest.read_text()
+                self.assertEqual(abandoned, retry == S.SW.WORKTREE_ARCHIVE_MAX_ATTEMPTS)
+
 if __name__ == "__main__":
     unittest.main()
