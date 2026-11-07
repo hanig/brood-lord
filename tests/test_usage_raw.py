@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import random
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -64,12 +65,18 @@ class TestRawUsage(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     def test_concurrent_append_digest_matches_copied_bytes(self):
-        original = U._read
-        def append_then_read(path):
-            with path.open('ab') as stream:
-                stream.write(event(4))
-            return original(path)
-        with mock.patch.object(U, '_read', side_effect=append_then_read):
+        parent = os.getpid()
+        read = os.read
+        appended = False
+        def append_during_copy(fd, count):
+            nonlocal appended
+            chunk = read(fd, count)
+            if os.getpid() != parent and chunk and not appended:
+                appended = True
+                with self.rollout.open('ab') as stream:
+                    stream.write(event(4))
+            return chunk
+        with mock.patch.object(U.os, 'read', side_effect=append_during_copy):
             target = self.capture()
         row = U._rows(target / 'manifest.jsonl')[0]
         data = (target / row['blob']).read_bytes()
@@ -90,8 +97,12 @@ class TestRawUsage(unittest.TestCase):
     def test_missing_home_and_bounded_stalled_read_and_cap(self):
         U.finish(self.state, 'gone', self.root / 'absent')
         self.assertEqual(U._rows(self.state / 'usage-raw/gone/manifest.jsonl')[0]['fault'], 'no_home')
+        parent = os.getpid()
+        read = os.read
         def stalled(*args):
-            time.sleep(10)
+            if os.getpid() != parent:
+                time.sleep(10)
+            return read(*args)
         with mock.patch.object(U.os, 'read', side_effect=stalled):
             started = time.monotonic()
             with self.assertRaisesRegex(ValueError, 'timeout'):
@@ -204,7 +215,7 @@ class TestRawUsage(unittest.TestCase):
 
     def test_report_pure_unknown_counts_finish_dates_and_filters(self):
         self.capture()
-        state = {'units': {'u': {'attempts': ['/run/a', '/run/b'], 'attempt_codex_homes': {
+        state = {'units': {'u': {'attempts': ['/run/a', '/run/b', 'dry-attempt-/run/dry'], 'attempt_codex_homes': {
             'a': {'finished_at': 1793925000}, 'b': {'finished_at': 1793925000}}}}}
         before = {str(p): (p.stat().st_mtime_ns, p.read_bytes()) for p in self.state.rglob('*') if p.is_file()}
         result = U.report(self.state, state)
@@ -213,6 +224,22 @@ class TestRawUsage(unittest.TestCase):
         self.assertEqual(U.report(self.state, state, unit='other')['totals'], None)
         self.assertEqual(U.report(self.state, state, since='2099-01-01')['measured_count'], 0)
         self.assertEqual(before, {str(p): (p.stat().st_mtime_ns, p.read_bytes()) for p in self.state.rglob('*') if p.is_file()})
+
+    def test_usage_cli_reads_preserved_copy_without_home(self):
+        target = self.capture()
+        import shutil
+        shutil.rmtree(self.home)
+        plan = self.root / 'plan.json'
+        plan.write_text(json.dumps({'name': 'fixture', 'units': [{'id': 'u', 'kind': 'code'}]}))
+        (self.state / 'swarm-state.json').write_text(json.dumps({'units': {'u': {
+            'attempts': ['/run/a'], 'attempt_codex_homes': {'a': {'finished_at': 1793925000}}}}}))
+        before = {str(p): p.read_bytes() for p in self.state.rglob('*') if p.is_file()}
+        result = subprocess.run([sys.executable, '-B', str(Path(U.__file__).with_name('swarm.py')),
+            'usage', str(plan), '--state-dir', str(self.state), '--json'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['totals']['total_tokens'], 3)
+        self.assertEqual(before, {str(p): p.read_bytes() for p in self.state.rglob('*') if p.is_file()})
 
 
 if __name__ == '__main__':
