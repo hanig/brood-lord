@@ -400,9 +400,14 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
             interpreter = str(target / "bin/python3")
             site_dir = subprocess.check_output(
                 [interpreter, "-I", "-S", "-c",
-                 "import site,sys; print(site.getsitepackages([sys.argv[1]])[0])",
+                 "import sys; sys.prefix = sys.exec_prefix = sys.argv[1]; "
+                 "import sysconfig; print(sysconfig.get_path('purelib'))",
                  str(target)],
                 text=True).strip()
+            self.assertTrue(Path(site_dir).is_dir(), site_dir)
+            self.assertIn(site_dir, subprocess.check_output(
+                [interpreter, "-I", "-c", "import sys; print('\\n'.join(sys.path))"],
+                text=True).splitlines())
             # Put the synthetic site ahead of distributor sitecustomize.
             Path(site_dir, "probe.pth").write_text(
                 "import sys; sys.path.insert(0, %r)\n" % site_dir)
