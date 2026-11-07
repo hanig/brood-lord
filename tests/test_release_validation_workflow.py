@@ -408,7 +408,7 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
             self.assertIn(str(Path(site_dir).resolve()), subprocess.check_output(
                 [interpreter, "-I", "-c",
                  "import os,sys; print('\\n'.join(map(os.path.realpath, sys.path)))"],
-                text=True).splitlines())
+                env={"HOME": str(home)}, text=True).splitlines())
             # Put the synthetic site ahead of distributor sitecustomize.
             Path(site_dir, "probe.pth").write_text(
                 "import sys; sys.path.insert(0, %r)\n" % site_dir)
