@@ -11,6 +11,11 @@ import stat
 from pathlib import Path
 
 import coordinator_paths as CP
+import usage_raw as UR
+
+
+class CaptureError(ValueError):
+    pass
 
 
 class HomeError(ValueError):
@@ -133,6 +138,7 @@ def allocate(state_dir, attempt, unit_dir, unit):
                                     "directory identity changed")
                 # No links have been populated yet. Never recursively remove
                 # unexpected contents or a replacement at the allocated path.
+                UR.finish(state_dir, attempt, home)
                 home.rmdir()
             except FileNotFoundError:
                 pass
@@ -157,7 +163,7 @@ def populate(home, auth, operator=None):
         raise HomeError(f"cannot populate Codex home {str(home)!r}") from None
 
 
-def remove(state_dir, attempt, recorded_path, recorded_identity):
+def remove(state_dir, attempt, recorded_path, recorded_identity, abandon_capture=False):
     """Remove exactly a coordinator-recorded home, without resolving its leaf.
 
     The leaf must still be the real directory recorded at allocation.
@@ -172,14 +178,21 @@ def remove(state_dir, attempt, recorded_path, recorded_identity):
         try:
             info = expected.lstat()
         except FileNotFoundError:
-            return
-        if not stat.S_ISDIR(info.st_mode):
+            info = None
+        if info is not None and not stat.S_ISDIR(info.st_mode):
             raise HomeError("refusing Codex home replacement: not a real directory")
-        if (not isinstance(recorded_identity, dict)
+        if info is not None and (not isinstance(recorded_identity, dict)
                 or (info.st_dev, info.st_ino) != (
                     recorded_identity.get("device"), recorded_identity.get("inode"))):
             raise HomeError("refusing Codex home replacement: device/inode does not match coordinator state")
-        shutil.rmtree(expected)
+        try:
+            UR.finish(state_dir, attempt, expected)
+        except Exception as exc:
+            if not abandon_capture:
+                raise CaptureError('usage capture failed; home retained for retry') from exc
+            UR.append(UR.archive(state_dir, attempt), {'type': 'capture_abandoned'})
+        if info is not None:
+            shutil.rmtree(expected)
     except OSError:
         raise HomeError("Codex home removal failed; will retry next advance") from None
 
