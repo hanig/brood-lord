@@ -5042,6 +5042,25 @@ def status_report(plan, state, state_dir, observed_at=None):
     }
 
 
+def cmd_usage(args):
+    import usage_raw
+    plan, err = U.read_json(args.plan)
+    if err:
+        sys.exit("error: no readable plan")
+    _prepare_command_paths(args, plan=plan, read_only=True)
+    result = usage_raw.report(args.state_dir, SS.load_state(args.state_dir),
+                              args.unit, args.since, args.tz)
+    if args.json:
+        print(json.dumps(result, sort_keys=True))
+    else:
+        print("Usage (agent-attested): %d measured, %d unknown" %
+              (result['measured_count'], result['unknown_count']))
+        print("Measured totals: " + json.dumps(result['totals'], sort_keys=True))
+        for row in result['unknown']:
+            print("%s/%s: unknown (%s)" % (row['unit'], row['attempt'], row['reason']))
+    return 0
+
+
 def cmd_status(args):
     plan, err = U.read_json(args.plan)
     if err:
@@ -5358,6 +5377,15 @@ def main():
                    help="reserved for compatibility; use drain_contract.py "
                         "with a complete observation file")
     o.set_defaults(fn=cmd_outbox)
+
+    usage = sub.add_parser("usage", help="usage from preserved local rollouts")
+    usage.add_argument("plan")
+    usage.add_argument("--state-dir", default=None)
+    usage.add_argument("--unit")
+    usage.add_argument("--since", help="inclusive finish date, YYYY-MM-DD")
+    usage.add_argument("--tz", default="UTC")
+    usage.add_argument("--json", action="store_true")
+    usage.set_defaults(fn=cmd_usage)
 
     s = sub.add_parser("status", help="what every unit is doing")
     s.add_argument("--json", action="store_true",

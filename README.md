@@ -700,6 +700,7 @@ The coordinator. Roughly 2,200 lines in `swarm.py`, 1,300 in `unit.py`.
 python3 scripts/swarm.py validate plan.json [--check-seeds]
 python3 scripts/swarm.py run      plan.json [--dry-run]
 python3 scripts/swarm.py status   plan.json [--json]
+python3 scripts/swarm.py usage    plan.json [--unit ID] [--since YYYY-MM-DD] [--tz UTC] [--json]
 python3 scripts/swarm.py scope-check plan.json --state-dir DIR --unit ID [--head REV] [--json]
 python3 scripts/swarm.py advance  plan.json
 python3 scripts/swarm.py seq-floor --state-dir DIR --floor N --approver NAME --reason TEXT
