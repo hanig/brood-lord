@@ -6,10 +6,11 @@ none of this module's data confers execution or closure authority.
 import datetime as dt
 import hashlib
 import json
-import multiprocessing as mp
 import os
 from pathlib import Path
 import re
+import select
+import signal
 import stat
 import tempfile
 import time
@@ -26,7 +27,12 @@ def archive(state_dir, attempt):
     root = Path(state_dir) / 'usage-raw'
     target = root / attempt
     for directory in (root, target):
-        directory.mkdir(mode=0o700, exist_ok=True, parents=True)
+        try:
+            directory.mkdir(mode=0o700, parents=True)
+            os.chmod(str(directory), 0o700)
+            _sync_dir(directory.parent)
+        except FileExistsError:
+            pass
         if not stat.S_ISDIR(directory.lstat().st_mode):
             raise ValueError('usage archive must be a real directory')
     return target
@@ -40,58 +46,78 @@ def _regular(path):
     return fd
 
 
-def _read_worker(path, pipe):
+def _read_worker(path, writer):
+    status = 1
     try:
         fd = _regular(path)
         try:
             while True:
                 chunk = os.read(fd, 65536)
-                pipe.send_bytes(chunk)
                 if not chunk:
+                    status = 0
                     break
+                while chunk:
+                    chunk = chunk[os.write(writer, chunk):]
         finally:
             os.close(fd)
     except (OSError, ValueError):
-        pipe.send_bytes(b'')
-        # A distinct exit code prevents accepting a partial read as complete.
-        raise SystemExit(1)
+        pass
     finally:
-        pipe.close()
+        # No inherited atexit handlers, buffered streams or process joins.
+        os._exit(status)
 
 
 def _read(path, seconds=READ_SECONDS, cap=BYTE_CAP):
-    """Bound even an uninterruptible filesystem read outside the coordinator.
+    """Bound regular-file reads in a child, including a stalled filesystem.
 
-    A stuck child is killed without an unbounded join. O_NONBLOCK alone does
-    not bound regular-file reads on a stalled filesystem.
+    The parent reads only a pipe. It never waits unboundedly to reap a child
+    that is stuck in kernel I/O, and has no multiprocessing exit-time join.
     """
-    context = mp.get_context('fork')
-    reader, writer = context.Pipe(duplex=False)
-    process = context.Process(target=_read_worker, args=(path, writer))
-    process.start()
-    writer.close()
+    reader, writer = os.pipe()
+    try:
+        pid = os.fork()
+    except BaseException:
+        os.close(reader)
+        os.close(writer)
+        raise
+    if pid == 0:
+        os.close(reader)
+        _read_worker(path, writer)
+    os.close(writer)
     deadline = time.monotonic() + seconds
-    chunks, size = [], 0
+    chunks, size, reaped = [], 0, False
     try:
         while True:
             remaining = deadline - time.monotonic()
-            if remaining <= 0 or not reader.poll(remaining):
+            if remaining <= 0 or not select.select([reader], [], [], remaining)[0]:
                 raise ValueError('timeout')
-            chunk = reader.recv_bytes(65536)
+            chunk = os.read(reader, 65536)
             if not chunk:
-                process.join(max(0, deadline - time.monotonic()))
-                if process.exitcode != 0:
-                    raise ValueError('read_error')
-                return b''.join(chunks)
+                while time.monotonic() < deadline:
+                    child, status = os.waitpid(pid, os.WNOHANG)
+                    if child:
+                        reaped = True
+                        if status != 0:
+                            raise ValueError('read_error')
+                        return b''.join(chunks)
+                    time.sleep(0.001)
+                raise ValueError('timeout')
             size += len(chunk)
             if size > cap:
                 raise ValueError('byte_cap')
             chunks.append(chunk)
     finally:
-        reader.close()
-        if process.is_alive():
-            process.kill()
-        process.join(0.05)
+        os.close(reader)
+        if not reaped:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            until = time.monotonic() + 0.05
+            while time.monotonic() < until:
+                if os.waitpid(pid, os.WNOHANG)[0]:
+                    break
+                time.sleep(0.001)
 
 
 def _rows(path):
@@ -134,13 +160,18 @@ def capture(state_dir, attempt_id, codex_home):
     if not home.exists():
         fault('', 'no_home')
         return
-    if not stat.S_ISDIR(home.lstat().st_mode):
+    if not stat.S_ISDIR(os.stat(str(home), follow_symlinks=False).st_mode):
         fault('', 'non_regular_home')
         return
     sessions = home / 'sessions'
-    if not sessions.exists():
+    try:
+        session_mode = os.stat(str(sessions), follow_symlinks=False).st_mode
+    except FileNotFoundError:
         return
-    if not stat.S_ISDIR(sessions.lstat().st_mode):
+    except OSError:
+        fault('sessions', 'enumeration_error')
+        return
+    if not stat.S_ISDIR(session_mode):
         fault('sessions', 'non_regular')
         return
     def walk_error(error):
@@ -278,13 +309,14 @@ def report(state_dir, state, unit=None, since=None, tz='UTC'):
     else:
         from zoneinfo import ZoneInfo
         zone = ZoneInfo(tz)
+    from swarm_preflight import DRY_PREFIX
     cutoff = dt.date.fromisoformat(since) if since else None
     measured, unknown, days = [], [], {}
     totals = {key: 0 for key in COUNTERS}
     for uid, us in (state.get('units') or {}).items():
         if unit is not None and unit != uid:
             continue
-        attempts = {Path(p).name for p in us.get('attempts', []) if not str(p).startswith('DRY_RUN:')}
+        attempts = {Path(p).name for p in us.get('attempts', []) if not str(p).startswith(DRY_PREFIX)}
         attempts.update((us.get('attempt_codex_homes') or {}).keys())
         for attempt in sorted(attempts):
             result = attempt_usage(state_dir, attempt)

@@ -990,10 +990,11 @@ class TestCodexHomes(unittest.TestCase):
 
     def test_usage_captured_before_terminal_deletion_and_retry_limit(self):
         from tests.test_usage_raw import event
-        for terminal in ("DONE", "FAILED", "PREEMPTED"):
+        for label, terminal in (("success", "DONE"), ("failure", "FAILED"),
+                                ("cancellation", "FAILED"), ("preempted", "PREEMPTED")):
             with self.subTest(terminal=terminal):
                 unit = F.code_unit(self.repo)
-                attempt = self.attempt("code", terminal)
+                attempt = self.attempt("code", label)
                 home, identity = CH.allocate(self.state_dir, attempt.name, attempt, unit)
                 (home / "sessions").mkdir()
                 (home / "sessions/rollout-a.jsonl").write_bytes(event(4))
