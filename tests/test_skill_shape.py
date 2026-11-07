@@ -377,7 +377,7 @@ REFERENCE_ELABORATION_INVENTORIES = {
         ("references/delegation-evidence.md", "review.honesty", 1),
         ("references/delegation-evidence.md", "review.panel-source", 1),
         ("references/dispatch-preamble.md", "delegation.contract", 2),
-        ("references/dispatch-preamble.md", "delegation.preamble", 29),
+        ("references/dispatch-preamble.md", "delegation.preamble", 31),
         ("references/handoff-takeover.md", "handoff.contents", 2),
         ("references/handoff-takeover.md", "handoff.transfer", 1),
         ("references/handoff-takeover.md", "limit.session-liveness", 1),
@@ -994,6 +994,26 @@ class TestAuthoredSkillShape(unittest.TestCase):
                 with self.subTest(surface=surface, phrase=phrase):
                     self.assertIn(phrase, surface)
         self.assertIn(text, (skill / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_codex_dispatch_waits_and_parallel_inner_loop(self):
+        reference = (SKILLS / "hanig-orchestrate/references/dispatch-preamble.md").read_text(
+            encoding="utf-8")
+        for sentence in (
+                "For Codex code agents only, wait in one blocking harness call whenever it covers the run.",
+                "`exec_command` clamps `yield_time_ms` to 30,000 ms",
+                'functions.exec` call with `// @exec: {"yield_time_ms": 1800000}',
+                "These internal waits do not require another model call.",
+                "every such poll waits the maximum measured duration.",
+                "Never use repeated `sleep` calls to wait on a running command",
+                "`yield_time_ms: 300000`, the measured maximum",
+                "Other providers retain their existing waiting instructions.",
+                "For Codex code agents only, use `python3 scripts/run_tests.py MODULE…`",
+                "`--fast` is allowed between repairs only.",
+                "The final full scoped run, without `--fast`, must happen before review and before opening the PR",
+                "Supervised review-worker modules retain the serialized launcher rule below",
+                "Other providers retain their existing test commands."):
+            with self.subTest(sentence=sentence):
+                self.assertIn(sentence, reference)
 
     def test_g2_dispatch_testing_and_lineage_guidance(self):
         reference = (SKILLS / "hanig-orchestrate/references/dispatch-preamble.md").read_text(
