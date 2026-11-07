@@ -349,7 +349,7 @@ def _d5_refuse(route, state_dir, plan=None, extra_repos=()):
 def _d5_dispatch(args):
     # Default refusal also covers new commands and aliases. Observations retain
     # their legacy constraints; validate's optional seed check can fetch.
-    if args.fn not in (cmd_schema, cmd_status, cmd_usage, cmd_scope_check, cmd_validate):
+    if args.fn not in (cmd_schema, cmd_status, cmd_scope_check, cmd_validate):
         _d5_refuse(getattr(args, "command", "unknown command"), getattr(args, "state_dir", None), plan=getattr(args, "plan", None))
     elif args.fn is cmd_validate and getattr(args, "check_seeds", False):
         _d5_refuse("validate --check-seeds", getattr(args, "state_dir", None), plan=getattr(args, "plan", None))
