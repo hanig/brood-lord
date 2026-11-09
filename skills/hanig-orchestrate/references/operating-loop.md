@@ -176,7 +176,7 @@ all five inputs: `--state-root` contains immediate plan children with `plan.json
 and `state/swarm-state.json`; `--output-dir`, `--repo`, `--binding`, and `--audit`
 have no host defaults. `--branch` defaults to main; `--live-hours` defaults to 72.
 `--paseo` and `--gh` default to PATH lookups; pass absolute executables when a
-scheduler's PATH is sparse. Commands run directly, without an interactive shell.
+scheduler's PATH is sparse. Commands run directly, without an interactive shell. <!-- declaration: report.scheduled-facts -->
 
 For macOS, save an operator-edited launchd plist like this (replace every
 `/absolute/...` path), then load it with `launchctl bootstrap gui/$(id -u) FILE`:
@@ -215,7 +215,7 @@ The scheduler runs at minute 55; reports are labelled for the upcoming hour
 report. Each hourly file and `latest.md` is replaced atomically. Sources carry
 local observation times; an agent's running status says nothing about progress.
 ATTENTION marks a fact to investigate, never a unit judgment. Non-terminal
-units in older inactive state directories are counted without being listed.
+units in older inactive state directories are counted without being listed. <!-- declaration: report.scheduled-facts -->
 
 Arm the waiter with:
 
