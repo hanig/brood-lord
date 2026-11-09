@@ -121,19 +121,29 @@ def state_facts(root, live_hours, agents):
         lines.append((True, "{}: unreadable plan: {}".format(label, exc)))
         plan_units, successors = [], {}
         plan_readable = False
-      # Unknown membership must preserve state diagnostics, not assert absence.
-      plan_ids = {unit["id"] for unit in plan_units} if plan_readable else set(states)
+      plan_ids = {unit["id"] for unit in plan_units}
       counts = {}
       for uid, status in states.items():
         if uid not in plan_ids:
           counts[status] = counts.get(status, 0) + 1
       if counts:
-        lines.append((False, "{}: not in plan.json: {}".format(label,
+        membership = "not in plan.json" if plan_readable else "plan membership unavailable"
+        lines.append((False, "{}: {}: {}".format(label, membership,
           ", ".join("{} {}".format(count, status) for status, count in sorted(counts.items())))))
       for unit in plan_units:
         states.setdefault(unit["id"], "UNALLOCATED")
       is_live = now - sf.stat().st_mtime <= live_hours * 3600 or any(
         status in ACTIVE for status in states.values())
+      if not plan_readable:
+        # State observations cannot establish membership, needs or kind when
+        # the plan is unavailable. Keep counts/liveness, never judge units.
+        nonterminal = [status for status in states.values() if status not in TERMINAL]
+        if is_live:
+          live_work = live_work or bool(nonterminal)
+          active = active or any(status in ACTIVE for status in states.values())
+        else:
+          leftovers += len(nonterminal)
+        continue
       # Propagate decision roots backwards through HELD needs. Each HELD is
       # visited at most once, so cycles terminate without recursion or alerts
       # unless a decision root is reachable.
@@ -151,6 +161,7 @@ def state_facts(root, live_hours, agents):
             decisions.add(uid)
             pending.append(uid)
       needs_by_id = {unit["id"]: unit.get("needs", []) for unit in plan_units}
+      kinds = {unit["id"]: unit.get("kind") for unit in plan_units}
       successors = {uid: following for uid, following in successors.items()
                     if states.get(uid) not in ACTIVE}
       # Retain all recorded states for needs/readiness and the existing live
@@ -176,10 +187,12 @@ def state_facts(root, live_hours, agents):
         if status in ACTIVE:
           active = True
           agent_id = units[uid].get("job_id")
-          agent = (agents or {}).get(str(agent_id), {})
-          agent_status = agent.get("status", "UNKNOWN" if agents is None and agent_id else "ABSENT")
-          flag = (agents is not None or not agent_id) and str(agent_status).lower() not in RUNNING_AGENTS
-          note = "; bound agent {}: {}".format(agent_id or "none", agent_status)
+          note = "; job id {}".format(agent_id if agent_id is not None else "none")
+          if kinds.get(uid) == "code":
+            agent = (agents or {}).get(str(agent_id), {})
+            agent_status = agent.get("status", "UNKNOWN" if agents is None and agent_id else "ABSENT")
+            flag = (agents is not None or not agent_id) and str(agent_status).lower() not in RUNNING_AGENTS
+            note = "; bound agent {}: {}".format(agent_id or "none", agent_status)
         lines.append((flag, "{}/{}: {}{}".format(label, uid, status, note)))
       for unit in plan_units:
         uid, needs = unit["id"], unit.get("needs", [])

@@ -66,7 +66,9 @@ class HourlyFacts(unittest.TestCase):
     (directory / "state").mkdir(parents=True, exist_ok=True)
     sf = directory / "state" / "swarm-state.json"
     sf.write_text(json.dumps({"units": units or {}}))
-    (directory / "plan.json").write_text(json.dumps({"units": ([{"id": uid} for uid in (units or {})] if plan is None else plan)}))
+    plan_units = [{"kind": "code", **unit} for unit in
+                  ([{"id": uid} for uid in (units or {})] if plan is None else plan)]
+    (directory / "plan.json").write_text(json.dumps({"units": plan_units}))
     if old:
       os.utime(sf, (time.time() - 100 * 3600,) * 2)
     return sf
@@ -213,10 +215,70 @@ class HourlyFacts(unittest.TestCase):
           hourly_facts.main(self.args)
         report = (self.output / "latest.md").read_bytes()
         self.assertRegex(report, rb"(?m)^ATTENTION wave .*unreadable plan")
-        self.assertRegex(report, rb"(?m)^ATTENTION wave .*?/u: " + state.encode())
-        self.assertIn(b"bound agent absent: ABSENT", report)
+        self.assertNotIn(b"/u:", report)
+        self.assertIn(b"plan membership unavailable: 1 " + state.encode(), report)
+        self.assertNotIn(b"bound agent", report)
         self.assertIn(b"live work: yes.", report)
         self.assertNotIn(b"not in plan.json", report)
+
+  def test_agent_liveness_only_for_code(self):
+    # Exhaustive bound: 3 kinds x 2 active states x 2 job-id types x 2 agent
+    # observations = 24 fixtures, including scheduler ids absent from Paseo.
+    for kind, state, job_id, present in itertools.product(
+        ("code", "slurm", "pipeline"), ("RUNNING", "SUBMITTED"),
+        (3684904, "3684904"), (False, True)):
+      with self.subTest(kind=kind, state=state, job_id=job_id, present=present):
+        self.plan(units={"work": {"state": state, "job_id": job_id}},
+                  plan=[{"id": "work", "kind": kind}])
+        self.responses["agents"] = [{"id": str(job_id), "status": "running"}] if present else []
+        report = self.collect()
+        line = next(line for line in report.splitlines() if b"/work: " in line)
+        self.assertEqual(line.startswith(b"ATTENTION "), kind == "code" and not present)
+        self.assertIn(b"3684904", line)
+        if kind == "code":
+          self.assertIn(b"bound agent", line)
+        else:
+          self.assertIn(b"job id 3684904", line)
+          self.assertNotIn(b"bound agent", line)
+          self.assertNotIn(b"ABSENT", line)
+          self.assertIn(b"ATTENTION count: 0", report)
+
+  def test_scheduler_root_keeps_held_chain_waiting(self):
+    self.plan(units={"seg1": {"state": "RUNNING", "job_id": 3684904},
+                     "seg2": {"state": "HELD"}, "seg3": {"state": "HELD"}},
+      plan=[{"id": "seg1", "kind": "slurm"},
+            {"id": "seg2", "kind": "slurm", "needs": ["seg1"]},
+            {"id": "seg3", "kind": "slurm", "needs": ["seg2"]}])
+    report = self.collect()
+    self.assertIn(b"ATTENTION count: 0", report)
+    self.assertIn(b"waiting for seg1 (RUNNING)", report)
+    self.assertIn(b"waiting for seg2 (HELD)", report)
+    self.assertIn(b"job id 3684904", report)
+    self.assertNotIn(b"bound agent", report)
+
+  def test_unreadable_plan_never_infers_membership_or_held_decision(self):
+    # Exhaustive bound: empty plan with a leftover FAILED unit, and HELD over
+    # DONE. Permission denial makes membership/needs unknown in both cases.
+    for status, plan in (("FAILED", []),
+                         ("HELD", [{"id": "u", "needs": ["done"]}])):
+      with self.subTest(status=status):
+        sf = self.plan(units={"u": {"state": status}, "done": {"state": "DONE"}}, plan=plan)
+        plan_path = sf.parent.parent / "plan.json"
+        read_bytes = Path.read_bytes
+        def read(path):
+          if path == plan_path:
+            raise PermissionError("fixture denied")
+          return read_bytes(path)
+        (self.root / "responses.json").write_text(json.dumps(self.responses))
+        with mock.patch.object(Path, "read_bytes", read), mock.patch.dict(
+            os.environ, self.env, clear=True), mock.patch("builtins.print"):
+          hourly_facts.main(self.args)
+        report = (self.output / "latest.md").read_bytes()
+        self.assertRegex(report, rb"(?m)^ATTENTION wave .*unreadable plan")
+        self.assertNotIn(b"/u:", report)
+        self.assertNotIn(b"not in plan.json", report)
+        self.assertIn(b"plan membership unavailable:", report)
+        self.assertIn(("1 " + status).encode(), report)
 
   def test_parts_and_read_only(self):
     self.plan(units={"u": {"state": "RUNNING", "job_id": "a"}})
