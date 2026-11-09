@@ -175,6 +175,7 @@ ORCHESTRATE_DECLARATIONS = (
     "tracker.drain",
     "tracker.dag",
     "report.three-parts",
+    "report.scheduled-facts",
     "handoff.contents",
     "handoff.transfer",
     "takeover.verify",
