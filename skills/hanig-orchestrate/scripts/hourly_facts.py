@@ -67,6 +67,7 @@ def atomic_write(path, data):
 def state_facts(root, live_hours, agents):
   lines, ready, leftovers, live_work, active = [], [], 0, False, False
   now = time.time()
+  skipped = 0
   try:
     if not root.is_dir():
       raise OSError("not a state directory")
@@ -84,12 +85,18 @@ def state_facts(root, live_hours, agents):
         continue
       if not stat.S_ISDIR(mode):
         continue
+      try:
+        sf.lstat()
+      except FileNotFoundError:
+        skipped += 1
+        continue
       units = read_json(sf)["units"]
       if not isinstance(units, dict) or any(
-          not isinstance(u, dict) or not isinstance(u.get("state", "UNALLOCATED"), str)
+          not isinstance(u, dict) or (u.get("state") is not None and not isinstance(u["state"], str))
           for u in units.values()):
-        raise ValueError("units must map ids to objects with string states")
-      states = {uid: u.get("state", "UNALLOCATED") for uid, u in units.items()}
+        raise ValueError("units must map ids to objects with string or null states")
+      states = {uid: "UNALLOCATED" if u.get("state") is None else u["state"]
+                for uid, u in units.items()}
       is_live = now - sf.stat().st_mtime <= live_hours * 3600 or any(
         status in ACTIVE for status in states.values())
       successors = {}
@@ -147,6 +154,9 @@ def state_facts(root, live_hours, agents):
             directory.name, uid, ", ".join(needs) or "nothing", observed, note)))
     except (OSError, ValueError, RecursionError, KeyError, TypeError) as exc:
       lines.append((True, "{}: unreadable state/plan: {}".format(label, exc)))
+  if skipped:
+    lines.append((False, "Skipped {} directories without state/swarm-state.json (observed {}).".format(
+      skipped, local_time())))
   return lines, ready, leftovers, live_work or any(flag for flag, _ in ready), active
 
 
