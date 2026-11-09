@@ -40,15 +40,17 @@ Linux cron:
 At :55, reports label the next hour and replace hourly files and latest.md atomically.
 The next report supersedes missed runs. ATTENTION marks facts, never judgments. <!-- declaration: report.scheduled-facts -->
 Source observations use local times; agent liveness does not imply progress. <!-- declaration: report.scheduled-facts -->
-Older inactive units are counted. Same-plan author_history predecessors show
+Older inactive units are counted. Stopped same-plan author_history predecessors show
 continued by their successor, without ATTENTION (amendment 1, 2026-11-09).
+SUBMITTED and RUNNING predecessors remain live, with bound-agent checks.
 
 ```bash
 python3 "$HANIG_ORCHESTRATE_DIR/scripts/wait_report.py" --output-dir /reports
 ```
 
 The waiter polls each minute. Quiet reports are persisted in .seen.json; the first
-unseen report with live work or ATTENTION wakes it. Preserve .seen.json across restarts.
+unseen report with live work or ATTENTION wakes it. Preserve .seen.json across restarts. Report names require calendar-valid
+YYYYMMDD-HH±ZZZZ.md timestamps; invalid seen entries refuse consumption.
 A host-local lock serializes consumption before printing; a crash then can lose a wake,
 superseded by the next report. Malformed records/reports stop: restore valid bytes and
 re-arm. The installer deploys no scheduler entries.

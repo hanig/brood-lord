@@ -10,14 +10,21 @@ import time
 
 from hourly_facts import atomic_write, positive
 
-REPORT_NAME = r"\d{8}-\d{2}(?:[+-]\d{4})?\.md"
+REPORT_NAME = r"^\d{8}-\d{2}[+-]\d{4}\.md$"
 
 
 def report_time(path):
+  return datetime.datetime.strptime(path.stem, "%Y%m%d-%H%z")
+
+
+def valid_report_name(name):
+  if not isinstance(name, str) or not re.fullmatch(REPORT_NAME, name):
+    return False
   try:
-    return datetime.datetime.strptime(path.stem, "%Y%m%d-%H%z")
+    report_time(Path(name))
   except ValueError:
-    return datetime.datetime.strptime(path.stem, "%Y%m%d-%H").astimezone()
+    return False
+  return True
 
 
 def take_report(directory):
@@ -30,13 +37,13 @@ def take_report(directory):
       record = json.loads(seen_path.read_bytes())
     except FileNotFoundError:
       record = []
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
       raise ValueError("invalid seen record {}: {}".format(seen_path, exc)) from exc
     if not isinstance(record, list) or any(
-        not isinstance(name, str) or not re.fullmatch(REPORT_NAME, name) for name in record):
+        not valid_report_name(name) for name in record):
       raise ValueError("invalid seen record {}: expected a JSON list of report file names".format(seen_path))
     seen = set(record)
-    paths = [p for p in directory.glob("*.md") if re.fullmatch(REPORT_NAME, p.name)]
+    paths = [p for p in directory.glob("*.md") if valid_report_name(p.name)]
     for path in sorted(paths, key=report_time):
       if path.name in seen:
         continue
