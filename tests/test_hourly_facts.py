@@ -178,7 +178,7 @@ class HourlyFacts(unittest.TestCase):
         report = self.collect()
         self.assertIn(b"continued by new", report)
         self.assertFalse(any(line.startswith(b"ATTENTION ") for line in report.splitlines()))
-        self.assertIn(b"ATTENTION count: 0;", report)
+        self.assertIn(b"ATTENTION count: 0; live work: no.", report)
         # Cross-plan references and self references do not suppress attention.
         self.plan("other", {"old": {"state": "INCOMPLETE"}}, [{"id": "old", "author_history": [{"unit": "old"}]}])
         report = self.collect()
