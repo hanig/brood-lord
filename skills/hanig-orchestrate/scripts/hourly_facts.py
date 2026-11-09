@@ -92,8 +92,34 @@ def state_facts(root, live_hours, agents):
             if not is_live:
                 leftovers += len(open_units)
                 continue
+            successors = {}
+            plan_units = []
+            try:
+                plan_units = read_json(directory / "plan.json")["units"]
+                if not isinstance(plan_units, list):
+                    raise ValueError("plan units must be a list")
+                for unit in plan_units:
+                    uid, needs = unit["id"], unit.get("needs", [])
+                    if not isinstance(uid, str) or not isinstance(needs, list) or any(
+                            not isinstance(need, str) for need in needs):
+                        raise ValueError("plan id must be a string and needs a list of strings")
+                    history = unit.get("author_history", [])
+                    if not isinstance(history, list) or any(
+                            not isinstance(row, dict) or not isinstance(row.get("unit"), str)
+                            for row in history):
+                        raise ValueError("author_history must list objects with string unit ids")
+                    for row in history:
+                        if row["unit"] != uid:
+                            successors.setdefault(row["unit"], set()).add(uid)
+            except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                lines.append((True, "{}: unreadable plan: {}".format(label, exc)))
+                plan_units, successors = [], {}
             live_work = live_work or bool(open_units)
             for uid, status in sorted(open_units.items()):
+                if uid in successors:
+                    lines.append((False, "{}/{}: {}; continued by {}".format(
+                        label, uid, status, ", ".join(sorted(successors[uid])))))
+                    continue
                 flag = status not in ACTIVE | {"UNALLOCATED"}
                 note = ""
                 if status in ACTIVE:
@@ -104,15 +130,9 @@ def state_facts(root, live_hours, agents):
                     flag = str(agent_status).lower() not in RUNNING_AGENTS
                     note = "; bound agent {}: {}".format(agent_id or "none", agent_status)
                 lines.append((flag, "{}/{}: {}{}".format(label, uid, status, note)))
-            plan_units = read_json(directory / "plan.json")["units"]
-            if not isinstance(plan_units, list):
-                raise ValueError("plan units must be a list")
             for unit in plan_units:
                 uid, needs = unit["id"], unit.get("needs", [])
-                if not isinstance(uid, str) or not isinstance(needs, list) or any(
-                        not isinstance(need, str) for need in needs):
-                    raise ValueError("plan id must be a string and needs a list of strings")
-                if states.get(uid, "UNALLOCATED") == "UNALLOCATED" and all(
+                if uid not in successors and states.get(uid, "UNALLOCATED") == "UNALLOCATED" and all(
                         states.get(need) == "DONE" for need in needs):
                     ready.append("ready: {}/{} (needs {} DONE; observed {})".format(
                         directory.name, uid, ", ".join(needs) or "nothing", observed))
