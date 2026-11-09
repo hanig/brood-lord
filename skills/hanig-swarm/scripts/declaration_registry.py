@@ -109,6 +109,7 @@ CLOSED_DECLARATIONS = {
         merge.flake-triage
         code.merge-command limit.merge-command
         tracker.authority tracker.reconcile tracker.drain tracker.dag report.three-parts
+        report.scheduled-facts
         handoff.contents handoff.transfer takeover.verify
         limit.session-liveness report.timezone
     """),
