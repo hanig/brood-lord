@@ -2139,6 +2139,7 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
     for uid, u in sorted(units.items()):
         us = SS._unit_state(state, uid)
         if (us.get("state") == "DONE"
+                and not us.get("merged_as")
                 and SO.closing_evidence_for(u.get("kind")) != "predicate_receipt"):
             SS._set_unit_state(us, "READY_FOR_PR")
             report.append(
