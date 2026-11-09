@@ -2,14 +2,12 @@
 
 ## Scheduled facts and one-shot wake
 
-Keep one waiter armed. On wake, read the file, show it with a short summary,
-act on ATTENTION items (including ready work) under the confirmed mandate,
-then re-arm. Neither script grants authority or calls a model. <!-- declaration: report.scheduled-facts -->
+On wake read, show and summarize; act on ATTENTION (including ready work) under
+the mandate, then re-arm one waiter. No model calls or authority are supplied. <!-- declaration: report.scheduled-facts -->
 
-Set HANIG_ORCHESTRATE_DIR to the loaded skill; install hanig-project beside it
-or set HANIG_SKILL_DEP_ROOTS. The sibling renders the last audit offline, with STALE.
-Paths: state-root holds plan directories (plan.json, state/swarm-state.json);
-output-dir holds reports; repo is the checkout; binding and audit select tracker inputs.
+Install hanig-project beside the loaded skill, or set HANIG_SKILL_DEP_ROOTS.
+Tracker is offline; STALE remains visible.
+State-root children hold plan.json and state/swarm-state.json.
 Substitute operator paths in these direct-command scheduler examples.
 
 macOS launchd example: bootstrap the edited plist with
