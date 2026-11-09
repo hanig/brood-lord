@@ -317,6 +317,27 @@ class HourlyFacts(unittest.TestCase):
       with self.assertRaises(subprocess.TimeoutExpired):
         subprocess.run(cmd, env=self.env, capture_output=True, timeout=3)
 
+  def test_invalid_seen_record(self):
+    self.output.mkdir()
+    report = self.output / "20261109-06.md"
+    report.write_text("Status: ATTENTION count: 1; live work: no.\n")
+    self.assertEqual(wait_report.take_report(self.output), report)
+    seen = self.output / ".seen.json"
+    # Exhaustive declared malformed fixtures: JSON types, entries and syntax.
+    for data in (b"{}", b'"20261109-06.md"', b"null", b"1", b"true",
+                 b"[1]", b"[null]", b"[[]]", b'["../report.md"]', b"{", b"\xff"):
+      with self.subTest(data=data):
+        seen.write_bytes(data)
+        before = {p.name: p.read_bytes() for p in self.output.iterdir()}
+        result = subprocess.run(
+          [sys.executable, str(SCRIPTS / "wait_report.py"),
+           "--output-dir", str(self.output), "--poll-seconds", "0.02"],
+          env=self.env, capture_output=True, timeout=3)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, b"")
+        self.assertIn(str(seen).encode(), result.stderr)
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.output.iterdir()})
+
   def test_declaration_registry(self):
     registry = ROOT / "skills" / "hanig-swarm" / "scripts" / "declaration_registry.py"
     for command in ("check-body", "check-references"):
