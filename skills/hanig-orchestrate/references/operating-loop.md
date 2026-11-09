@@ -1,5 +1,59 @@
 # Operating loop detail
 
+## Scheduled facts and one-shot wake
+
+On wake read, show and summarize; act on ATTENTION (including ready work) under
+the mandate, then re-arm one waiter. No model calls or authority are supplied. <!-- declaration: report.scheduled-facts -->
+
+Install hanig-project beside the loaded skill, or set HANIG_SKILL_DEP_ROOTS.
+Tracker is offline; STALE remains visible.
+State-root children hold plan.json and state/swarm-state.json.
+Substitute operator paths in these direct-command scheduler examples.
+
+macOS launchd example: bootstrap the edited plist with
+launchctl bootstrap gui/$(id -u) FILE.
+
+```xml
+<plist version="1.0"><dict>
+  <key>Label</key><string>local.orchestrator.hourly-facts</string>
+  <key>ProgramArguments</key><array>
+    <string>/python3</string>
+    <string>/skills/hanig-orchestrate/scripts/hourly_facts.py</string>
+    <string>--state-root</string><string>/coordinator</string>
+    <string>--output-dir</string><string>/reports</string>
+    <string>--repo</string><string>/checkout</string>
+    <string>--binding</string><string>/binding.json</string>
+    <string>--audit</string><string>/audit.json</string>
+    <string>--paseo</string><string>/bin/paseo</string>
+    <string>--gh</string><string>/bin/gh</string>
+  </array>
+  <key>StartCalendarInterval</key><dict><key>Minute</key><integer>55</integer></dict>
+</dict></plist>
+```
+
+Linux cron:
+
+```cron
+55 * * * * HANIG_ORCHESTRATE_DIR=/skills/hanig-orchestrate /python3 /skills/hanig-orchestrate/scripts/hourly_facts.py --state-root /coordinator --output-dir /reports --repo /checkout --binding /binding.json --audit /audit.json --paseo /bin/paseo --gh /bin/gh
+```
+
+At :55, reports label the next hour and replace hourly files and latest.md atomically.
+The next report supersedes missed runs. ATTENTION marks facts, never judgments. <!-- declaration: report.scheduled-facts -->
+Source observations use local times; agent liveness does not imply progress. <!-- declaration: report.scheduled-facts -->
+Older inactive units are counted. Stopped same-plan author_history predecessors show
+continued by their successor, without ATTENTION (amendment 1, 2026-11-09).
+SUBMITTED and RUNNING predecessors remain live, with bound-agent checks.
+
+```bash
+python3 "$HANIG_ORCHESTRATE_DIR/scripts/wait_report.py" --output-dir /reports
+```
+
+The waiter polls each minute. Quiet reports are persisted in .seen.json; the first
+unseen report with live work or ATTENTION wakes it. Preserve .seen.json across restarts.
+A host-local lock serializes consumption before printing; a crash then can lose a wake,
+superseded by the next report. Malformed records/reports stop: restore valid bytes and
+re-arm. The installer deploys no scheduler entries.
+
 ## The coordinator pass
 
 Source inspection of `swarm.py` shows that `cmd_advance` returns `cmd_run`, `cmd_run` calls `advance` once under the state lock, and then prints that the coordinator is exiting. `advance` rechecks live units, settles state, dispatches ready units, emits tracker intents, and returns. Repetition comes from the host scheduler. <!-- declaration: loop.advance -->

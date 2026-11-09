@@ -119,6 +119,7 @@ SWARM_DECLARATIONS = (
 )
 
 ORCHESTRATE_DECLARATIONS = (
+    "report.scheduled-facts",
     "placement.behavior-deciding",
     "placement.reference-elaboration",
     "placement.reference-dialect",
@@ -390,6 +391,7 @@ REFERENCE_ELABORATION_INVENTORIES = {
         ("references/operating-loop.md", "limit.merge-command", 2),
         ("references/operating-loop.md", "preservation.before-cleanup", 1),
         ("references/operating-loop.md", "report.three-parts", 2),
+        ("references/operating-loop.md", "report.scheduled-facts", 3),
         ("references/operating-loop.md", "report.timezone", 2),
         ("references/operating-loop.md", "tracker.authority", 2),
         ("references/operating-loop.md", "tracker.dag", 1),

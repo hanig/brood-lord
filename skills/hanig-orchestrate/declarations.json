@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
   "known_declarations": [
+    "report.scheduled-facts",
     "placement.behavior-deciding",
     "placement.reference-elaboration",
     "placement.reference-dialect",
@@ -66,6 +67,7 @@
   "retired_declarations": [],
   "replacement_declarations": [],
   "declarations": [
+    {"id": "report.scheduled-facts", "normative_text": "Keep one wait_report.py armed for host-scheduled hourly_facts.py. On wake, read and show the report with a short summary, act on ATTENTION including ready work under the mandate, then re-arm. These scripts grant no authority and call no model.", "references": ["references/operating-loop.md"]},
     {"id": "placement.behavior-deciding", "normative_text": "A statement that changes whether an orchestrator confirms, delegates, watches, preserves, reviews, adjudicates, merges, advances, drains, reconciles, reports, hands off, or stops is behavior-deciding and belongs in this body."},
     {"id": "placement.reference-elaboration", "normative_text": "References may elaborate a registered declaration or hold checked measurements and examples; they must not be the only source of a behavior decision.", "references": ["references/authority-adjudication.md", "references/delegation-evidence.md", "references/handoff-takeover.md", "references/operating-loop.md"]},
     {"id": "placement.reference-dialect", "normative_text": "References use strict dialect version 1: only closed column-zero fences and valid same-line declaration comments can exempt text; tabs, blockquotes, indented code, raw HTML, nested lists, and ambiguous structure are refused."},
