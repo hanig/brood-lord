@@ -171,5 +171,98 @@ class TestLiveLease(unittest.TestCase):
             self.assertFalse(SS.holds_lease(directory))
 
 
+class TestAdvanceDoneNormalization(unittest.TestCase):
+    def fixture(self, root):
+        plan = {"name": "normalization", "units": [
+            {"id": "code", "kind": "code", "repo": str(root / "repo"),
+             "target_branch": "main", "mode": "bypass", "prompt": "fixture",
+             "outputs": ["result"], "write_scopes": ["code/"]},
+            {"id": "after", "kind": "slurm", "runtime": "none",
+             "command": "true", "outputs": ["result"],
+             "needs": ["code"], "write_scopes": ["after/"]}]}
+        state_dir = str(root / "state")
+        self.assertTrue(SS.acquire_lease(state_dir)[0])
+        self.addCleanup(SS.release_lease, state_dir)
+        state = {"schema_version": 1, "units": {"code": {
+            "state": "DONE", "attempt_dir": None, "job_id": None,
+            "attempts": [], "gpu_hours": 0}}}
+        return plan, state, state_dir
+
+    def test_merged_done_stays_done_at_every_save_across_two_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan, state, state_dir = self.fixture(root)
+            attempt = root / "runs" / "code" / "a1"
+            attempt.mkdir(parents=True)
+            us = state["units"]["code"]
+            us.update(state="READY_FOR_PR", job_id="fixture-agent",
+                      attempt_dir=str(attempt), attempts=[str(attempt)],
+                      attempt_produced_heads={"a1": "c" * 40},
+                      attempt_launch_facts={"a1": {
+                          "unit_id": "code", "attempt_id": "a1",
+                          "repo": str(root / "repo"),
+                          "base_commit": "a" * 40, "base_tree": "b" * 40,
+                          "execution_workspace": str(root / "repo"),
+                          "workspace_identity": {"realpath": str(root / "repo")},
+                          "branch": "fixture", "clean_at_launch": True,
+                          "repository_remote": None}})
+            receipt = {"unit": "code", "repo": str(root / "repo"),
+                       "pr": "https://github.com/example/fixture/pull/1",
+                       "target": "main", "head": "c" * 40,
+                       "merged_as": "d" * 40, "method": "merge",
+                       "merged": True, "attested": True}
+            Path(state_dir, S.MERGE_RECEIPTS).write_text(
+                json.dumps(receipt) + "\n")
+            # Admit through advance's real receipt path; only the Git object
+            # check is stubbed because this fixture has no repository.
+            with mock.patch.object(S.W, "validate_pinned_head", return_value=None):
+                S.advance(plan, state, state_dir, str(root / "runs"),
+                          False, max_new=0)
+            self.assertEqual(us["state"], "DONE")
+            self.assertEqual(us["merge_receipt"], receipt)
+            self.assertEqual(us["merged_as"], receipt["merged_as"])
+            real_save = SS.save_state
+            writes = []
+            def observe_save(directory, snapshot):
+                writes.append(json.loads(json.dumps(snapshot)))
+                self.assertEqual(snapshot["units"]["code"]["state"], "DONE")
+                real_save(directory, snapshot)
+                self.assertEqual(SS.load_state(directory)["units"]["code"]["state"],
+                                 "DONE")
+            for pass_number in range(2):
+                with self.subTest(pass_number=pass_number), \
+                     mock.patch.object(SS, "save_state", side_effect=observe_save):
+                    state = SS.load_state(state_dir)
+                    before = len(writes)
+                    report, _, _ = S.advance(
+                        plan, state, state_dir, str(root / "runs"), False, max_new=0)
+                    self.assertGreater(len(writes), before)
+                    self.assertNotIn("Corrected to READY_FOR_PR", "\n".join(report))
+                    self.assertEqual(state["units"]["code"]["merge_receipt"], receipt)
+
+    def test_unmerged_done_is_saved_as_ready_and_dependent_waits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan, state, state_dir = self.fixture(root)
+            real_save = SS.save_state
+            writes = []
+            def observe_save(directory, snapshot):
+                writes.append(snapshot["units"]["code"]["state"])
+                real_save(directory, snapshot)
+            with mock.patch.object(SS, "save_state", side_effect=observe_save), \
+                 mock.patch.object(S, "_submit", side_effect=AssertionError(
+                     "dependent dispatched before a merge")) as submit:
+                report, dispatched, _ = S.advance(
+                    plan, state, state_dir, str(root / "runs"), False)
+            self.assertTrue(writes)
+            self.assertEqual(set(writes), {"READY_FOR_PR"})
+            self.assertIn("Corrected to READY_FOR_PR", "\n".join(report))
+            self.assertEqual(SS.load_state(state_dir)["units"]["code"]["state"],
+                             "READY_FOR_PR")
+            self.assertEqual(dispatched, 0)
+            submit.assert_not_called()
+            self.assertNotEqual(state["units"]["after"]["state"], "SUBMITTED")
+
+
 if __name__ == "__main__":
     unittest.main()
