@@ -105,6 +105,62 @@ class HourlyFacts(unittest.TestCase):
     self.assertIn(b"ATTENTION count: 0; live work: no.", report)
     self.assertFalse(any(line.startswith(b"ATTENTION ") for line in report.splitlines()))
 
+  def test_old_coordinator_shapes_are_quiet(self):
+    self.plan(units={"null": {"state": None}, "missing": {},
+                     "done": {"state": "DONE"}},
+         plan=[{"id": "null"}, {"id": "missing"}, {"id": "done"}], old=True)
+    state = self.state / "journals" / "state"
+    state.mkdir(parents=True)
+    (state / "outbox.jsonl").write_text("{}\n")
+    report = self.collect()
+    self.assertFalse(any(line.startswith(b"ATTENTION ") for line in report.splitlines()))
+    self.assertIn(b"ATTENTION count: 0; live work: no.", report)
+    self.assertIn(b"Older state dirs hold 2 non-terminal units", report)
+
+  def test_non_plan_state_directories_are_counted(self):
+    for name in ("journals", "other"):
+      state = self.state / name / "state"
+      state.mkdir(parents=True)
+      (state / "outbox.jsonl").write_text("{}\n")
+    report = self.collect()
+    self.assertFalse(any(line.startswith(b"ATTENTION ") for line in report.splitlines()))
+    counts = [line for line in report.splitlines() if b"without state/swarm-state.json" in line]
+    self.assertEqual(len(counts), 1)
+    self.assertTrue(counts[0].startswith(b"- Skipped 2 directories without state/swarm-state.json"))
+
+  def test_unallocated_shapes_have_identical_readiness(self):
+    # Exhaustive finite bound: 3 unallocated representations x 2 dependency states.
+    for unit, dependency in itertools.product(
+        ({"state": None}, {}, {"state": "UNALLOCATED"}), ("DONE", "RUNNING")):
+      with self.subTest(unit=unit, dependency=dependency):
+        self.plan(units={"work": unit, "dependency": {"state": dependency, "job_id": "a"}},
+             plan=[{"id": "work", "needs": ["dependency"]}, {"id": "dependency"}])
+        self.responses["agents"] = [{"id": "a", "status": "running"}]
+        report = self.collect()
+        attention = [line for line in report.splitlines() if line.startswith(b"ATTENTION ")]
+        self.assertEqual(len(attention), int(dependency == "DONE"))
+        if attention:
+          self.assertTrue(attention[0].startswith(b"ATTENTION ready: wave/work"))
+        self.assertIn(b"/work: UNALLOCATED", report)
+        self.assertNotIn(b"unreadable state", report)
+
+  def test_malformed_unit_states_still_need_attention(self):
+    # Exhaustive declared malformed fixtures: 5 non-string/non-null states,
+    # plus 3 non-object units (8 cases total).
+    for unit in ({"state": 3}, {"state": False}, {"state": []},
+                 {"state": {}}, {"state": 1.5}, None, [], "DONE"):
+      with self.subTest(unit=unit):
+        self.plan(units={"u": unit})
+        self.assertRegex(self.collect(), rb"(?m)^ATTENTION wave .*unreadable state/plan")
+
+  def test_existing_unreadable_state_file_needs_attention(self):
+    sf = self.plan()
+    sf.chmod(0)
+    try:
+      self.assertRegex(self.collect(), rb"(?m)^ATTENTION wave .*unreadable state/plan")
+    finally:
+      sf.chmod(0o600)
+
   def test_triggers_exhaustive(self):
     # Exhaustive finite product: 8 unit states x 5 agent conditions = 40 cases.
     states = ["UNALLOCATED", "SUBMITTED", "RUNNING", "DONE", "ABANDONED", "SUPERSEDED", "FAILED", "NEEDS_HUMAN"]
