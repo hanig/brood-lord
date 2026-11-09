@@ -171,7 +171,7 @@ notifications. <!-- declaration: report.scheduled-facts -->
 Set `HANIG_ORCHESTRATE_DIR` to the directory holding the loaded SKILL.md.
 Install `hanig-project` beside it or set `HANIG_SKILL_DEP_ROOTS` to its known
 parent. Tracker rendering uses that sibling's offline `linear_sync.py section`,
-never an audit or tracker API. STALE remains visible. Supply absolute paths for
+never an audit or tracker API. STALE remains visible. Supply absolute paths for <!-- declaration: report.scheduled-facts -->
 all five inputs: `--state-root` contains immediate plan children with `plan.json`
 and `state/swarm-state.json`; `--output-dir`, `--repo`, `--binding`, and `--audit`
 have no host defaults. `--branch` defaults to main; `--live-hours` defaults to 72.
@@ -214,7 +214,7 @@ The scheduler runs at minute 55; reports are labelled for the upcoming hour
 (current local time plus ten minutes). A missed run is superseded by the next
 report. Each hourly file and `latest.md` is replaced atomically. Sources carry
 local observation times; an agent's running status says nothing about progress.
-ATTENTION marks a fact to investigate, never a unit judgment. Non-terminal
+ATTENTION marks a fact to investigate, never a unit judgment. Non-terminal <!-- declaration: report.scheduled-facts -->
 units in older inactive state directories are counted without being listed. <!-- declaration: report.scheduled-facts -->
 
 Arm the waiter with:
