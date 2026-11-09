@@ -33,7 +33,7 @@ launchctl bootstrap gui/$(id -u) FILE.
 </dict></plist>
 ```
 
-Linux crontab example:
+Linux cron:
 
 ```cron
 55 * * * * HANIG_ORCHESTRATE_DIR=/skills/hanig-orchestrate /python3 /skills/hanig-orchestrate/scripts/hourly_facts.py --state-root /coordinator --output-dir /reports --repo /checkout --binding /binding.json --audit /audit.json --paseo /bin/paseo --gh /bin/gh

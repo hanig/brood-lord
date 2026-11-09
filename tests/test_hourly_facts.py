@@ -255,9 +255,9 @@ class HourlyFacts(unittest.TestCase):
         for path in self.output.glob("2*.md"):
             if path != quiet:
                 path.unlink()
-        cmd = [sys.executable, str(SCRIPTS / "wait_report.py"), "--output-dir", str(self.output), "--poll-seconds", "0.02"]
+        cmd = [sys.executable, "-c", "import runpy,sys,time;time.sleep(.5);sys.path.insert(0,sys.argv[1].rsplit('/',1)[0]);runpy.run_path(sys.argv.pop(1),run_name='__main__')", str(SCRIPTS / "wait_report.py"), "--output-dir", str(self.output), "--poll-seconds", "0.02"]
         with self.assertRaises(subprocess.TimeoutExpired):
-            subprocess.run(cmd, env=self.env, capture_output=True, timeout=0.3)
+            subprocess.run(cmd, env=self.env, capture_output=True, timeout=3)
         self.assertIn(quiet.name, json.loads((self.output / ".seen.json").read_bytes()))
         for index, (count, live) in enumerate([(1, "no"), (0, "yes")], 1):
             path = self.output / ("20000101-0{}.md".format(index))
@@ -266,7 +266,7 @@ class HourlyFacts(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.decode().strip(), str(path))
             with self.assertRaises(subprocess.TimeoutExpired):
-                subprocess.run(cmd, env=self.env, capture_output=True, timeout=0.3)
+                subprocess.run(cmd, env=self.env, capture_output=True, timeout=3)
 
     def test_declaration_registry(self):
         registry = ROOT / "skills" / "hanig-swarm" / "scripts" / "declaration_registry.py"
