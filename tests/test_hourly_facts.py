@@ -66,7 +66,7 @@ class HourlyFacts(unittest.TestCase):
     (directory / "state").mkdir(parents=True, exist_ok=True)
     sf = directory / "state" / "swarm-state.json"
     sf.write_text(json.dumps({"units": units or {}}))
-    (directory / "plan.json").write_text(json.dumps({"units": plan or []}))
+    (directory / "plan.json").write_text(json.dumps({"units": ([{"id": uid} for uid in (units or {})] if plan is None else plan)}))
     if old:
       os.utime(sf, (time.time() - 100 * 3600,) * 2)
     return sf
@@ -79,6 +79,99 @@ class HourlyFacts(unittest.TestCase):
     path = Path(result.stdout.decode().strip())
     self.assertEqual(path.read_bytes(), (self.output / "latest.md").read_bytes())
     return path.read_bytes()
+
+  def test_out_of_plan_units_are_one_quiet_summary(self):
+    for old in (False, True):
+      with self.subTest(old=old):
+        self.plan(units={"done": {"state": "DONE"},
+          "left-held": {"state": "HELD"}, "left-held2": {"state": "HELD"},
+          "left-failed": {"state": "FAILED"}, "left-human": {"state": "NEEDS_HUMAN"},
+          "left-active": {"state": "RUNNING"}}, plan=[{"id": "done"}], old=old)
+        report = self.collect()
+        summaries = [line for line in report.splitlines() if b"not in plan.json:" in line]
+        self.assertEqual(len(summaries), 1)
+        self.assertTrue(summaries[0].startswith(b"- wave "))
+        self.assertIn(b"1 FAILED, 2 HELD, 1 NEEDS_HUMAN, 1 RUNNING", summaries[0])
+        self.assertNotIn(b"left-", report)
+        self.assertIn(b"ATTENTION count: 0; live work: no.", report)
+
+  def test_held_waiting_and_failed_chain(self):
+    # Exhaustive declared roots: both active states, DONE, all four decision
+    # states, and READY_FOR_PR (which alerts itself but not its HELD followers).
+    for root in ("RUNNING", "SUBMITTED", "DONE", "FAILED", "FAILED_EVIDENCE",
+                 "NEEDS_HUMAN", "INCOMPLETE", "READY_FOR_PR"):
+      with self.subTest(root=root):
+        self.plan(units={"root": {"state": root, "job_id": "a"},
+                         "first": {"state": "HELD"}, "last": {"state": "HELD"}},
+          plan=[{"id": "root"}, {"id": "first", "needs": ["root"]},
+                {"id": "last", "needs": ["first"]}])
+        self.responses["agents"] = [{"id": "a", "status": "running"}]
+        report = self.collect()
+        for uid in (b"first", b"last"):
+          line = next(line for line in report.splitlines() if b"/" + uid + b": HELD" in line)
+          self.assertEqual(line.startswith(b"ATTENTION "),
+                           root in {"FAILED", "FAILED_EVIDENCE", "NEEDS_HUMAN", "INCOMPLETE"})
+          self.assertIn(b"waiting for", line)
+        if root != "DONE":
+          self.assertIn(("waiting for root ({})".format(root)).encode(), report)
+
+  def test_held_graphs_exhaustive(self):
+    # Exhaustive bound: 4**2 state pairs x 2**4 directed edge sets = 256 graphs,
+    # including self loops and two-node cycles. Oracle searches each HELD's
+    # reachable HELD needs for FAILED, independently of propagation direction.
+    ids = ("a", "b")
+    edges = tuple(itertools.product(ids, repeat=2))
+    for statuses, bits in itertools.product(
+        itertools.product(("HELD", "FAILED", "RUNNING", "DONE"), repeat=2),
+        itertools.product((False, True), repeat=4)):
+      states = dict(zip(ids, statuses))
+      needs = {uid: [v for (u, v), bit in zip(edges, bits) if bit and u == uid] for uid in ids}
+      self.plan(units={uid: {"state": status, "job_id": "agent"} for uid, status in states.items()},
+                plan=[{"id": uid, "needs": needs[uid]} for uid in ids])
+      lines = hourly_facts.state_facts(self.state, 72, {"agent": {"status": "running"}})[0]
+      for uid in ids:
+        if states[uid] != "HELD":
+          continue
+        seen, pending, expected = set(), list(needs[uid]), False
+        while pending:
+          need = pending.pop()
+          if need in seen:
+            continue
+          seen.add(need)
+          expected = expected or states[need] == "FAILED"
+          if states[need] == "HELD":
+            pending.extend(needs[need])
+        flag, line = next((flag, line) for flag, line in lines if "/{}: HELD".format(uid) in line)
+        self.assertEqual(flag, expected, (states, needs, uid, line))
+
+  def test_held_long_chain_and_cycle(self):
+    # Fixed bound beyond the interpreter recursion limit: 1,200 HELD units.
+    for failed in (False, True):
+      units = {str(i): {"state": "HELD"} for i in range(1200)}
+      units["root"] = {"state": "FAILED" if failed else "DONE"}
+      plan = [{"id": str(i), "needs": [str(i + 1) if i < 1199 else "root"]}
+              for i in range(1200)] + [{"id": "root"}]
+      self.plan(units=units, plan=plan)
+      lines = hourly_facts.state_facts(self.state, 72, {})[0]
+      self.assertEqual(sum(flag for flag, _ in lines), 1201 if failed else 0)
+    self.plan(units={"a": {"state": "HELD"}, "b": {"state": "HELD"}},
+              plan=[{"id": "a", "needs": ["b"]}, {"id": "b", "needs": ["a"]}])
+    self.assertIn(b"ATTENTION count: 0", self.collect())
+
+  def test_optional_tracker_pair(self):
+    self.args = self.args[:6]
+    report = self.collect()
+    self.assertEqual(report.split(b"## 2. Tracker\n\n")[1].split(b"\n## 3.")[0],
+                     b"Tracker: UNAVAILABLE (no binding configured)\n")
+    self.assertIn(b"ATTENTION count: 0; live work: no.", report)
+    for option, value in (("--binding", self.binding), ("--audit", self.audit)):
+      result = subprocess.run([sys.executable, str(SCRIPTS / "hourly_facts.py")] +
+        self.args + [option, str(value)], env=self.env, capture_output=True, timeout=10)
+      self.assertEqual(result.returncode, 2)
+      self.assertIn(b"--binding and --audit must be given together", result.stderr)
+    self.args += ["--binding", str(self.binding), "--audit", str(self.audit)]
+    self.audit.unlink()
+    self.assertIn(b"ATTENTION Tracker: UNAVAILABLE", self.collect())
 
   def test_parts_and_read_only(self):
     self.plan(units={"u": {"state": "RUNNING", "job_id": "a"}})
@@ -177,22 +270,22 @@ class HourlyFacts(unittest.TestCase):
     self.assertRegex(self.collect(), rb"(?m)^ATTENTION wave .*unreadable state/plan")
 
   def test_triggers_exhaustive(self):
-    # Exhaustive finite product: 8 unit states x 5 agent conditions = 40 cases.
-    states = ["UNALLOCATED", "SUBMITTED", "RUNNING", "DONE", "ABANDONED", "SUPERSEDED", "FAILED", "NEEDS_HUMAN"]
+    # Exhaustive finite product: 11 unit states x 5 agent conditions = 55 cases.
+    states = ["UNALLOCATED", "SUBMITTED", "RUNNING", "DONE", "ABANDONED", "SUPERSEDED", "FAILED", "NEEDS_HUMAN", "FAILED_EVIDENCE", "INCOMPLETE", "READY_FOR_PR"]
     for state, agent in itertools.product(states, [None, "idle", "running", "working", "busy"]):
       with self.subTest(state=state, agent=agent):
         units = {"u": {"state": state, "job_id": "a"}}
         self.plan(units=units)
         agents = {} if agent is None else {"a": {"status": agent}}
         lines, ready, leftovers, live, active = hourly_facts.state_facts(self.state, 72, agents)
-        expected = state in {"FAILED", "NEEDS_HUMAN"} or (state in hourly_facts.ACTIVE and agent in {None, "idle"})
+        expected = state in {"FAILED", "NEEDS_HUMAN", "FAILED_EVIDENCE", "INCOMPLETE", "READY_FOR_PR"} or (state in hourly_facts.ACTIVE and agent in {None, "idle"})
         self.assertEqual(any(flag for flag, line in lines), expected)
     self.plan(units={"u": {"state": "SUBMITTED"}})
     self.assertTrue(any(f for f, _ in hourly_facts.state_facts(self.state, 72, {})[0]))
 
   def test_ready_and_old(self):
     self.plan("live", {"done": {"state": "DONE"}, "wait": {"state": "RUNNING", "job_id": "a"}},
-         [{"id": "ready", "needs": ["done"]}, {"id": "blocked", "needs": ["wait"]}], old=True)
+         [{"id": "done"}, {"id": "wait"}, {"id": "ready", "needs": ["done"]}, {"id": "blocked", "needs": ["wait"]}], old=True)
     self.plan("old", {"invisible": {"state": "FAILED"}}, old=True)
     report = self.collect()
     self.assertIn(b"ATTENTION ready: live/ready", report)

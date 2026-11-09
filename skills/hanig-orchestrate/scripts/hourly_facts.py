@@ -97,8 +97,6 @@ def state_facts(root, live_hours, agents):
         raise ValueError("units must map ids to objects with string or null states")
       states = {uid: "UNALLOCATED" if u.get("state") is None else u["state"]
                 for uid, u in units.items()}
-      is_live = now - sf.stat().st_mtime <= live_hours * 3600 or any(
-        status in ACTIVE for status in states.values())
       successors = {}
       plan_units = []
       try:
@@ -121,8 +119,36 @@ def state_facts(root, live_hours, agents):
       except (OSError, ValueError, RecursionError, KeyError, TypeError, AttributeError) as exc:
         lines.append((True, "{}: unreadable plan: {}".format(label, exc)))
         plan_units, successors = [], {}
+      plan_ids = {unit["id"] for unit in plan_units}
+      counts = {}
+      for uid, status in states.items():
+        if uid not in plan_ids:
+          counts[status] = counts.get(status, 0) + 1
+      if counts:
+        lines.append((False, "{}: not in plan.json: {}".format(label,
+          ", ".join("{} {}".format(count, status) for status, count in sorted(counts.items())))))
+      states = {uid: status for uid, status in states.items() if uid in plan_ids}
       for unit in plan_units:
         states.setdefault(unit["id"], "UNALLOCATED")
+      is_live = now - sf.stat().st_mtime <= live_hours * 3600 or any(
+        status in ACTIVE for status in states.values())
+      # Propagate decision roots backwards through HELD needs. Each HELD is
+      # visited at most once, so cycles terminate without recursion or alerts
+      # unless a decision root is reachable.
+      held_followers = {}
+      for unit in plan_units:
+        if states[unit["id"]] == "HELD":
+          for need in unit.get("needs", []):
+            held_followers.setdefault(need, set()).add(unit["id"])
+      decisions = {uid for uid, status in states.items() if status in {
+        "FAILED", "FAILED_EVIDENCE", "NEEDS_HUMAN", "INCOMPLETE"}}
+      pending = list(decisions)
+      while pending:
+        for uid in held_followers.get(pending.pop(), ()):
+          if uid not in decisions:
+            decisions.add(uid)
+            pending.append(uid)
+      needs_by_id = {unit["id"]: unit.get("needs", []) for unit in plan_units}
       successors = {uid: following for uid, following in successors.items()
                     if states.get(uid) not in ACTIVE}
       open_units = {uid: status for uid, status in states.items() if status not in TERMINAL}
@@ -137,6 +163,11 @@ def state_facts(root, live_hours, agents):
           continue
         flag = status not in ACTIVE | {"UNALLOCATED"}
         note = ""
+        if status == "HELD":
+          flag = uid in decisions
+          waiting = ["{} ({})".format(need, states.get(need, "UNALLOCATED"))
+                     for need in needs_by_id[uid] if states.get(need) != "DONE"]
+          note = "; waiting for " + (", ".join(waiting) or "no non-DONE needs")
         if status in ACTIVE:
           active = True
           agent_id = units[uid].get("job_id")
@@ -161,6 +192,8 @@ def state_facts(root, live_hours, agents):
 
 
 def tracker(args):
+  if args.binding is None and args.audit is None:
+    return b"Tracker: UNAVAILABLE (no binding configured)\n", False
   observed = local_time()
   try:
     loaded = os.environ.get("HANIG_ORCHESTRATE_DIR", str(Path(__file__).absolute().parent.parent))
@@ -272,13 +305,18 @@ def positive(value):
 
 def main(argv=None):
   parser = argparse.ArgumentParser(description=__doc__)
-  for name in ("state-root", "output-dir", "repo", "binding", "audit"):
+  for name in ("state-root", "output-dir", "repo"):
     parser.add_argument("--" + name, required=True, type=lambda p: Path(p).absolute())
+  for name in ("binding", "audit"):
+    parser.add_argument("--" + name, type=lambda p: Path(p).absolute())
   parser.add_argument("--paseo", default="paseo")
   parser.add_argument("--gh", default="gh")
   parser.add_argument("--branch", default="main")
   parser.add_argument("--live-hours", type=positive, default=72)
-  print(collect(parser.parse_args(argv)))
+  args = parser.parse_args(argv)
+  if (args.binding is None) != (args.audit is None):
+    parser.error("--binding and --audit must be given together")
+  print(collect(args))
 
 
 if __name__ == "__main__":

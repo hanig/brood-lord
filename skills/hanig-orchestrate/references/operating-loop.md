@@ -7,7 +7,8 @@ the mandate, then re-arm one waiter. No model calls or authority are supplied. <
 
 Install hanig-project beside the loaded skill, or set HANIG_SKILL_DEP_ROOTS.
 Tracker is offline; STALE remains visible.
-State-root children hold plan.json and state/swarm-state.json.
+State-root children hold plan.json and state/swarm-state.json; link a plan beside state/ if it lives elsewhere.
+The --binding and --audit arguments are optional together; omit both when no tracker binding is configured.
 Substitute operator paths in these direct-command scheduler examples.
 
 macOS launchd example: bootstrap the edited plist with
