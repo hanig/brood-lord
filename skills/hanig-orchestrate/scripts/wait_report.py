@@ -10,6 +10,8 @@ import time
 
 from hourly_facts import atomic_write, positive
 
+REPORT_NAME = r"\d{8}-\d{2}(?:[+-]\d{4})?\.md"
+
 
 def report_time(path):
   try:
@@ -24,8 +26,17 @@ def take_report(directory):
   with (directory / ".seen.lock").open("a") as lock:
     fcntl.flock(lock, fcntl.LOCK_EX)
     seen_path = directory / ".seen.json"
-    seen = set(json.loads(seen_path.read_bytes())) if seen_path.exists() else set()
-    paths = [p for p in directory.glob("*.md") if re.fullmatch(r"\d{8}-\d{2}(?:[+-]\d{4})?\.md", p.name)]
+    try:
+      record = json.loads(seen_path.read_bytes())
+    except FileNotFoundError:
+      record = []
+    except (OSError, ValueError) as exc:
+      raise ValueError("invalid seen record {}: {}".format(seen_path, exc)) from exc
+    if not isinstance(record, list) or any(
+        not isinstance(name, str) or not re.fullmatch(REPORT_NAME, name) for name in record):
+      raise ValueError("invalid seen record {}: expected a JSON list of report file names".format(seen_path))
+    seen = set(record)
+    paths = [p for p in directory.glob("*.md") if re.fullmatch(REPORT_NAME, p.name)]
     for path in sorted(paths, key=report_time):
       if path.name in seen:
         continue
