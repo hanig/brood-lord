@@ -172,6 +172,18 @@ class HourlyFacts(unittest.TestCase):
         self.env["HANIG_ORCHESTRATE_DIR"] = str(self.root / "missing")
         self.assertIn(b"Tracker: UNAVAILABLE", self.collect())
 
+    def test_continued_predecessor(self):
+        self.plan(units={"old": {"state": "INCOMPLETE"}, "new": {"state": "DONE"}},
+                  plan=[{"id": "old"}, {"id": "new", "author_history": [{"unit": "old"}]}])
+        report = self.collect()
+        self.assertIn(b"continued by new", report)
+        self.assertFalse(any(line.startswith(b"ATTENTION ") for line in report.splitlines()))
+        self.assertIn(b"ATTENTION count: 0;", report)
+        # Cross-plan references and self references do not suppress attention.
+        self.plan("other", {"old": {"state": "INCOMPLETE"}}, [{"id": "old", "author_history": [{"unit": "old"}]}])
+        report = self.collect()
+        self.assertRegex(report, rb"(?m)^ATTENTION other .*?/old: INCOMPLETE")
+
     def test_unreadable_state_root(self):
         with mock.patch.object(Path, "iterdir", side_effect=PermissionError("fixture denied")):
             lines, ready, leftovers, live, active = hourly_facts.state_facts(self.state, 72, {})

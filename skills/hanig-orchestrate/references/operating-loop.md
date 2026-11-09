@@ -208,6 +208,8 @@ minutes). Missed reports are superseded by the next. Hourly files and latest.md
 are replaced atomically. ATTENTION marks facts, never judgments. <!-- declaration: report.scheduled-facts -->
 Source observations use local times; agent liveness does not imply progress. <!-- declaration: report.scheduled-facts -->
 Older inactive directories contribute a count of non-terminal units.
+A predecessor named in another unit's author_history is listed as continued by
+that unit, without ATTENTION (contract amendment 1, 2026-11-09).
 
 ```bash
 python3 "$HANIG_ORCHESTRATE_DIR/scripts/wait_report.py" --output-dir /absolute/reports
