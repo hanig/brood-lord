@@ -69,7 +69,11 @@ def state_facts(root, live_hours, agents):
     now = time.time()
     if not root.is_dir():
         return [(True, "State root unavailable: {}".format(root))], [], 0, False, False
-    for directory in sorted(root.iterdir()):
+    try:
+        directories = sorted(root.iterdir())
+    except OSError as exc:
+        return [(True, "State root unavailable (observed {}): {}".format(local_time(), exc))], [], 0, False, False
+    for directory in directories:
         sf = directory / "state" / "swarm-state.json"
         if not (directory / "state").is_dir():
             continue
