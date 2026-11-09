@@ -5,13 +5,13 @@ import datetime
 import json
 import math
 import os
+import stat
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import time
 
-# Importing the installed resolver must not write into the installed skill.
 sys.dont_write_bytecode = True
 from skill_paths import sibling_skill_root
 
@@ -67,19 +67,23 @@ def atomic_write(path, data):
 def state_facts(root, live_hours, agents):
     lines, ready, leftovers, live_work, active = [], [], 0, False, False
     now = time.time()
-    if not root.is_dir():
-        return [(True, "State root unavailable: {}".format(root))], [], 0, False, False
     try:
+        if not root.is_dir():
+            raise OSError("not a state directory")
         directories = sorted(root.iterdir())
     except OSError as exc:
         return [(True, "State root unavailable (observed {}): {}".format(local_time(), exc))], [], 0, False, False
     for directory in directories:
         sf = directory / "state" / "swarm-state.json"
-        if not (directory / "state").is_dir():
-            continue
         observed = local_time()
         label = "{} (observed {})".format(directory.name, observed)
         try:
+            try:
+                mode = sf.parent.stat().st_mode
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            if not stat.S_ISDIR(mode):
+                continue
             units = read_json(sf)["units"]
             if not isinstance(units, dict) or any(
                     not isinstance(u, dict) or not isinstance(u.get("state", "UNALLOCATED"), str)
@@ -156,7 +160,6 @@ def tracker(args):
         read = read.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z%z")
         section = run([sys.executable, str(sibling / "scripts" / "linear_sync.py"),
                        "section", "--binding", str(args.binding), "--audit", str(args.audit)], args.repo)
-        # Pick a fence longer than any backtick run, without touching stdout bytes.
         fence = b"```"
         while fence in section:
             fence += b"`"
@@ -198,6 +201,10 @@ def collect(args):
                                             "--limit", "1", "--json", "status,conclusion,headSha,event,createdAt"])):
         try:
             rows = list_source(argv, args.repo)
+            if kind == "Open PRs":
+                while len(rows) >= int(argv[argv.index("--limit") + 1]):
+                    argv[argv.index("--limit") + 1] = str(int(argv[argv.index("--limit") + 1]) * 2)
+                    rows = list_source(argv, args.repo)
             observed = local_time()
             body.append("{} (observed {}):".format(kind, observed))
             if kind == "Open PRs":
@@ -213,7 +220,7 @@ def collect(args):
             else:
                 for row in rows:
                     status = row.get("conclusion") or row.get("status") or "unknown"
-                    body.append(render(str(status).upper() in BAD, "{} {} at {}".format(row.get("event"), status, row.get("headSha"))))
+                    body.append(render(str(status).upper() in {"FAILURE", "TIMED_OUT"}, "{} {} at {}".format(row.get("event"), status, row.get("headSha"))))
             if not rows:
                 body.append("- none")
         except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
@@ -224,12 +231,12 @@ def collect(args):
     tail.extend(render(True, message) for message in ready)
     if not ready:
         tail.append("- nothing: no unallocated unit in a readable live plan has all needs DONE; unreadable sources are flagged above.")
-    hour = datetime.datetime.now().astimezone() + datetime.timedelta(minutes=10)
+    hour = datetime.datetime.fromtimestamp(time.time() + 600).astimezone()
     header = "# Hourly facts for {:%Y-%m-%d %H}:00 %s\nStatus: ATTENTION count: {}; live work: {}.\nCollected {} (read-only; no model).\n\n".format(
         hour, count, "yes" if live else "no", local_time()) % hour.strftime("%Z")
     report = (header + "\n".join(body) + "\n\n## 2. Tracker\n\n").encode() + section + b"\n" + "\n".join(tail).encode() + b"\n"
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    target = args.output_dir / (hour.strftime("%Y%m%d-%H") + ".md")
+    target = args.output_dir / (hour.strftime("%Y%m%d-%H%z") + ".md")
     atomic_write(target, report)
     atomic_write(args.output_dir / "latest.md", report)
     return target
