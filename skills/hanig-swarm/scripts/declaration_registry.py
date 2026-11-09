@@ -90,6 +90,7 @@ CLOSED_DECLARATIONS = {
         limit.base-branch-comparison compatibility.python
     """),
     "hanig-orchestrate": _closed_ids("""
+        report.scheduled-facts
         placement.behavior-deciding placement.reference-elaboration
         placement.reference-dialect capability.host-policy
         capability.dependencies paths.skill-directory authority.source
@@ -109,7 +110,6 @@ CLOSED_DECLARATIONS = {
         merge.flake-triage
         code.merge-command limit.merge-command
         tracker.authority tracker.reconcile tracker.drain tracker.dag report.three-parts
-        report.scheduled-facts
         handoff.contents handoff.transfer takeover.verify
         limit.session-liveness report.timezone
     """),
