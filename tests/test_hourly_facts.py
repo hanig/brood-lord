@@ -1,4 +1,4 @@
-"""Hourly report integration fixtures; all commands run with a replaced PATH."""
+"""Hourly fixtures with a replaced PATH."""
 import hashlib
 import itertools
 import json
@@ -81,7 +81,7 @@ class HourlyFacts(unittest.TestCase):
         self.assertEqual(path.read_bytes(), (self.output / "latest.md").read_bytes())
         return path.read_bytes()
 
-    def test_three_parts_verbatim_observations_and_read_only(self):
+    def test_parts_and_read_only(self):
         self.plan(units={"u": {"state": "RUNNING", "job_id": "a"}})
         self.responses["agents"] = [{"id": "a", "status": "running"}]
         def digest():
@@ -106,7 +106,7 @@ class HourlyFacts(unittest.TestCase):
         self.assertIn(b"ATTENTION count: 0; live work: no.", report)
         self.assertFalse(any(line.startswith(b"ATTENTION ") for line in report.splitlines()))
 
-    def test_unit_and_agent_triggers_exhaustive(self):
+    def test_triggers_exhaustive(self):
         # Exhaustive finite product: 8 unit states x 5 agent conditions = 40 cases.
         states = ["UNALLOCATED", "SUBMITTED", "RUNNING", "DONE", "ABANDONED", "SUPERSEDED", "FAILED", "NEEDS_HUMAN"]
         for state, agent in itertools.product(states, [None, "idle", "running", "working", "busy"]):
@@ -120,7 +120,7 @@ class HourlyFacts(unittest.TestCase):
         self.plan(units={"u": {"state": "SUBMITTED"}})
         self.assertTrue(any(f for f, _ in hourly_facts.state_facts(self.state, 72, {})[0]))
 
-    def test_ready_and_old_directories(self):
+    def test_ready_and_old(self):
         self.plan("live", {"done": {"state": "DONE"}, "wait": {"state": "RUNNING", "job_id": "a"}},
                   [{"id": "ready", "needs": ["done"]}, {"id": "blocked", "needs": ["wait"]}], old=True)
         self.plan("old", {"invisible": {"state": "FAILED"}}, old=True)
@@ -132,7 +132,6 @@ class HourlyFacts(unittest.TestCase):
         self.assertNotIn(b"invisible", report)
 
     def test_checks_all_failure_triggers(self):
-        # Exhaustive documented bad conclusions (plus legacy StatusContext ERROR).
         for status in sorted(hourly_facts.BAD):
             with self.subTest(status=status):
                 self.responses["prs"] = [{"number": 1, "title": "test", "mergeable": "MERGEABLE",
@@ -140,11 +139,15 @@ class HourlyFacts(unittest.TestCase):
                 self.responses["runs"] = [{"conclusion": status.lower(), "headSha": "abc"}]
                 report = self.collect()
                 self.assertIn(b"ATTENTION PR 1", report)
-                self.assertRegex(report, rb"(?m)^ATTENTION None " + status.lower().encode())
+                ci = rb"(?m)^ATTENTION None " + status.lower().encode()
+                if status in {"FAILURE", "TIMED_OUT"}:
+                    self.assertRegex(report, ci)
+                else:
+                    self.assertNotRegex(report, ci)
                 self.assertIn(status.encode() + b":1", report)
                 self.assertIn(b"mergeable MERGEABLE", report)
 
-    def test_unreadable_sources_and_malformed_inputs(self):
+    def test_unreadable_sources(self):
         self.plan(units={"u": {"state": "RUNNING", "job_id": "a"}})
         self.responses["agents"] = {"error": {"code": "DAEMON_DOWN"}}
         report = self.collect()
@@ -163,7 +166,7 @@ class HourlyFacts(unittest.TestCase):
         (sf.parent.parent / "plan.json").write_text('{"units":[{"id":"u","needs":"oops"}]}')
         self.assertIn(b"needs a list", self.collect())
 
-    def test_missing_inputs_tools_and_target_branch(self):
+    def test_inputs_and_tools(self):
         self.responses["agents"] = {"error": "daemon down"}
         report = self.collect()
         self.assertNotIn(b"ATTENTION paseo", report)  # no bound active unit
@@ -172,6 +175,52 @@ class HourlyFacts(unittest.TestCase):
         self.env["HANIG_ORCHESTRATE_DIR"] = str(self.root / "missing")
         self.assertIn(b"Tracker: UNAVAILABLE", self.collect())
 
+    def test_clock_change_delivery(self):
+        import datetime
+        self.addCleanup(time.tzset)
+        self.env["TZ"] = "America/Los_Angeles"
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            time.tzset()
+            try:
+                for index, stamp in enumerate(("2026-11-01T08:55:00+00:00", "2026-11-01T09:55:00+00:00")):
+                    instant = datetime.datetime.fromisoformat(stamp)
+                    class Clock(datetime.datetime):
+                        @classmethod
+                        def now(cls, tz=None):
+                            return instant.astimezone(tz)
+                    self.responses["agents"] = [{"id": "a", "status": "running"}] if index else []
+                    (self.root / "responses.json").write_text(json.dumps(self.responses))
+                    with mock.patch.object(time, "time", return_value=instant.timestamp()), mock.patch.object(datetime, "datetime", Clock):
+                        hourly_facts.main(self.args)
+                    result = wait_report.take_report(self.output)
+                    self.assertEqual(result is not None, bool(index))
+            finally:
+                os.environ.pop("TZ", None)
+                time.tzset()
+
+    def test_pr_list_limit(self):
+        gh = self.tools / "gh"
+        gh.write_text(gh.read_text().replace("v=d[k]\n",
+            "v=d[k]\nif k == 'prs': v=v[:int(sys.argv[sys.argv.index('--limit')+1])]\n"))
+        self.responses["prs"] = [
+            {"number": n, "title": str(n), "statusCheckRollup": [
+                {"conclusion": "FAILURE" if n == 1 else "SUCCESS"}]}
+            for n in range(1001, 0, -1)]
+        self.assertIn(b"ATTENTION PR 1 ", self.collect())
+
+    def test_unsearchable_plan(self):
+        sf = self.plan(units={"u": {"state": "RUNNING"}})
+        directory = sf.parent.parent
+        directory.chmod(0)
+        try:
+            self.assertIn(b"ATTENTION wave ", self.collect())
+        finally:
+            directory.chmod(0o700)
+
+    def test_cancelled_latest_run(self):
+        self.responses["runs"] = [{"conclusion": "cancelled"}]
+        self.assertIn(b"ATTENTION count: 0; live work: no.", self.collect())
+
     def test_continued_predecessor(self):
         self.plan(units={"old": {"state": "INCOMPLETE"}, "new": {"state": "DONE"}},
                   plan=[{"id": "old"}, {"id": "new", "author_history": [{"unit": "old"}]}])
@@ -179,16 +228,16 @@ class HourlyFacts(unittest.TestCase):
         self.assertIn(b"continued by new", report)
         self.assertFalse(any(line.startswith(b"ATTENTION ") for line in report.splitlines()))
         self.assertIn(b"ATTENTION count: 0; live work: no.", report)
-        # Cross-plan references and self references do not suppress attention.
         self.plan("other", {"old": {"state": "INCOMPLETE"}}, [{"id": "old", "author_history": [{"unit": "old"}]}])
         report = self.collect()
         self.assertRegex(report, rb"(?m)^ATTENTION other .*?/old: INCOMPLETE")
 
     def test_unreadable_state_root(self):
-        with mock.patch.object(Path, "iterdir", side_effect=PermissionError("fixture denied")):
-            lines, ready, leftovers, live, active = hourly_facts.state_facts(self.state, 72, {})
-        self.assertTrue(lines[0][0])
-        self.assertIn("fixture denied", lines[0][1])
+        for method in ("iterdir", "is_dir"):
+            with mock.patch.object(Path, method, side_effect=PermissionError("fixture denied")):
+                lines, ready, leftovers, live, active = hourly_facts.state_facts(self.state, 72, {})
+            self.assertTrue(lines[0][0])
+            self.assertIn("fixture denied", lines[0][1])
 
     def test_portable_required_paths(self):
         source = (SCRIPTS / "hourly_facts.py").read_text()
@@ -199,7 +248,7 @@ class HourlyFacts(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn(b"usage:", result.stderr)
 
-    def test_waiter_restart_quiet_attention_live_and_timeout(self):
+    def test_waiter(self):
         self.collect()
         quiet = self.output / "20000101-00.md"
         (self.output / "latest.md").replace(quiet)
