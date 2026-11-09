@@ -114,7 +114,7 @@ def state_facts(root, live_hours, agents):
             except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
                 lines.append((True, "{}: unreadable plan: {}".format(label, exc)))
                 plan_units, successors = [], {}
-            live_work = live_work or bool(open_units)
+            live_work = live_work or bool(open_units.keys() - successors.keys())
             for uid, status in sorted(open_units.items()):
                 if uid in successors:
                     lines.append((False, "{}/{}: {}; continued by {}".format(
