@@ -131,7 +131,7 @@ class HourlyFacts(unittest.TestCase):
     self.assertNotIn(b"invisible", report)
 
   def test_checks_all_failure_triggers(self):
-    for status in sorted(hourly_facts.BAD):
+    for status in ("FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "ERROR"):
       with self.subTest(status=status):
         self.responses["prs"] = [{"number": 1, "title": "test", "mergeable": "MERGEABLE",
                     "statusCheckRollup": [{"conclusion": status}, {"state": "SUCCESS"}]}]
@@ -281,6 +281,91 @@ class HourlyFacts(unittest.TestCase):
     report = self.collect()
     self.assertRegex(report, rb"(?m)^ATTENTION other .*?/old: INCOMPLETE")
 
+  def test_active_continued_predecessor_wakes(self):
+    # Exhaustive bound: both active states, both present and absent bound agent.
+    for state, present in itertools.product(("RUNNING", "SUBMITTED"), (True, False)):
+      with self.subTest(state=state, present=present):
+        self.plan(units={"old": {"state": state, "job_id": "a"}, "new": {"state": "DONE"}},
+          plan=[{"id": "old"}, {"id": "new", "author_history": [{"unit": "old"}]}], old=True)
+        self.responses["agents"] = [{"id": "a", "status": "idle"}] if present else []
+        report = self.collect()
+        self.assertIn(b"live work: yes.", report)
+        self.assertRegex(report, rb"(?m)^ATTENTION wave .*?/old: " + state.encode())
+        self.assertNotIn(b"continued by new", report)
+        # A new waiter lineage for each fixture; persisted record must consume once.
+        seen = self.output / ".seen.json"
+        if seen.exists():
+          seen.unlink()
+        self.assertIsNotNone(wait_report.take_report(self.output))
+        self.assertIsNone(wait_report.take_report(self.output))
+
+  def test_deep_json_sources(self):
+    # Fixed adversarial bound: 2,000 nested JSON arrays, including Python 3.9.
+    deep = "[" * 2000 + "]" * 2000
+    sf = self.plan()
+    for source, message in ((sf, b"unreadable state/plan"),
+                            (sf.parent.parent / "plan.json", b"unreadable plan"),
+                            (self.audit, b"Tracker: UNAVAILABLE")):
+      with self.subTest(source=source):
+        original = source.read_bytes()
+        try:
+          source.write_text(deep)
+          self.assertRegex(self.collect(), rb"(?m)^ATTENTION .*" + message)
+        finally:
+          source.write_bytes(original)
+    self.output.mkdir(exist_ok=True)
+    seen = self.output / ".seen.json"
+    seen.write_text(deep)
+    with self.assertRaisesRegex(ValueError, "invalid seen record"):
+      wait_report.take_report(self.output)
+    self.assertEqual(seen.read_text(), deep)
+
+  def test_calendar_report_validation(self):
+    self.output.mkdir()
+    valid = self.output / "20261109-06+0000.md"
+    valid.write_text("Status: ATTENTION count: 1; live work: no.\n")
+    self.assertEqual(wait_report.take_report(self.output), valid)
+    seen = self.output / ".seen.json"
+    before = seen.read_bytes()
+    # Exhaustive declared invalid date/hour/offset/structure fixtures (9).
+    for name in ("20261399-99+9999.md", "20260229-06+0000.md",
+                 "20261131-06+0000.md", "20261109-24+0000.md",
+                 "20261109-06+2400.md", "20261109-06+0060.md",
+                 "20261109-06-2460.md", "20261109-06.md",
+                 "2026119-06+0000.md"):
+      with self.subTest(name=name):
+        invalid = self.output / name
+        invalid.write_bytes(valid.read_bytes())
+        self.assertIsNone(wait_report.take_report(self.output))
+        self.assertEqual(seen.read_bytes(), before)
+        seen.write_text(json.dumps([name]))
+        corrupted = seen.read_bytes()
+        with self.assertRaisesRegex(ValueError, "invalid seen record"):
+          wait_report.take_report(self.output)
+        self.assertEqual(seen.read_bytes(), corrupted)
+        seen.write_bytes(before)
+        invalid.unlink()
+    # Valid leap day and edge offsets must still deliver.
+    for name in ("20240229-23+2359.md", "20261109-00-2359.md"):
+      path = self.output / name
+      path.write_bytes(valid.read_bytes())
+      self.assertEqual(wait_report.take_report(self.output), path)
+
+  def test_completed_pr_conclusions(self):
+    # Exhaustive declared 12 conclusions, plus 3 pending representations.
+    for conclusion in ("SUCCESS", "NEUTRAL", "SKIPPED", "STARTUP_FAILURE",
+                       "FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED",
+                       "ERROR", "STALE", "UNKNOWN_FUTURE", ""):
+      with self.subTest(conclusion=conclusion):
+        self.responses["prs"] = [{"number": 1, "title": "test",
+          "statusCheckRollup": [{"status": "COMPLETED", "conclusion": conclusion}]}]
+        report = self.collect()
+        self.assertEqual(b"ATTENTION PR 1 " in report,
+                         conclusion not in {"SUCCESS", "NEUTRAL", "SKIPPED"})
+    for check in ({"status": "IN_PROGRESS"}, {"status": "QUEUED"}, {"state": "PENDING"}):
+      self.responses["prs"][0]["statusCheckRollup"] = [check]
+      self.assertNotIn(b"ATTENTION PR 1 ", self.collect())
+
   def test_unreadable_state_root(self):
     for method in ("iterdir", "is_dir"):
       with mock.patch.object(Path, method, side_effect=PermissionError("fixture denied")):
@@ -299,7 +384,7 @@ class HourlyFacts(unittest.TestCase):
 
   def test_waiter(self):
     self.collect()
-    quiet = self.output / "20000101-00.md"
+    quiet = self.output / "20000101-00+0000.md"
     (self.output / "latest.md").replace(quiet)
     for path in self.output.glob("2*.md"):
       if path != quiet:
@@ -309,7 +394,7 @@ class HourlyFacts(unittest.TestCase):
       subprocess.run(cmd, env=self.env, capture_output=True, timeout=3)
     self.assertIn(quiet.name, json.loads((self.output / ".seen.json").read_bytes()))
     for index, (count, live) in enumerate([(1, "no"), (0, "yes")], 1):
-      path = self.output / ("20000101-0{}.md".format(index))
+      path = self.output / ("20000101-0{}+0000.md".format(index))
       path.write_text("Status: ATTENTION count: {}; live work: {}.\n".format(count, live))
       result = subprocess.run(cmd, env=self.env, capture_output=True, timeout=3)
       self.assertEqual(result.returncode, 0, result.stderr)
@@ -319,12 +404,12 @@ class HourlyFacts(unittest.TestCase):
 
   def test_invalid_seen_record(self):
     self.output.mkdir()
-    report = self.output / "20261109-06.md"
+    report = self.output / "20261109-06+0000.md"
     report.write_text("Status: ATTENTION count: 1; live work: no.\n")
     self.assertEqual(wait_report.take_report(self.output), report)
     seen = self.output / ".seen.json"
     # Exhaustive declared malformed fixtures: JSON types, entries and syntax.
-    for data in (b"{}", b'"20261109-06.md"', b"null", b"1", b"true",
+    for data in (b"{}", b'"20261109-06+0000.md"', b"null", b"1", b"true",
                  b"[1]", b"[null]", b"[[]]", b'["../report.md"]', b"{", b"\xff"):
       with self.subTest(data=data):
         seen.write_bytes(data)

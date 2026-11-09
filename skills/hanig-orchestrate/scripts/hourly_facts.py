@@ -18,7 +18,7 @@ from skill_paths import sibling_skill_root
 TERMINAL = {"DONE", "ABANDONED", "SUPERSEDED"}
 ACTIVE = {"SUBMITTED", "RUNNING"}
 RUNNING_AGENTS = {"running", "working", "busy"}
-BAD = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "ERROR"}
+BENIGN = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 
 
 def local_time(timestamp=None):
@@ -111,11 +111,13 @@ def state_facts(root, live_hours, agents):
           for row in history:
             if row["unit"] != uid:
               successors.setdefault(row["unit"], set()).add(uid)
-      except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+      except (OSError, ValueError, RecursionError, KeyError, TypeError, AttributeError) as exc:
         lines.append((True, "{}: unreadable plan: {}".format(label, exc)))
         plan_units, successors = [], {}
       for unit in plan_units:
         states.setdefault(unit["id"], "UNALLOCATED")
+      successors = {uid: following for uid, following in successors.items()
+                    if states.get(uid) not in ACTIVE}
       open_units = {uid: status for uid, status in states.items() if status not in TERMINAL}
       if not is_live:
         leftovers += len(open_units)
@@ -143,7 +145,7 @@ def state_facts(root, live_hours, agents):
           note = "; continued by " + ", ".join(sorted(successors[uid])) if uid in successors else ""
           ready.append((uid not in successors, "ready: {}/{} (needs {} DONE; observed {}){}".format(
             directory.name, uid, ", ".join(needs) or "nothing", observed, note)))
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (OSError, ValueError, RecursionError, KeyError, TypeError) as exc:
       lines.append((True, "{}: unreadable state/plan: {}".format(label, exc)))
   return lines, ready, leftovers, live_work or any(flag for flag, _ in ready), active
 
@@ -168,7 +170,7 @@ def tracker(args):
       fence += b"`"
     return ("Tracker observed {}; audit read_finished {}. Offline; never refreshed here.\n".format(
       observed, read).encode() + fence + b"\n" + section + b"\n" + fence + b"\n", False)
-  except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
+  except (OSError, ValueError, RecursionError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
     return ("ATTENTION Tracker: UNAVAILABLE (observed {}): {}\n".format(
       observed, one_line(exc)).encode(), True)
 
@@ -185,7 +187,7 @@ def collect(args):
   try:
     agent_rows = list_source([args.paseo, "ls", "--json"], args.repo)
     agents = {str(a["id"]): a for a in agent_rows}
-  except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+  except (OSError, ValueError, RecursionError, KeyError, TypeError, subprocess.SubprocessError) as exc:
     agent_rows, agents, agent_error = [], None, exc
   lines, ready, leftovers, live, active = state_facts(args.state_root, args.live_hours, agents)
   state_obs = local_time()
@@ -215,10 +217,15 @@ def collect(args):
         live = live or bool(rows)
         for pr in rows:
           counts = {}
+          bad = False
           for check in pr.get("statusCheckRollup") or []:
             status = check.get("conclusion") or check.get("state") or check.get("status") or "PENDING"
             counts[status] = counts.get(status, 0) + 1
-          body.append(render(bool(BAD.intersection(counts)), "PR {} {}{}: {}; mergeable {}".format(
+            if check.get("conclusion") or check.get("status") == "COMPLETED":
+              bad = bad or status not in BENIGN
+            elif check.get("state"):
+              bad = bad or status not in BENIGN | {"PENDING", "EXPECTED"}
+          body.append(render(bad, "PR {} {}{}: {}; mergeable {}".format(
             pr["number"], pr["title"], " (draft)" if pr.get("isDraft") else "",
             " ".join("{}:{}".format(k, v) for k, v in sorted(counts.items())) or "no checks", pr.get("mergeable"))))
       else:
@@ -227,7 +234,7 @@ def collect(args):
           body.append(render(str(status).upper() in {"FAILURE", "TIMED_OUT", "STARTUP_FAILURE"}, "{} {} at {}".format(row.get("event"), status, row.get("headSha"))))
       if not rows:
         body.append("- none")
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, RecursionError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
       body.append(render(True, "{} UNAVAILABLE (observed {}): {}".format(kind, local_time(), exc)))
   section, unavailable = tracker(args)
   count += unavailable
