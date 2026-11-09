@@ -18,7 +18,7 @@ def take_report(directory):
         seen_path = directory / ".seen.json"
         seen = set(json.loads(seen_path.read_bytes())) if seen_path.exists() else set()
         for path in sorted(directory.glob("*.md")):
-            if not re.fullmatch(r"\d{8}-\d{2}\.md", path.name) or path.name in seen:
+            if not re.fullmatch(r"\d{8}-\d{2}(?:[+-]\d{4})?\.md", path.name) or path.name in seen:
                 continue
             report = path.read_bytes()
             status = re.search(rb"^Status: ATTENTION count: (\d+); live work: (yes|no)\.$", report, re.M)
