@@ -159,3 +159,75 @@ The sweep examines every in-progress issue regardless of age and repeats after e
 Forge routing supports standard HTTP(S) and SSH remotes without explicit ports and keeps the observed HTTP(S) PR URL; ports are refused rather than silently discarded. Reconciliation requires a single-parent squash result; merge observations and the squash method remain attested. The actual merge parent's SHA supplies `--target-commit`, including when the target moved after the original observation. Head matching does not atomically freeze CI reruns or concurrent PR retargeting, and a one-parent result alone does not distinguish squash from a one-commit rebase by another operator. The same credential can bypass `merge_unit.py`. This detects bypass after the fact; it does not prevent it. Coverage is limited to supplied directories and the merged-PR window, so a direct push without a merged PR is outside the comparison. A pending request accounts for a lost response; cancelled or abandoned requests do not account for later merges. Historical reconciliation attests recording, not who executed the merge. A matching pending record cannot distinguish a lost response from a later direct merge of the same PR and head; this check establishes record presence, never execution attribution. The observation is not an atomic forge snapshot; a changed or unreadable page calls for a retry. <!-- declaration: limit.merge-command -->
 
 The hook resolves a supported `gh` locator through a bounded `gh repo view` read, then reports counts after exact anchor matching for a single literal `git [-C DIR] push origin ...` without push options, or explicit `gh ... --repo OWNER/REPO` (`-R` also works). Other routing, compound commands, malformed inputs, missing anchors and differing hostname spellings produce repository-specific uncertainty. Hostname spelling is preserved in the comparison, and action detection is unchanged.
+
+## Scheduled facts and one-shot wake
+
+Keep one `wait_report.py` waiter armed. On wake, read the printed report path,
+show the report to the owner with a short summary, act on its ATTENTION items
+under the confirmed mandate (including dispatching ready work), then re-arm.
+The scripts supply facts and no authority; they neither call a model nor send
+notifications. <!-- declaration: report.scheduled-facts -->
+
+Set `HANIG_ORCHESTRATE_DIR` to the directory holding the loaded SKILL.md.
+Install `hanig-project` beside it or set `HANIG_SKILL_DEP_ROOTS` to its known
+parent. Tracker rendering uses that sibling's offline `linear_sync.py section`,
+never an audit or tracker API. STALE remains visible. Supply absolute paths for
+all five inputs: `--state-root` contains immediate plan children with `plan.json`
+and `state/swarm-state.json`; `--output-dir`, `--repo`, `--binding`, and `--audit`
+have no host defaults. `--branch` defaults to main; `--live-hours` defaults to 72.
+`--paseo` and `--gh` default to PATH lookups; pass absolute executables when a
+scheduler's PATH is sparse. Commands run directly, without an interactive shell.
+
+For macOS, save an operator-edited launchd plist like this (replace every
+`/absolute/...` path), then load it with `launchctl bootstrap gui/$(id -u) FILE`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>local.orchestrator.hourly-facts</string>
+  <key>ProgramArguments</key><array>
+    <string>/absolute/python3</string>
+    <string>/absolute/skills/hanig-orchestrate/scripts/hourly_facts.py</string>
+    <string>--state-root</string><string>/absolute/coordinator</string>
+    <string>--output-dir</string><string>/absolute/reports</string>
+    <string>--repo</string><string>/absolute/checkout</string>
+    <string>--binding</string><string>/absolute/binding.json</string>
+    <string>--audit</string><string>/absolute/audit.json</string>
+    <string>--paseo</string><string>/absolute/bin/paseo</string>
+    <string>--gh</string><string>/absolute/bin/gh</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>HANIG_ORCHESTRATE_DIR</key><string>/absolute/skills/hanig-orchestrate</string>
+  </dict>
+  <key>StartCalendarInterval</key><dict><key>Minute</key><integer>55</integer></dict>
+</dict></plist>
+```
+
+For Linux, the equivalent operator crontab entry is:
+
+```cron
+55 * * * * HANIG_ORCHESTRATE_DIR=/absolute/skills/hanig-orchestrate /absolute/python3 /absolute/skills/hanig-orchestrate/scripts/hourly_facts.py --state-root /absolute/coordinator --output-dir /absolute/reports --repo /absolute/checkout --binding /absolute/binding.json --audit /absolute/audit.json --paseo /absolute/bin/paseo --gh /absolute/bin/gh
+```
+
+The scheduler runs at minute 55; reports are labelled for the upcoming hour
+(current local time plus ten minutes). A missed run is superseded by the next
+report. Each hourly file and `latest.md` is replaced atomically. Sources carry
+local observation times; an agent's running status says nothing about progress.
+ATTENTION marks a fact to investigate, never a unit judgment. Non-terminal
+units in older inactive state directories are counted without being listed.
+
+Arm the waiter with:
+
+```bash
+python3 "$HANIG_ORCHESTRATE_DIR/scripts/wait_report.py" --output-dir /absolute/reports
+```
+
+It polls once a minute, persists quiet reports as seen, and prints the first
+unseen report with live work or ATTENTION. Keep `.seen.json` with the output
+directory across restarts: it defines the waiter lineage, and deleting it starts
+a new lineage. A host-local lock serializes concurrent consumption. Consumption
+is recorded before printing, so a crash between recording and delivery can lose
+that wake; the next hourly report supersedes it. A malformed seen record or
+report stops the waiter visibly; preserve and inspect the file, then restore a
+valid record/report and re-arm. The installer deploys no scheduler entries.
