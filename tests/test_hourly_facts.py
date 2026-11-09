@@ -155,11 +155,26 @@ class HourlyFacts(unittest.TestCase):
 
   def test_existing_unreadable_state_file_needs_attention(self):
     sf = self.plan()
-    sf.chmod(0)
-    try:
-      self.assertRegex(self.collect(), rb"(?m)^ATTENTION wave .*unreadable state/plan")
-    finally:
-      sf.chmod(0o600)
+    (self.root / "responses.json").write_text(json.dumps(self.responses))
+    read_bytes = Path.read_bytes
+    def denied(path):
+      if path == sf:
+        raise PermissionError("fixture denied")
+      return read_bytes(path)
+    # Inject the read error rather than assuming chmod removes read access:
+    # privileged collectors can read mode-000 files. Exercise the real CLI
+    # and inspect its written report, including the ATTENTION prefix.
+    with mock.patch.object(Path, "read_bytes", denied), mock.patch.dict(
+        os.environ, self.env, clear=True), mock.patch("builtins.print"):
+      hourly_facts.main(self.args)
+    report = (self.output / "latest.md").read_bytes()
+    self.assertRegex(report, rb"(?m)^ATTENTION wave .*unreadable state/plan.*fixture denied")
+
+  def test_existing_state_directory_needs_attention(self):
+    sf = self.plan()
+    sf.unlink()
+    sf.mkdir()
+    self.assertRegex(self.collect(), rb"(?m)^ATTENTION wave .*unreadable state/plan")
 
   def test_triggers_exhaustive(self):
     # Exhaustive finite product: 8 unit states x 5 agent conditions = 40 cases.
