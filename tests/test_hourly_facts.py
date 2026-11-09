@@ -172,6 +172,12 @@ class HourlyFacts(unittest.TestCase):
         self.env["HANIG_ORCHESTRATE_DIR"] = str(self.root / "missing")
         self.assertIn(b"Tracker: UNAVAILABLE", self.collect())
 
+    def test_unreadable_state_root(self):
+        with mock.patch.object(Path, "iterdir", side_effect=PermissionError("fixture denied")):
+            lines, ready, leftovers, live, active = hourly_facts.state_facts(self.state, 72, {})
+        self.assertTrue(lines[0][0])
+        self.assertIn("fixture denied", lines[0][1])
+
     def test_portable_required_paths(self):
         source = (SCRIPTS / "hourly_facts.py").read_text()
         for forbidden in ("/Users/", "/home/", "brood-lord", "chimera", "andromeda"):
