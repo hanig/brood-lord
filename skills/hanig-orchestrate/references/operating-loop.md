@@ -49,8 +49,7 @@ python3 "$HANIG_ORCHESTRATE_DIR/scripts/wait_report.py" --output-dir /reports
 ```
 
 The waiter polls each minute. Quiet reports are persisted in .seen.json; the first
-unseen report with live work or ATTENTION wakes it. Preserve .seen.json across restarts. Report names require calendar-valid
-YYYYMMDD-HH±ZZZZ.md timestamps; invalid seen entries refuse consumption.
+unseen report with live work or ATTENTION wakes it. Preserve .seen.json across restarts.
 A host-local lock serializes consumption before printing; a crash then can lose a wake,
 superseded by the next report. Malformed records/reports stop: restore valid bytes and
 re-arm. The installer deploys no scheduler entries.
