@@ -99,6 +99,7 @@ def state_facts(root, live_hours, agents):
                 for uid, u in units.items()}
       successors = {}
       plan_units = []
+      plan_readable = True
       try:
         plan_units = read_json(directory / "plan.json")["units"]
         if not isinstance(plan_units, list):
@@ -119,7 +120,9 @@ def state_facts(root, live_hours, agents):
       except (OSError, ValueError, RecursionError, KeyError, TypeError, AttributeError) as exc:
         lines.append((True, "{}: unreadable plan: {}".format(label, exc)))
         plan_units, successors = [], {}
-      plan_ids = {unit["id"] for unit in plan_units}
+        plan_readable = False
+      # Unknown membership must preserve state diagnostics, not assert absence.
+      plan_ids = {unit["id"] for unit in plan_units} if plan_readable else set(states)
       counts = {}
       for uid, status in states.items():
         if uid not in plan_ids:
@@ -127,7 +130,6 @@ def state_facts(root, live_hours, agents):
       if counts:
         lines.append((False, "{}: not in plan.json: {}".format(label,
           ", ".join("{} {}".format(count, status) for status, count in sorted(counts.items())))))
-      states = {uid: status for uid, status in states.items() if uid in plan_ids}
       for unit in plan_units:
         states.setdefault(unit["id"], "UNALLOCATED")
       is_live = now - sf.stat().st_mtime <= live_hours * 3600 or any(
@@ -151,7 +153,10 @@ def state_facts(root, live_hours, agents):
       needs_by_id = {unit["id"]: unit.get("needs", []) for unit in plan_units}
       successors = {uid: following for uid, following in successors.items()
                     if states.get(uid) not in ACTIVE}
-      open_units = {uid: status for uid, status in states.items() if status not in TERMINAL}
+      # Retain all recorded states for needs/readiness and the existing live
+      # directory rule; filter only which units receive individual diagnostics.
+      open_units = {uid: status for uid, status in states.items()
+                    if uid in plan_ids and status not in TERMINAL}
       if not is_live:
         leftovers += len(open_units)
         continue
@@ -163,7 +168,7 @@ def state_facts(root, live_hours, agents):
           continue
         flag = status not in ACTIVE | {"UNALLOCATED"}
         note = ""
-        if status == "HELD":
+        if status == "HELD" and plan_readable:
           flag = uid in decisions
           waiting = ["{} ({})".format(need, states.get(need, "UNALLOCATED"))
                      for need in needs_by_id[uid] if states.get(need) != "DONE"]

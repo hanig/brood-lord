@@ -173,6 +173,51 @@ class HourlyFacts(unittest.TestCase):
     self.audit.unlink()
     self.assertIn(b"ATTENTION Tracker: UNAVAILABLE", self.collect())
 
+  def test_out_of_plan_dependencies_keep_recorded_states(self):
+    # Exhaustive bound: DONE and all four decision-root states outside the plan.
+    for status in ("DONE", "FAILED", "FAILED_EVIDENCE", "NEEDS_HUMAN", "INCOMPLETE"):
+      with self.subTest(status=status):
+        self.plan(units={"done": {"state": "DONE"}, "old": {"state": status},
+                         "held": {"state": "HELD"}, "held_done": {"state": "HELD"}},
+          plan=[{"id": "ready", "needs": ["done"]},
+                {"id": "held", "needs": ["old"]}, {"id": "held_done", "needs": ["done"]}])
+        report = self.collect()
+        self.assertIn(b"ATTENTION ready: wave/ready", report)
+        line = next(line for line in report.splitlines() if b"/held: HELD" in line)
+        self.assertEqual(line.startswith(b"ATTENTION "), status != "DONE")
+        if status != "DONE":
+          self.assertIn(("old ({})".format(status)).encode(), line)
+        line = next(line for line in report.splitlines() if b"/held_done: HELD" in line)
+        self.assertTrue(line.startswith(b"- "))
+        self.assertIn(b"no non-DONE needs", line)
+        self.assertNotIn(b"(UNALLOCATED)", report)
+        self.assertNotRegex(report, rb"(?m)^ATTENTION .*?/(old|done):")
+        self.assertEqual(sum(b"not in plan.json:" in line for line in report.splitlines()), 1)
+
+  def test_unreadable_plan_preserves_active_diagnostics(self):
+    # Exhaustive bound: unreadable and invalid plans x both active states.
+    for denied, state in itertools.product((False, True), ("RUNNING", "SUBMITTED")):
+      with self.subTest(denied=denied, state=state):
+        sf = self.plan(units={"u": {"state": state, "job_id": "absent"}}, old=True)
+        plan_path = sf.parent.parent / "plan.json"
+        if not denied:
+          plan_path.write_text("{broken")
+        read_bytes = Path.read_bytes
+        def read(path):
+          if denied and path == plan_path:
+            raise PermissionError("fixture denied")
+          return read_bytes(path)
+        (self.root / "responses.json").write_text(json.dumps(self.responses))
+        with mock.patch.object(Path, "read_bytes", read), mock.patch.dict(
+            os.environ, self.env, clear=True), mock.patch("builtins.print"):
+          hourly_facts.main(self.args)
+        report = (self.output / "latest.md").read_bytes()
+        self.assertRegex(report, rb"(?m)^ATTENTION wave .*unreadable plan")
+        self.assertRegex(report, rb"(?m)^ATTENTION wave .*?/u: " + state.encode())
+        self.assertIn(b"bound agent absent: ABSENT", report)
+        self.assertIn(b"live work: yes.", report)
+        self.assertNotIn(b"not in plan.json", report)
+
   def test_parts_and_read_only(self):
     self.plan(units={"u": {"state": "RUNNING", "job_id": "a"}})
     self.responses["agents"] = [{"id": "a", "status": "running"}]
