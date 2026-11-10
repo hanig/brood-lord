@@ -27,6 +27,7 @@ import socket
 import subprocess
 import sys
 import warnings
+import weakref
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -87,6 +88,18 @@ _ABBREV = {
     "grad_clip": "clip",
 }
 _INPUTS: dict[str, list[str]] = {}
+_METRIC_STATE = {}
+
+
+def _metric_state(run):
+    key = id(run)
+    if key not in _METRIC_STATE:
+        try:
+            ref = weakref.ref(run, lambda ref: _METRIC_STATE.pop(key, None))
+        except TypeError:
+            ref = lambda: run
+        _METRIC_STATE[key] = (ref, {"summaries": {}, "axis": STEP_METRIC})
+    return _METRIC_STATE[key][1]
 
 
 # --------------------------------------------------------------------------- provenance
@@ -237,7 +250,7 @@ def run_name(
         ab = _ABBREV.get(leaf, leaf.replace("_", "")[:10])
         parts.append(_slugify(f"{ab}{_fmt_value(val)}"))
     if seed is not None:
-        parts.append(f"s{seed}")
+        parts.append(_slugify(f"s{_redact(seed)}"))
     name = "-".join(p for p in parts if p)
     if len(name) > max_len:
         import hashlib
@@ -251,12 +264,13 @@ def run_name(
 
 
 def _rank() -> int:
-    for var in ("RANK", "LOCAL_RANK"):
-        if var in os.environ:
-            return int(os.environ[var])
+    if "RANK" in os.environ:
+        return int(os.environ["RANK"])
     if int(os.environ.get("SLURM_NTASKS", "1")) > 1 and "SLURM_PROCID" in os.environ:
-        return int(os.environ["SLURM_PROCID"])
-    return 0
+        rank = int(os.environ["SLURM_PROCID"])
+        if rank != 0:
+            return rank
+    return int(os.environ.get("LOCAL_RANK", "0"))
 
 
 def _new_run_id() -> str:
@@ -308,7 +322,8 @@ def start_run(
         return wandb.init(mode="disabled")
 
     _check_slug(project, "project")
-    _check_slug(family, "family")
+    if not isinstance(family, str) or not family:
+        raise ValueError("family must be a non-empty string")
     if job_type not in JOB_TYPES:
         raise ValueError(f"job_type {job_type!r} not in {JOB_TYPES}")
     if not hypothesis or len(hypothesis.strip()) < 10:
@@ -385,15 +400,17 @@ def define_metrics(
     summaries: Mapping[str, str] | None = None,
 ) -> None:
     """Put every namespace on one step axis and declare best-value summaries."""
+    state = _metric_state(run)
+    definitions = {**state["summaries"], **(summaries or {})}
     run.define_metric(step_metric)
     for ns in namespaces:
-        if f"{ns}/" != step_metric[: len(ns) + 1]:
-            run.define_metric(f"{ns}/*", step_metric=step_metric)
-    for key, how in (summaries or {}).items():
+        run.define_metric(f"{ns}/*", step_metric=step_metric)
+    for key, how in definitions.items():
         if how not in ("min", "max", "mean", "last"):
             raise ValueError(f"summary for {key!r} must be min, max, mean or last")
         # wandb 0.31 dropped define_metric(goal=); summary="min"/"max" is enough.
         run.define_metric(key, step_metric=step_metric, summary=how)
+    state.update(summaries=definitions, axis=step_metric)
 
 
 _warned_keys: set[str] = set()
@@ -405,7 +422,7 @@ def log_step(run, step: int, metrics: Mapping[str, Any], commit: bool | None = N
         if "/" not in k and k not in _warned_keys:
             _warned_keys.add(k)
             warnings.warn(f"metric {k!r} has no namespace; use train/, val/, opt/, perf/ ...")
-    run.log({**metrics, STEP_METRIC: step}, commit=commit)
+    run.log({**metrics, _metric_state(run)["axis"]: step}, commit=commit)
 
 
 # --------------------------------------------------------------------------- artifacts
@@ -418,6 +435,8 @@ def _qualified(art) -> str:
 
 def use_input(run, ref: str, type: str | None = None):
     """``run.use_artifact`` that records lineage and warns on unpinned refs."""
+    if getattr(run, "disabled", False):
+        return None
     if not _VERSION_RE.search(ref):
         warnings.warn(
             f"input {ref!r} is not pinned to :vN; the resolved version is recorded, "
@@ -549,11 +568,19 @@ def log_model(
     """Log a checkpoint as a ``model`` artifact with step, metrics and arch in metadata.
 
     The default name ``ckpt-<run_id>`` keeps every checkpoint of a run in one
-    collection, versioned, with ``step-N`` and ``best`` aliases.
+    collection, versioned, with ``step-N`` and ``best`` aliases. IDs that would
+    violate name rules use a stable digest label; metadata retains ``run_id``.
     """
     if getattr(run, "disabled", False):
         return None
-    name = name or f"ckpt-{run.id}".lower()
+    if not name:
+        name = f"ckpt-{run.id}".lower()
+        try:
+            _check_artifact_name(name)
+        except ValueError:
+            import hashlib
+
+            name = "ckpt-id" + hashlib.sha256(str(run.id).encode()).hexdigest()
     _check_artifact_name(name)
     metrics = dict(_redact(metrics or {}))
     shown = ", ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in metrics.items())
@@ -566,6 +593,7 @@ def log_model(
             "family": run.config.get("family"),
             "arch": dict(run.config.get("arch") or {}),
             "run_name": run.name,
+            "run_id": run.id,
         }
     )
     art.metadata = _redact(md)
@@ -636,6 +664,7 @@ def finish(run, outcome: str, verdict: str, exit_code: int | None = None) -> lis
     for issue in issues:
         print(f"[wbkit] {issue}", file=sys.stderr)
     run.finish(exit_code=exit_code)
+    _METRIC_STATE.pop(id(run), None)
     return issues
 
 
@@ -671,6 +700,8 @@ def lint_run(
     prov = config.get("provenance") or {}
     if isinstance(prov, Mapping) and isinstance(prov.get("value"), Mapping):
         prov = prov["value"]  # older public-API config shape wraps values
+    if not isinstance(prov, Mapping):
+        prov = {}
     if not prov.get("git_commit"):
         issues.append("config.no-commit: provenance.git_commit missing")
     elif prov.get("git_dirty"):

@@ -62,6 +62,9 @@ For checkpoints, `wbkit.log_model` fills the card from the run (step, metrics
 at save, file sizes). Add caveats when they exist: "EMA weights only", <!-- declaration: logging.conventions -->
 "optimizer state not included", "trained with a data bug fixed in v4".
 
+For a generated checkpoint name that violates these rules, wbkit uses a stable
+`ckpt-id{digest}` name and records the original `run_id` in metadata. <!-- declaration: logging.conventions -->
+
 ## Metadata
 
 Metadata is for machines: filters, sorting, and later export. Flat or shallow,
