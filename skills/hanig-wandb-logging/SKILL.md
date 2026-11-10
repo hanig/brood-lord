@@ -1,10 +1,9 @@
 ---
 name: hanig-wandb-logging
 description: >-
-  Instrument a project's training, eval and preprocessing code for readable
-  W&B runs: names, hypothesis notes, nested config, metric axes and summaries,
-  rank-zero logging and stable requeue ids. Use for adding wandb logging,
-  run naming or framework integration. Does not judge convergence or success.
+  Instrument training, eval and preprocessing for readable W&B names, notes,
+  nested config, metrics/summaries, rank-zero logging and requeue ids. Use for
+  adding W&B or framework logging. Never judges success or convergence.
 ---
 
 # hanig-wandb-logging

@@ -108,7 +108,7 @@ def provenance(wandb, cwd=None):
     return {'git_commit': sha, 'git_dirty': bool(_git('status', '--porcelain', cwd=cwd)) if sha else None, 'git_branch': _git('rev-parse', '--abbrev-ref', 'HEAD', cwd=cwd), 'git_remote': _redact(_git('config', '--get', 'remote.origin.url', cwd=cwd)), 'command': _redact_argv(sys.argv), 'cwd': os.getcwd(), 'host': socket.gethostname(), 'python': sys.version.split()[0], 'torch': _pkg_version('torch'), 'wandb': wandb.__version__, 'cuda_visible_devices': env.get('CUDA_VISIBLE_DEVICES'), 'slurm': slurm or None, 'started_at': _utcnow()}
 
 def _flatten(d, prefix=''):
-    flat: dict[str, Any] = {}
+    flat = {}
     for k, v in d.items():
         key = f'{prefix}{k}'
         if isinstance(v, Mapping):
@@ -266,7 +266,7 @@ def log_step(run, step, metrics, commit=None):
     for k in metrics:
         if '/' not in k and k not in _warned_keys:
             _warned_keys.add(k)
-            warnings.warn(f'metric {k!r} needs a namespace')
+            warnings.warn(f'metric {_redact(k)!r} needs a namespace')
     run.log(_redact({**metrics, _metric_state(run)['axis']: step}), commit=commit)
 
 def finish(run, outcome, verdict, exit_code=None):
@@ -276,8 +276,11 @@ def finish(run, outcome, verdict, exit_code=None):
     if getattr(run, 'disabled', False) or not getattr(run, 'id', None):
         return []
     run.notes = _redact((run.notes or '') + f'\nOutcome ({verdict}): {outcome.strip()}')
+    summary = _redact(dict(run.summary))
     for key in list(run.summary.keys()):
-        run.summary[key] = _redact({key: run.summary[key]})[key]
+        if key not in summary:
+            del run.summary[key]
+    run.summary.update(summary)
     run.summary['verdict'] = verdict
     if verdict == 'broken':
         run.tags = tuple(sorted(set(run.tags or ()) | {'broken'}))
