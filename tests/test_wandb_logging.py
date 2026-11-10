@@ -2,7 +2,7 @@
 6 secret keys x 3 config shapes; 4 record types x 3 positions;
 2 global x 2 local ranks x 2 task-count settings;
 6 keys x 3 argv layouts x 3 value shapes. R1 exhausts 5 delimiters x 2 name
-paths, 8 science/3 credential fields, 3 verbatim strings and 3 interrupted writes.
+paths, 8 science/3 credential fields, 3 verbatim strings and 4 interrupted writes.
 SDK absence skips visibly.
 """
 from pathlib import Path
@@ -121,7 +121,7 @@ class ReviewRegressions(Checks):
     for global_rank,local_rank in itertools.product(('0','4'),('0','1')):
       env={'SLURM_NTASKS':'8','SLURM_PROCID':global_rank,'LOCAL_RANK':local_rank}
       with self.subTest(env=env),patch.dict(os.environ,env,clear=True):
-        self.eq(start().disabled,(global_rank,local_rank)!=('0','0'))
+        self.eq(start().disabled,global_rank!='0')
   def test_axis_redefinition(self):
     r=start(summaries={'eval/loss':'min'})
     wbkit.define_metrics(r,namespaces=('aux',))
@@ -166,7 +166,7 @@ class SecondReviewRegressions(Checks):
       if count is not None:
         env['SLURM_NTASKS']=count
       with self.subTest(env=env),patch.dict(os.environ,env,clear=True):
-        self.eq(start().disabled,(proc,local)!=('0','0'))
+        self.eq(start().disabled,proc!='0')
 
 @unittest.skipUnless(importlib.util.find_spec('wandb'),'wandb is absent; optional offline integration requires caller-installed wandb')
 class OfflineIntegration(Checks):
@@ -298,7 +298,7 @@ class RoundOne(Checks):
 class AtomicInitialization(Checks):
   def test_interrupted_writers(self):
     real=Path.write_text
-    for stop in range(3):
+    for stop in range(4):
       with self.subTest(stop=stop),tempfile.TemporaryDirectory()as tmp:
         calls=[0]
         def partial(path,text,*args,**kw):
@@ -318,6 +318,84 @@ class AtomicInitialization(Checks):
             else:self.assertRegex(text,r'^[a-z0-9]{8}\n$')
         self.assertTrue(start(output_dir=tmp).id)
 
+
+class RoundTwo(Checks):
+  def test_authorization(self):
+    text='Authorization: Bearer '+T
+    with patch.object(sys,'argv',['train.py','--header',text]):
+      r=start(config=recipe({'header':text,'Authorization':'Bearer '+T}),hypothesis=text,name=text)
+    self.lacks(T,shown(r))
+    r.summary['text']=text
+    wbkit.finish(r,text,'inconclusive')
+    self.lacks(T,repr(r.__dict__))
+
+  def test_secretory(self):
+    fields=('secretory_cell_fraction','secreted_protein','secretome_size')
+    c={'data':dict.fromkeys(fields,.25)}
+    r=start(config=c,base_config={'data':dict.fromkeys(fields,.1)})
+    self.eq(r.config['data'],c['data'])
+    self.eq(wbkit.config_deltas(c,{'data':{}}),{'data.'+k:.25 for k in fields})
+    wbkit.log_step(r,1,{'data/'+k:.25 for k in fields})
+    for k in fields:self.eq(r.logged[-1]['data/'+k],.25)
+    for k in('secret','client_secret','secret_key'):
+      self.eq(wbkit._redact({k:T})[k],'***')
+
+  def test_rank_priority(self):
+    with patch.dict(os.environ,{'SLURM_PROCID':'0','LOCAL_RANK':'1'},clear=True):
+      self.assertFalse(start().disabled)
+
+  def test_resume_name(self):
+    for legacy in(False,True):
+      with tempfile.TemporaryDirectory()as tmp:
+        a=start(output_dir=tmp,model='small',data='cells',config={'arch':{'model':'small'},'data':{'dataset':'cells'},'train':{'seed':0}})
+        if legacy:
+          for p in Path(tmp).glob('wandb_config*.json'):
+            value=json.loads(p.read_text());value.pop('name',None);p.write_text(json.dumps(value))
+        b=start(output_dir=tmp,model='large',data='images',config={'train':{'seed':9}})
+        self.eq(a.config,b.config)
+        if not legacy:self.eq(a.name,b.name)
+        self.lacks('large',b.name);self.lacks('images',b.name)
+
+  def test_combined_summary(self):
+    ops='min max mean last first copy none'.split()
+    cases=[','.join(p)for n in(1,2)for p in itertools.product(ops,repeat=n)]+[None,'','MIN,MAX']
+    for how in cases:
+      r=start(summaries={'val/loss':how})
+      self.assertIn(('val/loss','trainer/step',how),r.definitions)
+    for how in('bad','min,bad'):
+      with self.assertRaises(ValueError):start(summaries={'val/loss':how})
+
+  def test_corrupt_config(self):
+    with tempfile.TemporaryDirectory()as tmp:
+      a=start(output_dir=tmp,config={'train':{'lr':.1}})
+      p=Path(tmp)/'wandb_config.json';p.write_text('{')
+      b=start(output_dir=tmp,config={'train':{'lr':.9}})
+      self.eq(a.id,b.id);self.eq(a.config,b.config)
+      self.eq(b.summary['provenance/resume_count'],1)
+      self.assertIn(b'{',[q.read_bytes()for q in Path(tmp).glob('*.corrupt-*')])
+      for q in Path(tmp).glob('*backup*'):q.unlink()
+      p.write_text('{');sdk=FakeWandb()
+      with self.assertRaisesRegex(ValueError,'recover'):start(sdk,output_dir=tmp)
+      self.eq(p.read_text(),'{');self.assertFalse(hasattr(sdk,'run'))
+
+  def test_passphrase(self):
+    text='password=my '+T+' phrase'
+    self.lacks(T,wbkit._redact(text))
+    r=start(hypothesis=text,config=recipe({'note':text}),name=text)
+    self.lacks(T,shown(r))
+
+  def test_argv_words(self):
+    for words in(['my '+T+' phrase'],['my',T,'phrase']):
+      text=wbkit._redact_argv(['train.py','--password']+words+['--lr','3'])
+      self.lacks(T,text);self.assertIn('--lr 3',text)
+
+  def test_empty_rank(self):
+    keys=('RANK','SLURM_PROCID','LOCAL_RANK')
+    for vals in itertools.product((None,'','0','4'),repeat=3):
+      env={k:v for k,v in zip(keys,vals)if v is not None}
+      want=next((int(v)for v in vals if v),0)
+      with self.subTest(env=env),patch.dict(os.environ,env,clear=True):
+        self.eq(start().disabled,want!=0)
 
 if __name__=='__main__':
   unittest.main()
