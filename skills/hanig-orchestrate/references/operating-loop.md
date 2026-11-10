@@ -10,12 +10,12 @@ Tracker is offline; STALE remains visible.
 State-root children hold plan.json and state/swarm-state.json; link a plan beside state/ if it lives elsewhere.
 The --binding and --audit arguments are optional together; omit both when no tracker binding is configured.
 Repeat --agent-root DIR to include agent working directories outside --repo and --state-root.
-Repeat --status-file 'runs/*/STATUS' for file-based progress; ** is refused.
+The repeatable `--status-file 'runs/*/STATUS'` adds file progress; ** produces a usage error.
 The last STATUS or STATUS: record (optionally timestamped or bulleted) is shown
-with its file mtime. Repeat --attention-status awaiting_coordinator and
---terminal-status done for exact values; other status values count as live work.
-At least one of --state-root or --status-file is required. With only files,
-agent scope uses --repo and --agent-root. Reads use at most the last 1 MiB.
+with its mtime. Exact values in repeatable `--attention-status awaiting_coordinator`
+and `--terminal-status done` control attention and liveness; other values are live.
+File sources allow omission of --state-root; agent scope then uses --repo
+and --agent-root. Reads use at most the last 1 MiB.
 Substitute operator paths in these direct-command scheduler examples.
 
 macOS launchd example: bootstrap the edited plist with
