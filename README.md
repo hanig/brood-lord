@@ -1513,7 +1513,6 @@ skills/hanig-review-gate/   review.py, committee.py, reviewers.json, PROTOCOL.md
 skills/hanig-verified-workflow/  contract.py
 skills/hanig-portable-handoff/   handoff.py
 skills/hanig-debrief/        skeleton, declarations and bundled path resolver
-skills/hanig-wandb-logging/  wbkit.py core, naming and framework references
 tests/                      stdlib unittest
 examples/                   reference config to copy elsewhere; nothing reads it here
 docs/probes/                measured environment data per cluster
