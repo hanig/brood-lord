@@ -1,9 +1,7 @@
-"""Core W&B logging tests with injected fakes and no network.
-
-Exhaustive itertools products: 6 secret keys x 3 config shapes; 4 record types
-x 3 positions; 2 process ranks x 2 local ranks x task-count presence; and
-6 secret keys x 3 argv layouts x 3 value shapes. No random sampling.
-The real SDK integration skips visibly when wandb is absent.
+"""Core tests use fakes, no network, and exhaustive itertools products:
+6 secret keys x 3 config shapes; 4 record types x 3 positions;
+2 global x 2 local ranks x 2 task-count settings;
+6 keys x 3 argv layouts x 3 value shapes. SDK absence skips visibly.
 """
 from pathlib import Path
 import argparse
@@ -224,7 +222,11 @@ class PartOneRegressions(unittest.TestCase):
         run = start(sdk, model='model token=' + secret, data='cells', name='sample secret=' + secret, hypothesis='Check password=' + secret, expect='val/loss < 1; api_key=' + secret, tags=['secret=' + secret], group='group token=' + secret, config={'arch': {'note token=' + secret: 'public'}, 'train': {'note': 'token=' + secret}, 'data': {}})
         self.assertNotIn(secret, repr(run.__dict__))
         wbkit.log_step(run, 1, {'train/text': 'token=' + secret})
+        with self.assertWarns(UserWarning) as warning:
+            wbkit.log_step(run, 1, {'token=' + secret: 1})
+        self.assertNotIn(secret, str(warning.warning))
         run.summary['message'] = 'secret=' + secret
+        run.summary['note token=' + secret] = 'public'
         wbkit.finish(run, 'token=' + secret, 'inconclusive')
         self.assertNotIn(secret, repr(run.__dict__))
         self.assertTrue(run.finished)
