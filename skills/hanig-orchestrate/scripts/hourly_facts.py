@@ -218,10 +218,12 @@ def state_facts(root, live_hours, agents, bound_agents=None):
 STATUS_BYTES = 1024 * 1024
 
 
-def last_status(text):
+def last_status(text, partial_first=False):
   """Return the value and original line of the last STATUS record."""
   value, last = None, None
-  for line in text.splitlines():
+  lines = text.splitlines()
+  # A bounded tail can begin inside a line; its first fragment is not a record.
+  for line in (lines[1:] if partial_first else lines):
     content = line.lstrip()
     if content.startswith(("- ", "* ")):
       content = content[2:]
@@ -256,7 +258,7 @@ def status_facts(patterns, attention, terminal):
           with open(path, "rb") as handle:
             handle.seek(max(0, info.st_size - STATUS_BYTES))
             text = handle.read(STATUS_BYTES).decode("utf-8", "replace")
-          value, last = last_status(text)
+          value, last = last_status(text, info.st_size > STATUS_BYTES)
           live = live or (value is not None and value not in terminal)
           lines.append((value in attention, "{}: {}".format(
             label, last if last is not None else "no STATUS line")))
