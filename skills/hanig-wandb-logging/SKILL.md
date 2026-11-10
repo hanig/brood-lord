@@ -41,9 +41,13 @@ wbkit.log_step(run, step, metrics)
 wbkit.finish(run, outcome, contract_verdict)
 ```
 
-Supply project/family/job_type/model/data, H/Expect, nested config, optional
+Supply project/family/job_type/model/data, hypothesis/expect, nested config, optional
 base_config/group and output_dir in run_args; declare min/max summaries.
 
 Reuse output_dir across requeues; new experiments need new directories.
 It saves sanitized config/provenance, id and resume count.
 Restore training checkpoints separately. Direct SDK writes remain caller-owned.
+
+Set original `name` for legacy state.
+If both config copies are corrupt, restore known good `wandb_config.json`.
+Corrupt bytes are kept.
