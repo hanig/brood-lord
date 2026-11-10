@@ -98,7 +98,7 @@ def _metric_state(run):
             ref = weakref.ref(run, lambda ref: _METRIC_STATE.pop(key, None))
         except TypeError:
             ref = lambda: run
-        _METRIC_STATE[key] = (ref, {"summaries": {}, "axis": STEP_METRIC})
+        _METRIC_STATE[key] = (ref, {"summaries": {}, "axis": STEP_METRIC, "namespaces": ()})
     return _METRIC_STATE[key][1]
 
 
@@ -402,6 +402,7 @@ def define_metrics(
     """Put every namespace on one step axis and declare best-value summaries."""
     state = _metric_state(run)
     definitions = {**state["summaries"], **(summaries or {})}
+    namespaces = tuple(dict.fromkeys((*state["namespaces"], *namespaces)))
     run.define_metric(step_metric)
     for ns in namespaces:
         run.define_metric(f"{ns}/*", step_metric=step_metric)
@@ -410,7 +411,7 @@ def define_metrics(
             raise ValueError(f"summary for {key!r} must be min, max, mean or last")
         # wandb 0.31 dropped define_metric(goal=); summary="min"/"max" is enough.
         run.define_metric(key, step_metric=step_metric, summary=how)
-    state.update(summaries=definitions, axis=step_metric)
+    state.update(summaries=definitions, axis=step_metric, namespaces=namespaces)
 
 
 _warned_keys: set[str] = set()

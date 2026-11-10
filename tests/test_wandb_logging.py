@@ -212,6 +212,7 @@ class Logging(unittest.TestCase):
         self.assertEqual(report['runs_checked'], 1)
         self.assertEqual(report['artifact_collections_checked'], 1)
         self.assertIn('notes.empty', report['by_rule'])
+        self.assertEqual(audit_project.audit(api, 'team/sample', 0)['runs_checked'], 0)
         self.assertEqual(audit_project.audit(types.SimpleNamespace(Api=lambda **kw: api),
                                            'team/sample', 1), report)
 
@@ -242,9 +243,11 @@ class ReviewRegressions(unittest.TestCase):
 
     def test_axis_redefinition(self):
         run = start(FakeWandb(), summaries={'eval/loss': 'min'})
+        wbkit.define_metrics(run, namespaces=('aux',))
         wbkit.define_metrics(run, step_metric='train/global_step')
         definitions = {n: (axis, summary) for n, axis, summary in run.definitions}
         self.assertEqual(definitions['train/*'][0], 'train/global_step')
+        self.assertEqual(definitions['aux/*'][0], 'train/global_step')
         self.assertEqual(definitions['eval/loss'], ('train/global_step', 'min'))
         wbkit.log_step(run, 7, {'train/loss': 0.2})
         self.assertEqual(run.logged[-1]['train/global_step'], 7)

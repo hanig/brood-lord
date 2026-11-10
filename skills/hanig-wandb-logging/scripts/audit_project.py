@@ -28,8 +28,6 @@ def _code(issue: str) -> str:
 def audit(api, path: str, limit: int = 200) -> dict:
     if hasattr(api, "Api"):
         api = api.Api(timeout=120)
-    if limit < 1:
-        raise ValueError("limit must be positive")
     entity, project = path.split("/", 1)
     runs = api.runs(path, order="-created_at", per_page=min(limit, 100))
     run_rows = []
