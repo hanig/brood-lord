@@ -4,6 +4,7 @@ import argparse
 import datetime
 import glob
 import fnmatch
+import errno
 import json
 import math
 import os
@@ -270,6 +271,9 @@ def status_matches(repo, pattern):
           elif fnmatch.fnmatchcase(entry.name, part):
             pending.append((entry.path, index + 1))
     except OSError as exc:
+      if exc.errno in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP) and index < len(parts):
+        if index != len(parts) - 1 or not fnmatch.fnmatchcase(Path(directory).name, parts[index]):
+          continue
       errors.append("{}: {}".format(directory, exc))
   return sorted(matches), errors
 
@@ -291,10 +295,11 @@ def status_facts(args):
       try:
         with os.fdopen(os.open(str(path), os.O_RDONLY | os.O_NONBLOCK),
                  "r", encoding="utf-8") as handle:
-          if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+          info = os.fstat(handle.fileno())
+          if not stat.S_ISREG(info.st_mode):
             raise ValueError("not a regular STATUS file")
           text = handle.read()
-        modified = local_time(path.stat().st_mtime)
+        modified = local_time(info.st_mtime)
         last, value = None, None
         for line in text.splitlines():
           line = line.lstrip()
@@ -439,9 +444,9 @@ def positive(value):
 
 def main(argv=None):
   parser = argparse.ArgumentParser(description=__doc__)
-  for name in ("output-dir", "repo"):
-    parser.add_argument("--" + name, required=True, type=lambda p: Path(p).absolute())
-  parser.add_argument("--state-root", type=lambda p: Path(p).absolute())
+  parser.add_argument("--output-dir", required=True, type=lambda p: Path(p).absolute())
+  parser.add_argument("--repo", required=True, type=lambda p: Path(p).expanduser().absolute())
+  parser.add_argument("--state-root", type=lambda p: Path(p).expanduser().absolute())
   parser.add_argument("--agent-root", action="append", default=[], type=Path)
   for name in ("status-file", "attention-status", "terminal-status"):
     parser.add_argument("--" + name, action="append", default=[])

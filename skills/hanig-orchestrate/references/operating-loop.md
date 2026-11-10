@@ -9,16 +9,13 @@ Install hanig-project beside the loaded skill, or set HANIG_SKILL_DEP_ROOTS.
 Tracker is offline; STALE remains visible.
 State-root children hold plan.json and state/swarm-state.json; link a plan beside state/ if it lives elsewhere.
 The --binding and --audit arguments are optional together; omit both when no tracker binding is configured.
-Repeat `--status-file 'GLOB'` for progress files (relative to `--repo`, or absolute);
-with a STATUS source, `--state-root` is optional. Use one or both sources.
-The last `STATUS:` or `STATUS` line wins: strip indentation and one `- ` or `* `
-marker, then skip one optional ISO timestamp token (`YYYY-MM-DDT...`). The next
-token is the marker, followed by the status value; trailing fields remain visible.
-Repeat `--attention-status VALUE` for exact alert values and `--terminal-status VALUE`
-for finished values; other statuses count as live work. Missing/unreadable sources alert.
-Agents belong here by an active code-unit job id or a resolved cwd under `--repo`
-or `--state-root`, or any repeatable `--agent-root DIR` (including `~` expansion);
-other projects receive one quiet count. (Contract amendment 1, 2026-11-10.)
+Repeat `--status-file GLOB` (relative to `--repo` or absolute); use it, `--state-root`, or both.
+The last `STATUS`/`STATUS:` line wins after indentation, one `- ` or `* ` marker,
+and an optional ISO timestamp token. The next token is the value; trailing fields stay visible.
+Repeat `--attention-status VALUE` for exact alerts; `--terminal-status VALUE` marks finished work.
+Other statuses are live; missing/unreadable sources alert. Repeat `--agent-root DIR` for external
+worktrees; agents also belong by repo/state-root cwd or active code job id. Paths expand `~`.
+Contract amendment 1, 2026-11-10.
 Substitute operator paths in these direct-command scheduler examples.
 
 macOS launchd example: bootstrap the edited plist with

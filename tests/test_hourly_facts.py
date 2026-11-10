@@ -104,6 +104,7 @@ class HourlyFacts(unittest.TestCase):
         report = self.collect()
         self.assertEqual(b"- agent 42 " in report, kind == "code" and state != "DONE")
     (self.root / "link").symlink_to(self.repo, target_is_directory=True)
+    self.args[1], self.args[5] = "~/coordinator", "~/repo"
     for cwd in (str(self.repo / "child"), str(self.state / "attempt"),
                 str(self.root / "link" / "child"), "~/repo/child"):
       with self.subTest(cwd=cwd):
@@ -245,8 +246,6 @@ class HourlyFacts(unittest.TestCase):
         self.assertTrue(lines[0][1].endswith("STATUS awaiting_coordinator"))
 
   def test_recursive_status_glob_is_iterative(self):
-    # Safe host equivalent of the reviewer's 1,100-level Linux tree: 100
-    # directories with recursion limit 80, below this host's path-length limit.
     directory, created = self.repo, []
     for _ in range(100):
       directory = directory / "x"
@@ -273,9 +272,10 @@ class HourlyFacts(unittest.TestCase):
     sub = self.repo / "sub[1]"
     sub.mkdir()
     (sub / "nested.md").write_text("STATUS done")
-    # Exhaustive supported glob shapes: terminal, repeated and suffixed globstar.
     for pattern in ("**", "**/**", "**/*.md"):
       with self.subTest(pattern=pattern):
+        if pattern == "**/*.md":
+          (self.repo / "other.txt").symlink_to("missing")
         lines, live = hourly_facts.status_facts(self.status_args([pattern]))
         self.assertEqual(len(lines), 2)
         self.assertFalse(live)
@@ -318,6 +318,22 @@ class HourlyFacts(unittest.TestCase):
     os.mkfifo(self.repo / "progress.md")
     self.args += ["--status-file", "*.md"]
     self.assertIn(b"ATTENTION progress.md: unreadable STATUS file", self.collect())
+
+  def test_status_mtime_uses_open_file(self):
+    path, replacement = self.repo / "progress.md", self.root / "new"
+    path.write_text("STATUS done")
+    replacement.write_text("STATUS awaiting_coordinator")
+    os.utime(path, (1700000000, 1700000000))
+    os.utime(replacement, (1800000000, 1800000000))
+    fdopen = os.fdopen
+    def rotate(*args, **kwargs):
+      handle = fdopen(*args, **kwargs)
+      os.replace(replacement, path)
+      return handle
+    with mock.patch.object(os, "fdopen", rotate):
+      lines, _ = hourly_facts.status_facts(self.status_args(["progress.md"]))
+    self.assertIn(hourly_facts.local_time(1700000000), lines[0][1])
+    self.assertTrue(lines[0][1].endswith("STATUS done"))
 
   def test_unreadable_status_file(self):
     path = self.repo / "denied.md"
