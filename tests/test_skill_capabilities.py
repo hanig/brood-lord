@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "skills"
 COMPATIBILITY = ROOT / "docs" / "agent-compatibility.md"
 AUTHORED = {
+    "hanig-wandb-logging",
     "hanig-debrief",
     "hanig-orchestrate",
     "hanig-project",
@@ -217,6 +218,7 @@ class TestSkillCapabilities(unittest.TestCase):
 
     def test_authored_skills_state_their_host_safe_boundaries(self):
         expected = {
+            "hanig-wandb-logging": "Host capability boundary",
             "hanig-debrief": (
                 "Drafting is offline; only debrief_file.py reaches the network, "
                 "after one named approval of the exact packet."

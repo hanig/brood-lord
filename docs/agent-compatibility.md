@@ -105,6 +105,7 @@ support.
 | `hanig-verified-workflow` | authored | portable / all four | Python helper, Git evidence, `sbatch`/`sacct`, project-local Nextflow/Snakemake | capability-limited; usable locally only where its workflow programs exist |
 | `hanig-review-gate` | authored | portable / all four | Python review helpers, reviewer configuration and coordinator credentials | capability-limited; unavailable reviewers yield unreviewed, never a self-pass |
 | `hanig-debrief` | authored | portable / all four | bundled path resolver; debrief programs are not yet shipped | skeleton; filing waits for owner approval of the exact scrubbed packet |
+| `hanig-wandb-logging` | authored | portable / all four | caller-provided W&B module; stdlib helper | logging only; no verdict authority or installed W&B dependency |
 | `hanig-portable-handoff` | authored | portable / all four | Python/Git helper, `MEMORY.md`, local receipt paths | supported when Python/Git and paths are available; never moves secrets |
 | `agent-bus` | vendored verbatim | portable / all four | fixed upstream `~/.agent-bus` layout, local bus helper, optional Paseo | dependency-limited; upstream path is not created by this installer |
 | `paseo` | vendored verbatim | portable / all four | Paseo daemon/CLI, `~/.paseo` preferences, agent-bus | dependency-limited; no daemon or provider is provisioned |
