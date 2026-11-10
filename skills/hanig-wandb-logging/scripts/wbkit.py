@@ -58,7 +58,7 @@ def _redact(obj):
     elif isinstance(obj, tuple) and hasattr(obj, '_asdict'):
         obj = obj._asdict()
     if isinstance(obj, Mapping):
-        return {k: '***' if _SECRET_RE.search(str(k)) else _redact(v) for k, v in obj.items()}
+        return {_redact(k): '***' if _SECRET_RE.search(str(k)) else _redact(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_redact(v) for v in obj]
     if isinstance(obj, str):
