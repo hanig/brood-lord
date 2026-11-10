@@ -11,15 +11,10 @@ description: >-
 
 ## Host capability boundary
 
-Use the active host's real file and shell capabilities and authorized W&B
-access. This skill installs no package, credentials, connector or service.
-The caller installs and imports W&B in its own project and passes it to wbkit.
-Measured with wandb 0.31.0; other versions are best effort. Missing access is
-reported as an incomplete logging check.
-
-Set `HANIG_WANDB_LOGGING_DIR` to the directory holding this loaded SKILL.md.
-Copy [wbkit](scripts/wbkit.py) from there into the training project. Inputs
-and outputs stay relative to the project directory.
+Use authorized host access. The skill installs no package, credentials or
+connector. Measured with wandb 0.31.0; other versions are best effort.
+Copy [wbkit](scripts/wbkit.py) from the loaded skill into project code;
+the caller imports and supplies W&B.
 
 The training logging requirement lives in hanig-project and hanig-swarm;
 this skill explains how to apply it.
