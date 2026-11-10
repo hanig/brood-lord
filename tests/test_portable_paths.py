@@ -21,7 +21,7 @@ from scheduler_fixture import closed_bin  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SKILLS = REPO / "skills"
-AUTHORED = ("hanig-debrief", "hanig-orchestrate", "hanig-portable-handoff", "hanig-project",
+AUTHORED = ("hanig-wandb-logging", "hanig-debrief", "hanig-orchestrate", "hanig-portable-handoff", "hanig-project",
             "hanig-review-gate", "hanig-swarm", "hanig-verified-workflow")
 
 
