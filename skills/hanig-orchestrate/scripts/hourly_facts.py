@@ -3,6 +3,7 @@
 import argparse
 import datetime
 import glob
+import fnmatch
 import json
 import math
 import os
@@ -234,33 +235,52 @@ def status_matches(repo, pattern):
   base = parts[0] if Path(pattern).is_absolute() else str(repo)
   if Path(pattern).is_absolute():
     parts = parts[1:]
-  pending, visited, matches = [(base, 0)], set(), set()
+  pending, visited, matches, errors = [(base, 0)], set(), set(), []
   while pending:
     directory, index = pending.pop()
-    if (directory, index) in visited:
-      continue
-    visited.add((directory, index))
-    if index == len(parts):
-      if not Path(directory).is_dir():
-        matches.add(directory)
-      continue
-    part = parts[index]
-    if part == "**":
-      pending.append((directory, index + 1))
-      pending.extend((name, index if Path(name).is_dir() else index + 1)
-        for name in glob.glob(os.path.join(glob.escape(directory), "*")))
-    else:
-      pending.extend((name, index + 1) for name in glob.glob(
-        os.path.join(glob.escape(directory), part)))
-  return sorted(matches)
+    try:
+      info = os.stat(directory)
+      key = (info.st_dev, info.st_ino, index)
+      if key in visited:
+        continue
+      visited.add(key)
+      if index == len(parts):
+        if not stat.S_ISDIR(info.st_mode):
+          matches.add(directory)
+        continue
+      if not stat.S_ISDIR(info.st_mode):
+        continue
+      part = parts[index]
+      if part != "**" and not glob.has_magic(part):
+        candidate = os.path.join(directory, part)
+        try:
+          os.lstat(candidate)
+        except FileNotFoundError:
+          continue
+        pending.append((candidate, index + 1))
+        continue
+      if part == "**":
+        pending.append((directory, index + 1))
+      with os.scandir(directory) as entries:
+        for entry in entries:
+          if entry.name.startswith(".") and not part.startswith("."):
+            continue
+          if part == "**":
+            pending.extend(((entry.path, index), (entry.path, index + 1)))
+          elif fnmatch.fnmatchcase(entry.name, part):
+            pending.append((entry.path, index + 1))
+    except OSError as exc:
+      errors.append("{}: {}".format(directory, exc))
+  return sorted(matches), errors
 
 
 def status_facts(args):
   lines, live, seen = [], False, set()
   for pattern in args.status_file:
     pattern = os.path.expanduser(pattern)
-    matches = status_matches(args.repo, pattern)
-    if not matches:
+    matches, errors = status_matches(args.repo, pattern)
+    lines.extend((True, "Unreadable STATUS source: " + error) for error in errors)
+    if not matches and not errors:
       lines.append((True, "STATUS glob matched no file: {}".format(pattern)))
     for name in matches:
       path = Path(name)
@@ -269,7 +289,11 @@ def status_facts(args):
       seen.add(path)
       label = os.path.relpath(str(path), str(args.repo))
       try:
-        text = path.read_text(encoding="utf-8")
+        with os.fdopen(os.open(str(path), os.O_RDONLY | os.O_NONBLOCK),
+                 "r", encoding="utf-8") as handle:
+          if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise ValueError("not a regular STATUS file")
+          text = handle.read()
         modified = local_time(path.stat().st_mtime)
         last, value = None, None
         for line in text.splitlines():

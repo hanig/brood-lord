@@ -21,6 +21,7 @@ import wait_report
 SECTION = b"STALE  tracker\r\n\tunchanged   spaces\n```\nno final newline  "
 
 
+# Exhaustive bounds: bindings 3x3, STATUS 7x3, repo names 3x2, bare markers 2x2x2, permissions 2x2.
 class HourlyFacts(unittest.TestCase):
   def setUp(self):
     self.tmp = tempfile.TemporaryDirectory()
@@ -93,7 +94,6 @@ class HourlyFacts(unittest.TestCase):
     self.assertIn(b"- 1 agents of other projects not listed", report)
 
   def test_project_agent_bindings_and_paths(self):
-    # Exhaustive bound: 3 kinds x 3 states. Only active code binds a foreign cwd.
     for kind, state in itertools.product(("code", "slurm", "pipeline"),
                                          ("SUBMITTED", "RUNNING", "DONE")):
       with self.subTest(kind=kind, state=state):
@@ -168,7 +168,6 @@ class HourlyFacts(unittest.TestCase):
     self.assertIn(b"at least one of --state-root or --status-file is required", result.stderr)
 
   def test_amended_status_line_shapes(self):
-    # Exhaustive supplied fixtures x 3 list prefixes = 21 cases; no random seed.
     fixtures = (
       ("STATUS started", "started"),
       ("STATUS complete pr=https://example.invalid/pull/349 head=a6872608", "complete"),
@@ -190,7 +189,6 @@ class HourlyFacts(unittest.TestCase):
           "yes" if value is not None and value not in {"complete", "done"} else "no")).encode(), report)
         line = next(line for line in report.splitlines() if b"amended.md (modified " in line)
         self.assertTrue(line.endswith((content if value is not None else "no STATUS line").encode()))
-    # STEP is ignored after an earlier STATUS, and fields never supply its value.
     path.write_text("STATUS done\nSTEP review_finished round=2 direct_exit=0\n")
     self.assertIn(b"ATTENTION count: 0; live work: no.", self.collect())
     path.write_text("STATUS complete reason=awaiting_coordinator")
@@ -216,7 +214,6 @@ class HourlyFacts(unittest.TestCase):
       attention_status=["awaiting_coordinator"], terminal_status=["done"])
 
   def test_status_globs_escape_repository(self):
-    # Exhaustive bound: literal [, *, ? in repo name, with/without a sibling.
     for name, sibling in itertools.product(("project[1]", "project*", "project?"), (False, True)):
       with self.subTest(name=name, sibling=sibling):
         self.repo = self.root / name
@@ -237,7 +234,6 @@ class HourlyFacts(unittest.TestCase):
           other.rmdir()
 
   def test_status_requires_a_value(self):
-    # Exhaustive bound: both markers, with/without timestamp, with/without list marker.
     for marker, timestamp, prefix in itertools.product(
         ("STATUS", "STATUS:"), ("", "2026-11-10T02:42:18-08:00 "), ("", "  - ")):
       with self.subTest(marker=marker, timestamp=timestamp, prefix=prefix):
@@ -294,17 +290,46 @@ class HourlyFacts(unittest.TestCase):
     self.assertEqual(len(lines), 1)
     self.assertTrue(lines[0][0])
 
+  def test_status_symlink_cycle(self):
+    (self.repo / "progress.md").write_text("STATUS done")
+    (self.repo / "back").symlink_to(".", target_is_directory=True)
+    for pattern in ("**", "**/*.md"):
+      lines, live = hourly_facts.status_facts(self.status_args([pattern]))
+      self.assertEqual(len(lines), 1)
+      self.assertFalse(lines[0][0])
+      self.assertFalse(live)
+
+  def test_status_inaccessible_branch(self):
+    (self.repo / "progress.md").write_text("STATUS done")
+    private = self.repo / "private"
+    private.mkdir()
+    (private / "progress.md").write_text("STATUS awaiting_coordinator")
+    for mode, pattern in itertools.product((0, 0o644), ("**/*.md", "*/progress.md")):
+      with self.subTest(mode=mode, pattern=pattern):
+        private.chmod(mode)
+        try:
+          lines, _ = hourly_facts.status_facts(self.status_args(["progress.md", pattern]))
+          self.assertTrue(any(flag for flag, _ in lines))
+          self.assertTrue(any("progress.md (modified " in message for _, message in lines))
+        finally:
+          private.chmod(0o700)
+
+  def test_status_fifo_does_not_block(self):
+    os.mkfifo(self.repo / "progress.md")
+    self.args += ["--status-file", "*.md"]
+    self.assertIn(b"ATTENTION progress.md: unreadable STATUS file", self.collect())
+
   def test_unreadable_status_file(self):
     path = self.repo / "denied.md"
     path.write_text("STATUS: done")
     self.args += ["--status-file", "*.md"]
-    read_text = Path.read_text
+    open_file = os.open
     def read(candidate, *args, **kwargs):
-      if candidate == path:
+      if Path(candidate) == path:
         raise PermissionError("fixture denied")
-      return read_text(candidate, *args, **kwargs)
+      return open_file(candidate, *args, **kwargs)
     (self.root / "responses.json").write_text(json.dumps(self.responses))
-    with mock.patch.object(Path, "read_text", read), mock.patch.dict(
+    with mock.patch.object(os, "open", read), mock.patch.dict(
         os.environ, self.env, clear=True), mock.patch("builtins.print"):
       hourly_facts.main(self.args)
     self.assertIn(b"ATTENTION denied.md: unreadable STATUS file: fixture denied",
