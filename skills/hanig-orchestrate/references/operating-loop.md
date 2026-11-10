@@ -11,11 +11,14 @@ State-root children hold plan.json and state/swarm-state.json; link a plan besid
 The --binding and --audit arguments are optional together; omit both when no tracker binding is configured.
 Repeat `--status-file 'GLOB'` for progress files (relative to `--repo`, or absolute);
 with a STATUS source, `--state-root` is optional. At least one source is required.
-The last `STATUS:` line, optionally indented with one `- ` or `* ` marker, wins.
+The last `STATUS:` or `STATUS` line wins: strip indentation and one `- ` or `* `
+marker, then skip one optional ISO timestamp token (`YYYY-MM-DDT...`). The next
+token is the marker, followed by the status value; trailing fields remain visible.
 Repeat `--attention-status VALUE` for exact alert values and `--terminal-status VALUE`
 for finished values; other statuses count as live work. Missing/unreadable sources alert.
 Agents belong here by an active code-unit job id or a resolved cwd under `--repo`
-or `--state-root` (including `~` expansion); other projects receive one quiet count.
+or `--state-root`, or any repeatable `--agent-root DIR` (including `~` expansion);
+other projects receive one quiet count. (Contract amendment 1, 2026-11-10.)
 Substitute operator paths in these direct-command scheduler examples.
 
 macOS launchd example: bootstrap the edited plist with

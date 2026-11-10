@@ -6,6 +6,7 @@ import glob
 import json
 import math
 import os
+import re
 import stat
 from pathlib import Path
 import subprocess
@@ -245,10 +246,12 @@ def status_facts(args):
           line = line.lstrip()
           if line.startswith(("- ", "* ")):
             line = line[2:]
-          if line.startswith("STATUS:"):
+          tokens = line.split()
+          if tokens and re.match(r"^\d{4}-\d{2}-\d{2}T", tokens[0]):
+            tokens = tokens[1:]
+          if tokens and tokens[0] in {"STATUS:", "STATUS"}:
             last = line
-            tokens = line[len("STATUS:"):].split()
-            value = tokens[0] if tokens else ""
+            value = tokens[1] if len(tokens) > 1 else ""
         live = live or (last is not None and value not in args.terminal_status)
         lines.append((value is not None and value in args.attention_status,
           "{} (modified {}): {}".format(label, modified, last if last is not None else "no STATUS line")))
@@ -302,7 +305,7 @@ def collect(args):
   lines, ready, leftovers, live, active = (state_facts(
     args.state_root, args.live_hours, agents, bound_ids) if args.state_root is not None
     else ([], [], 0, False, False))
-  roots = [path.expanduser().resolve() for path in (args.repo, args.state_root) if path is not None]
+  roots = [path.expanduser().resolve() for path in (args.repo, args.state_root, *args.agent_root) if path is not None]
   scoped_agents = [a for a in agent_rows if project_agent(a, roots, bound_ids)]
   state_obs = local_time()
   body = ["## 1. Running work", "", "Agents observed {} (liveness only; no progress inference):".format(agent_obs)]
@@ -385,6 +388,7 @@ def main(argv=None):
   for name in ("output-dir", "repo"):
     parser.add_argument("--" + name, required=True, type=lambda p: Path(p).absolute())
   parser.add_argument("--state-root", type=lambda p: Path(p).absolute())
+  parser.add_argument("--agent-root", action="append", default=[], type=Path)
   for name in ("status-file", "attention-status", "terminal-status"):
     parser.add_argument("--" + name, action="append", default=[])
   for name in ("binding", "audit"):

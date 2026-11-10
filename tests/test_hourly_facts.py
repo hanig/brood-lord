@@ -166,6 +166,50 @@ class HourlyFacts(unittest.TestCase):
     self.assertEqual(result.returncode, 2)
     self.assertIn(b"at least one of --state-root or --status-file is required", result.stderr)
 
+  def test_amended_status_line_shapes(self):
+    # Exhaustive supplied fixtures x 3 list prefixes = 21 cases; no random seed.
+    fixtures = (
+      ("STATUS started", "started"),
+      ("STATUS complete pr=https://example.invalid/pull/349 head=a6872608", "complete"),
+      ("STATUS awaiting_coordinator scope=closeout reason=x", "awaiting_coordinator"),
+      ("2026-11-09T22:16:40-08:00 STATUS awaiting_coordinator scope=x evidence=/data/x", "awaiting_coordinator"),
+      ("2026-11-10T02:42:18.082217-08:00 STATUS wandb_REPLAY_PROGRESS run=r1 acknowledged_ordinal=428", "wandb_REPLAY_PROGRESS"),
+      ("STEP review_finished round=2 direct_exit=0", None),
+      ("STATUS: done", "done"),
+    )
+    path = self.repo / "amended.md"
+    self.args += ["--status-file", "amended.md", "--attention-status", "awaiting_coordinator",
+                  "--terminal-status", "complete", "--terminal-status", "done"]
+    for (content, value), prefix in itertools.product(fixtures, ("", "  - ", "\t* ")):
+      with self.subTest(content=content, prefix=prefix):
+        path.write_text(prefix + content)
+        report = self.collect()
+        self.assertIn(("ATTENTION count: {}; live work: {}.".format(
+          int(value == "awaiting_coordinator"),
+          "yes" if value is not None and value not in {"complete", "done"} else "no")).encode(), report)
+        line = next(line for line in report.splitlines() if b"amended.md (modified " in line)
+        self.assertTrue(line.endswith((content if value is not None else "no STATUS line").encode()))
+    # STEP is ignored after an earlier STATUS, and fields never supply its value.
+    path.write_text("STATUS done\nSTEP review_finished round=2 direct_exit=0\n")
+    self.assertIn(b"ATTENTION count: 0; live work: no.", self.collect())
+    path.write_text("STATUS complete reason=awaiting_coordinator")
+    self.assertIn(b"ATTENTION count: 0; live work: no.", self.collect())
+
+  def test_agent_roots_without_state_root(self):
+    path = self.repo / "progress.md"
+    path.write_text("STATUS done")
+    self.args = self.args[2:] + ["--status-file", "progress.md", "--terminal-status", "done",
+      "--agent-root", str(self.root / "unused"), "--agent-root", "~/external"]
+    self.env["HOME"] = str(self.root)
+    self.responses["agents"] = [{"id": "external", "cwd": "~/external/attempt", "status": "running"}]
+    report = self.collect()
+    self.assertIn(b"- agent external ", report)
+    self.assertIn(b"live work: yes.", report)
+    self.responses["agents"][0]["cwd"] = str(self.root / "external-other")
+    report = self.collect()
+    self.assertNotIn(b"- agent external ", report)
+    self.assertIn(b"live work: no.", report)
+
   def test_unreadable_status_file(self):
     path = self.repo / "denied.md"
     path.write_text("STATUS: done")
