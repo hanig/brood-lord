@@ -265,6 +265,14 @@ def project_agent(agent, bound_agents, roots):
     except ValueError:
       # Different Windows drives cannot contain one another. Later roots can.
       continue
+    # On case-insensitive volumes, realpath can retain different spellings.
+    # Compare directory identity without case-folding either decision value.
+    for parent in (Path(cwd),) + tuple(Path(cwd).parents):
+      try:
+        if os.path.samefile(root, parent):
+          return True
+      except (OSError, ValueError):
+        continue
   return False
 
 
