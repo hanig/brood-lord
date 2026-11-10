@@ -97,6 +97,25 @@ class HourlyFacts(unittest.TestCase):
         summaries = [line for line in report.splitlines() if b"agents of other projects" in line]
         self.assertEqual(summaries, [b"- 1 agents of other projects not listed"])
 
+  def test_agent_containment_uses_directory_identity(self):
+    # Simulate a case-insensitive filesystem without case-folding decisions.
+    base = self.root.resolve()
+    root = str(base / "Project")
+    child = str(base / "project" / "child")
+    def samefile(left, right):
+      return str(left) == root and str(right) == str(base / "project")
+    with mock.patch.object(hourly_facts.os.path, "samefile", side_effect=samefile):
+      self.assertTrue(hourly_facts.project_agent({"id": "ours", "cwd": child}, set(), [root]))
+
+  def test_case_variant_project_cwd_on_case_insensitive_volume(self):
+    alternate = self.root / "REPO"
+    if not alternate.exists() or not os.path.samefile(alternate, self.repo):
+      self.skipTest("requires a case-insensitive fixture volume")
+    self.responses["agents"] = [{"id": "ours", "status": "running", "cwd": str(alternate / "child")}]
+    report = self.collect()
+    self.assertIn(b"- agent ours : running", report)
+    self.assertIn(b"ATTENTION count: 0; live work: yes.", report)
+
   def test_agent_roots_on_distinct_drives(self):
     # Synthetic Windows path semantics on this POSIX operator host.
     with mock.patch.object(hourly_facts, "os", SimpleNamespace(path=ntpath)):
