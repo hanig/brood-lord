@@ -162,7 +162,7 @@
  "test_tracker_sync_hook": 28.8,
  "test_validate_seeds": 6.3,
  "test_verify": 3.1,
- "test_wandb_logging": 1.3,
+ "test_wandb_logging": 4.3,
  "test_worker_scope_check": 7.6,
  "test_worktree": 1.7
 }

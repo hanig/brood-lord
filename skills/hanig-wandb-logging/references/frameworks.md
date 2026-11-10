@@ -1,13 +1,15 @@
 # Frameworks
 
-- PyTorch/DDP: call start_run per rank (RANK, SLURM_PROCID, LOCAL_RANK priority).
-  Nonzero ranks get disabled runs. Reduce metrics before rank-zero logging.
-- Lightning/HF: initialize after rank setup on global zero; attach the logger
-  to that run. Log trainer/step in an optimizer callback, or pass the framework's
-  axis to define_metrics; rebinding retains summaries/namespaces.
-- Accelerate: create/log inside is_main_process with reduced metrics.
-- Sweeps: use the existing SDK run, run_name/define_metrics and sanitized direct
-  writes via wbkit._redact. Use job_type sweep-trial and a question group.
+`import wandb; wbkit.start_run(wandb, **run_args)`.
 
-Reuse output_dir on requeue. Logging does not resume training. <!-- declaration: logging.conventions -->
-Smoke-test with WANDB_MODE=offline; sync later with authorized access.
+- Torch/DDP: start per rank (RANK > SLURM_PROCID > LOCAL_RANK); reduce first.
+  Nonzero ranks: disabled.
+- Lightning/HF: start on global zero after rank setup; attach logger.
+  Use namespaced metrics, trainer/step optimizer callbacks or framework axis
+  via define_metrics (keeps summaries/namespaces).
+- Accelerate: reduce; start/log in is_main_process.
+- Sweeps: SDK run; run_name/define_metrics; wbkit._redact on direct writes;
+  job_type=sweep-trial; group=question.
+
+Requeue: reuse output_dir; restore training separately. <!-- declaration: logging.conventions -->
+WANDB_MODE=offline; authorized sync.
