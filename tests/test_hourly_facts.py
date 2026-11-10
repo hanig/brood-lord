@@ -205,6 +205,40 @@ class HourlyFacts(unittest.TestCase):
     self.assertTrue(lines[0][0])
     self.assertIn("read failed", lines[0][1])
 
+  def test_status_tail_does_not_fabricate_records(self):
+    path = self.root / "STATUS"
+    fragment = b"STATUS awaiting_coordinator\n"
+    unit = b"STEP later\n"
+    size = hourly_facts.STATUS_BYTES - len(fragment)
+    payload = b"STEP message=" + fragment + unit * (size // len(unit)) + b"x" * (size % len(unit))
+    path.write_bytes(payload)
+    lines, live = hourly_facts.status_facts([str(path)], ["awaiting_coordinator"], [])
+    self.assertFalse(lines[0][0])
+    self.assertIn("no STATUS line", lines[0][1])
+    self.assertFalse(live)
+    # Exhaustive: 3 line separators x 2 suffixes. Complete trailing records
+    # survive the partial-line discard, including an unterminated final line.
+    for separator, suffix in itertools.product((b"\n", b"\r", b"\r\n"), (b"", b"\n")):
+      record = separator + b"STATUS done" + suffix
+      path.write_bytes(b"x" * hourly_facts.STATUS_BYTES + record)
+      lines, live = hourly_facts.status_facts([str(path)], [], ["done"])
+      self.assertIn("STATUS done", lines[0][1])
+      self.assertFalse(live)
+
+  def test_status_bullet_requires_literal_space(self):
+    # The contract names literal '- ' and '* ', not tab-separated bullets.
+    for bullet in ("-\t", "*\t"):
+      self.assertEqual(hourly_facts.last_status("STATUS awaiting_coordinator\n" + bullet + "STATUS done"),
+                       ("awaiting_coordinator", "STATUS awaiting_coordinator"))
+
+  def test_status_realpath_error_is_attention(self):
+    path = self.root / "STATUS"
+    path.write_text("STATUS done")
+    with mock.patch.object(hourly_facts.os.path, "realpath", side_effect=OSError("race")):
+      lines, live = hourly_facts.status_facts([str(path)], [], [])
+    self.assertEqual(lines, [(True, str(path) + ": unreadable: race")])
+    self.assertFalse(live)
+
   def test_status_source_usage_errors(self):
     for extra in ([], ["--status-file", str(self.root / "**" / "STATUS")]):
       result = subprocess.run([sys.executable, str(SCRIPTS / "hourly_facts.py")] +
