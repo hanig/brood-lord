@@ -86,7 +86,7 @@ every issue title for approval, files them in Linear, and dispatches.
 
 ---
 
-## The seven skills we wrote
+## The eight skills we wrote
 
 | Skill | One line |
 |---|---|
@@ -96,9 +96,10 @@ every issue title for approval, files them in Linear, and dispatches.
 | `hanig-verified-workflow` | Declare and verify what "done" means for one batch job. |
 | `hanig-review-gate` | Adversarial multi-model review of code and of the claims made about it. |
 | `hanig-portable-handoff` | Capture and resume run state across machines. |
+| `hanig-wandb-logging` | Make W&B runs readable; caller supplies W&B, contracts judge outcomes. |
 | `hanig-debrief` | Skeleton for project lessons, a private dossier and an owner-approved public packet; debrief programs are not yet shipped. |
 
-All seven are prefixed `hanig-` so they can never collide with an Arc
+All eight are prefixed `hanig-` so they can never collide with an Arc
 org-managed skill name. That prefix is now load-bearing rather than tidy:
 `install.sh` reads it as the authorship namespace, and anything under
 `skills/` outside it is treated as vendored -- installed by us, written
@@ -1512,6 +1513,7 @@ skills/hanig-review-gate/   review.py, committee.py, reviewers.json, PROTOCOL.md
 skills/hanig-verified-workflow/  contract.py
 skills/hanig-portable-handoff/   handoff.py
 skills/hanig-debrief/        skeleton, declarations and bundled path resolver
+skills/hanig-wandb-logging/  wbkit.py core, naming and framework references
 tests/                      stdlib unittest
 examples/                   reference config to copy elsewhere; nothing reads it here
 docs/probes/                measured environment data per cluster
