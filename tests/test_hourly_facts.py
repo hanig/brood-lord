@@ -172,7 +172,7 @@ class HourlyFacts(unittest.TestCase):
   def test_status_read_and_stat_errors(self):
     path = self.root / "STATUS"
     path.write_text("STATUS running")
-    for target in ("stat", "open"):
+    for target in ("stat", "read"):
       patcher = (mock.patch.object(hourly_facts.os, "stat", side_effect=OSError("stat denied"))
                  if target == "stat" else mock.patch("builtins.open", side_effect=OSError("read denied")))
       with patcher:
