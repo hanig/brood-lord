@@ -4,8 +4,8 @@ Import wandb in project code; pass it to wbkit.
 
 ## PyTorch / DDP
 
-Call start_run on every rank. Global RANK then SLURM_PROCID then LOCAL_RANK
-select ownership; nonzero ranks get disabled runs. Reduce metrics before logging.
+Call start_run per rank. Ownership uses RANK, SLURM_PROCID, then LOCAL_RANK;
+nonzero ranks are disabled. Reduce metrics before logging.
 
 ## Lightning / Hugging Face Trainer
 
