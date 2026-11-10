@@ -117,7 +117,7 @@ class HourlyFacts(unittest.TestCase):
     for extra_root in (False, True):
       with self.subTest(extra_root=extra_root):
         if extra_root:
-          self.args += ["--agent-root", str(chain / "0")]
+          self.args += ["--agent-root", str(chain / "0" / "other")]
         report = self.collect()
         self.assertNotIn(b"agent foreign", report)
         self.assertIn(b"- 1 agents of other projects not listed", report)
