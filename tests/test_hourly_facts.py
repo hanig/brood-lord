@@ -82,6 +82,57 @@ class HourlyFacts(unittest.TestCase):
     self.assertEqual(path.read_bytes(), (self.output / "latest.md").read_bytes())
     return path.read_bytes()
 
+  def test_foreign_agents_do_not_wake(self):
+    # Exhaustive bound: 3 running statuses x 3 foreign cwd forms.
+    for status, cwd in itertools.product(
+        ("running", "working", "busy"),
+        (None, str(self.root / "foreign"), str(self.repo) + "2")):
+      with self.subTest(status=status, cwd=cwd):
+        self.responses["agents"] = [{"id": "foreign", "status": status, "cwd": cwd}]
+        report = self.collect()
+        self.assertNotIn(b"agent foreign", report)
+        self.assertIn(b"ATTENTION count: 0; live work: no.", report)
+        summaries = [line for line in report.splitlines() if b"agents of other projects" in line]
+        self.assertEqual(summaries, [b"- 1 agents of other projects not listed"])
+
+  def test_agent_cwd_roots(self):
+    extra, second = self.root / "extra", self.root / "second"
+    self.args += ["--agent-root", str(extra), "--agent-root", str(second)]
+    # Exhaustive bound: 4 roots x equal/descendant x absolute/tilde = 16.
+    self.env["HOME"] = str(self.root)
+    for root, child, tilde in itertools.product(
+        (self.repo, self.state, extra, second), (False, True), (False, True)):
+      cwd = root / "child" if child else root
+      if tilde:
+        cwd = "~/" + str(cwd.relative_to(self.root))
+      with self.subTest(root=root, child=child, tilde=tilde):
+        self.responses["agents"] = [{"id": "ours", "status": "running", "cwd": str(cwd)}]
+        report = self.collect()
+        self.assertIn(b"- agent ours : running", report)
+        self.assertIn(b"ATTENTION count: 0; live work: yes.", report)
+        self.assertNotIn(b"agents of other projects", report)
+    alias = self.root / "alias"
+    alias.symlink_to(self.repo, target_is_directory=True)
+    self.responses["agents"] = [{"id": "linked", "status": "running", "cwd": str(alias / "child")}]
+    self.assertIn(b"- agent linked : running", self.collect())
+
+  def test_only_active_code_bindings_scope_agents(self):
+    # Exhaustive bound: 3 kinds x 4 states x 2 job-id types x 2 cwd forms = 48.
+    for kind, state, job_id, cwd in itertools.product(
+        ("code", "slurm", "pipeline"), ("RUNNING", "SUBMITTED", "DONE", "FAILED"),
+        (123, "123"), (None, str(self.root / "foreign"))):
+      with self.subTest(kind=kind, state=state, job_id=job_id, cwd=cwd):
+        self.plan(units={"work": {"state": state, "job_id": job_id}},
+                  plan=[{"id": "work", "kind": kind}])
+        self.responses["agents"] = [{"id": str(job_id), "status": "idle", "cwd": cwd}]
+        report = self.collect()
+        belongs = kind == "code" and state in {"RUNNING", "SUBMITTED"}
+        self.assertEqual(b"- agent 123 : idle" in report, belongs)
+        self.assertEqual(b"- 1 agents of other projects not listed" in report, not belongs)
+        if belongs:
+          self.assertIn(b"ATTENTION count: 1; live work: yes.", report)
+          self.assertIn(b"bound agent 123: idle", report)
+
   def test_out_of_plan_units_are_one_quiet_summary(self):
     for old in (False, True):
       with self.subTest(old=old):
@@ -504,7 +555,7 @@ class HourlyFacts(unittest.TestCase):
             @classmethod
             def now(cls, tz=None):
               return instant.astimezone(tz)
-          self.responses["agents"] = [{"id": "a", "status": "running"}] if index else []
+          self.responses["agents"] = [{"id": "a", "status": "running", "cwd": str(self.repo)}] if index else []
           (self.root / "responses.json").write_text(json.dumps(self.responses))
           with mock.patch.object(time, "time", return_value=instant.timestamp()), mock.patch.object(datetime, "datetime", Clock):
             hourly_facts.main(self.args)

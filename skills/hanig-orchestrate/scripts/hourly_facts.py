@@ -64,7 +64,7 @@ def atomic_write(path, data):
       os.unlink(name)
 
 
-def state_facts(root, live_hours, agents):
+def state_facts(root, live_hours, agents, bound_agents=None):
   lines, ready, leftovers, live_work, active = [], [], 0, False, False
   now = time.time()
   skipped = 0
@@ -162,6 +162,10 @@ def state_facts(root, live_hours, agents):
             pending.append(uid)
       needs_by_id = {unit["id"]: unit.get("needs", []) for unit in plan_units}
       kinds = {unit["id"]: unit.get("kind") for unit in plan_units}
+      if bound_agents is not None:
+        for uid, recorded in units.items():
+          if kinds.get(uid) == "code" and states[uid] in ACTIVE and recorded.get("job_id") is not None:
+            bound_agents.add(str(recorded["job_id"]))
       successors = {uid: following for uid, following in successors.items()
                     if states.get(uid) not in ACTIVE}
       # Retain all recorded states for needs/readiness and the existing live
@@ -236,6 +240,19 @@ def tracker(args):
       observed, one_line(exc)).encode(), True)
 
 
+def project_agent(agent, bound_agents, roots):
+  if str(agent["id"]) in bound_agents:
+    return True
+  cwd = agent.get("cwd")
+  if not isinstance(cwd, str) or not cwd:
+    return False
+  try:
+    cwd = os.path.realpath(os.path.expanduser(cwd))
+    return any(os.path.commonpath([cwd, root]) == root for root in roots)
+  except (OSError, ValueError):
+    return False
+
+
 def collect(args):
   count = 0
   def render(flag, message):
@@ -250,14 +267,22 @@ def collect(args):
     agents = {str(a["id"]): a for a in agent_rows}
   except (OSError, ValueError, RecursionError, KeyError, TypeError, subprocess.SubprocessError) as exc:
     agent_rows, agents, agent_error = [], None, exc
-  lines, ready, leftovers, live, active = state_facts(args.state_root, args.live_hours, agents)
+  bound_agents = set()
+  lines, ready, leftovers, live, active = state_facts(
+    args.state_root, args.live_hours, agents, bound_agents)
+  roots = [os.path.realpath(os.path.expanduser(str(root)))
+           for root in [args.repo, args.state_root] + args.agent_root]
+  project_rows = [a for a in agent_rows if project_agent(a, bound_agents, roots)]
+  foreign_count = len(agent_rows) - len(project_rows)
   state_obs = local_time()
   body = ["## 1. Running work", "", "Agents observed {} (liveness only; no progress inference):".format(agent_obs)]
   if agent_error is not None:
     body.append(render(True, "paseo ls unavailable: {}".format(agent_error)))
-  for agent in agent_rows:
+  if foreign_count:
+    body.append(render(False, "{} agents of other projects not listed".format(foreign_count)))
+  for agent in project_rows:
     body.append(render(False, "agent {} {}: {}".format(agent.get("id"), agent.get("name", ""), agent.get("status", "unknown"))))
-  live = live or any(str(a.get("status", "")).lower() in RUNNING_AGENTS for a in agent_rows)
+  live = live or any(str(a.get("status", "")).lower() in RUNNING_AGENTS for a in project_rows)
   body.append("Units in live state directories ({} h or active):".format(args.live_hours))
   body.extend(render(flag, message) for flag, message in lines)
   body.append("Older state dirs hold {} non-terminal units; not listed (observed {}).".format(leftovers, state_obs))
@@ -327,6 +352,8 @@ def main(argv=None):
     parser.add_argument("--" + name, required=True, type=lambda p: Path(p).absolute())
   for name in ("binding", "audit"):
     parser.add_argument("--" + name, type=lambda p: Path(p).absolute())
+  parser.add_argument("--agent-root", action="append", default=[], metavar="DIR",
+            help="include agents whose resolved cwd is in DIR (repeatable)")
   parser.add_argument("--paseo", default="paseo")
   parser.add_argument("--gh", default="gh")
   parser.add_argument("--branch", default="main")
