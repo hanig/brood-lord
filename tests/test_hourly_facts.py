@@ -225,6 +225,18 @@ class HourlyFacts(unittest.TestCase):
       self.assertIn("STATUS done", lines[0][1])
       self.assertFalse(live)
 
+  def test_status_aligned_tail_keeps_complete_record(self):
+    path = self.root / "STATUS"
+    record = b"STATUS awaiting_coordinator\n"
+    unit = b"STEP later\n"
+    size = hourly_facts.STATUS_BYTES - len(record)
+    path.write_bytes(b"STEP previous\n" + record +
+                     unit * (size // len(unit)) + b"x" * (size % len(unit)))
+    lines, live = hourly_facts.status_facts([str(path)], ["awaiting_coordinator"], [])
+    self.assertTrue(lines[0][0])
+    self.assertTrue(live)
+    self.assertIn("STATUS awaiting_coordinator", lines[0][1])
+
   def test_status_bullet_requires_literal_space(self):
     # The contract names literal '- ' and '* ', not tab-separated bullets.
     for bullet in ("-\t", "*\t"):
