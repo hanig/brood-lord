@@ -10,6 +10,7 @@ import importlib
 import importlib.util
 import itertools
 import dataclasses
+from enum import Enum
 import json
 import os
 import sys
@@ -240,5 +241,79 @@ class PartOneRegressions(unittest.TestCase):
             self.assertEqual(two.config, one.config)
             self.assertEqual(three.config, one.config)
             self.assertEqual(three.summary['provenance/resume_count'], 2)
+class RoundOne(unittest.TestCase):
+    def test_labeled_punctuation(self):
+        # Exhaustive 5 leading delimiters x 2 name paths.
+        for delimiter, custom in itertools.product(',;})]', (False, True)):
+            value = 'password=' + delimiter + 'SENTINEL'
+            with self.subTest(delimiter=delimiter, custom=custom), patch.object(sys, 'argv', ['train.py', '--'+value]):
+                options = dict(config={'train': {'note': value}}, base_config={'train': {'note': 'public'}}, hypothesis='Testing '+value)
+                if custom: options['name'] = value
+                run = start(FakeWandb(), **options)
+                self.assertNotIn('SENTINEL', repr(run.config)+run.name+run.notes)
+
+    def test_token_config(self):
+        # Exhaustive 8 science field names; credential positive cases stay covered.
+        fields = ('token_count','token_embedding_dim','pad_token_id','mask_token_id','token_acc','token_loss','token_budget','token-count')
+        cfg = {'train': dict.fromkeys(fields, 8192)}
+        run = start(FakeWandb(), config=cfg, base_config={'train': dict.fromkeys(fields, 4096)})
+        self.assertEqual(run.config['train'], cfg['train'])
+        self.assertEqual(wbkit.config_deltas(cfg, {'train': {}}), {'train.'+k:8192 for k in fields})
+        for key in fields: self.assertIn(key+'=8192', run.notes)
+
+    def test_token_metrics(self):
+        run = start(FakeWandb())
+        wbkit.log_step(run, 5, {'train/token_acc': .91})
+        self.assertEqual(run.logged[-1]['train/token_acc'], .91)
+        run.summary['val/token_loss'] = {'min': .1}
+        wbkit.finish(run, 'A recorded result.', 'inconclusive')
+        self.assertEqual(run.summary['val/token_loss'], {'min': .1})
+
+    def test_resume_labels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = {'train': {'lr': .1, 'seed': 0}}
+            one = start(FakeWandb(), output_dir=tmp, base_config=base, config={'train': {'lr': .2, 'seed': 1}})
+            two = start(FakeWandb(), output_dir=tmp, base_config=base, config={'train': {'lr': .9, 'seed': 9}})
+            self.assertEqual(two.config, one.config)
+            self.assertEqual(two.name, one.name)
+            self.assertEqual(two.notes, one.notes)
+
+    def test_partial_provenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)/'wandb_provenance.json'
+            path.write_text('{')
+            (Path(tmp)/'wandb_run_id').write_text('abc123xy\n')
+            run = start(FakeWandb(), output_dir=tmp)
+            self.assertEqual(run.id, 'abc123xy')
+            self.assertEqual(run.summary['provenance/resume_count'], 1)
+            self.assertIsInstance(json.loads(path.read_text()), dict)
+            self.assertIn(b'{', [p.read_bytes() for p in Path(tmp).glob('*.corrupt-*')])
+
+    def test_family_precedence(self):
+        run = start(FakeWandb(), family='ExpectedFamily', config={'family':'UnexpectedFamily','train':{}})
+        self.assertEqual(run.config['family'], 'ExpectedFamily')
+
+    def test_json_safe_config(self):
+        class Choice(Enum):
+            A = 'chosen'
+        class Scalar:
+            def item(self): return 7
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {'train': {'path':Path(tmp)/'data','choice':Choice.A,'number':Scalar()}}
+            run = start(FakeWandb(), output_dir=tmp, config=cfg)
+            self.assertEqual(run.config['train'], {'path':str(Path(tmp)/'data'),'choice':'chosen','number':7})
+            self.assertEqual(start(FakeWandb(), output_dir=tmp, config=cfg).config, run.config)
+
+    def test_exact_nonsecret_strings(self):
+        # Exhaustive 3 literal JSON fragments, including exponent/precision spelling.
+        for text in ('val/loss in [0.50,0.60]', '--lrs=[1e-3,1e-4]', '{"x":  1}'):
+            with self.subTest(text=text): self.assertEqual(wbkit._redact(text), text)
+        text = 'val/loss in [0.50,0.60]'
+        with patch.object(sys, 'argv', ['train.py', '--lrs=[1e-3,1e-4]']):
+            run = start(FakeWandb(), expect=text)
+        self.assertIn('Expect: '+text, run.notes)
+        self.assertEqual(run.config['provenance']['command'], 'train.py --lrs=[1e-3,1e-4]')
+
+
 if __name__ == '__main__':
     unittest.main()
