@@ -1,26 +1,13 @@
-# Framework integration
+# Frameworks
 
-Import wandb in project code; pass it to wbkit.
+- PyTorch/DDP: call start_run per rank (RANK, SLURM_PROCID, LOCAL_RANK priority).
+  Nonzero ranks get disabled runs. Reduce metrics before rank-zero logging.
+- Lightning/HF: initialize after rank setup on global zero; attach the logger
+  to that run. Log trainer/step in an optimizer callback, or pass the framework's
+  axis to define_metrics; rebinding retains summaries/namespaces.
+- Accelerate: create/log inside is_main_process with reduced metrics.
+- Sweeps: use the existing SDK run, run_name/define_metrics and sanitized direct
+  writes via wbkit._redact. Use job_type sweep-trial and a question group.
 
-## PyTorch / DDP
-
-Call start_run per rank. Ownership uses RANK, SLURM_PROCID, then LOCAL_RANK;
-nonzero ranks are disabled. Reduce metrics before logging.
-
-## Lightning / Hugging Face Trainer
-
-Create the run after rank initialization, on global rank zero. Attach the logger
-to it. Log trainer/step from an optimizer callback. For a framework-owned axis,
-pass it to define_metrics; rebinding retains summaries and namespaces.
-
-## Accelerate / sweeps
-
-Accelerate: log reduced metrics in accelerator.is_main_process. For sweeps,
-apply run_name/define_metrics to the existing run; sanitize direct writes with
-wbkit._redact. Use job_type sweep-trial and a group for the question.
-
-## Requeues
-
-Reuse output_dir for the same logical run. Restore the checkpoint separately;
-logging does not resume training. <!-- declaration: logging.conventions -->
-Smoke-check with WANDB_MODE=offline; sync later with authorized access.
+Reuse output_dir on requeue. Logging does not resume training. <!-- declaration: logging.conventions -->
+Smoke-test with WANDB_MODE=offline; sync later with authorized access.
