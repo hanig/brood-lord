@@ -272,7 +272,7 @@ DECLARATION_INVENTORIES = {
 }
 
 REFERENCE_ELABORATION_INVENTORIES = {
-    "hanig-wandb-logging": (('references/artifacts.md', 'logging.conventions', 12), ('references/frameworks.md', 'logging.conventions', 4), ('references/naming.md', 'logging.conventions', 9)),
+    "hanig-wandb-logging": (('references/artifacts.md', 'logging.conventions', 13), ('references/frameworks.md', 'logging.conventions', 4), ('references/naming.md', 'logging.conventions', 9)),
     "hanig-debrief": (
         ('references/contract.md', 'purpose.scope', 17),
         ('references/contract.md', 'workflow.triage', 1),

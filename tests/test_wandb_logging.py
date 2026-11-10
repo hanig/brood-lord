@@ -216,6 +216,76 @@ class Logging(unittest.TestCase):
                                            'team/sample', 1), report)
 
 
+class ReviewRegressions(unittest.TestCase):
+    def test_seed_containers(self):
+        for container in ([{'api_key': 'hidden-value'}], {'token': 'hidden-value'}):
+            with self.subTest(container=container):
+                cfg = {'arch': {}, 'train': {'seed': container}, 'data': {}}
+                run = start(FakeWandb(), rank=0, config=cfg)
+                self.assertNotIn('hidden-value', run.name + run.notes + repr(run.config))
+                self.assertNotIn('hidden-value', wbkit.run_name('sample', 'cells', seed=container))
+
+    def test_global_and_local_rank(self):
+        # Exhaust all four Slurm/global x local rank combinations.
+        for global_rank, local_rank in itertools.product(('0', '4'), ('0', '1')):
+            env = {'SLURM_NTASKS': '8', 'SLURM_PROCID': global_rank, 'LOCAL_RANK': local_rank}
+            with self.subTest(env=env), patch.dict(os.environ, env, clear=True):
+                self.assertEqual(start(FakeWandb()).disabled,
+                                 (global_rank, local_rank) != ('0', '0'))
+
+    def test_disabled_input_is_noop(self):
+        calls = []
+        run = types.SimpleNamespace(disabled=True, id=None,
+                                    use_artifact=lambda *a, **kw: calls.append(a))
+        self.assertIsNone(wbkit.use_input(run, 'team/project/data:v1'))
+        self.assertEqual(calls, [])
+
+    def test_axis_redefinition(self):
+        run = start(FakeWandb(), summaries={'eval/loss': 'min'})
+        wbkit.define_metrics(run, step_metric='train/global_step')
+        definitions = {n: (axis, summary) for n, axis, summary in run.definitions}
+        self.assertEqual(definitions['train/*'][0], 'train/global_step')
+        self.assertEqual(definitions['eval/loss'], ('train/global_step', 'min'))
+        wbkit.log_step(run, 7, {'train/loss': 0.2})
+        self.assertEqual(run.logged[-1]['train/global_step'], 7)
+        other = start(FakeWandb())  # Same fake ID, distinct run object.
+        self.assertNotIn('eval/loss', [d[0] for d in other.definitions])
+
+    def test_malformed_provenance_audit(self):
+        for value in ('migrated', [1], 1):
+            run = types.SimpleNamespace(id='a', name='sample-cells-s0', notes='H: baseline',
+                group='baseline', job_type='train', config={'provenance': value},
+                summary_metrics={}, tags=[], state='finished', url='offline')
+            api = types.SimpleNamespace(runs=lambda *a, **kw: [run], artifact_types=lambda **kw: [])
+            with self.subTest(value=value):
+                self.assertIn('config.no-commit', audit_project.audit(api, 'team/project')['by_rule'])
+
+    def test_family_is_config_text(self):
+        for family in ('GeneFormer', 'Gene Former'):
+            self.assertEqual(start(FakeWandb(), family=family).config['family'], family)
+
+    def test_generated_checkpoint_names(self):
+        # Exhaust 128 version-like and 64 date-like valid IDs, plus two reported cases.
+        ids = ['v' + ''.join(d) for d in itertools.product('01', repeat=7)]
+        ids += ['20' + ''.join(d) for d in itertools.product('01', repeat=6)]
+        ids += ['v1234567', '20261109']
+        sdk = FakeWandb(); run = start(sdk)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'weights.bin'; path.write_bytes(b'weights')
+            for identity in ids:
+                with self.subTest(identity=identity):
+                    run.id = identity
+                    first = wbkit.log_model(sdk, run, path, step=1)
+                    second = wbkit.log_model(sdk, run, path, step=2)
+                    self.assertEqual(first.name, second.name)
+                    self.assertEqual(first.metadata['run_id'], identity)
+                    self.assertEqual(wbkit.lint_artifact(name=first.name, type='model',
+                        description=first.description, metadata=first.metadata), [])
+            for name in ('final', 'latest', 'v2', '20261109'):
+                with self.assertRaises(ValueError):
+                    wbkit.log_model(sdk, run, path, step=1, name=name)
+
+
 @unittest.skipUnless(importlib.util.find_spec('wandb'),
                      'wandb is absent; optional offline integration requires caller-installed wandb')
 class OfflineIntegration(unittest.TestCase):
