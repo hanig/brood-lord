@@ -9,6 +9,7 @@ Install hanig-project beside the loaded skill, or set HANIG_SKILL_DEP_ROOTS.
 Tracker is offline; STALE remains visible.
 State-root children hold plan.json and state/swarm-state.json; link a plan beside state/ if it lives elsewhere.
 The --binding and --audit arguments are optional together; omit both when no tracker binding is configured.
+Repeat --agent-root DIR to include agent working directories outside --repo and --state-root.
 Substitute operator paths in these direct-command scheduler examples.
 
 macOS launchd example: bootstrap the edited plist with
