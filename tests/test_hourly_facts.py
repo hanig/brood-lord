@@ -21,7 +21,6 @@ import wait_report
 SECTION = b"STALE  tracker\r\n\tunchanged   spaces\n```\nno final newline  "
 
 
-# Exhaustive bounds: bindings 3x3, STATUS 7x3, repo names 3x2, bare markers 2x2x2, permissions 2x2.
 class HourlyFacts(unittest.TestCase):
   def setUp(self):
     self.tmp = tempfile.TemporaryDirectory()
@@ -84,6 +83,7 @@ class HourlyFacts(unittest.TestCase):
     self.assertEqual(path.read_bytes(), (self.output / "latest.md").read_bytes())
     return path.read_bytes()
 
+  # Exhaustive bounds: bindings 3x3, STATUS 7x3, repo names 3x2, bare markers 2x2x2, permissions 2x2.
   def test_foreign_running_agent_is_quiet_and_not_live(self):
     self.responses["agents"] = [{"id": "foreign", "name": "other-name",
       "cwd": str(self.root / "repo-other"), "status": "running"}]
