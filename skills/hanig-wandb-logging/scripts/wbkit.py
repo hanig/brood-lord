@@ -494,5 +494,3 @@ def lint_run(
     if bare:
         issues.append(f"metrics.unnamespaced: {', '.join(bare[:8])}")
     return issues
-
-
