@@ -99,5 +99,12 @@
  "test_swarm_preflight.TestPreflightExtraction.test_patch_owners": 6.7,
  "test_swarm_routing.TestRoutingExtraction.test_tests_patch_the_routing_owner": 5.3,
  "test_swarm_workspaces.TestWorkspacesExtraction.test_patch_owners": 5.5,
- "test_tracker_sync_hook.TrackerSyncHookInputContract.test_hostile_command_text_stays_bounded_and_correct": 11.6
+ "test_tracker_sync_hook.TrackerSyncHookInputContract.test_hostile_command_text_stays_bounded_and_correct": 11.6,
+ "test_wandb_logging.Logging.test_metrics_and_disabled_rank": 7.3,
+ "test_wandb_logging.Logging.test_secret_properties": 69.5,
+ "test_wandb_logging.Logging.test_stable_id_and_resume_config": 6.2,
+ "test_wandb_logging.ReviewRegressions.test_axis_redefinition": 9.8,
+ "test_wandb_logging.ReviewRegressions.test_family_is_config_text": 6.2,
+ "test_wandb_logging.SecondReviewRegressions.test_dataclass_secrets": 23.3,
+ "test_wandb_logging.SecondReviewRegressions.test_input_history_project_and_entity": 12.4
 }

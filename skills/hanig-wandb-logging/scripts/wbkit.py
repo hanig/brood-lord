@@ -1,24 +1,13 @@
-"""wbkit: opinionated Weights & Biases helpers for informative runs and artifacts.
+"""Vendor into the training project; pass the caller's W&B module explicitly.
 
-Vendor this single file into a training repository (for example as
-``<package>/wbkit.py``). It imports only the standard library. The caller passes its ``wandb`` module.
-
-What it enforces, so every run is findable and explainable months later:
-
-* a run name built from the model, the data and the hyperparameters that differ
-  from the group's base config, never a random ``adjective-noun-7``;
-* notes that open with the hypothesis (``H:``) and close with the outcome;
-* a nested config (``family``, ``arch``, ``train``, ``data``, ``provenance``) with
-  git commit, dirty flag, command line, host and Slurm ids recorded;
-* namespaced metric keys (``train/``, ``val/``, ``opt/``, ``perf/`` ...) on one
-  shared step axis, with best-value summaries declared up front;
-* artifacts whose description is a card (what, produced by, inputs, contents,
-  intended use, caveats) and whose metadata is searchable;
-* rank-zero-only logging and stable run ids across Slurm requeues.
+Run naming, hypothesis/outcome notes, nested provenance config, shared metric
+axes, artifact cards/lineage and rank-zero requeue-safe logging. Stdlib only.
 """
 
 from __future__ import annotations
 
+import argparse
+import dataclasses
 import datetime as _dt
 import importlib.metadata as _md
 import os
@@ -26,6 +15,7 @@ import re
 import socket
 import subprocess
 import sys
+import types
 import warnings
 import weakref
 from pathlib import Path
@@ -61,10 +51,10 @@ STEP_METRIC = "trainer/step"
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _ARTIFACT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 _RANDOM_NAME_RE = re.compile(r"^[a-z]+-[a-z]+-\d+$")
-_SECRET_RE = re.compile(r"(api[_-]?key|token|secret|passw(or)?d|credential)", re.I)
+_SECRET_RE = re.compile(r"(api[_-]?key|token(?![a-z])|secret|passw(or)?d|credential)", re.I)
 _VERSION_RE = re.compile(r":v\d+$")
 _VERSIONISH_NAME_RE = re.compile(
-    r"(^|[-_.])(final|latest|best|new|old)([-_.]|$)|(^|[-_.])v\d+$|(^|[-_.])20\d{6}([-_.]|$)"
+    r"(^|[-_.])(final|latest|best|new|old)$|(^|[-_.])v\d+$|(^|[-_.])20\d{6}([-_.]|$)"
 )
 _ABBREV = {
     "learning_rate": "lr",
@@ -87,7 +77,7 @@ _ABBREV = {
     "mask_ratio": "mask",
     "grad_clip": "clip",
 }
-_INPUTS: dict[str, list[str]] = {}
+_INPUTS: dict[tuple, list[str]] = {}
 _METRIC_STATE = {}
 
 
@@ -102,7 +92,6 @@ def _metric_state(run):
     return _METRIC_STATE[key][1]
 
 
-# --------------------------------------------------------------------------- provenance
 
 
 def _git(*args: str, cwd: str | None = None) -> str | None:
@@ -144,6 +133,12 @@ def _redact_argv(argv: Iterable[str]) -> str:
 
 
 def _redact(obj: Any) -> Any:
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        obj = {f.name: getattr(obj, f.name) for f in dataclasses.fields(obj)}
+    elif isinstance(obj, (argparse.Namespace, types.SimpleNamespace)):
+        obj = vars(obj)
+    elif isinstance(obj, tuple) and hasattr(obj, "_asdict"):
+        obj = obj._asdict()
     if isinstance(obj, Mapping):
         return {k: ("***" if _SECRET_RE.search(str(k)) else _redact(v)) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -187,7 +182,6 @@ def provenance(wandb, cwd: str | None = None) -> dict[str, Any]:
     }
 
 
-# --------------------------------------------------------------------------- naming
 
 
 def _flatten(d: Mapping[str, Any], prefix: str = "") -> dict[str, Any]:
@@ -260,13 +254,12 @@ def run_name(
     return name
 
 
-# --------------------------------------------------------------------------- runs
 
 
 def _rank() -> int:
     if "RANK" in os.environ:
         return int(os.environ["RANK"])
-    if int(os.environ.get("SLURM_NTASKS", "1")) > 1 and "SLURM_PROCID" in os.environ:
+    if "SLURM_PROCID" in os.environ:
         rank = int(os.environ["SLURM_PROCID"])
         if rank != 0:
             return rank
@@ -307,16 +300,7 @@ def start_run(
     rank: int | None = None,
     **init_kwargs: Any,
 ):
-    """Start an informative run. Non-zero ranks get a disabled run.
-
-    ``config`` should be nested as ``{"arch": ..., "train": ..., "data": ...}``;
-    ``family`` and ``provenance`` are added here. ``base_config`` is the group's
-    reference config; keys that differ from it go into the run name.
-    ``summaries`` maps metric keys to ``"min"`` or ``"max"`` so the runs table
-    shows the best value instead of the last one.
-    ``output_dir`` makes the run id survive a Slurm requeue: the id is written
-    to ``<output_dir>/wandb_run_id`` and reused with ``resume="allow"``.
-    """
+    """Start with base-config deltas, summary rules and a persistent output_dir ID."""
     rank = _rank() if rank is None else rank
     if rank != 0:
         return wandb.init(mode="disabled")
@@ -426,12 +410,15 @@ def log_step(run, step: int, metrics: Mapping[str, Any], commit: bool | None = N
     run.log({**metrics, _metric_state(run)["axis"]: step}, commit=commit)
 
 
-# --------------------------------------------------------------------------- artifacts
 
 
 def _qualified(art) -> str:
     base = art.name.split(":")[0]
     return f"{art.entity}/{art.project}/{base}:{art.version}"
+
+
+def _run_key(run):
+    return tuple(getattr(run, key, None) for key in ("entity", "project", "id"))
 
 
 def use_input(run, ref: str, type: str | None = None):
@@ -444,7 +431,7 @@ def use_input(run, ref: str, type: str | None = None):
             "but pin it in config for reproducibility"
         )
     art = run.use_artifact(ref, type=type)
-    _INPUTS.setdefault(run.id, []).append(_qualified(art))
+    _INPUTS.setdefault(_run_key(run), []).append(_qualified(art))
     return art
 
 
@@ -468,7 +455,7 @@ def artifact_card(
         lines.append(f"**Produced by:** {who}, job_type `{run.job_type}`, commit `{sha}`{dirty}")
         if prov.get("command"):
             lines.append(f"**Command:** `{prov['command']}`")
-    ins = list(inputs) if inputs is not None else (_INPUTS.get(getattr(run, "id", ""), []))
+    ins = list(inputs) if inputs is not None else _INPUTS.get(_run_key(run), [])
     lines.append("**Inputs:** " + (", ".join(f"`{i}`" for i in ins) if ins else "none recorded"))
     lines.append(f"**Contents:** {contents.strip()}")
     lines.append(f"**Intended use:** {intended_use.strip()}")
@@ -530,12 +517,7 @@ def log_dataset(
     aliases: Iterable[str] = (),
     type: str = "dataset",
 ):
-    """Log a dataset (local path or s3://, gs://, file:// URI) with a card.
-
-    Paths over 2 GiB become references by default: W&B stores checksums and
-    the URI, not the bytes. A file:// reference only resolves on hosts that
-    mount that path, so say where it lives in ``caveats``.
-    """
+    """Log a dataset/card; above 2 GiB default to references requiring a shared mount."""
     if getattr(run, "disabled", False):
         return None
     _check_artifact_name(name)
@@ -566,12 +548,7 @@ def log_model(
     reference: bool | None = None,
     aliases: Iterable[str] = (),
 ):
-    """Log a checkpoint as a ``model`` artifact with step, metrics and arch in metadata.
-
-    The default name ``ckpt-<run_id>`` keeps every checkpoint of a run in one
-    collection, versioned, with ``step-N`` and ``best`` aliases. IDs that would
-    violate name rules use a stable digest label; metadata retains ``run_id``.
-    """
+    """Log checkpoint metadata/card with step-N/best aliases in one run collection."""
     if getattr(run, "disabled", False):
         return None
     if not name:
@@ -640,7 +617,6 @@ def log_predictions(
     return run.log_artifact(art)
 
 
-# --------------------------------------------------------------------------- finishing and lint
 
 
 def finish(run, outcome: str, verdict: str, exit_code: int | None = None) -> list[str]:
@@ -680,11 +656,7 @@ def lint_run(
     tags: Iterable[str] = (),
     state: str | None = None,
 ) -> list[str]:
-    """Rules shared by ``finish`` and the project auditor.
-
-    Each issue is ``"<rule-code>: <advice>"``; the code is stable so the auditor
-    can group by it.
-    """
+    """Return stable rule-code: advice issues, shared with the project auditor."""
     issues = []
     if not name or _RANDOM_NAME_RE.match(name):
         issues.append("name.random: W&B default name; use model-data-deltas-seed")

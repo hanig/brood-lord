@@ -1,25 +1,18 @@
 #!/usr/bin/env python3
-"""Read-only audit of a W&B project against the hanig-wandb-logging conventions.
-
-    In caller code: audit(wandb.Api(timeout=120), "entity/project", 200)
-
-Reports, per rule, how many runs or artifacts break it and which ones, so the
-fixes can be planned and confirmed before anything is renamed or rewritten.
-Changes nothing in W&B.
-"""
+"""Read-only per-rule run/artifact audit; call audit(api, "entity/project", 200)."""
 
 from __future__ import annotations
 
 import argparse
 import collections
 import json
+import importlib.util
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import wbkit  # noqa: E402
-
-
+_spec = importlib.util.spec_from_file_location("_audit_wbkit", Path(__file__).with_name("wbkit.py"))
+wbkit = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(wbkit)
 
 def _code(issue: str) -> str:
     return issue.split(":", 1)[0]

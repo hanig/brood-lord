@@ -1,8 +1,5 @@
 # Naming and structure
 
-Read this when choosing entity, project, group, run name, tags, notes, config
-layout or metric keys.
-
 ## Contents
 
 1. Entity and project
@@ -19,9 +16,7 @@ layout or metric keys.
 Use a team entity for anything other people will read. Registry links and team
 visibility both require it; personal-entity runs must be re-logged to move. <!-- declaration: logging.conventions -->
 
-A project is the set of runs you want in one runs table and one workspace.
-Runs belong together when they share a metric schema and you would plot them
-on the same axes.
+A project groups runs sharing metric schema and plot axes in one table/workspace.
 
 | Good | Why |
 |---|---|
@@ -41,12 +36,10 @@ Segment inside a project with group, job_type, tags and config.
 
 ## 2. Group and job_type
 
-A group is one question: an ablation family, a seed replicate set, a sweep, or
-the preprocess/train/eval chain of one pipeline invocation.
+A group is one question: ablation, seed replicates, sweep, or one pipeline invocation.
 
-Format: `YYYYMMDD-{slug}`, for example `20261109-mask-ratio-ablation`,
-`20261112-seed-replicates-base`. The date is when the question was posed,
-fixed for all runs in the group, so a rerun next week still lands in it.
+Format: `YYYYMMDD-{slug}`, e.g. `20261109-mask-ratio-ablation`. Fix the date
+when posing the question; later reruns stay in the same group.
 
 `job_type` vocabulary (the workspace can then split panels by it):
 
@@ -80,7 +73,7 @@ pass `resume="allow"`.
 
 ## 4. Tags
 
-Few and from a controlled vocabulary, because tags are filters, not prose.
+Use a small controlled vocabulary for filtering.
 
 - Role: `baseline`, `ablation`, `candidate`, `debug`, `broken`, `dirty-tree`.
 - Facets with a prefix: `data:{name}`, `arch:{name}`, `cluster:{name}`.
@@ -120,10 +113,9 @@ mask-ratio ablation at the current default config."
 }
 ```
 
-Why this split: it is the shape of the Arc Bench Training contract
-(`architecture.config`, `training.config` including seed, `training_data`
-splits and mixture shares, `run.commit` and `run.repository`). Keeping it at
-logging time makes contract export mechanical.
+This matches the Arc Bench Training contract: `architecture.config`,
+`training.config` including seed, `training_data` splits/mixture shares,
+`run.commit` and `run.repository`, making later export mechanical.
 
 Hydra or OmegaConf users: `OmegaConf.to_container(cfg, resolve=True)` then map
 groups onto these sections; do not log the unresolved config. <!-- declaration: logging.conventions -->
@@ -151,8 +143,7 @@ passing `step=`, which W&B requires to be monotonic per process and silently <!-
 drops on violation after a resume.
 
 Declare best-value summaries: `define_metric("val/loss", summary="min")`.
-Without this the runs table shows the last value, which for an overfit run is
-the worst one.
+Otherwise the table shows the last value, potentially the worst after overfitting.
 
 Per-subset metrics: `val/pearson_delta/k562`, `val/pearson_delta/hepg2`. Panels
 group on the prefix.

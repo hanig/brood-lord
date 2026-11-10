@@ -4,13 +4,18 @@ Secret properties exhaust itertools.product over 6 keys x 3 container shapes.
 The optional SDK case uses offline mode exclusively.
 """
 from pathlib import Path
+import argparse
+import collections
 import importlib
 import importlib.util
 import itertools
+import dataclasses
 import json
 import os
 import sys
+import subprocess
 import tempfile
+import threading
 import types
 import unittest
 from unittest.mock import patch
@@ -287,6 +292,119 @@ class ReviewRegressions(unittest.TestCase):
             for name in ('final', 'latest', 'v2', '20261109'):
                 with self.assertRaises(ValueError):
                     wbkit.log_model(sdk, run, path, step=1, name=name)
+
+
+class SecondReviewRegressions(unittest.TestCase):
+    def test_dataclass_secrets(self):
+        @dataclasses.dataclass
+        class Recipe:
+            api_key: str
+            width: int = 8
+        # Exhaust four stdlib record types x three container positions.
+        records = (Recipe, argparse.Namespace, types.SimpleNamespace,
+                   collections.namedtuple('Record', 'api_key width'))
+        wraps = (lambda x: x, lambda x: [x], lambda x: {'recipe': x})
+        for record, wrap in itertools.product(records, wraps):
+            cfg = {'arch': {}, 'train': wrap(record(api_key='hidden-value', width=8)), 'data': {}}
+            base = {'train': wrap(record(api_key='old-value', width=8))}
+            run = start(FakeWandb(), config=cfg, base_config=base)
+            self.assertNotIn('hidden-value', repr(run.config) + run.name + run.notes)
+            self.assertIn('8', repr(run.config))
+
+    def test_token_hyperparameters_survive(self):
+        cfg = {'train': {'max_tokens': 1024, 'tokens_per_batch': 32, 'tokenizer': 'wordpiece'}}
+        base = {'train': {'max_tokens': 512, 'tokens_per_batch': 16, 'tokenizer': 'character'}}
+        run = start(FakeWandb(), config=cfg, base_config=base)
+        self.assertEqual(run.config['train'], cfg['train'])
+        self.assertEqual(wbkit.config_deltas(cfg, base),
+                         {'train.' + k: v for k, v in cfg['train'].items()})
+        for key in ('token', 'access_token', 'api_key', 'client_secret', 'password', 'credential'):
+            self.assertEqual(wbkit._redact({key: 'hidden-value'})[key], '***')
+
+    def test_rank_without_task_count(self):
+        # Exhaust 2 process ranks x 2 local ranks x presence/absence of task count.
+        for proc, local, count in itertools.product(('0', '4'), ('0', '1'), (None, '8')):
+            env = {'SLURM_PROCID': proc, 'LOCAL_RANK': local}
+            if count is not None:
+                env['SLURM_NTASKS'] = count
+            with self.subTest(env=env), patch.dict(os.environ, env, clear=True):
+                self.assertEqual(start(FakeWandb()).disabled, (proc, local) != ('0', '0'))
+
+    def test_input_history_project_and_entity(self):
+        # Exhaust three distinct entity/project scopes sharing one run ID.
+        for entity, project in (('team', 'alpha'), ('team', 'beta'), ('other', 'alpha')):
+            run = start(FakeWandb(), entity=entity, project=project)
+            card = lambda r: wbkit.artifact_card(summary='s', contents='c', intended_use='u', run=r)
+            self.assertIn('Inputs:** none recorded', card(run))
+            ref = entity + '/' + project + '/cells:v1'
+            run.use_artifact = lambda *a, **kw: types.SimpleNamespace(
+                name='cells:v1', entity=entity, project=project, version='v1')
+            wbkit.use_input(run, ref)
+            wbkit.finish(run, 'Fixture.', 'inconclusive')
+            resumed = start(FakeWandb(), entity=entity, project=project)
+            self.assertIn(ref, card(resumed))
+
+    def test_descriptive_artifact_names(self):
+        for name in ('old-world-monkeys', 'new-york-images', 'best-practice-corpus'):
+            with self.subTest(name=name):
+                wbkit._check_artifact_name(name)
+                self.assertFalse(any(i.startswith('artifact.versioned-name:') for i in
+                    wbkit.lint_artifact(name=name, type='dataset', description='', metadata={})))
+
+    def test_auditor_ignores_unrelated_loaded_module(self):
+        code = '''
+import sys, types
+sys.modules['wbkit'] = types.ModuleType('wbkit')
+import audit_project
+run = types.SimpleNamespace(id='a', name='sample', notes='', group=None,
+    job_type=None, config={}, summary_metrics={}, tags=[], state='finished', url='offline')
+api = types.SimpleNamespace(runs=lambda *a, **kw: [run], artifact_types=lambda **kw: [])
+assert audit_project.audit(api, 'team/sample')['runs_checked'] == 1
+'''
+        result = subprocess.run([sys.executable, '-c',
+            'import sys; sys.path.insert(0, ' + repr(str(SCRIPTS)) + ')\n' + code],
+            capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_lightning_checkpoint_collective(self):
+        text = (SCRIPTS.parent / 'references/frameworks.md').read_text()
+        callback = text[text.index('class WbkitCheckpoint'):].split('```', 1)[0]
+        saved, uploaded, errors = [], [], []
+        barrier = threading.Barrier(2, timeout=2)
+        values = {}
+        namespace = {'L': types.SimpleNamespace(Callback=object), 'wandb': object(),
+                     'wbkit': types.SimpleNamespace(log_model=lambda *a, **kw: uploaded.append(len(saved)))}
+        exec(callback, namespace)
+        def worker(rank):
+            def broadcast(value):
+                values[rank] = value
+                barrier.wait()
+                answer = values[0]
+                barrier.wait()
+                return answer
+            def save(path):
+                saved.append(rank)
+                barrier.wait()
+            trainer = types.SimpleNamespace(is_global_zero=rank == 0,
+                callback_metrics={}, strategy=types.SimpleNamespace(broadcast=broadcast),
+                default_root_dir='output', global_step=1, save_checkpoint=save)
+            cb = namespace['WbkitCheckpoint'](object())
+            try:
+                # Better, worse, better, missing: every rank follows the same decision.
+                for val in (2, 3, 1, None):
+                    trainer.callback_metrics = {'val/loss': val}
+                    cb.on_validation_end(trainer, None)
+            except Exception as exc:
+                errors.append(repr(exc))
+        threads = [threading.Thread(target=worker, args=(rank,)) for rank in (0, 1)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        self.assertFalse(any(t.is_alive() for t in threads))
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(saved), [0, 0, 1, 1])
+        self.assertEqual(uploaded, [2, 4])
 
 
 @unittest.skipUnless(importlib.util.find_spec('wandb'),
