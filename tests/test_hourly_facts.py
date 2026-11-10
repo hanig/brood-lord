@@ -188,11 +188,15 @@ class HourlyFacts(unittest.TestCase):
     info = os.stat(path)
     real_open = open
     with real_open(path, "rb") as handle:
-      with mock.patch("builtins.open", return_value=handle):
+      reader = mock.Mock(wraps=handle)
+      reader.__enter__ = mock.Mock(return_value=reader)
+      reader.__exit__ = mock.Mock(return_value=False)
+      with mock.patch("builtins.open", return_value=reader):
         with mock.patch.object(hourly_facts.os, "stat", return_value=info) as observed:
           with mock.patch.object(hourly_facts, "last_status", wraps=hourly_facts.last_status) as parse:
             lines, live = hourly_facts.status_facts([str(path)], [], ["done"])
     self.assertEqual(len(parse.call_args[0][0].encode()), 1024 * 1024)
+    self.assertEqual(reader.read.call_args_list, [mock.call(1), mock.call(1024 * 1024)])
     observed.assert_called_once_with(str(path))
     self.assertIn("mtime " + hourly_facts.local_time(info.st_mtime), lines[0][1])
     self.assertIn("STATUS done", lines[0][1])

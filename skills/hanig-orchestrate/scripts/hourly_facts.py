@@ -256,9 +256,12 @@ def status_facts(patterns, attention, terminal):
             lines.append((True, "{}: not a regular file".format(label)))
             continue
           with open(path, "rb") as handle:
-            handle.seek(max(0, info.st_size - STATUS_BYTES))
+            offset = max(0, info.st_size - STATUS_BYTES)
+            handle.seek(max(0, offset - 1))
+            boundary = handle.read(1) if offset else b""
             text = handle.read(STATUS_BYTES).decode("utf-8", "replace")
-          value, last = last_status(text, info.st_size > STATUS_BYTES)
+          value, last = last_status(text, bool(offset) and boundary not in
+                                    (b"\n", b"\r", b"\v", b"\f", b"\x1c", b"\x1d", b"\x1e"))
           live = live or (value is not None and value not in terminal)
           lines.append((value in attention, "{}: {}".format(
             label, last if last is not None else "no STATUS line")))
