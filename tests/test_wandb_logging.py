@@ -221,7 +221,7 @@ class PartOneRegressions(unittest.TestCase):
     def test_all_egress(self):
         secret = 'synthetic-hidden'
         sdk = FakeWandb()
-        run = start(sdk, model='model token=' + secret, data='cells', name='sample secret=' + secret, hypothesis='Check password=' + secret, expect='val/loss < 1; api_key=' + secret, tags=['secret=' + secret], group='group token=' + secret, config={'arch': {}, 'train': {'note': 'token=' + secret}, 'data': {}})
+        run = start(sdk, model='model token=' + secret, data='cells', name='sample secret=' + secret, hypothesis='Check password=' + secret, expect='val/loss < 1; api_key=' + secret, tags=['secret=' + secret], group='group token=' + secret, config={'arch': {'note token=' + secret: 'public'}, 'train': {'note': 'token=' + secret}, 'data': {}})
         self.assertNotIn(secret, repr(run.__dict__))
         wbkit.log_step(run, 1, {'train/text': 'token=' + secret})
         run.summary['message'] = 'secret=' + secret
