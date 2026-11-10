@@ -120,6 +120,7 @@ SWARM_DECLARATIONS = (
 
 ORCHESTRATE_DECLARATIONS = (
     "report.scheduled-facts",
+    "owner.questions",
     "placement.behavior-deciding",
     "placement.reference-elaboration",
     "placement.reference-dialect",
@@ -128,7 +129,6 @@ ORCHESTRATE_DECLARATIONS = (
     "paths.skill-directory",
     "authority.source",
     "authority.confirmation",
-    "owner.questions",
     "authority.narrow-mode",
     "authority.revocation",
     "authority.lease",
@@ -977,12 +977,13 @@ class TestAuthoredSkillShape(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, cards)
         for declaration in ("report.three-parts", "report.scheduled-facts"):
-            report = next(line for line in block.splitlines()
-                          if line.startswith('- **`' + declaration + '`:** '))
             with self.subTest(declaration=declaration):
-                self.assertIn("line listing any open owner questions", report)
-                self.assertIn("each already asked as a card", report)
-                self.assertIn('"No open owner questions"', report)
+                self.assertIn(declaration, cards)
+        self.assertIn("Open each three-part report", cards)
+        self.assertIn("line listing any open owner questions", cards)
+        self.assertIn("each already asked as a card", cards)
+        self.assertIn('"No open owner questions"', cards)
+        self.assertIn("hourly facts report format unchanged", cards)
         self.assertIn("three ordered parts: (1) running work", block)
         self.assertIn("(2) the output of linear_sync.py section quoted verbatim", block)
         self.assertIn("(3) work that can start now followed by dispatch", block)

@@ -90,11 +90,11 @@ CLOSED_DECLARATIONS = {
         limit.base-branch-comparison compatibility.python
     """),
     "hanig-orchestrate": _closed_ids("""
-        report.scheduled-facts
+        report.scheduled-facts owner.questions
         placement.behavior-deciding placement.reference-elaboration
         placement.reference-dialect capability.host-policy
         capability.dependencies paths.skill-directory authority.source
-        authority.confirmation owner.questions authority.narrow-mode authority.revocation
+        authority.confirmation authority.narrow-mode authority.revocation
         authority.lease authority.session-cap authority.admission
         authority.rollover authority.worker-delegation
         role.supervision delegation.whole-loop delegation.prompt
