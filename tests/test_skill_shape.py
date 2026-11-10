@@ -959,6 +959,26 @@ class TestAuthoredSkillShape(unittest.TestCase):
         # Read the consumer's rendered declaration, not just its JSON source.
         cards = next(line for line in block.splitlines()
                      if line.startswith('- **`owner.questions`:** '))
+        # Pin the whole instruction: separate phrase matches can admit inserted
+        # wording that makes the structured tool optional for selected questions.
+        self.assertEqual(cards, (
+            "- **`owner.questions`:** Every question to the owner uses the active host's "
+            'structured question tool as a card with 2 to 4 options, the recommended option first '
+            'and labelled as recommended. This covers decisions, approvals, authority '
+            'confirmation, and actions only the owner can take, such as starting a process '
+            "another session's permission check refused. Each card stands on its own: what was "
+            'found, why it matters, and what each option does. Ask in the same turn the need '
+            'arises and keep unrelated work moving. On hosts without a structured question tool, '
+            'put a marked question block at the very top of the message with numbered options and '
+            'the recommendation. Never ask a question only inside a status report or a narrative '
+            "paragraph. This changes how to ask, not when: decisions inside the current mandate's "
+            'grant are still made and reported, not asked. Authority confirmation still shows the '
+            'mandate sections verbatim in the message; use the card only for the confirmation '
+            'itself. Open each three-part report (report.three-parts), including the owner-facing '
+            'use of report.scheduled-facts, with a line listing any open owner questions, each '
+            'already asked as a card, or "No open owner questions". Keep the existing three parts '
+            'and their order and the hourly facts report format unchanged.'
+        ))
         for phrase in (
                 "Every question to the owner uses",
                 "active host's structured question tool", "card with 2 to 4 options",
