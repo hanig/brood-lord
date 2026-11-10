@@ -239,6 +239,32 @@ class HourlyFacts(unittest.TestCase):
     self.assertEqual(lines, [(True, str(path) + ": unreadable: race")])
     self.assertFalse(live)
 
+  def test_status_bad_realpath_preserves_other_matches(self):
+    bad, good = self.root / "bad", self.root / "good"
+    good.write_text("STATUS awaiting_coordinator")
+    pattern = str(self.root / "*")
+    for error in (OSError("race"), RecursionError("chain")):
+      with mock.patch.object(hourly_facts.glob, "glob", return_value=[str(bad), str(good)]):
+        with mock.patch.object(hourly_facts.os.path, "realpath", side_effect=[error, str(good)]):
+          lines, live = hourly_facts.status_facts([pattern], ["awaiting_coordinator"], [])
+      self.assertEqual(len(lines), 2)
+      self.assertIn(str(bad) + ": unreadable:", lines[0][1])
+      self.assertIn(str(good), lines[1][1])
+      self.assertTrue(lines[1][0])
+      self.assertTrue(live)
+    links = self.root / "links"
+    links.mkdir()
+    (links / "end").write_text("STATUS done")
+    for i in range(1100):
+      (links / str(i)).symlink_to(str(i + 1) if i < 1099 else "end")
+    bad.symlink_to("links/0")
+    with mock.patch.object(hourly_facts.glob, "glob", return_value=[str(bad), str(good)]):
+      lines, live = hourly_facts.status_facts([pattern], ["awaiting_coordinator"], [])
+    self.assertEqual(len(lines), 2)
+    self.assertIn(str(bad) + ": unreadable:", lines[0][1])
+    self.assertTrue(lines[1][0])
+    self.assertTrue(live)
+
   def test_status_source_usage_errors(self):
     for extra in ([], ["--status-file", str(self.root / "**" / "STATUS")]):
       result = subprocess.run([sys.executable, str(SCRIPTS / "hourly_facts.py")] +

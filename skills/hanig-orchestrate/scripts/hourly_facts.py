@@ -244,12 +244,12 @@ def status_facts(patterns, attention, terminal):
       if not matches:
         lines.append((True, "{}: no matches".format(pattern)))
       for path in matches:
-        identity = os.path.realpath(path)
-        if identity in seen:
-          continue
-        seen.add(identity)
         label = path
         try:
+          identity = os.path.realpath(path)
+          if identity in seen:
+            continue
+          seen.add(identity)
           info = os.stat(path)
           label = "{} (mtime {})".format(path, local_time(info.st_mtime))
           if not stat.S_ISREG(info.st_mode):
@@ -262,7 +262,7 @@ def status_facts(patterns, attention, terminal):
           live = live or (value is not None and value not in terminal)
           lines.append((value in attention, "{}: {}".format(
             label, last if last is not None else "no STATUS line")))
-        except (OSError, ValueError, OverflowError) as exc:
+        except (OSError, ValueError, OverflowError, RecursionError) as exc:
           lines.append((True, "{}: unreadable: {}".format(label, exc)))
     except (OSError, ValueError, RecursionError) as exc:
       lines.append((True, "{}: unreadable: {}".format(pattern, exc)))
