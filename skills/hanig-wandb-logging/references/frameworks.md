@@ -23,5 +23,4 @@ wbkit._redact. Use job_type sweep-trial and a group for the question.
 
 Reuse output_dir for the same logical run. Restore the checkpoint separately;
 logging does not resume training. <!-- declaration: logging.conventions -->
-Use WANDB_MODE=offline for smoke checks, then caller-managed wandb sync
-when authorized connectivity is available.
+Smoke-check with WANDB_MODE=offline; sync later with authorized access.
