@@ -228,15 +228,45 @@ def project_agent(agent, roots, bound_ids):
     return False
 
 
+def status_matches(repo, pattern):
+  """Expand glob components iteratively; the repo prefix is a literal path."""
+  parts = Path(pattern).parts
+  base = parts[0] if Path(pattern).is_absolute() else str(repo)
+  if Path(pattern).is_absolute():
+    parts = parts[1:]
+  pending, visited, matches = [(base, 0)], set(), set()
+  while pending:
+    directory, index = pending.pop()
+    if (directory, index) in visited:
+      continue
+    visited.add((directory, index))
+    if index == len(parts):
+      if not Path(directory).is_dir():
+        matches.add(directory)
+      continue
+    part = parts[index]
+    if part == "**":
+      pending.append((directory, index + 1))
+      pending.extend((name, index) for name in glob.glob(
+        os.path.join(glob.escape(directory), "*")) if Path(name).is_dir())
+    else:
+      pending.extend((name, index + 1) for name in glob.glob(
+        os.path.join(glob.escape(directory), part)))
+  return sorted(matches)
+
+
 def status_facts(args):
-  lines, live = [], False
+  lines, live, seen = [], False, set()
   for pattern in args.status_file:
     pattern = os.path.expanduser(pattern)
-    matches = sorted(glob.glob(str(args.repo / pattern), recursive=True))
+    matches = status_matches(args.repo, pattern)
     if not matches:
       lines.append((True, "STATUS glob matched no file: {}".format(pattern)))
     for name in matches:
       path = Path(name)
+      if path in seen:
+        continue
+      seen.add(path)
       label = os.path.relpath(str(path), str(args.repo))
       try:
         text = path.read_text(encoding="utf-8")
@@ -249,9 +279,9 @@ def status_facts(args):
           tokens = line.split()
           if tokens and re.match(r"^\d{4}-\d{2}-\d{2}T", tokens[0]):
             tokens = tokens[1:]
-          if tokens and tokens[0] in {"STATUS:", "STATUS"}:
+          if len(tokens) >= 2 and tokens[0] in {"STATUS:", "STATUS"}:
             last = line
-            value = tokens[1] if len(tokens) > 1 else ""
+            value = tokens[1]
         live = live or (last is not None and value not in args.terminal_status)
         lines.append((value is not None and value in args.attention_status,
           "{} (modified {}): {}".format(label, modified, last if last is not None else "no STATUS line")))

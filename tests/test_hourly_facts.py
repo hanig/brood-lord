@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -209,6 +210,75 @@ class HourlyFacts(unittest.TestCase):
     report = self.collect()
     self.assertNotIn(b"- agent external ", report)
     self.assertIn(b"live work: no.", report)
+
+  def status_args(self, patterns):
+    return SimpleNamespace(repo=self.repo, status_file=patterns,
+      attention_status=["awaiting_coordinator"], terminal_status=["done"])
+
+  def test_status_globs_escape_repository(self):
+    # Exhaustive bound: literal [, *, ? in repo name, with/without a sibling.
+    for name, sibling in itertools.product(("project[1]", "project*", "project?"), (False, True)):
+      with self.subTest(name=name, sibling=sibling):
+        self.repo = self.root / name
+        self.repo.mkdir(exist_ok=True)
+        (self.repo / "progress.md").write_text("STATUS awaiting_coordinator")
+        other = self.root / "project1"
+        if sibling:
+          other.mkdir(exist_ok=True)
+          (other / "progress.md").write_text("STATUS done")
+        lines, live = hourly_facts.status_facts(self.status_args(["*.md"]))
+        self.assertTrue(live)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0][0])
+        self.assertTrue(lines[0][1].startswith("progress.md (modified "))
+        self.assertTrue(lines[0][1].endswith("STATUS awaiting_coordinator"))
+        if sibling:
+          (other / "progress.md").unlink()
+          other.rmdir()
+
+  def test_status_requires_a_value(self):
+    # Exhaustive bound: both markers, with/without timestamp, with/without list marker.
+    for marker, timestamp, prefix in itertools.product(
+        ("STATUS", "STATUS:"), ("", "2026-11-10T02:42:18-08:00 "), ("", "  - ")):
+      with self.subTest(marker=marker, timestamp=timestamp, prefix=prefix):
+        (self.repo / "progress.md").write_text(
+          "STATUS awaiting_coordinator\n" + prefix + timestamp + marker + "\n")
+        lines, live = hourly_facts.status_facts(self.status_args(["*.md"]))
+        self.assertTrue(live)
+        self.assertTrue(lines[0][0])
+        self.assertTrue(lines[0][1].endswith("STATUS awaiting_coordinator"))
+
+  def test_recursive_status_glob_is_iterative(self):
+    # Safe host equivalent of the reviewer's 1,100-level Linux tree: 100
+    # directories with recursion limit 80, below this host's path-length limit.
+    directory, created = self.repo, []
+    for _ in range(100):
+      directory = directory / "x"
+      directory.mkdir()
+      created.append(directory)
+    (directory / "deep.md").write_text("STATUS done")
+    (self.repo / "progress.md").write_text("STATUS done")
+    limit = sys.getrecursionlimit()
+    try:
+      sys.setrecursionlimit(80)
+      lines, live = hourly_facts.status_facts(self.status_args(["**/*.md"]))
+    finally:
+      sys.setrecursionlimit(limit)
+      (directory / "deep.md").unlink()
+      for path in reversed(created):
+        path.rmdir()
+    self.assertFalse(live)
+    self.assertEqual(len(lines), 2)
+    self.assertFalse(any(flag for flag, _ in lines))
+    self.assertTrue(any("deep.md (modified " in message for _, message in lines))
+
+  def test_overlapping_status_globs_count_files_once(self):
+    (self.repo / "progress.md").write_text("STATUS awaiting_coordinator")
+    (self.repo / "old").mkdir()
+    lines, live = hourly_facts.status_facts(self.status_args(["*", "progress.md"]))
+    self.assertTrue(live)
+    self.assertEqual(len(lines), 1)
+    self.assertTrue(lines[0][0])
 
   def test_unreadable_status_file(self):
     path = self.repo / "denied.md"
