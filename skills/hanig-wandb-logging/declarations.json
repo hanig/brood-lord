@@ -25,19 +25,19 @@
     },
     {
       "id": "capability.host",
-      "normative_text": "Use authorized host capabilities. Callers supply W&B; scripts import only stdlib. Missing access means an incomplete logging check."
+      "normative_text": "Use authorized host access. Callers supply W&B; scripts use stdlib. Missing access means incomplete logging evidence."
     },
     {
       "id": "paths.skill-directory",
-      "normative_text": "Set HANIG_WANDB_LOGGING_DIR to the loaded SKILL.md directory. Keep data/output paths project-relative."
+      "normative_text": "Set HANIG_WANDB_LOGGING_DIR to the loaded SKILL.md directory; keep data/output project-relative."
     },
     {
       "id": "logging.credentials",
-      "normative_text": "Sanitize every outgoing value recursively, including JSON argv and summary strings. Remove secret-key values. Keep unlabeled credentials out of free text."
+      "normative_text": "Sanitize outgoing values, JSON argv and summaries. Remove secret-key values. Keep unlabeled credentials out of prose."
     },
     {
       "id": "approval.shared-state",
-      "normative_text": "Show a logging plan and confirm new shared names. Obtain confirmation before shared run/card edits. Never delete runs or artifact versions as cleanup."
+      "normative_text": "Show a logging plan; confirm shared names/edits. Never delete runs or artifact versions as cleanup."
     }
   ]
 }
