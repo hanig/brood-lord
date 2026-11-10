@@ -9,8 +9,8 @@ checkpoints go through `wbkit.log_model` with a card.
 
 ## Raw PyTorch (single process or DDP)
 
-`wbkit.start_run` returns a disabled run when `RANK`, `LOCAL_RANK` or (under
-multi-task srun) `SLURM_PROCID` is non-zero, so every rank can call it.
+`wbkit.start_run` returns a disabled run on nonzero global ranks, falling back
+to `SLURM_PROCID` and then `LOCAL_RANK`, so every rank can call it.
 Reduce metrics across ranks before logging; log on rank 0 only (the disabled <!-- declaration: logging.conventions -->
 run makes `log_step` a no-op elsewhere).
 
@@ -32,26 +32,25 @@ Lightning logs with its own `trainer/global_step`. Either pass
 Rank note: under Lightning, the process rank is known only after the Trainer <!-- declaration: logging.conventions -->
 starts. Use `rank_zero_only` or create the run in `setup()` on global rank 0.
 
-A checkpoint callback that logs through wbkit:
+Lightning's [save_checkpoint](https://lightning.ai/docs/pytorch/stable/optional-api/api/lightning.pytorch.trainer.trainer.Trainer) requires all ranks for distributed checkpointing. Broadcast the decision; only artifact logging is rank zero. <!-- declaration: logging.conventions -->
 
 ```python
 class WbkitCheckpoint(L.Callback):
     def __init__(self, run, monitor="val/loss", mode="min"):
         self.run, self.monitor, self.mode, self.best = run, monitor, mode, None
     def on_validation_end(self, trainer, pl_module):
-        if not trainer.is_global_zero:
-            return
         val = trainer.callback_metrics.get(self.monitor)
-        if val is None:
-            return
-        val = float(val)
-        better = self.best is None or (val < self.best if self.mode == "min" else val > self.best)
-        if better:
-            self.best = val
+        better = False
+        if trainer.is_global_zero and val is not None:
+            val = float(val)
+            better = self.best is None or (val < self.best if self.mode == "min" else val > self.best)
+        if trainer.strategy.broadcast(better):
             path = f"{trainer.default_root_dir}/best.ckpt"
             trainer.save_checkpoint(path)
-            wbkit.log_model(wandb, self.run, path, step=trainer.global_step,
-                            metrics={self.monitor: val}, is_best=True)
+            if trainer.is_global_zero:
+                self.best = val
+                wbkit.log_model(wandb, self.run, path, step=trainer.global_step,
+                                metrics={self.monitor: val}, is_best=True)
 ```
 
 ## Hugging Face Trainer

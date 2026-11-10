@@ -1,11 +1,6 @@
 # Artifacts: names, types, cards, metadata, lineage
 
-Read this when logging datasets, checkpoints, predictions or eval results, or
-when writing or fixing artifact descriptions.
-
 ## Types
-
-Five, so the lineage graph and Registry filters stay legible:
 
 | type | What | Typical producer |
 |---|---|---|
@@ -35,9 +30,7 @@ only when consumers should not silently pick it up. <!-- declaration: logging.co
 
 ## The description card
 
-The description renders as markdown in the UI and is the first thing a
-consumer reads. Every artifact gets these fields (`wbkit.artifact_card` writes
-them):
+The UI renders a Markdown card with these fields (`wbkit.artifact_card`):
 
 ```
 <One sentence: what this is, in domain terms.>
@@ -67,8 +60,8 @@ For a generated checkpoint name that violates these rules, wbkit uses a stable
 
 ## Metadata
 
-Metadata is for machines: filters, sorting, and later export. Flat or shallow,
-JSON-serializable, stable keys across versions.
+Metadata supports filters, sorting and export: flat/shallow, JSON-serializable,
+with stable keys across versions.
 
 - Datasets: `n_samples`, `n_features`, `splits` (counts per split),
   `source_uri`, `storage` (`upload`/`reference`), `n_files`, `total_bytes`,
@@ -102,10 +95,9 @@ a reference above 2 GiB.
 
 ## Lineage
 
-Every input goes through `run.use_artifact("{entity}/{project}/{name}:vN")`
-(or `wbkit.use_input`, which also records it for the card). Reading a file
-directly from disk leaves no edge, and the lineage graph then says the model
-came from nowhere. Pin `:vN` in config; resolving an alias at run time is fine
+Use `run.use_artifact("{entity}/{project}/{name}:vN")` for every input
+(or `wbkit.use_input` to also fill the card). Direct file reads leave no
+lineage edge. Pin `:vN` in config; resolving an alias at run time is fine
 only when the run's purpose is "evaluate whatever is in production", and the <!-- declaration: logging.conventions -->
 resolved version is still recorded.
 
@@ -115,9 +107,8 @@ For a finetune, the parent checkpoint is an input too.
 
 Link only versions that passed a stated check, into an existing collection <!-- declaration: logging.conventions -->
 named for the durable task (`wandb-registry-model/state3-perturbation`).
-`link_artifact` auto-creates a collection on a typo, so read exact names first.
-Details of Registry paths and allowlists are in the official `wandb/skills`
-`ARTIFACTS_AND_REGISTRY.md`.
+Read exact names first: a `link_artifact` typo creates a collection. See
+`wandb/skills` `ARTIFACTS_AND_REGISTRY.md` for Registry paths and allowlists.
 
 ## Fixing descriptions after the fact
 

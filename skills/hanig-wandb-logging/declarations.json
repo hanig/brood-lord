@@ -13,7 +13,7 @@
   "declarations": [
     {
       "id": "logging.conventions",
-      "normative_text": "Follow the naming, config, metric, artifact and framework conventions elaborated in the references: model-data-delta-seed labels, H:/Expect:/Outcome notes, family/arch/train/data/provenance config, namespaced metrics on a shared step axis with summaries, artifact cards and metadata, pinned lineage, rank-zero logging and persistent requeue ids.",
+      "normative_text": "Follow the references: model-data-delta-seed names; H:/Expect:/Outcome notes; family/arch/train/data/provenance config; namespaced metrics on one step axis with summaries; artifact cards, metadata and pinned lineage; rank-zero logging and persistent requeue ids.",
       "references": [
         "references/naming.md",
         "references/artifacts.md",
@@ -22,23 +22,23 @@
     },
     {
       "id": "logging.boundary",
-      "normative_text": "Never judge success or convergence here. Record caller-supplied verdicts from hanig-verified-workflow contracts and hanig-swarm/converge.py predicates; Expect quotes the predicate declared before the run. Label checkpoint selection after observing results post hoc in card caveats."
+      "normative_text": "Never judge success or convergence. Record verdicts from hanig-verified-workflow contracts and hanig-swarm/converge.py predicates. Expect quotes the predicate declared before the run. Label post-result checkpoint selection post hoc in card caveats."
     },
     {
       "id": "capability.host",
-      "normative_text": "Use available host capabilities and authorized W&B access. The caller imports W&B and passes its module or Api explicitly; shipped scripts import only the standard library. Missing access remains a blocked logging check."
+      "normative_text": "Use available host capabilities and authorized W&B access. Callers pass W&B or Api explicitly; shipped scripts import only stdlib. Missing access blocks the logging check."
     },
     {
       "id": "paths.skill-directory",
-      "normative_text": "Set HANIG_WANDB_LOGGING_DIR to the directory containing the loaded SKILL.md; locate programs there and keep data and output paths project-relative."
+      "normative_text": "Set HANIG_WANDB_LOGGING_DIR to the loaded SKILL.md directory; locate programs there and keep data/output paths project-relative."
     },
     {
       "id": "logging.credentials",
-      "normative_text": "Never send config values under secret-pattern keys or use them in generated names or notes. Redact command-line credentials; review custom free text for secrets."
+      "normative_text": "Never send config values under secret-pattern keys or use them in generated names/notes. Redact argv credentials; check custom free text."
     },
     {
       "id": "approval.shared-state",
-      "normative_text": "Show a concrete logging plan, resolving new project/entity/group choices with the user. Before renaming runs, rewriting notes or tags, editing shared artifact descriptions or promoting registry aliases, show exact changes and obtain confirmation. Never delete runs or artifact versions as cleanup."
+      "normative_text": "Show a concrete logging plan; resolve new project/entity/group choices with the user. Show exact run renames, notes/tags rewrites, shared card edits or registry promotions and obtain confirmation first. Never delete runs or artifact versions as cleanup."
     }
   ]
 }
