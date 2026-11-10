@@ -120,6 +120,7 @@ SWARM_DECLARATIONS = (
 
 ORCHESTRATE_DECLARATIONS = (
     "report.scheduled-facts",
+    "owner.questions",
     "placement.behavior-deciding",
     "placement.reference-elaboration",
     "placement.reference-dialect",
@@ -949,6 +950,64 @@ class TestAuthoredSkillShape(unittest.TestCase):
         skill = SKILLS / "hanig-orchestrate"
         self.assertEqual(DECLARATION_REGISTRY.body_diff(skill), "")
         self.assertEqual(_declaration_completeness_problems(skill), [])
+
+    def test_orchestrate_owner_questions_reach_the_generated_body(self):
+        skill = SKILLS / "hanig-orchestrate"
+        text = (skill / "SKILL.md").read_text(encoding="utf-8")
+        block = text.split(DECLARATION_REGISTRY.BEGIN_MARKER, 1)[1].split(
+            DECLARATION_REGISTRY.END_MARKER, 1)[0]
+        # Read the consumer's rendered declaration, not just its JSON source.
+        cards = next(line for line in block.splitlines()
+                     if line.startswith('- **`owner.questions`:** '))
+        # Pin the whole instruction: separate phrase matches can admit inserted
+        # wording that makes the structured tool optional for selected questions.
+        self.assertEqual(cards, (
+            "- **`owner.questions`:** Every question to the owner uses the active host's "
+            'structured question tool as a card with 2 to 4 options, the recommended option first '
+            'and labelled as recommended. This covers decisions, approvals, authority '
+            'confirmation, and actions only the owner can take, such as starting a process '
+            "another session's permission check refused. Each card stands on its own: what was "
+            'found, why it matters, and what each option does. Ask in the same turn the need '
+            'arises and keep unrelated work moving. On hosts without a structured question tool, '
+            'put a marked question block at the very top of the message with numbered options and '
+            'the recommendation. Never ask a question only inside a status report or a narrative '
+            "paragraph. This changes how to ask, not when: decisions inside the current mandate's "
+            'grant are still made and reported, not asked. Authority confirmation still shows the '
+            'mandate sections verbatim in the message; use the card only for the confirmation '
+            'itself. Open each three-part report (report.three-parts), including the owner-facing '
+            'use of report.scheduled-facts, with a line listing any open owner questions, each '
+            'already asked as a card, or "No open owner questions". Keep the existing three parts '
+            'and their order and the hourly facts report format unchanged.'
+        ))
+        for phrase in (
+                "Every question to the owner uses",
+                "active host's structured question tool", "card with 2 to 4 options",
+                "recommended option first and labelled as recommended",
+                "decisions, approvals, authority confirmation",
+                "actions only the owner can take",
+                "starting a process another session's permission check refused",
+                "what was found, why it matters, and what each option does",
+                "same turn the need arises", "keep unrelated work moving",
+                "On hosts without a structured question tool",
+                "marked question block at the very top of the message",
+                "numbered options and the recommendation",
+                "Never ask a question only inside a status report or a narrative paragraph",
+                "decisions inside the current mandate's grant are still made and reported, not asked",
+                "mandate sections verbatim in the message",
+                "card only for the confirmation itself"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, cards)
+        for declaration in ("report.three-parts", "report.scheduled-facts"):
+            with self.subTest(declaration=declaration):
+                self.assertIn(declaration, cards)
+        self.assertIn("Open each three-part report", cards)
+        self.assertIn("line listing any open owner questions", cards)
+        self.assertIn("each already asked as a card", cards)
+        self.assertIn('"No open owner questions"', cards)
+        self.assertIn("hourly facts report format unchanged", cards)
+        self.assertIn("three ordered parts: (1) running work", block)
+        self.assertIn("(2) the output of linear_sync.py section quoted verbatim", block)
+        self.assertIn("(3) work that can start now followed by dispatch", block)
 
     def test_orchestrate_round_budget_survives_continuations(self):
         skill = SKILLS / "hanig-orchestrate"

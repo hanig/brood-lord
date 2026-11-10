@@ -2,6 +2,7 @@
   "schema_version": 2,
   "known_declarations": [
     "report.scheduled-facts",
+    "owner.questions",
     "placement.behavior-deciding",
     "placement.reference-elaboration",
     "placement.reference-dialect",
@@ -68,6 +69,7 @@
   "replacement_declarations": [],
   "declarations": [
     {"id": "report.scheduled-facts", "normative_text": "Keep one wait_report.py armed for host-scheduled hourly_facts.py. On wake, read and show the report with a short summary, act on ATTENTION including ready work under the mandate, then re-arm. These scripts grant no authority and call no model.", "references": ["references/operating-loop.md"]},
+    {"id": "owner.questions", "normative_text": "Every question to the owner uses the active host's structured question tool as a card with 2 to 4 options, the recommended option first and labelled as recommended. This covers decisions, approvals, authority confirmation, and actions only the owner can take, such as starting a process another session's permission check refused. Each card stands on its own: what was found, why it matters, and what each option does. Ask in the same turn the need arises and keep unrelated work moving. On hosts without a structured question tool, put a marked question block at the very top of the message with numbered options and the recommendation. Never ask a question only inside a status report or a narrative paragraph. This changes how to ask, not when: decisions inside the current mandate's grant are still made and reported, not asked. Authority confirmation still shows the mandate sections verbatim in the message; use the card only for the confirmation itself. Open each three-part report (report.three-parts), including the owner-facing use of report.scheduled-facts, with a line listing any open owner questions, each already asked as a card, or \"No open owner questions\". Keep the existing three parts and their order and the hourly facts report format unchanged."},
     {"id": "placement.behavior-deciding", "normative_text": "A statement that changes whether an orchestrator confirms, delegates, watches, preserves, reviews, adjudicates, merges, advances, drains, reconciles, reports, hands off, or stops is behavior-deciding and belongs in this body."},
     {"id": "placement.reference-elaboration", "normative_text": "References may elaborate a registered declaration or hold checked measurements and examples; they must not be the only source of a behavior decision.", "references": ["references/authority-adjudication.md", "references/delegation-evidence.md", "references/handoff-takeover.md", "references/operating-loop.md"]},
     {"id": "placement.reference-dialect", "normative_text": "References use strict dialect version 1: only closed column-zero fences and valid same-line declaration comments can exempt text; tabs, blockquotes, indented code, raw HTML, nested lists, and ambiguous structure are refused."},
