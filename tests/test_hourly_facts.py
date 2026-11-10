@@ -82,6 +82,106 @@ class HourlyFacts(unittest.TestCase):
     self.assertEqual(path.read_bytes(), (self.output / "latest.md").read_bytes())
     return path.read_bytes()
 
+  def test_foreign_running_agent_is_quiet_and_not_live(self):
+    self.responses["agents"] = [{"id": "foreign", "name": "other-name",
+      "cwd": str(self.root / "repo-other"), "status": "running"}]
+    report = self.collect()
+    self.assertIn(b"ATTENTION count: 0; live work: no.", report)
+    self.assertNotIn(b"foreign", report)
+    self.assertNotIn(b"other-name", report)
+    self.assertIn(b"- 1 agents of other projects not listed", report)
+
+  def test_project_agent_bindings_and_paths(self):
+    # Exhaustive bound: 3 kinds x 3 states. Only active code binds a foreign cwd.
+    for kind, state in itertools.product(("code", "slurm", "pipeline"),
+                                         ("SUBMITTED", "RUNNING", "DONE")):
+      with self.subTest(kind=kind, state=state):
+        self.plan(units={"u": {"state": state, "job_id": 42}},
+                  plan=[{"id": "u", "kind": kind}])
+        self.responses["agents"] = [{"id": "42", "status": "running",
+                                      "cwd": str(self.root / "elsewhere")}]
+        report = self.collect()
+        self.assertEqual(b"- agent 42 " in report, kind == "code" and state != "DONE")
+    (self.root / "link").symlink_to(self.repo, target_is_directory=True)
+    for cwd in (str(self.repo / "child"), str(self.state / "attempt"),
+                str(self.root / "link" / "child"), "~/repo/child"):
+      with self.subTest(cwd=cwd):
+        self.env["HOME"] = str(self.root)
+        self.responses["agents"] = [{"id": "local", "cwd": cwd, "status": "running"}]
+        report = self.collect()
+        self.assertIn(b"- agent local ", report)
+        self.assertIn(b"live work: yes.", report)
+
+  def test_status_values_and_last_line(self):
+    path = self.repo / "progress.md"
+    self.args += ["--status-file", "*.md", "--attention-status", "awaiting_coordinator",
+                  "--attention-status", "STOP_FOR_COORDINATOR", "--terminal-status", "done",
+                  "--terminal-status", "finished"]
+    cases = (
+      ("STATUS: awaiting_coordinator review please", True, True),
+      ("- STATUS: done", False, False),
+      ("STATUS: running", False, True),
+      ("STATUS: running\n  * STATUS: done complete\ntrailer", False, False),
+      ("STATUS: done\n\t- STATUS: awaiting_coordinator help", True, True),
+      ("STATUS: STOP_FOR_COORDINATOR", True, True),
+      ("STATUS: finished", False, False),
+      ("STATUS: Awaiting_coordinator", False, True),
+      ("STATUS: awaiting_coordinator_suffix", False, True),
+      ("no status\ntext STATUS: awaiting_coordinator\n- - STATUS: running", False, False),
+    )
+    for content, attention, live in cases:
+      with self.subTest(content=content):
+        path.write_text(content)
+        stamp = 1700000000
+        os.utime(path, (stamp, stamp))
+        report = self.collect()
+        self.assertIn(("ATTENTION count: {}; live work: {}.".format(
+          int(attention), "yes" if live else "no")).encode(), report)
+        self.assertIn(b"### STATUS files", report)
+        line = next(line for line in report.splitlines() if b"progress.md (modified " in line)
+        self.assertEqual(line.startswith(b"ATTENTION "), attention)
+        self.assertIn(hourly_facts.local_time(stamp).encode(), line)
+        if "trailer" in content:
+          self.assertTrue(line.endswith(b"STATUS: done complete"))
+        if content.startswith("no status"):
+          self.assertTrue(line.endswith(b"no STATUS line"))
+
+  def test_status_sources_and_optional_state_root(self):
+    path = self.repo / "unit.md"
+    path.write_text("- STATUS: done")
+    other = self.repo / "second.txt"
+    other.write_text("STATUS: running")
+    self.args = self.args[2:] + ["--status-file", str(path), "--terminal-status", "done"]
+    self.responses["agents"] = [{"id": "foreign", "cwd": str(self.state), "status": "running"}]
+    self.assertIn(b"ATTENTION count: 0; live work: no.", self.collect())
+    self.args += ["--status-file", "*.txt"]
+    report = self.collect()
+    self.assertIn(b"second.txt (modified ", report)
+    self.assertIn(b"live work: yes.", report)
+    self.args += ["--status-file", "missing-*.md"]
+    self.assertIn(b"ATTENTION STATUS glob matched no file: missing-*.md", self.collect())
+    result = subprocess.run([sys.executable, str(SCRIPTS / "hourly_facts.py"),
+      "--repo", str(self.repo), "--output-dir", str(self.output)],
+      env=self.env, capture_output=True, timeout=10)
+    self.assertEqual(result.returncode, 2)
+    self.assertIn(b"at least one of --state-root or --status-file is required", result.stderr)
+
+  def test_unreadable_status_file(self):
+    path = self.repo / "denied.md"
+    path.write_text("STATUS: done")
+    self.args += ["--status-file", "*.md"]
+    read_text = Path.read_text
+    def read(candidate, *args, **kwargs):
+      if candidate == path:
+        raise PermissionError("fixture denied")
+      return read_text(candidate, *args, **kwargs)
+    (self.root / "responses.json").write_text(json.dumps(self.responses))
+    with mock.patch.object(Path, "read_text", read), mock.patch.dict(
+        os.environ, self.env, clear=True), mock.patch("builtins.print"):
+      hourly_facts.main(self.args)
+    self.assertIn(b"ATTENTION denied.md: unreadable STATUS file: fixture denied",
+                  (self.output / "latest.md").read_bytes())
+
   def test_out_of_plan_units_are_one_quiet_summary(self):
     for old in (False, True):
       with self.subTest(old=old):
@@ -504,7 +604,7 @@ class HourlyFacts(unittest.TestCase):
             @classmethod
             def now(cls, tz=None):
               return instant.astimezone(tz)
-          self.responses["agents"] = [{"id": "a", "status": "running"}] if index else []
+          self.responses["agents"] = [{"id": "a", "cwd": str(self.repo), "status": "running"}] if index else []
           (self.root / "responses.json").write_text(json.dumps(self.responses))
           with mock.patch.object(time, "time", return_value=instant.timestamp()), mock.patch.object(datetime, "datetime", Clock):
             hourly_facts.main(self.args)

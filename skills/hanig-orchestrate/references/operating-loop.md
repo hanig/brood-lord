@@ -9,6 +9,13 @@ Install hanig-project beside the loaded skill, or set HANIG_SKILL_DEP_ROOTS.
 Tracker is offline; STALE remains visible.
 State-root children hold plan.json and state/swarm-state.json; link a plan beside state/ if it lives elsewhere.
 The --binding and --audit arguments are optional together; omit both when no tracker binding is configured.
+Repeat `--status-file 'GLOB'` for progress files (relative to `--repo`, or absolute);
+with a STATUS source, `--state-root` is optional. At least one source is required.
+The last `STATUS:` line, optionally indented with one `- ` or `* ` marker, wins.
+Repeat `--attention-status VALUE` for exact alert values and `--terminal-status VALUE`
+for finished values; other statuses count as live work. Missing/unreadable sources alert.
+Agents belong here by an active code-unit job id or a resolved cwd under `--repo`
+or `--state-root` (including `~` expansion); other projects receive one quiet count.
 Substitute operator paths in these direct-command scheduler examples.
 
 macOS launchd example: bootstrap the edited plist with

@@ -2,6 +2,7 @@
 """Read-only hourly facts."""
 import argparse
 import datetime
+import glob
 import json
 import math
 import os
@@ -64,7 +65,7 @@ def atomic_write(path, data):
       os.unlink(name)
 
 
-def state_facts(root, live_hours, agents):
+def state_facts(root, live_hours, agents, bound_ids=None):
   lines, ready, leftovers, live_work, active = [], [], 0, False, False
   now = time.time()
   skipped = 0
@@ -162,6 +163,10 @@ def state_facts(root, live_hours, agents):
             pending.append(uid)
       needs_by_id = {unit["id"]: unit.get("needs", []) for unit in plan_units}
       kinds = {unit["id"]: unit.get("kind") for unit in plan_units}
+      if bound_ids is not None:
+        bound_ids.update(str(units[uid]["job_id"]) for uid in plan_ids
+          if states[uid] in ACTIVE and kinds.get(uid) == "code"
+          and units[uid].get("job_id") is not None)
       successors = {uid: following for uid, following in successors.items()
                     if states.get(uid) not in ACTIVE}
       # Retain all recorded states for needs/readiness and the existing live
@@ -209,6 +214,49 @@ def state_facts(root, live_hours, agents):
   return lines, ready, leftovers, live_work or any(flag for flag, _ in ready), active
 
 
+def project_agent(agent, roots, bound_ids):
+  if str(agent["id"]) in bound_ids:
+    return True
+  cwd = agent.get("cwd")
+  if not isinstance(cwd, str) or not cwd:
+    return False
+  try:
+    path = Path(cwd).expanduser().resolve()
+    return any(path == root or root in path.parents for root in roots)
+  except (OSError, ValueError, RuntimeError):
+    return False
+
+
+def status_facts(args):
+  lines, live = [], False
+  for pattern in args.status_file:
+    pattern = os.path.expanduser(pattern)
+    matches = sorted(glob.glob(str(args.repo / pattern), recursive=True))
+    if not matches:
+      lines.append((True, "STATUS glob matched no file: {}".format(pattern)))
+    for name in matches:
+      path = Path(name)
+      label = os.path.relpath(str(path), str(args.repo))
+      try:
+        text = path.read_text(encoding="utf-8")
+        modified = local_time(path.stat().st_mtime)
+        last, value = None, None
+        for line in text.splitlines():
+          line = line.lstrip()
+          if line.startswith(("- ", "* ")):
+            line = line[2:]
+          if line.startswith("STATUS:"):
+            last = line
+            tokens = line[len("STATUS:"):].split()
+            value = tokens[0] if tokens else ""
+        live = live or (last is not None and value not in args.terminal_status)
+        lines.append((value is not None and value in args.attention_status,
+          "{} (modified {}): {}".format(label, modified, last if last is not None else "no STATUS line")))
+      except (OSError, ValueError) as exc:
+        lines.append((True, "{}: unreadable STATUS file: {}".format(label, exc)))
+  return lines, live
+
+
 def tracker(args):
   if args.binding is None and args.audit is None:
     return b"Tracker: UNAVAILABLE (no binding configured)\n", False
@@ -250,17 +298,28 @@ def collect(args):
     agents = {str(a["id"]): a for a in agent_rows}
   except (OSError, ValueError, RecursionError, KeyError, TypeError, subprocess.SubprocessError) as exc:
     agent_rows, agents, agent_error = [], None, exc
-  lines, ready, leftovers, live, active = state_facts(args.state_root, args.live_hours, agents)
+  bound_ids = set()
+  lines, ready, leftovers, live, active = (state_facts(
+    args.state_root, args.live_hours, agents, bound_ids) if args.state_root is not None
+    else ([], [], 0, False, False))
+  roots = [path.expanduser().resolve() for path in (args.repo, args.state_root) if path is not None]
+  scoped_agents = [a for a in agent_rows if project_agent(a, roots, bound_ids)]
   state_obs = local_time()
   body = ["## 1. Running work", "", "Agents observed {} (liveness only; no progress inference):".format(agent_obs)]
   if agent_error is not None:
     body.append(render(True, "paseo ls unavailable: {}".format(agent_error)))
-  for agent in agent_rows:
+  body.append(render(False, "{} agents of other projects not listed".format(len(agent_rows) - len(scoped_agents))))
+  for agent in scoped_agents:
     body.append(render(False, "agent {} {}: {}".format(agent.get("id"), agent.get("name", ""), agent.get("status", "unknown"))))
-  live = live or any(str(a.get("status", "")).lower() in RUNNING_AGENTS for a in agent_rows)
+  live = live or any(str(a.get("status", "")).lower() in RUNNING_AGENTS for a in scoped_agents)
   body.append("Units in live state directories ({} h or active):".format(args.live_hours))
   body.extend(render(flag, message) for flag, message in lines)
   body.append("Older state dirs hold {} non-terminal units; not listed (observed {}).".format(leftovers, state_obs))
+  if args.status_file:
+    body.extend(["", "### STATUS files", ""])
+    statuses, status_live = status_facts(args)
+    body.extend(render(flag, message) for flag, message in statuses)
+    live = live or status_live
   for kind, argv in (
       ("Open PRs", [args.gh, "pr", "list", "--state", "open", "--limit", "1000", "--json",
              "number,title,isDraft,mergeable,statusCheckRollup,updatedAt"]),
@@ -323,8 +382,11 @@ def positive(value):
 
 def main(argv=None):
   parser = argparse.ArgumentParser(description=__doc__)
-  for name in ("state-root", "output-dir", "repo"):
+  for name in ("output-dir", "repo"):
     parser.add_argument("--" + name, required=True, type=lambda p: Path(p).absolute())
+  parser.add_argument("--state-root", type=lambda p: Path(p).absolute())
+  for name in ("status-file", "attention-status", "terminal-status"):
+    parser.add_argument("--" + name, action="append", default=[])
   for name in ("binding", "audit"):
     parser.add_argument("--" + name, type=lambda p: Path(p).absolute())
   parser.add_argument("--paseo", default="paseo")
@@ -332,6 +394,8 @@ def main(argv=None):
   parser.add_argument("--branch", default="main")
   parser.add_argument("--live-hours", type=positive, default=72)
   args = parser.parse_args(argv)
+  if args.state_root is None and not args.status_file:
+    parser.error("at least one of --state-root or --status-file is required")
   if (args.binding is None) != (args.audit is None):
     parser.error("--binding and --audit must be given together")
   print(collect(args))
