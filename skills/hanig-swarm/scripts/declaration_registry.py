@@ -55,6 +55,7 @@ def _closed_ids(value):
 
 
 CLOSED_DECLARATIONS = {
+    "hanig-wandb-logging": _closed_ids("logging.conventions logging.boundary capability.host paths.skill-directory logging.credentials approval.shared-state"),
     "hanig-debrief": _closed_ids("""
         purpose.scope capability.programs paths.skill-directory approval.packet
         workflow.draft workflow.classify workflow.packet workflow.approve workflow.triage

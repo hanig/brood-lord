@@ -261,7 +261,10 @@ DEBRIEF_DECLARATIONS = ("purpose.scope", "capability.programs",
                         "paths.skill-directory", "approval.packet",
                         'workflow.draft', 'workflow.classify', 'workflow.packet', 'workflow.approve', 'workflow.triage')
 
+WANDB_DECLARATIONS = ('logging.conventions', 'logging.boundary', 'capability.host', 'paths.skill-directory', 'logging.credentials', 'approval.shared-state')
+
 DECLARATION_INVENTORIES = {
+    "hanig-wandb-logging": WANDB_DECLARATIONS,
     "hanig-debrief": DEBRIEF_DECLARATIONS,
     "hanig-project": PROJECT_DECLARATIONS,
     "hanig-orchestrate": ORCHESTRATE_DECLARATIONS,
@@ -269,6 +272,7 @@ DECLARATION_INVENTORIES = {
 }
 
 REFERENCE_ELABORATION_INVENTORIES = {
+    "hanig-wandb-logging": (('references/artifacts.md', 'logging.conventions', 12), ('references/frameworks.md', 'logging.conventions', 4), ('references/naming.md', 'logging.conventions', 9)),
     "hanig-debrief": (
         ('references/contract.md', 'purpose.scope', 17),
         ('references/contract.md', 'workflow.triage', 1),
