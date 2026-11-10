@@ -2,6 +2,8 @@
 from __future__ import annotations
 import argparse
 import dataclasses
+from enum import Enum
+import hashlib
 import datetime as _dt
 import importlib.metadata as _md
 import os
@@ -22,7 +24,7 @@ METRIC_NAMESPACES = ('train', 'val', 'eval', 'test', 'opt', 'perf', 'data', 'tra
 STEP_METRIC = 'trainer/step'
 _SLUG_RE = re.compile('^[a-z0-9][a-z0-9-]{0,62}$')
 _RANDOM_NAME_RE = re.compile('^[a-z]+-[a-z]+-\\d+$')
-_SECRET_RE = re.compile('(api[_-]?key|token(?![a-z])|secret|passw(or)?d|credential)', re.I)
+_SECRET_RE = re.compile('(api[_-]?key|token(?=\\.|$)|secret|passw(or)?d|credential)', re.I)
 _ABBREV = {'learning_rate': 'lr', 'lr': 'lr', 'weight_decay': 'wd', 'batch_size': 'bs', 'global_batch_size': 'gbs', 'dropout': 'do', 'num_layers': 'L', 'n_layers': 'L', 'hidden_dim': 'd', 'd_model': 'd', 'num_heads': 'h', 'warmup_steps': 'wu', 'max_steps': 'steps', 'epochs': 'ep', 'max_epochs': 'ep', 'seed': 's', 'temperature': 'T', 'mask_ratio': 'mask', 'grad_clip': 'clip'}
 _METRIC_STATE = {}
 
@@ -71,26 +73,55 @@ def _redact(obj):
                 except ValueError:
                     pass
                 else:
-                    parts.append(json.dumps(_redact(value), ensure_ascii=False))
+                    clean = _redact(value)
+                    parts.append(obj[pos:pos+size] if clean == value else json.dumps(clean, ensure_ascii=False))
                     pos += size
                     continue
             parts.append(obj[pos])
             pos += 1
         text = ''.join(parts)
-        key = '[\\w.-]*(?:api[_-]?key|token(?![a-z])|secret|passw(?:or)?d|credential)[\\w.-]*'
-        pattern = '(?i)([\\"\']?' + key + '[\\"\']?\\s*[:=]\\s*)(?:\\"[^\\"]*\\"|\'[^\']*\'|[^\\s,;})]+)'
-        text = re.sub(pattern, lambda m: m.group(1) + '"***"', text)
-        return re.sub('//[^/@\\s]+@', '//', text)
+        labels = re.compile(r"[\"']?[\w./-]+[\"']?\s*[:=]\s*")
+        out, pos = [], 0
+        for match in labels.finditer(text):
+            if match.start() < pos:
+                continue
+            key = re.split(r'\s*[:=]', match.group())[0].strip('"\'')
+            if not _SECRET_RE.search(key):
+                continue
+            end, quoted = match.end(), ''
+            if end < len(text) and text[end] in '"\'':
+                quoted = text[end]
+                end += 1
+                while end < len(text) and text[end] != quoted:
+                    end += 2 if text[end] == '\\' else 1
+                end = min(end+1, len(text))
+            elif end < len(text) and text[end] in '{[':
+                try:
+                    _, size = decoder.raw_decode(text[end:])
+                    end += size
+                except ValueError:
+                    end = len(text)
+            else:
+                value = re.match(r'\S+', text[end:])
+                end += value.end() if value else 0
+            out.extend((text[pos:match.end()], quoted+'***'+quoted))
+            pos = end
+        out.append(text[pos:])
+        return re.sub(r'([a-zA-Z][\w+.-]*://)[^/@\s]+@', r'\1', ''.join(out))
     return obj
 
 def _redact_argv(argv):
-    out, redact_next = ([], False)
+    out, redact_next = [], False
     for tok in argv:
         if redact_next:
             out.append('***')
             redact_next = False
-        elif tok.startswith('-') and '=' not in tok and _SECRET_RE.search(tok):
-            out.append(tok)
+        elif tok.startswith('-') and '=' in tok:
+            key, value = tok.split('=', 1)
+            key, value = next(iter(_redact({key: value}).items()))
+            out.append(key+'='+value)
+        elif re.fullmatch(r'-+[\w-]+', tok) and _SECRET_RE.search(tok):
+            out.append(_redact(tok))
             redact_next = True
         else:
             out.append(_redact(tok))
@@ -123,7 +154,7 @@ def config_deltas(config, base):
         return {}
     cur, ref = (_flatten(_redact(config)), _flatten(_redact(base)))
     skip = ('provenance.', 'family.')
-    return {k: v for k, v in cur.items() if not k.startswith(skip) and (not _SECRET_RE.search(k)) and (k not in ref or ref[k] != v)}
+    return {k: v for k, v in cur.items() if k not in ('family', 'provenance') and not k.startswith(skip) and (not _SECRET_RE.search(k)) and (k not in ref or ref[k] != v)}
 
 def _fmt_value(v):
     if isinstance(v, bool):
@@ -133,10 +164,10 @@ def _fmt_value(v):
             mant, exp = f'{v:.0e}'.split('e')
             return f'{mant}e{int(exp)}'
         return f'{v:g}'
-    return str(v)
+    return _redact(str(v))
 
 def _slugify(s):
-    s = re.sub('[^A-Za-z0-9.+-]+', '-', str(s)).strip('-')
+    s = re.sub('[^A-Za-z0-9.+-]+', '-', _redact(str(s))).strip('-')
     return re.sub('-{2,}', '-', s)
 
 def run_name(model, data, deltas=None, seed=None, max_len=64):
@@ -178,8 +209,42 @@ def _check_slug(value, what):
     if not _SLUG_RE.match(value):
         warnings.warn(f'{what}.slug: recommend kebab-case, 63 chars')
 
+def _atomic(path, text):
+    temporary = path.with_name(path.name+'.tmp')
+    temporary.write_text(text)
+    temporary.replace(path)
+
+
+def _load(path):
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text())
+        if isinstance(value, dict):
+            return value
+    except ValueError:
+        pass
+    data = path.read_bytes()
+    backup = path.with_name(path.name+'.corrupt-'+hashlib.sha256(data).hexdigest())
+    if not backup.exists():
+        backup.write_bytes(data)
+    print('[wbkit] recovered incomplete logging metadata; original bytes retained', file=sys.stderr)
+    return {}
+
+
+def _json_default(value):
+    if isinstance(value, Enum):
+        return value.value
+    for method in ('tolist', 'item'):
+        convert = getattr(value, method, None)
+        if callable(convert):
+            clean = convert()
+            if clean is not value:
+                return clean
+    return str(value)
+
+
 def start_run(wandb, *, project, family, job_type, model, data, hypothesis, config, expect=None, base_config=None, group=None, tags=(), summaries=None, entity=None, output_dir=None, name=None, rank=None, **init_kwargs):
-    """Start with base-config deltas, summary rules and a persistent output_dir ID."""
     rank = _rank() if rank is None else rank
     if rank != 0:
         return wandb.init(mode='disabled')
@@ -192,56 +257,52 @@ def start_run(wandb, *, project, family, job_type, model, data, hypothesis, conf
         warnings.warn('notes.short-hypothesis: recommend 10+ characters')
     if group is not None and len(group) > 128:
         warnings.warn('group.long: at most 128 chars is recommended')
-    flat = _flatten(config)
-    seed = flat.get('train.seed', flat.get('seed'))
-    deltas = config_deltas(config, base_config)
-    name = name or run_name(model, data, deltas, seed)
-    run_id, resuming = (None, False)
+    prov = _redact(provenance(wandb))
+    run_id, resuming, saved = None, False, {}
     if output_dir is not None:
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
-        id_file = out / 'wandb_run_id'
-        if id_file.exists():
-            run_id, resuming = (id_file.read_text().strip(), True)
-        else:
-            run_id = _new_run_id()
-            id_file.write_text(run_id + '\n')
+        saved = _load(out/'wandb_config.json')
+        id_file = out/'wandb_run_id'
+        run_id = id_file.read_text().strip() if id_file.exists() else None
+        run_id = run_id or saved.get('id')
+        resuming = bool(run_id)
+        run_id = run_id or _new_run_id()
+        _atomic(id_file, run_id+'\n')
         init_kwargs.setdefault('dir', str(out))
-    prov = launch_prov = _redact(provenance(wandb))
-    if output_dir is not None:
-        import json
-        prov_file = Path(output_dir) / 'wandb_provenance.json'
-        if resuming and prov_file.exists():
-            launch_prov = json.loads(prov_file.read_text())
-        else:
-            prov_file.write_text(json.dumps(prov, indent=1) + '\n')
-    tag_list = [t.lower() for t in tags]
-    if prov['git_dirty']:
-        tag_list.append('dirty-tree')
-    for t in tag_list:
-        if len(t) > 64:
-            warnings.warn('tag.long: at most 64 chars is recommended')
+        prov_file = out/'wandb_provenance.json'
+        launch_prov = _load(prov_file) if resuming else {}
+        if not launch_prov:
+            launch_prov = (saved.get('config') or {}).get('provenance') or prov
+        _atomic(prov_file, json.dumps(_redact(launch_prov))+'\n')
+    else:
+        launch_prov = prov
+    full_config = _redact({**config, 'family': family, 'provenance': launch_prov})
+    if resuming and isinstance(saved.get('config'), Mapping):
+        full_config = _redact(saved['config'])
+    full_config = _redact(json.loads(json.dumps(full_config, default=_json_default)))
+    resume_count = int(saved.get('resume_count', 0))+1 if resuming else 0
+    flat = _flatten(full_config)
+    seed = flat.get('train.seed', flat.get('seed'))
+    deltas = config_deltas(full_config, base_config)
+    name = name or run_name(model, data, deltas, seed)
     notes = f"H: {(hypothesis or '').strip()}"
     if expect:
         notes += f'\nExpect: {expect.strip()}'
     if deltas:
-        notes += '\nDeltas vs base: ' + ', '.join((f'{k}={v}' for k, v in deltas.items()))
-    full_config = _redact({'family': family, **config, 'provenance': launch_prov})
-    resume_count = 0
+        notes += '\nDeltas vs base: '+', '.join(f'{k}={v}' for k,v in deltas.items())
+    tag_list = [t.lower() for t in tags]
+    if prov['git_dirty']:
+        tag_list.append('dirty-tree')
+    for t in tag_list:
+        if len(t)>64:
+            warnings.warn('tag.long: at most 64 chars is recommended')
     if output_dir is not None:
-        state_file = Path(output_dir) / 'wandb_config.json'
-        if resuming and state_file.exists():
-            saved = json.loads(state_file.read_text())
-            full_config = _redact(saved['config'])
-            resume_count = saved.get('resume_count', 0) + 1
-        state = {'config': full_config, 'resume_count': resume_count}
-        temporary = state_file.with_suffix('.tmp')
-        temporary.write_text(json.dumps(state, indent=1) + '\n')
-        temporary.replace(state_file)
+        _atomic(out/'wandb_config.json', json.dumps({'id':run_id,'config':full_config,'resume_count':resume_count})+'\n')
     payload = _redact(dict(entity=entity, project=project, group=group, job_type=job_type, name=name, notes=notes, tags=sorted(set(tag_list)), config=full_config, allow_val_change=resuming, id=run_id, resume='allow' if run_id else None, **init_kwargs))
     run = wandb.init(**payload)
     if resuming:
-        run.summary['provenance/last_resume'] = _redact(prov)
+        run.summary['provenance/last_resume'] = prov
         run.summary['provenance/resume_count'] = resume_count
     define_metrics(run, summaries=summaries)
     return run
