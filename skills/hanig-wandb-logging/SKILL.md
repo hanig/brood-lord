@@ -16,8 +16,8 @@ connector. Measured with wandb 0.31.0; other versions are best effort.
 Copy [wbkit](scripts/wbkit.py) from the loaded skill into project code;
 the caller imports and supplies W&B.
 
-The training logging requirement lives in hanig-project and hanig-swarm;
-this skill explains how to apply it.
+This skill makes runs readable, never judges outcomes. The training logging
+requirement lives in hanig-project and hanig-swarm.
 
 <!-- BEGIN GENERATED DECLARATIONS: declarations.json -->
 
