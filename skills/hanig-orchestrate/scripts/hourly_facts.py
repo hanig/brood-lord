@@ -240,17 +240,32 @@ def tracker(args):
       observed, one_line(exc)).encode(), True)
 
 
+def agent_path(value):
+  try:
+    return os.path.realpath(os.path.expanduser(value))
+  except (OSError, ValueError, RecursionError):
+    return None
+
+
 def project_agent(agent, bound_agents, roots):
   if str(agent["id"]) in bound_agents:
     return True
   cwd = agent.get("cwd")
   if not isinstance(cwd, str) or not cwd:
     return False
-  try:
-    cwd = os.path.realpath(os.path.expanduser(cwd))
-    return any(os.path.commonpath([cwd, root]) == root for root in roots)
-  except (OSError, ValueError):
+  cwd = agent_path(cwd)
+  if cwd is None:
     return False
+  for root in roots:
+    if root is None:
+      continue
+    try:
+      if os.path.commonpath([cwd, root]) == root:
+        return True
+    except ValueError:
+      # Different Windows drives cannot contain one another. Later roots can.
+      continue
+  return False
 
 
 def collect(args):
@@ -270,7 +285,7 @@ def collect(args):
   bound_agents = set()
   lines, ready, leftovers, live, active = state_facts(
     args.state_root, args.live_hours, agents, bound_agents)
-  roots = [os.path.realpath(os.path.expanduser(str(root)))
+  roots = [agent_path(str(root))
            for root in [args.repo, args.state_root] + args.agent_root]
   project_rows = [a for a in agent_rows if project_agent(a, bound_agents, roots)]
   foreign_count = len(agent_rows) - len(project_rows)
