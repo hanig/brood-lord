@@ -527,7 +527,7 @@ def log_dataset(
     art.description = artifact_card(
         summary=summary, contents=contents, intended_use=intended_use, run=run, caveats=caveats
     )
-    art.metadata = md
+    art.metadata = _redact(md)
     return run.log_artifact(art, aliases=list(aliases))
 
 
@@ -555,7 +555,7 @@ def log_model(
         return None
     name = name or f"ckpt-{run.id}".lower()
     _check_artifact_name(name)
-    metrics = dict(metrics or {})
+    metrics = dict(_redact(metrics or {}))
     shown = ", ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in metrics.items())
     art = wandb.Artifact(name, type="model")
     md = _add_source(art, path, reference, checksum=True)
@@ -568,7 +568,7 @@ def log_model(
             "run_name": run.name,
         }
     )
-    art.metadata = md
+    art.metadata = _redact(md)
     art.description = artifact_card(
         summary=summary or f"Checkpoint of `{run.name}` at step {step}.",
         contents=f"{md.get('n_files', '?')} file(s), {md.get('total_bytes', 0) / 1e6:.1f} MB. "
@@ -600,7 +600,7 @@ def log_predictions(
     art = wandb.Artifact(name, type="predictions")
     art.add(table, "predictions")
     cols = ", ".join(table.columns)
-    art.metadata = {"eval_set": eval_set, "n_rows": len(table.data), "columns": table.columns, **(metadata or {})}
+    art.metadata = _redact({"eval_set": eval_set, "n_rows": len(table.data), "columns": table.columns, **(metadata or {})})
     art.description = artifact_card(
         summary=summary,
         contents=f"Table `predictions` with {len(table.data)} rows; columns: {cols}.",

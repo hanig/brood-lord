@@ -163,6 +163,29 @@ class Logging(unittest.TestCase):
         self.assertTrue(run.finished)
         self.assertEqual(run.summary['verdict'], 'supported')
 
+    def test_artifact_secrets_from_caller_owned_config(self):
+        sdk = FakeWandb()
+        run = start(sdk)
+        # Sweep/framework callers can supply runs without start_run redaction.
+        run.config['arch']['api_key'] = 'synthetic-secret'
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'weights.bin'
+            path.write_bytes(b'weights')
+            art = wbkit.log_model(sdk, run, path, step=1,
+                                 metrics={'token': 'synthetic-secret'})
+            self.assertNotIn('synthetic-secret', repr(art.metadata) + art.description)
+            self.assertEqual(art.metadata['arch']['width'], 8)
+            ds = wbkit.log_dataset(sdk, run, 'cells-clean', path, summary='Data.',
+                                  contents='One file.', intended_use='Training.',
+                                  metadata={'secret': 'synthetic-secret', 'n_samples': 3})
+            self.assertNotIn('synthetic-secret', repr(ds.metadata))
+            self.assertEqual(ds.metadata['n_samples'], 3)
+        table = types.SimpleNamespace(columns=['score'], data=[[1]])
+        preds = wbkit.log_predictions(sdk, run, 'preds-sample', table,
+                                      eval_set='sample', summary='Predictions.',
+                                      metadata={'credential': 'synthetic-secret'})
+        self.assertNotIn('synthetic-secret', repr(preds.metadata))
+
     def test_lint(self):
         issues = wbkit.lint_run(name='happy-fox-2', notes='', group=None, job_type=None,
                                config={}, summary_keys=['loss'])
