@@ -22,6 +22,8 @@ of fabricating output or changing the host's permissions.  Paseo and the agent
 bus are optional services, not prerequisites that this skill installs; their
 portable fallback is documented in `docs/agent-compatibility.md`.
 
+The hanig-wandb-logging skill describes run presentation.
+
 A scheduler reporting `COMPLETED` is not evidence that work was produced.
 
 These all look like success and are not:
