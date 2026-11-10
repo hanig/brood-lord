@@ -10,7 +10,7 @@ Tracker is offline; STALE remains visible.
 State-root children hold plan.json and state/swarm-state.json; link a plan beside state/ if it lives elsewhere.
 The --binding and --audit arguments are optional together; omit both when no tracker binding is configured.
 Repeat `--status-file 'GLOB'` for progress files (relative to `--repo`, or absolute);
-with a STATUS source, `--state-root` is optional. At least one source is required.
+with a STATUS source, `--state-root` is optional. Use one or both sources.
 The last `STATUS:` or `STATUS` line wins: strip indentation and one `- ` or `* `
 marker, then skip one optional ISO timestamp token (`YYYY-MM-DDT...`). The next
 token is the marker, followed by the status value; trailing fields remain visible.
