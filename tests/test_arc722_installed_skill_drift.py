@@ -22,6 +22,7 @@ from tests.scheduler_fixture import codex_environment, state_environment
 SHIPPED_SKILLS = (
     "hanig-debrief", "hanig-orchestrate", "hanig-portable-handoff", "hanig-project",
     "hanig-review-gate", "hanig-swarm", "hanig-verified-workflow",
+    "hanig-wandb-logging",
 )
 
 

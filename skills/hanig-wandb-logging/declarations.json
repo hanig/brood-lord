@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "known_declarations": [
+    "logging.conventions",
+    "logging.boundary",
+    "capability.host",
+    "paths.skill-directory",
+    "logging.credentials",
+    "approval.shared-state"
+  ],
+  "retired_declarations": [],
+  "replacement_declarations": [],
+  "declarations": [
+    {
+      "id": "logging.conventions",
+      "normative_text": "Follow the references: model-data-delta-seed names; H:/Expect:/Outcome notes; family/arch/train/data/provenance config; namespaced metrics on one step axis with summaries; rank-zero logging and persistent requeue ids. Treat kebab-case projects and hypothesis length as lint recommendations, never reasons to refuse a run.",
+      "references": [
+        "references/naming.md",
+        "references/frameworks.md"
+      ]
+    },
+    {
+      "id": "logging.boundary",
+      "normative_text": "Never judge success or convergence. Record verdicts from hanig-verified-workflow contracts and hanig-swarm/converge.py predicates. Expect quotes the predicate declared before the run. Label post-result checkpoint selection post hoc in card caveats."
+    },
+    {
+      "id": "capability.host",
+      "normative_text": "Use available host capabilities and authorized W&B access. Callers pass W&B explicitly; shipped scripts import only stdlib. Missing access blocks the logging check."
+    },
+    {
+      "id": "paths.skill-directory",
+      "normative_text": "Set HANIG_WANDB_LOGGING_DIR to the loaded SKILL.md directory; locate programs there and keep data/output paths project-relative."
+    },
+    {
+      "id": "logging.credentials",
+      "normative_text": "Sanitize outgoing config recursively, argv including JSON, generated names, notes and summary strings with the same sanitizer. Secret-pattern keys lose their values. Keep unlabeled credentials out of free text."
+    },
+    {
+      "id": "approval.shared-state",
+      "normative_text": "Show a concrete logging plan; resolve new project/entity/group choices with the user. Show exact run renames, notes/tags rewrites, shared card edits or registry promotions and obtain confirmation first. Never delete runs or artifact versions as cleanup."
+    }
+  ]
+}
