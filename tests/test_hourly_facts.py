@@ -84,6 +84,210 @@ class HourlyFacts(unittest.TestCase):
     self.assertEqual(path.read_bytes(), (self.output / "latest.md").read_bytes())
     return path.read_bytes()
 
+  def test_status_line_grammar(self):
+    # Exhaustive: 8 record shapes x 3 bullet forms x 2 leading whitespace forms.
+    records = (
+      ("STATUS started", "started"),
+      ("STATUS complete pr=https://example.invalid/pull/349 head=a6872608", "complete"),
+      ("STATUS awaiting_coordinator scope=closeout reason=x", "awaiting_coordinator"),
+      ("2026-11-09T22:16:40-08:00 STATUS awaiting_coordinator scope=x evidence=/data/x", "awaiting_coordinator"),
+      ("2026-11-10T02:42:18.082217-08:00 STATUS wandb_REPLAY_PROGRESS run=r1 acknowledged_ordinal=428", "wandb_REPLAY_PROGRESS"),
+      ("STEP review_finished round=2 direct_exit=0", None),
+      ("STATUS: done", "done"),
+      ("STATUSLESS done", None))
+    for (record, expected), bullet, whitespace in itertools.product(
+        records, ("", "- ", "* "), ("", " \t")):
+      line = whitespace + bullet + record
+      with self.subTest(line=line):
+        self.assertEqual(hourly_facts.last_status(line),
+                         (expected, line if expected else None))
+    self.assertEqual(hourly_facts.last_status("STATUS started\n- STATUS: done\nSTEP later"),
+                     ("done", "- STATUS: done"))
+    for line in ("- - STATUS done", "x STATUS done", "status done", "STATUS:done"):
+      self.assertEqual(hourly_facts.last_status(line), (None, None))
+
+  def test_status_only_report_and_agent_scope(self):
+    path = self.root / "STATUS"
+    self.args = self.args[2:] + ["--status-file", str(path),
+      "--attention-status", "awaiting_coordinator", "--attention-status", "STOP_FOR_COORDINATOR",
+      "--terminal-status", "done", "--terminal-status", "complete",
+      "--agent-root", str(self.root / "extra")]
+    self.responses["agents"] = [
+      {"id": "ours", "status": "idle", "cwd": str(self.repo)},
+      {"id": "extra", "status": "idle", "cwd": str(self.root / "extra")},
+      {"id": "foreign", "status": "running", "cwd": str(self.state)}]
+    # Exhaustive finite bound: 7 values, exact case-sensitive classifications.
+    for value in ("started", "awaiting_coordinator", "STOP_FOR_COORDINATOR",
+                  "Awaiting_coordinator", "done", "complete", None):
+      with self.subTest(value=value):
+        line = "- STATUS: " + value if value else "STEP review_finished"
+        path.write_text("STATUS started\n" + line if value else line)
+        os.utime(path, (1234567890, 1234567890))
+        report = self.collect()
+        attention = value in {"awaiting_coordinator", "STOP_FOR_COORDINATOR"}
+        live = value not in {"done", "complete", None}
+        self.assertIn(("ATTENTION count: {}; live work: {}.".format(
+          int(attention), "yes" if live else "no")).encode(), report)
+        self.assertIn(b"### STATUS files", report.split(b"## 2. Tracker")[0])
+        self.assertIn((str(path) + " (mtime " + hourly_facts.local_time(1234567890)).encode(), report)
+        self.assertIn((line if value else "no STATUS line").encode(), report)
+        self.assertIn(b"agent ours", report)
+        self.assertIn(b"agent extra", report)
+        self.assertNotIn(b"agent foreign", report)
+        self.assertNotIn(b"Units in live state", report)
+
+  def test_status_expansion_deduplication_and_single_stat(self):
+    path = self.root / "progress.txt"
+    path.write_text("STATUS running")
+    alias = self.root / "alias.txt"
+    alias.symlink_to(path)
+    patterns = [str(self.root / "*.txt"), str(path)]
+    with mock.patch.dict(os.environ, HOME=str(self.root)):
+      with mock.patch.object(hourly_facts.glob, "glob", wraps=hourly_facts.glob.glob) as expand:
+        with mock.patch.object(hourly_facts.os, "stat", wraps=os.stat) as observed:
+          lines, live = hourly_facts.status_facts(["~/*.txt", str(path)], [], [])
+    self.assertEqual(expand.call_args_list, [mock.call(pattern) for pattern in patterns])
+    self.assertEqual(observed.call_count, 1)
+    self.assertEqual(len(lines), 1)
+    self.assertTrue(live)
+    self.args += ["--status-file", str(path)]
+    self.assertIn(b"STATUS running", self.collect())
+
+  def test_status_nonregular_sources_never_open(self):
+    fifo = self.root / "fifo"
+    os.mkfifo(fifo)
+    broken = self.root / "broken"
+    broken.symlink_to(self.root / "absent")
+    for path, message in ((fifo, "not a regular file"), (self.repo, "not a regular file"),
+                          (broken, "unreadable"), (self.root / "missing*", "no matches")):
+      with self.subTest(path=path):
+        # collect() runs the real CLI with a 10-second subprocess timeout:
+        # opening the FIFO before checking its type must fail rather than hang.
+        self.args += ["--status-file", str(path)]
+        report = self.collect()
+        self.assertIn((str(path)).encode(), report)
+        self.assertRegex(report, rb"(?m)^ATTENTION .*" + message.encode())
+        self.args = self.args[:-2]
+
+  def test_status_read_and_stat_errors(self):
+    path = self.root / "STATUS"
+    path.write_text("STATUS running")
+    for target in ("stat", "read"):
+      patcher = (mock.patch.object(hourly_facts.os, "stat", side_effect=OSError("stat denied"))
+                 if target == "stat" else mock.patch("builtins.open", side_effect=OSError("read denied")))
+      with patcher:
+        lines, live = hourly_facts.status_facts([str(path)], [], [])
+      self.assertTrue(lines[0][0])
+      self.assertIn("unreadable", lines[0][1])
+      self.assertIn(target + " denied", lines[0][1])
+      self.assertFalse(live)
+
+  def test_status_tail_read_bound_and_stat_mtime(self):
+    path = self.root / "STATUS"
+    path.write_bytes(b"STATUS stale\n" + b"x" * hourly_facts.STATUS_BYTES + b"\nSTATUS done\n")
+    info = os.stat(path)
+    real_open = open
+    with real_open(path, "rb") as handle:
+      reader = mock.Mock(wraps=handle)
+      reader.__enter__ = mock.Mock(return_value=reader)
+      reader.__exit__ = mock.Mock(return_value=False)
+      with mock.patch("builtins.open", return_value=reader):
+        with mock.patch.object(hourly_facts.os, "stat", return_value=info) as observed:
+          with mock.patch.object(hourly_facts, "last_status", wraps=hourly_facts.last_status) as parse:
+            lines, live = hourly_facts.status_facts([str(path)], [], ["done"])
+    self.assertEqual(len(parse.call_args[0][0].encode()), 1024 * 1024)
+    self.assertEqual(reader.read.call_args_list, [mock.call(1), mock.call(1024 * 1024)])
+    observed.assert_called_once_with(str(path))
+    self.assertIn("mtime " + hourly_facts.local_time(info.st_mtime), lines[0][1])
+    self.assertIn("STATUS done", lines[0][1])
+    self.assertFalse(live)
+    # A shrinking file is still read from the stat's offset, and read errors
+    # after open are reported with that same observed mtime.
+    with mock.patch("builtins.open") as opening:
+      opening.return_value.__enter__.return_value.read.side_effect = OSError("read failed")
+      lines, _ = hourly_facts.status_facts([str(path)], [], [])
+    self.assertTrue(lines[0][0])
+    self.assertIn("read failed", lines[0][1])
+
+  def test_status_tail_does_not_fabricate_records(self):
+    path = self.root / "STATUS"
+    fragment = b"STATUS awaiting_coordinator\n"
+    unit = b"STEP later\n"
+    size = hourly_facts.STATUS_BYTES - len(fragment)
+    payload = b"STEP message=" + fragment + unit * (size // len(unit)) + b"x" * (size % len(unit))
+    path.write_bytes(payload)
+    lines, live = hourly_facts.status_facts([str(path)], ["awaiting_coordinator"], [])
+    self.assertFalse(lines[0][0])
+    self.assertIn("no STATUS line", lines[0][1])
+    self.assertFalse(live)
+    # Exhaustive: 3 line separators x 2 suffixes. Complete trailing records
+    # survive the partial-line discard, including an unterminated final line.
+    for separator, suffix in itertools.product((b"\n", b"\r", b"\r\n"), (b"", b"\n")):
+      record = separator + b"STATUS done" + suffix
+      path.write_bytes(b"x" * hourly_facts.STATUS_BYTES + record)
+      lines, live = hourly_facts.status_facts([str(path)], [], ["done"])
+      self.assertIn("STATUS done", lines[0][1])
+      self.assertFalse(live)
+
+  def test_status_aligned_tail_keeps_complete_record(self):
+    path = self.root / "STATUS"
+    record = b"STATUS awaiting_coordinator\n"
+    unit = b"STEP later\n"
+    size = hourly_facts.STATUS_BYTES - len(record)
+    path.write_bytes(b"STEP previous\n" + record +
+                     unit * (size // len(unit)) + b"x" * (size % len(unit)))
+    lines, live = hourly_facts.status_facts([str(path)], ["awaiting_coordinator"], [])
+    self.assertTrue(lines[0][0])
+    self.assertTrue(live)
+    self.assertIn("STATUS awaiting_coordinator", lines[0][1])
+
+  def test_status_bullet_requires_literal_space(self):
+    # The contract names literal '- ' and '* ', not tab-separated bullets.
+    for bullet in ("-\t", "*\t"):
+      self.assertEqual(hourly_facts.last_status("STATUS awaiting_coordinator\n" + bullet + "STATUS done"),
+                       ("awaiting_coordinator", "STATUS awaiting_coordinator"))
+
+  def test_status_realpath_error_is_attention(self):
+    path = self.root / "STATUS"
+    path.write_text("STATUS done")
+    with mock.patch.object(hourly_facts.os.path, "realpath", side_effect=OSError("race")):
+      lines, live = hourly_facts.status_facts([str(path)], [], [])
+    self.assertEqual(lines, [(True, str(path) + ": unreadable: race")])
+    self.assertFalse(live)
+
+  def test_status_bad_realpath_preserves_other_matches(self):
+    bad, good = self.root / "bad", self.root / "good"
+    good.write_text("STATUS awaiting_coordinator")
+    pattern = str(self.root / "*")
+    for error in (OSError("race"), RecursionError("chain")):
+      with mock.patch.object(hourly_facts.glob, "glob", return_value=[str(bad), str(good)]):
+        with mock.patch.object(hourly_facts.os.path, "realpath", side_effect=[error, str(good)]):
+          lines, live = hourly_facts.status_facts([pattern], ["awaiting_coordinator"], [])
+      self.assertEqual(len(lines), 2)
+      self.assertIn(str(bad) + ": unreadable:", lines[0][1])
+      self.assertIn(str(good), lines[1][1])
+      self.assertTrue(lines[1][0])
+      self.assertTrue(live)
+    links = self.root / "links"
+    links.mkdir()
+    (links / "end").write_text("STATUS done")
+    for i in range(1100):
+      (links / str(i)).symlink_to(str(i + 1) if i < 1099 else "end")
+    bad.symlink_to("links/0")
+    with mock.patch.object(hourly_facts.glob, "glob", return_value=[str(bad), str(good)]):
+      lines, live = hourly_facts.status_facts([pattern], ["awaiting_coordinator"], [])
+    self.assertEqual(len(lines), 2)
+    self.assertIn(str(bad) + ": unreadable:", lines[0][1])
+    self.assertTrue(lines[1][0])
+    self.assertTrue(live)
+
+  def test_status_source_usage_errors(self):
+    for extra in ([], ["--status-file", str(self.root / "**" / "STATUS")]):
+      result = subprocess.run([sys.executable, str(SCRIPTS / "hourly_facts.py")] +
+        self.args[2:] + extra, env=self.env, capture_output=True, timeout=10)
+      self.assertEqual(result.returncode, 2)
+      self.assertIn(b"usage:", result.stderr)
+
   def test_foreign_agents_do_not_wake(self):
     # Exhaustive bound: 3 running statuses x 3 foreign cwd forms.
     for status, cwd in itertools.product(
