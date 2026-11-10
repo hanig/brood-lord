@@ -247,8 +247,8 @@ def status_matches(repo, pattern):
     part = parts[index]
     if part == "**":
       pending.append((directory, index + 1))
-      pending.extend((name, index) for name in glob.glob(
-        os.path.join(glob.escape(directory), "*")) if Path(name).is_dir())
+      pending.extend((name, index if Path(name).is_dir() else index + 1)
+        for name in glob.glob(os.path.join(glob.escape(directory), "*")))
     else:
       pending.extend((name, index + 1) for name in glob.glob(
         os.path.join(glob.escape(directory), part)))

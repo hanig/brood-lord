@@ -272,6 +272,20 @@ class HourlyFacts(unittest.TestCase):
     self.assertFalse(any(flag for flag, _ in lines))
     self.assertTrue(any("deep.md (modified " in message for _, message in lines))
 
+  def test_globstar_matches_files(self):
+    (self.repo / "root.md").write_text("STATUS done")
+    sub = self.repo / "sub[1]"
+    sub.mkdir()
+    (sub / "nested.md").write_text("STATUS done")
+    # Exhaustive supported glob shapes: terminal, repeated and suffixed globstar.
+    for pattern in ("**", "**/**", "**/*.md"):
+      with self.subTest(pattern=pattern):
+        lines, live = hourly_facts.status_facts(self.status_args([pattern]))
+        self.assertEqual(len(lines), 2)
+        self.assertFalse(live)
+        self.assertFalse(any(flag for flag, _ in lines))
+        self.assertTrue(any("sub[1]/nested.md" in message for _, message in lines))
+
   def test_overlapping_status_globs_count_files_once(self):
     (self.repo / "progress.md").write_text("STATUS awaiting_coordinator")
     (self.repo / "old").mkdir()
