@@ -15,10 +15,9 @@ pass it to define_metrics; rebinding retains summaries and namespaces.
 
 ## Accelerate / sweeps
 
-With Accelerate, create and log inside accelerator.is_main_process, using
-reduced metrics. For an SDK-created sweep run, apply run_name and define_metrics
-to that run; sanitize custom values with wbkit._redact before direct SDK writes.
-Use job_type sweep-trial and a group naming the sweep question.
+Accelerate: log reduced metrics in accelerator.is_main_process. For sweeps,
+apply run_name/define_metrics to the existing run; sanitize direct writes with
+wbkit._redact. Use job_type sweep-trial and a group for the question.
 
 ## Requeues
 
