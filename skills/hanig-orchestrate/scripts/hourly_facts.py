@@ -2,9 +2,11 @@
 """Read-only hourly facts."""
 import argparse
 import datetime
+import glob
 import json
 import math
 import os
+import re
 import stat
 from pathlib import Path
 import subprocess
@@ -213,6 +215,58 @@ def state_facts(root, live_hours, agents, bound_agents=None):
   return lines, ready, leftovers, live_work or any(flag for flag, _ in ready), active
 
 
+STATUS_BYTES = 1024 * 1024
+
+
+def last_status(text):
+  """Return the value and original line of the last STATUS record."""
+  value, last = None, None
+  for line in text.splitlines():
+    content = line.lstrip()
+    if content.startswith(("- ", "* ")):
+      content = content[2:]
+    tokens = content.split()
+    if tokens and re.match(r"^\d{4}-\d{2}-\d{2}T", tokens[0]):
+      tokens = tokens[1:]
+    if tokens and tokens[0] in {"STATUS", "STATUS:"}:
+      value = tokens[1] if len(tokens) > 1 else None
+      last = line
+  return value, last
+
+
+def status_facts(patterns, attention, terminal):
+  lines, seen, live = [], set(), False
+  for pattern in patterns:
+    try:
+      matches = glob.glob(os.path.expanduser(pattern))
+      if not matches:
+        lines.append((True, "{}: no matches".format(pattern)))
+      for path in matches:
+        identity = os.path.realpath(path)
+        if identity in seen:
+          continue
+        seen.add(identity)
+        label = path
+        try:
+          info = os.stat(path)
+          label = "{} (mtime {})".format(path, local_time(info.st_mtime))
+          if not stat.S_ISREG(info.st_mode):
+            lines.append((True, "{}: not a regular file".format(label)))
+            continue
+          with open(path, "rb") as handle:
+            handle.seek(max(0, info.st_size - STATUS_BYTES))
+            text = handle.read(STATUS_BYTES).decode("utf-8", "replace")
+          value, last = last_status(text)
+          live = live or (value is not None and value not in terminal)
+          lines.append((value in attention, "{}: {}".format(
+            label, last if last is not None else "no STATUS line")))
+        except (OSError, ValueError, OverflowError) as exc:
+          lines.append((True, "{}: unreadable: {}".format(label, exc)))
+    except (OSError, ValueError, RecursionError) as exc:
+      lines.append((True, "{}: unreadable: {}".format(pattern, exc)))
+  return lines, live
+
+
 def tracker(args):
   if args.binding is None and args.audit is None:
     return b"Tracker: UNAVAILABLE (no binding configured)\n", False
@@ -291,10 +345,11 @@ def collect(args):
   except (OSError, ValueError, RecursionError, KeyError, TypeError, subprocess.SubprocessError) as exc:
     agent_rows, agents, agent_error = [], None, exc
   bound_agents = set()
-  lines, ready, leftovers, live, active = state_facts(
-    args.state_root, args.live_hours, agents, bound_agents)
+  lines, ready, leftovers, live, active = (state_facts(
+    args.state_root, args.live_hours, agents, bound_agents) if args.state_root is not None
+    else ([], [], 0, False, False))
   roots = [agent_path(str(root))
-           for root in [args.repo, args.state_root] + args.agent_root]
+           for root in [args.repo, args.state_root] + args.agent_root if root is not None]
   project_rows = [a for a in agent_rows if project_agent(a, bound_agents, roots)]
   foreign_count = len(agent_rows) - len(project_rows)
   state_obs = local_time()
@@ -306,9 +361,15 @@ def collect(args):
   for agent in project_rows:
     body.append(render(False, "agent {} {}: {}".format(agent.get("id"), agent.get("name", ""), agent.get("status", "unknown"))))
   live = live or any(str(a.get("status", "")).lower() in RUNNING_AGENTS for a in project_rows)
-  body.append("Units in live state directories ({} h or active):".format(args.live_hours))
-  body.extend(render(flag, message) for flag, message in lines)
-  body.append("Older state dirs hold {} non-terminal units; not listed (observed {}).".format(leftovers, state_obs))
+  if args.state_root is not None:
+    body.append("Units in live state directories ({} h or active):".format(args.live_hours))
+    body.extend(render(flag, message) for flag, message in lines)
+    body.append("Older state dirs hold {} non-terminal units; not listed (observed {}).".format(leftovers, state_obs))
+  if args.status_file:
+    status_lines, status_live = status_facts(args.status_file, args.attention_status, args.terminal_status)
+    live = live or status_live
+    body.extend(["", "### STATUS files", ""])
+    body.extend(render(flag, message) for flag, message in status_lines)
   for kind, argv in (
       ("Open PRs", [args.gh, "pr", "list", "--state", "open", "--limit", "1000", "--json",
              "number,title,isDraft,mergeable,statusCheckRollup,updatedAt"]),
@@ -371,17 +432,23 @@ def positive(value):
 
 def main(argv=None):
   parser = argparse.ArgumentParser(description=__doc__)
-  for name in ("state-root", "output-dir", "repo"):
+  for name in ("output-dir", "repo"):
     parser.add_argument("--" + name, required=True, type=lambda p: Path(p).absolute())
-  for name in ("binding", "audit"):
+  for name in ("state-root", "binding", "audit"):
     parser.add_argument("--" + name, type=lambda p: Path(p).absolute())
   parser.add_argument("--agent-root", action="append", default=[], metavar="DIR",
             help="include agents whose resolved cwd is in DIR (repeatable)")
+  for name in ("status-file", "attention-status", "terminal-status"):
+    parser.add_argument("--" + name, action="append", default=[])
   parser.add_argument("--paseo", default="paseo")
   parser.add_argument("--gh", default="gh")
   parser.add_argument("--branch", default="main")
   parser.add_argument("--live-hours", type=positive, default=72)
   args = parser.parse_args(argv)
+  if args.state_root is None and not args.status_file:
+    parser.error("give --state-root or --status-file")
+  if any("**" in pattern for pattern in args.status_file):
+    parser.error("--status-file refuses **")
   if (args.binding is None) != (args.audit is None):
     parser.error("--binding and --audit must be given together")
   print(collect(args))
