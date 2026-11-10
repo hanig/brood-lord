@@ -960,6 +960,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
         cards = next(line for line in block.splitlines()
                      if line.startswith('- **`owner.questions`:** '))
         for phrase in (
+                "Every question to the owner uses",
                 "active host's structured question tool", "card with 2 to 4 options",
                 "recommended option first and labelled as recommended",
                 "decisions, approvals, authority confirmation",
