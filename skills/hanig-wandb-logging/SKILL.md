@@ -72,9 +72,10 @@ run_name fits integer max_len>=1; <1 raises ValueError.
 
 ## Known limits (to be fixed in part 2)
 
-- Keys 1 and "1" collide: one sent entry is silently dropped and later changes to it give no resume warning; use unique string keys.
-- config_deltas conflates tuple/list and set/list, so container-type-only changes vanish from names; compare original types manually.
-- Literal "a.b" and nested a then b collide in deltas; avoid literal dotted keys.
-- Sets with unorderable values such as Decimal('NaN') raise in start_run; use a list.
-- Config class objects such as np.float32 as a dtype raise TypeError in start_run, potentially losing earlier initialization/preprocessing if the job exits; pass str(np.float32).
-- secret_keys requires a list/tuple of complete names: bare "api_token" iterates characters and leaves that key exposed; always pass secret_keys=("api_token",).
+- 1/"1" collide: silent loss/no resume warning; use unique string keys.
+- tuple/list, set/list swaps hide name deltas/resume warnings; compare types.
+- "a.b"/nested a,b deltas collide; avoid dotted keys.
+- Sets whose sort raises TypeError fall back to iteration order; a set holding Decimal('NaN') raises decimal.InvalidOperation in start_run; use a list.
+- Dtype class: start_run TypeError; exit loses init/preprocessing; use str(np.float32).
+- secret_keys needs full names: "api_token" iterates/leaks; use ("api_token",).
+- A key first declared in secret_keys on a resume that also finds a corrupt snapshot: recovery copies the old snapshot, value included, into a local corrupt-snapshot archive under output_dir before pruning; delete that archive, or use a new output_dir.
