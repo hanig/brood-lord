@@ -13,7 +13,7 @@ STEP_METRIC='trainer/step'
 _SL=re.compile('^[a-z0-9][a-z0-9-]{0,62}$')
 _RN=re.compile('^[a-z]+-[a-z]+-\\d+$')
 _PUBLIC_TOKEN=('pad','eos','bos','cls','sep','unk','mask','sos','decoder_start','special')
-_SEC=re.compile(r'(api[_-]?key|'+''.join(r'(?<!'+p+r'[_-])'for p in _PUBLIC_TOKEN)+r'token(?=\.|$|[_-](?:value|secret|key|credential)(?:[._-]|$))|secret(?![a-z])|authorization|passw(or)?d|credential)',re.I)
+_SEC=re.compile(r'(api[_-]?key|'+''.join(r'(?<!'+p+r'[_-])'for p in _PUBLIC_TOKEN)+r'token(?=\.|$|[_-](?:value|secret|key|credential)(?:[._-]|$))|private[_-]?key|secret[_-]?(?:access[_-]?)?key|secret(?![a-z])|authorization|passw(or)?d|credential)',re.I)
 _AB=dict(zip('learning_rate lr weight_decay batch_size global_batch_size dropout num_layers n_layers hidden_dim d_model num_heads warmup_steps max_steps epochs max_epochs seed temperature mask_ratio grad_clip'.split(),'lr lr wd bs gbs do L L d d h wu steps ep ep s T mask clip'.split()))
 _MS={}
 def _metrics(run):
@@ -42,7 +42,7 @@ def _redact(o):
  if isinstance(o,(list,tuple)):return[_redact(v)for v in o]
  if isinstance(o,str):
   dec=json.JSONDecoder()
-  lab=re.compile(r"[\"']?[\w./-]+[\"']?\s*[:=]\s*")
+  lab=re.compile(r"[\"']?[\w./-]+[\"']?[^\S\r\n]*[:=][^\S\r\n]*")
   out,j=[],0
   while j<len(o):
    if o[j]in '{["':
@@ -70,12 +70,7 @@ def _redact(o):
   return ''.join(out)
  return o
 def _redact_argv(argv):
- """Record command identity and option names, never argument values.
-
- Tokens after argv[0] are classified independently, including after --.
- Short options retain only their first two characters, so attached values
- and bundled options have the same bounded representation.
- """
+ """Per-token command metadata; never retain values. Bundles keep two chars."""
  flags=[]
  positional_count=0
  for token in argv[1:]:
@@ -92,7 +87,6 @@ def _redact_argv(argv):
   'argv_sha256':hashlib.sha256('\0'.join(argv).encode('utf-8')).hexdigest(),
  }
 def _migrate_command(prov,current):
- """Old argv strings cannot reconstruct argv identity; use this launch."""
  if isinstance(prov,Mapping)and isinstance(prov.get('command'),str):
   warnings.warn('provenance.legacy-command: replaced with current launch identity')
   return {**prov,'command':current}
@@ -199,7 +193,7 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   saved=_load(sf)
   if not isinstance(saved.get('config'),Mapping):
    saved=_load(bf)
-   if(sf.exists()or bf.exists())and not isinstance(saved.get('config'),Mapping):raise ValueError('recover wandb_config.json')
+   if(sf.exists()or bf.exists()or(out/'wandb_config.ready').exists())and not isinstance(saved.get('config'),Mapping):raise ValueError('recover wandb_config.json')
   idf=out/'wandb_run_id'
   rid=idf.read_text().strip()if idf.exists()else None
   rid=rid or saved.get('id')
@@ -246,6 +240,7 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   rec=json.dumps({'id':rid,'config':cfg,'resume_count':rc,'name':name,'notes':notes})+'\n'
   _atomic(out/'wandb_config.json',rec)
   _atomic(out/'wandb_config.backup.json',rec)
+  _atomic(out/'wandb_config.ready',rid+'\n')
  args=_redact(dict(entity=entity,project=project,group=group,job_type=job_type,name=name,notes=notes,tags=sorted(set(tag_list)),config=cfg,allow_val_change=again,id=rid,resume='allow' if rid else None,**kw))
  run=wandb.init(**args)
  if again:
