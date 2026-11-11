@@ -454,6 +454,26 @@ class CommandProvenance(Checks):
      changed=[t.replace(value,value+'CHANGED')for t in argv]
      if changed!=argv:
       s.assertNotEqual(got['argv_sha256'],wbkit._redact_argv(changed)['argv_sha256'])
+ def test_legacy_snapshot(s):
+  # Exhaustive 3 persisted sources x 2 value layouts.
+  for source,command in itertools.product(
+    ('primary','backup','provenance'),
+    ('train.py -k LEGACY_VALUE_CANARY','train.py --k=LEGACY_VALUE_CANARY')):
+   with s.subTest(source=source,command=command),TD()as d:
+    a=start(output_dir=d);p=Path(d)
+    if source=='provenance':
+     f=p/'wandb_provenance.json';obj=json.loads(f.read_text());obj['command']=command
+    else:
+     f=p/('wandb_config.json'if source=='primary'else 'wandb_config.backup.json')
+     obj=json.loads(f.read_text());obj['config']['provenance']['command']=command
+     if source=='backup':(p/'wandb_config.json').unlink()
+    f.write_text(json.dumps(obj))
+    with s.assertWarnsRegex(UserWarning,'legacy-command'):
+     b=start(output_dir=d,config=recipe({'lr':9}))
+    s.eq(a.id,b.id);s.eq(b.config['train'],a.config['train'])
+    s.clean(b,'LEGACY_VALUE_CANARY')
+    for f in p.glob('*.json'):s.lacks('LEGACY_VALUE_CANARY',f.read_text())
+    s.assertIsInstance(b.config['provenance']['command'],dict)
  def test_combined(s):
   argv=['train.py','--k=SECRET','--k','SECRET','-kSECRET','-k','SECRET',
         '-xvf','-','--','positional','{"api_key":"SECRET"}']
