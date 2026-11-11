@@ -33,51 +33,41 @@ def _pkg(name):
  try:
   return _md.version(name)
  except _md.PackageNotFoundError:return None
-def _redact(o):
- """Redact labeled secrets recursively; callers own unlabeled prose."""
- if dataclasses.is_dataclass(o)and(not isinstance(o,type)):o={f.name:getattr(o,f.name)for f in dataclasses.fields(o)}
- elif isinstance(o,(argparse.Namespace,types.SimpleNamespace)):o=vars(o)
- elif isinstance(o,tuple)and hasattr(o,'_asdict'):o=o._asdict()
- if isinstance(o,Mapping):return{_redact(k):'***' if _SEC.search(str(k))else _redact(v)for k,v in o.items()}
- if isinstance(o,(list,tuple)):return[_redact(v)for v in o]
- if isinstance(o,str):
-  o=re.sub(r'-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----.*?-----END \1-----','***',o,flags=re.S)
-  dec=json.JSONDecoder()
-  uri_pattern=re.compile(r'''[a-zA-Z][\w+.-]*://[^\s/?#<>"']+''')
-  word_pattern=re.compile(r'[\w./-]+')
-  lab=re.compile(r"[\"']?(?:api[ \t]+key|private[ \t]+key|secret[ \t]+(?:access[ \t]+)?key|[\w./-]+)[\"']?[^\S\r\n]*[:=][^\S\r\n]*",re.I)
-  out,j=[],0
-  while j<len(o):
-   if o[j]in '{["':
-    try:
-     v,n=dec.raw_decode(o[j:])
-     if not isinstance(v,str)or not o[j+n:].lstrip().startswith((':','=')):
-      c=_redact(v)
-      out.append(o[j:j+n]if c==v else json.dumps(c,ensure_ascii=False))
-      j+=n
-      continue
-    except(ValueError,RecursionError):pass
-   uri=uri_pattern.match(o,j)
-   if uri:
-    scheme,authority=uri.group().split('://',1)
-    out.append(scheme+'://'+authority.rsplit('@',1)[-1]);j=uri.end()
-    continue
-   m=lab.match(o,j)
-   if m and _SEC.search(re.split(r'\s*[:=]',m.group())[0].strip('"\'')):
-    e=m.end()
-    if e<len(o)and o[e]in '\r\n':
-     n=re.match(r'\r\n|[\r\n]',o[e:]).end()+e
-     if n<len(o)and not re.match(r'(?:H:|Expect:|Deltas vs base:|Outcome \()',o[n:]):e=n
-    v=re.match(r'[^\r\n]+',o[e:]);e+=v.end()if v else 0
-    out.append(o[j:m.end()]+'***');j=e
-   elif m:
-    out.append(m.group());j=m.end()
-   else:
-    word=word_pattern.match(o,j)
-    if word:out.append(word.group());j=word.end()
-    else:out.append(o[j]);j+=1
-  return ''.join(out)
+def _record(o):
+ if dataclasses.is_dataclass(o)and not isinstance(o,type):return{f.name:getattr(o,f.name)for f in dataclasses.fields(o)}
+ if isinstance(o,(argparse.Namespace,types.SimpleNamespace)):return vars(o)
+ if isinstance(o,tuple)and hasattr(o,'_asdict'):return o._asdict()
  return o
+def _secret_values(o):
+ """Collect verbatim leaf values beneath secret keys, before masking."""
+ found=set()
+ def visit(v,secret=False):
+  v=_record(v)
+  if isinstance(v,Mapping):
+   for k,x in v.items():visit(x,secret or bool(_SEC.search(str(k))))
+  elif isinstance(v,(list,tuple)):
+   for x in v:visit(x,secret)
+  elif secret:
+   if not isinstance(v,(str,int,float,bool,type(None))):
+    x=_json(v)
+    if x is not v:visit(x,True)
+   else:
+    text=str(v)
+    if len(text)>=6:found.add(text)
+ visit(o)
+ return found
+def _redact(o,known=()):
+ """Mask secret-keyed config and known values; never scan free-text labels."""
+ secrets=sorted(set(known)|_secret_values(o),key=lambda v:(-len(v),v))
+ def clean(v):
+  v=_record(v)
+  if isinstance(v,Mapping):return{clean(k):'***'if _SEC.search(str(k))else clean(x)for k,x in v.items()}
+  if isinstance(v,(list,tuple)):return[clean(x)for x in v]
+  if isinstance(v,str):
+   for secret in secrets:v=v.replace(secret,'***')
+  return v
+ return clean(o)
+def _sent(run,o):return _redact(o,_metrics(run).get('secrets',()))
 def _redact_argv(argv):
  """Command identity; option-shaped values before -- follow the flag rule."""
  flags=[]
@@ -102,10 +92,9 @@ def _redact_argv(argv):
   'program':os.path.basename(argv[0])if argv else '',
   'flags':flags,
   'positional_count':positional_count,
-  'argv_sha256':hashlib.sha256('\0'.join(argv).encode('utf-8','surrogateescape')).hexdigest(),
  }
 def _migrate_command(prov,current):
- if isinstance(prov,Mapping)and isinstance(prov.get('command'),str):
+ if isinstance(prov,Mapping)and (isinstance(prov.get('command'),str)or isinstance(prov.get('command'),Mapping)and 'argv_sha256'in prov['command']):
   warnings.warn('provenance.legacy-command: replaced with current launch identity')
   return {**prov,'command':current}
  return prov
@@ -141,8 +130,9 @@ def _slugify(s):
  s=re.sub('[^A-Za-z0-9.+-]+','-',_redact(str(s))).strip('-')
  return re.sub('-{2,}','-',s)
 def run_name(model,data,deltas=None,seed=None,max_len=64):
- ps=[_slugify(_redact(model)),_slugify(_redact(data))]
- for q,val in _redact(deltas or{}).items():
+ known=_secret_values({'deltas':deltas,'seed':seed})
+ ps=[_slugify(_redact(model,known)),_slugify(_redact(data,known))]
+ for q,val in _redact(deltas or{},known).items():
   if _SEC.search(str(q)):
    continue
   leaf=q.rsplit('.',1)[-1]
@@ -201,7 +191,8 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
  if job_type not in JOB_TYPES:warnings.warn('job_type.nonstandard: use JOB_TYPES')
  if not hypothesis or len(hypothesis.strip())<10:warnings.warn('notes.short-hypothesis: recommend 10+ chars')
  if group is not None and len(group)>128:warnings.warn('group.long: recommend <=128 chars')
- prov=_redact(provenance(wandb))
+ known=_secret_values(config)
+ prov=_redact(provenance(wandb),known)
  rid,again,saved=None,False,{}
  if output_dir is not None:
   out=Path(output_dir)
@@ -224,7 +215,7 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   p0=_load(pf)if again else{}
   if not p0:p0=(saved.get('config')or{}).get('provenance')or prov
   p0=_migrate_command(p0,prov['command'])
-  _atomic(pf,json.dumps(_redact(p0))+'\n')
+  _atomic(pf,json.dumps(_redact(p0,known))+'\n')
  else:
   p0=prov
  cfg=_redact({**config,'family':family,'provenance':p0})
@@ -235,7 +226,7 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   if current!=old:warnings.warn('resume.config-mismatch: saved logging config retained; restore caller training config separately')
  if isinstance(cfg.get('provenance'),Mapping):
   cfg['provenance']=_migrate_command(cfg['provenance'],prov['command'])
- cfg=_norm(cfg)
+ cfg=_redact(_norm(cfg),known)
  rc=int(saved.get('resume_count',0))+1 if again else 0
  f=_flat(cfg)
  seed=f.get('train.seed',f.get('seed'))
@@ -245,15 +236,15 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   if again and saved:
    warnings.warn('resume.legacy-name: set name')
    model,data='resume',rid
-  name=run_name(model,data,deltas,seed)
- name=_redact(name)
+  name=run_name(_redact(model,known),_redact(data,known),deltas,seed)
+ name=_redact(name,known)
  notes=f"H: {(hypothesis or '').strip()}"
  if expect:
   notes+=f'\nExpect: {expect.strip()}'
  if deltas:
   notes+='\nDeltas vs base: '+', '.join(f'{k}={json.dumps(v)}' for k,v in deltas.items())
  if again and saved and 'notes'not in saved:warnings.warn('resume.legacy-notes: supply original hypothesis/expect')
- notes=_redact(saved.get('notes')or notes)
+ notes=_redact(saved.get('notes')or notes,known)
  tag_list=[t.lower()for t in tags]
  if prov['git_dirty']:tag_list.append('dirty-tree')
  for t in tag_list:
@@ -263,8 +254,9 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   _atomic(out/'wandb_config.json',rec)
   _atomic(out/'wandb_config.backup.json',rec)
   _atomic(out/'wandb_config.ready',rid+'\n')
- args=_redact(dict(entity=entity,project=project,group=group,job_type=job_type,name=name,notes=notes,tags=sorted(set(tag_list)),config=cfg,allow_val_change=again,id=rid,resume='allow' if rid else None,**kw))
+ args=_redact(dict(entity=entity,project=project,group=group,job_type=job_type,name=name,notes=notes,tags=sorted(set(tag_list)),config=cfg,allow_val_change=again,id=rid,resume='allow' if rid else None,**kw),known)
  run=wandb.init(**args)
+ _metrics(run)['secrets']=known
  if again:
   run.summary['provenance/last_resume']=prov
   run.summary['provenance/resume_count']=rc
@@ -274,25 +266,25 @@ def define_metrics(run,step_metric=STEP_METRIC,namespaces=METRIC_NAMESPACES,summ
  state=_metrics(run)
  defs={**state['summaries'],**(summaries or{})}
  namespaces=tuple(dict.fromkeys((*state['namespaces'],*namespaces)))
- run.define_metric(_redact(step_metric))
+ run.define_metric(_sent(run,step_metric))
  for ns in namespaces:
-  run.define_metric(_redact(f'{ns}/*'),step_metric=_redact(step_metric))
+  run.define_metric(_sent(run,f'{ns}/*'),step_metric=_sent(run,step_metric))
  for q,how in defs.items():
   if how and not set(how.lower().split(','))<=set('min max mean last first copy none'.split()):raise ValueError('invalid summary')
-  run.define_metric(_redact(q),step_metric=_redact(step_metric),summary=how)
+  run.define_metric(_sent(run,q),step_metric=_sent(run,step_metric),summary=how)
  state.update(summaries=defs,axis=step_metric,namespaces=namespaces)
 _warned:set[str]=set()
 def log_step(run,step,metrics,commit=None):
  for k in metrics:
   if '/' not in k and k not in _warned:
    _warned.add(k)
-   warnings.warn(f'metric {_redact(k)!r} needs a namespace')
- run.log(_redact({**metrics,_metrics(run)['axis']:step}),commit=commit)
+   warnings.warn(f'metric {_sent(run,k)!r} needs a namespace')
+ run.log(_sent(run,{**metrics,_metrics(run)['axis']:step}),commit=commit)
 def finish(run,outcome,verdict,exit_code=None):
  if verdict not in VERDICTS:raise ValueError(f'verdict {verdict!r} not in {VERDICTS}')
  if getattr(run,'disabled',False)or not getattr(run,'id',None):return[]
- run.notes=_redact((run.notes or '')+f'\nOutcome ({verdict}): {outcome.strip()}')
- sm=_redact(dict(run.summary))
+ run.notes=_sent(run,(run.notes or '')+f'\nOutcome ({verdict}): {outcome.strip()}')
+ sm=_sent(run,dict(run.summary))
  for q in list(run.summary.keys()):
   if q not in sm:
    del run.summary[q]
