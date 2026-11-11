@@ -1,8 +1,7 @@
 # Naming
 
-Use a team entity and a project per metric schema. Kebab-case is advice;
-underscore/period names pass. Group one question under YYYYMMDD-question.
-Model-data-deltas-s{seed} labels default to 64 characters; ids carry identity.
+Use team entity/project per metric schema; kebab-case is advice.
+Group YYYYMMDD-question. Default names: model-data-deltas-s{seed}, <=64 chars.
 Only changed hyperparameters appear as deltas. <!-- declaration: logging.conventions -->
 
 
@@ -22,7 +21,7 @@ negative tokens accepted by float() are counted and omitted. Option-shaped value
 before -- follow the flag rule, since no caller option parser is available.
 Legacy argv strings and digest records become current-launch command metadata
 with a warning.
-Resolve Hydra/OmegaConf.
+Resolve framework configs.
 
 Use train/loss, val/loss, eval/loss, opt/lr, perf/samples_per_s, perf/gpu_mem_gb
 and data/samples_seen on trainer/step. Log the restored optimizer step instead
