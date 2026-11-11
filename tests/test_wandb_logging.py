@@ -42,6 +42,7 @@ class Logging(Checks):
   s.eq(wbkit.run_name('sample','cells',{'train.lr':0.0003},2),'sample-cells-lr3e-4-s2')
   s.eq(wbkit.config_deltas({'train':{'lr':2,'seed':1}},{'train':{'lr':1,'seed':1}}),{'train.lr':2})
   s.eq(wbkit.config_deltas({'lr':1},None),{})
+  s.lacks(S,wbkit.run_name(S,S,{'api_key':S},S))
   s.assertLessEqual(len(wbkit.run_name('x'*90,'cells')),64)
  def test_secrets(s):
   for k,q in itertools.product(K,('scalar','mapping','list')):
