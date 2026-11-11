@@ -763,7 +763,7 @@ class PartTwo(Checks):
  def test_collisions(s):
   with warnings.catch_warnings(record=True)as ws:
    warnings.simplefilter('always')
-   r=start(config=recipe({1:'old','1':'kept',2:'old','2':'new'}))
+   r=start(config=recipe({1:'old','1':'kept',2:'old','2':'new'}),base_config=recipe({'width':8}))
   messages=[str(w.message)for w in ws if 'key-collision' in str(w.message)]
   s.eq(messages,['config.key-collision: train.1','config.key-collision: train.2'])
   s.eq(r.config[TR],{'1':'kept','2':'new'})
