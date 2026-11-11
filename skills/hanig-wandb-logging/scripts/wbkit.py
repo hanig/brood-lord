@@ -47,13 +47,10 @@ def _secret_values(o):
    for k,x in v.items():visit(x,secret or bool(_SEC.search(str(k))))
   elif isinstance(v,(list,tuple)):
    for x in v:visit(x,secret)
-  elif secret:
-   if not isinstance(v,(str,int,float,bool,type(None))):
-    x=_json(v)
-    if x is not v:visit(x,True)
-   else:
-    text=str(v)
-    if len(text)>=6:found.add(text)
+  elif not isinstance(v,(str,int,float,bool,type(None))):
+   x=_json(v)
+   if x is not v:visit(x,secret)
+  elif secret and len(str(v))>=6:found.add(str(v))
  visit(o)
  return found
 def _redact(o,known=()):
