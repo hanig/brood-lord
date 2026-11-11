@@ -40,7 +40,8 @@ wbkit.finish(run, outcome, contract_verdict)
 ```
 
 Requeues reuse output_dir; restore training separately. Config/name/notes persist;
-mismatches/missing labels warn. SDK writes are caller-owned; ready precedes init.
+mismatches/missing labels warn. SDK writes are caller-owned; kit state persists only after successful init.
+Pre-init refusal changes no output_dir file or resume_count.
 Corrupt/lost ready snapshots refuse before init, preserving bytes: restore
 wandb_config.json or use a new output_dir/id. Legacy directories without marker/
 snapshots use caller config: restore first or start anew. Omit option-shaped
@@ -67,7 +68,12 @@ Owner, 2026-11-11: launch/resume keys become text (Enum string value/name,
 otherwise str(key)). Every Mapping, list, tuple, deque, set, frozenset and converted
 record recurses; deques/sets become lists, sets sorted if orderable, else iteration order.
 Metrics bind to trainer/step or the configured axis; config_deltas equality
-requires identical types/equal values, subject to limits below.
+requires identical types/equal values; floats use == or both NaN, never serialized text.
+Collisions warn once/path/launch; last entry stays. Metrics, including loss/password, stay in artifacts/cards/summaries.
+Explicit names accept W&B letters/digits/-/_/., 1..128 chars; dates/versions/status warn.
+Status words match whole tokens; old-faithful-geyser never warns.
+Secret labels (family included) stay omitted from config/name/notes/cards;
+paths go in provenance.redacted_keys.
 run_name fits integer max_len>=1; <1 raises ValueError.
 
 ## Known limits
