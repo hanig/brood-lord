@@ -76,14 +76,10 @@ run_name fits integer max_len>=1; <1 raises ValueError.
 
 ## Artifacts and lineage
 
-See [artifacts](references/artifacts.md) for cards, metadata, aliases and storage.
-Pass the caller's SDK explicitly to log_dataset and log_model. use_input records
-resolved qualified input versions atomically under output_dir and reloads them
-for the same run id. Keep that directory across requeues and process restarts.
-Use artifact_name(kind, *parts) for every generated logical name. Put versions,
-dates and status in aliases. Sanity checkpoints never get best; set post_hoc=True
-for a checkpoint chosen after seeing results. Logging records caller selections;
-it never evaluates checkpoint quality or decides convergence.
+[Artifacts](references/artifacts.md) covers log_dataset/log_model with the
+caller-supplied SDK, cards, metadata, aliases and persistent input lineage.
+Use artifact_name for generated names. Set sanity_checkpoint=True for sanity
+saves and post_hoc=True for choices made after seeing results.
 
 ```python
 import wandb, wbkit
@@ -91,9 +87,5 @@ wbkit.use_input(run, "team/project/data-cells:v3")
 wbkit.log_model(wandb, run, "outputs/checkpoint", step=100, post_hoc=True)
 ```
 
-Container-type-only changes warn on resume and appear in deltas. Text-key
-collisions warn; the last entry wins. Bare str/bytes secret_keys are refused.
-Conversion exceptions fall back to str(value), without calling class methods.
-Snapshot disagreement refuses before init; restore matching snapshots. Recovery
-archives prune launch secrets; unparseable bytes with declared keys become a
-recovery notice. Archives cannot replace intact config snapshots.
+Snapshot disagreement refuses before init; restore matching snapshots.
+Recovery archives prune launch secrets; unsafe malformed bytes become a notice.
