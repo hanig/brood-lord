@@ -140,7 +140,7 @@ def run_name(model,data,deltas=None,seed=None,max_len=64):
    continue
   ab=_AB.get(leaf,leaf.replace('_','')[:10])
   ps.append(_slugify(f'{ab}{_fmt(val)}'))
- if seed is not None:ps.append(_slugify(f's{_redact(seed)}'))
+ if seed is not None:ps.append(_slugify(f's{_redact(seed,known)}'))
  name='-'.join((p for p in ps if p))
  if len(name)>max_len:
   digest=hashlib.sha1(name.encode()).hexdigest()[:6]
