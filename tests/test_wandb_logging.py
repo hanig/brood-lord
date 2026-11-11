@@ -586,8 +586,9 @@ class RoundOneRepairs(Checks):
    with TD()as d:
     for i in range(2):
      r=start(rank=0,output_dir=d,config=recipe({key:H}),secret_keys=[key])
-     s.eq(r.config[PR][RK],['train.'+key]);s.clean(r)
-     s.eq(r.config['family'],'sample')
+     s.eq(r.config[PR][RK],(['family']if key=='family'else [])+['train.'+key]);s.clean(r)
+     if key=='family':s.lacks('family',r.config)
+     else:s.eq(r.config['family'],'sample')
  def test_new_secret_on_resume(s):
   with TD()as d:
    c=recipe({'project_key':H})
@@ -808,13 +809,13 @@ class PartTwo(Checks):
   for kind,token,suffix in itertools.product(wbkit.ARTIFACT_TYPES,('20261109','v2','final','latest','best','cells','with spaces','A'*200,''),('val','20261110')):
    name=wbkit.artifact_name(kind,token,suffix);wbkit._check_artifact_name(name);s.no(wbkit._VERSIONISH_NAME_RE.search(name))
   for name in ('final','latest','v2','20261109','cells-final','cells-20261109-val'):
-   with s.assertRaises(ValueError):wbkit._check_artifact_name(name)
+   with s.assertWarns(UserWarning):wbkit._check_artifact_name(name)
    s.has('artifact.versioned-name',[x.split(':')[0]for x in wbkit.lint_artifact(name=name,type='dataset',description='',metadata={})])
  def test_artifacts(s):
   with TD()as d:
-   path=Path(d)/'weights';path.write_bytes(b'weights');sdk=ArtifactSDK();r=start(sdk,output_dir=d,secret_keys=('custom_key',));args=dict(summary='Cells.',contents='Counts.',intended_use='Train.');ds=wbkit.log_dataset(sdk,r,'cells-filtered',path,**args,metadata={'n_samples':2,'custom_key':S});s.eq(ds.metadata['n_samples'],2);s.lacks(S,repr(ds.metadata))
+   path=Path(d)/'weights';path.write_bytes(b'weights');sdk=ArtifactSDK();r=start(sdk,output_dir=d,secret_keys=('custom_key',));args=dict(summary='Cells.',contents='Counts.',intended_use='Train.');ds=wbkit.log_dataset(sdk,r,'cells-filtered',path,**args,metadata={'n_samples':2,'custom_key':S});s.eq(ds.metadata['n_samples'],2);s.eq(ds.metadata['custom_key'],S)
    for field in ('Produced by','Inputs','Contents','Intended use','Caveats'):s.has(field,ds.description)
-   ck=wbkit.log_model(sdk,r,path,step=0,is_best=True,sanity_checkpoint=True,aliases=['best','candidate'],post_hoc=True,metrics={'custom_key':S,'val/loss':.2});s.lacks('best',ck.aliases);s.has('candidate',ck.aliases);s.has('Post hoc',ck.description);s.has('Sanity checkpoint',ck.description);s.lacks(S,ck.description);s.lacks(S,repr(ck.metadata));ck=wbkit.log_model(sdk,r,path,step=1,is_best=True);s.has('best',ck.aliases);s.has('step-1',ck.aliases);s.eq(wbkit.lint_artifact(name=ck.name,type=ck.type,description=ck.description,metadata=ck.metadata),[]);ds=wbkit.log_dataset(sdk,r,'cells-reference','s3://example/data',**args);s.eq(ds.metadata['storage'],'reference')
+   ck=wbkit.log_model(sdk,r,path,step=0,is_best=True,sanity_checkpoint=True,aliases=['best','candidate'],post_hoc=True,metrics={'custom_key':S,'val/loss':.2});s.lacks('best',ck.aliases);s.has('candidate',ck.aliases);s.has('Post hoc',ck.description);s.has('Sanity checkpoint',ck.description);s.has(S,ck.description);s.eq(ck.metadata['metrics']['custom_key'],S);ck=wbkit.log_model(sdk,r,path,step=1,is_best=True);s.has('best',ck.aliases);s.has('step-1',ck.aliases);s.eq(wbkit.lint_artifact(name=ck.name,type=ck.type,description=ck.description,metadata=ck.metadata),[]);ds=wbkit.log_dataset(sdk,r,'cells-reference','s3://example/data',**args);s.eq(ds.metadata['storage'],'reference')
  def test_restart(s):
   with TD()as d:
    r=start(ArtifactSDK(),output_dir=d);wbkit.use_input(r,'team/project/cells:v3');s.has('team/project/cells:v3',wbkit.artifact_card(summary='Cells',contents='x',intended_use='x',run=r));cmd=[sys.executable,'-B','-c',"from tests.test_wandb_logging import *; r=start(ArtifactSDK(),output_dir=sys.argv[1]); print(wbkit.artifact_card(summary='x',contents='x',intended_use='x',run=r))",d];child=subprocess.run(cmd,capture_output=True,text=True,timeout=20);s.eq(child.returncode,0,child.stderr);s.has('team/project/cells:v3',child.stdout);s.eq(json.loads((Path(d)/'wandb_inputs.json').read_text())['id'],r.id)
@@ -834,7 +835,7 @@ class PartTwo(Checks):
  def test_review_edges(s):
   with s.warns(UserWarning,'key-collision'):
    wbkit.config_deltas(recipe({1:'changed','1':'same'}),recipe({'1':'same'}))
-  for name,rule in (('cells-2026-11-09','versioned-name'),('Cells','invalid-name')):
+  for name,rule in (('cells-2026-11-09','versioned-name'),('Cells!','invalid-name')):
    s.yes(any(rule in x for x in wbkit.lint_artifact(name=name,type='dataset',description='Produced by Contents Intended use '*3,metadata={'x':1})))
   with TD()as d:
    start(output_dir=d);Path(d,'wandb_inputs.json').write_text('{"id":"other","inputs":[]}');sdk=FakeWandb()
@@ -851,6 +852,73 @@ class PartTwo(Checks):
   s.eq(wbkit.config_deltas(None,recipe({'width':8})),{});s.has(PR,start(config=None,base_config=recipe({'width':8})).config)
   with TD()as d:
    sdk=ArtifactSDK();r=start(sdk,config={'arch':'transformer',TR:{},'data':{}});p=Path(d)/'weights';p.write_bytes(b'weights');s.eq(wbkit.log_model(sdk,r,p,step=1).metadata['arch'],'transformer')
+class OwnerRepairs(Checks):
+ def test_metrics(s):
+  # 2 keys x 2 kinds, exhaustive.
+  for key,kind in itertools.product(('loss','password'),('dataset','model')):
+   with TD()as d:
+    p=Path(d)/'weights';p.write_bytes(b'x');sdk=ArtifactSDK();r=start(sdk,secret_keys=(key,))
+    if kind=='model':
+     art=wbkit.log_model(sdk,r,p,step=1,metrics={key:.25});s.has(key+'=0.25',art.description)
+    else:art=wbkit.log_dataset(sdk,r,'cells',p,summary='x',contents='x',intended_use='x',metadata={'metrics':{key:.25}})
+    s.eq(art.metadata['metrics'],{key:.25})
+    wbkit.log_step(r,1,{'eval/'+key:.25});s.eq(r.logged[-1]['eval/'+key],.25)
+ def test_collision_paths(s):
+  class K(Enum):ONE='1'
+  cfg=recipe({1:'a','1':'b',K.ONE:'c'})
+  with warnings.catch_warnings(record=True)as ws:
+   warnings.simplefilter('always');r=start(config=cfg,base_config=cfg)
+  s.eq([str(w.message)for w in ws if 'key-collision'in str(w.message)],['config.key-collision: train.1']);s.eq(r.config[TR],{'1':'c'})
+ def test_numeric(s):
+  # Exhaustive 6x6.
+  values=(0.0,-0.0,float('nan'),1.0,0,False)
+  for a,b in itertools.product(values,repeat=2):
+   same=type(a)is type(b)and(a==b or isinstance(a,float)and isinstance(b,float)and a!=a and b!=b)
+   x,y=recipe({'x':a}),recipe({'x':b})
+   s.eq(bool(wbkit.config_deltas(x,y)),not same)
+   with TD()as d:
+    start(config=x,output_dir=d)
+    with warnings.catch_warnings(record=True)as ws:
+     warnings.simplefilter('always');start(config=y,output_dir=d)
+    s.eq(any('resume.config-mismatch'in str(w.message)for w in ws),not same)
+ def test_refusal(s):
+  # Exhaustive 4.
+  for cause in ('lineage','tags','init','snapshot'):
+   with TD()as d:
+    p=Path(d);start(output_dir=d)
+    if cause=='lineage':(p/'wandb_inputs.json').write_text('{"id":"other","inputs":[]}')
+    if cause=='snapshot':(p/CF).write_text('{"password":"CANARY_VALUE",') ;(p/BF).write_text('{')
+    snap=lambda:{f.name:f.read_bytes()for f in p.iterdir()};before=snap();sdk=FakeWandb()
+    args={'tags':[None]}if cause=='tags'else {}
+    if cause=='init':sdk.init=lambda **kw:(_ for _ in ()).throw(RuntimeError('SDK refusal'))
+    with s.assertRaises((ValueError,TypeError,RuntimeError)):start(sdk,output_dir=d,**args)
+    s.eq(snap(),before)
+    if cause=='lineage':
+     (p/'wandb_inputs.json').unlink();s.eq(start(output_dir=d).summary['provenance/resume_count'],1)
+  with TD()as d:
+   p=Path(d)/'new'
+   with s.assertRaises(TypeError):start(output_dir=p,tags=[None])
+   s.no(p.exists())
+ def test_explicit_names(s):
+  # Exhaustive 8x2.
+  for name,kind in itertools.product(('old-faithful-geyser','new-york-taxi','best-buy-reviews','Cells_1.0','final','latest','v2','X'*128),('dataset','model')):
+   with TD()as d,warnings.catch_warnings(record=True)as ws:
+    warnings.simplefilter('always');p=Path(d)/'x';p.write_bytes(b'x');sdk=ArtifactSDK();r=start(sdk)
+    art=wbkit.log_model(sdk,r,p,step=1,name=name)if kind=='model'else wbkit.log_dataset(sdk,r,name,p,summary='x',contents='x',intended_use='x')
+    s.eq(art.name,name)
+    if name=='old-faithful-geyser':s.no(ws)
+  for name in ('','x'*129,'bad/name','bad name'):
+   with s.assertRaises(ValueError):wbkit._check_artifact_name(name)
+ def test_generated_secrets(s):
+  # Exhaustive 5x2.
+  for key in ('family','model','data','hypothesis','expect'):
+   with TD()as d:
+    for _ in range(2):
+     r=start(ArtifactSDK(),output_dir=d,secret_keys=(key,),**{key:S})
+     s.clean(r,S);s.has(key,r.config[PR][RK])
+     s.lacks(S,wbkit.artifact_card(summary='x',contents='x',intended_use='x',run=r))
+     for f in Path(d).glob('*.json'):s.lacks(S,f.read_text())
+
 class FakeArtifact:
  def __init__(s,name,type):s.name=name;s.type=type;s.metadata={};s.description='';s.sources=[]
  def add_file(s,path):s.sources.append(('file',path))
