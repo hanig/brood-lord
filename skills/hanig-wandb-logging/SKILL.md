@@ -72,8 +72,17 @@ requires identical types/equal values; floats use == or both NaN, never serializ
 Collisions warn once/path/launch; last entry stays. Metrics, including loss/password, stay in artifacts/cards/summaries.
 Explicit names accept W&B letters/digits/-/_/., 1..128 chars; dates/versions/status warn.
 Status words match whole tokens; old-faithful-geyser never warns.
-Secret labels (family included) stay omitted from config/name/notes/cards;
-paths go in provenance.redacted_keys.
+RESERVED_KEYS is a normalized frozenset: provenance family model data seed name notes group,
+gitcommit gitdirty gitbranch gitremote command cwd host python torch wandb
+cudavisibledevices slurm startedat redactedkeys jobid arrayjobid arraytaskid
+jobpartition jobnumnodes ntasks restartcount clustername.
+secret_keys may not name these generated fields: ValueError before SDK calls/writes.
+Reserved config entries remain subject to the default secret list (no overlap).
+Explicit run_name model/data/seed/deltas are caller labels used as written,
+like free text; the helper validates secret_keys but does not redact labels.
+Set signatures compare members by value, including signed zero, independent of order.
+Unknown remote card sizes say size unknown. Direct config_deltas warns once/path
+across config and base_config together.
 run_name fits integer max_len>=1; <1 raises ValueError.
 
 ## Known limits
