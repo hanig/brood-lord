@@ -40,9 +40,6 @@ wbkit.log_step(run, step, metrics)
 wbkit.finish(run, outcome, contract_verdict)
 ```
 
-run_args: project/family/job_type/model/data, hypothesis/expect, nested config;
-optional base_config/group/output_dir/summaries (min/max).
-
 Reuse output_dir across requeues; new experiments need new directories.
 It saves sanitized config/provenance, original name/notes, id and resume count.
 Restore training checkpoints separately. Direct SDK writes remain caller-owned.
