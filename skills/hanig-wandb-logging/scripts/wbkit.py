@@ -59,7 +59,7 @@ def _redact(o,secret_keys=(),removed=None):
     if _secret(k,keys):
      if removed is not None:removed.add(q)
     else:
-     if k in out:warnings.warn('config.key-collision: '+q)
+     if k in out and removed is not None:warnings.warn('config.key-collision: '+q)
      out[k]=clean(x,q+'.')
    return out
   if isinstance(v,(set,frozenset)):
