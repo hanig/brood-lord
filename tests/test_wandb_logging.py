@@ -593,15 +593,48 @@ class RoundOneRepairs(Checks):
    s.assertFalse(any('resume.new-secret'in str(w.message)for w in found))
 
 class ObjectContract(Checks):
- def test_attribute_secret(s):
+ def test_structured_secret(s):
+  @dataclasses.dataclass
+  class D:
+   api_key:str=S
+   width:int=8
+  # Exhaustive: 3 containers x 3 nesting shapes x 2 sources.
+  for cls,shape,source in itertools.product(
+      (D,argparse.Namespace,types.SimpleNamespace),range(3),('config','base_config')):
+   obj=cls(api_key=S,width=8)
+   value=(obj,{'nested':obj},[{'nested':obj}])[shape]
+   path=('train.api_key','train.nested.api_key','train.0.nested.api_key')[shape]
+   with s.subTest(cls=cls,shape=shape,source=source),TD()as d:
+    args={source:recipe(value)}
+    if source=='config':args['base_config']=recipe({})
+    r=start(rank=0,output_dir=d,**args)
+    s.clean(r,S)
+    s.assertIn(path,r.config['provenance']['redacted_keys'])
+    for p in Path(d).glob('*.json'):s.lacks(S,p.read_text())
+    if source=='config':
+     expected=({'width':8},{'nested':{'width':8}},[{'nested':{'width':8}}])[shape]
+     s.eq(r.config['train'],expected)
+    s.eq(obj.api_key,S)  # caller-owned containers are unchanged
+ def test_arbitrary_object(s):
   class M:
    api_key=S
    width=8
    def __str__(self):return "api_key='"+self.api_key+"' width=8"
+   def __deepcopy__(self,memo):raise AssertionError('must not deep-copy')
+  @dataclasses.dataclass
+  class D:
+   child:object
+   password:str=S
+  obj=M()
+  s.assertIs(wbkit._record(obj),obj)
+  s.assertIs(wbkit._record(D(obj))['child'],obj)
   with TD()as d:
-   r=start(rank=0,output_dir=d,config=recipe(M()))
-   s.clean(r,S)
-   for p in Path(d).glob('*.json'):s.lacks(S,p.read_text())
+   r=start(rank=0,output_dir=d,config=recipe(D(obj)))
+   s.eq(r.config['train'],{'child':str(obj)})
+   s.eq(r.config['provenance']['redacted_keys'],['train.password'])
+   for p in Path(d).glob('wandb_config*.json'):
+    s.eq(json.loads(p.read_text())['config']['train'],{'child':str(obj)})
+
 
 if __name__=='__main__':
  unittest.main()
