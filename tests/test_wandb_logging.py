@@ -728,5 +728,40 @@ class FinalRoundCounterexamples(Checks):
    s.eq(wbkit._redact(cls((3,1,2))),[1,2,3])
    v=cls((1,'a'))
    s.eq(wbkit._redact(v),list(v))
+class Wa4Counterexamples(Checks):
+ # Recovery diagnostics only; no implementation repair after the single gate.
+ def test_decimal_set(s):
+  from decimal import Decimal
+  sdk=FakeWandb()
+  r=start(sdk,rank=0,config={'data':{'codes':{Decimal('1'),Decimal('NaN')}}})
+  s.eq(set(r.config['data']['codes']),{'1','NaN'})
+ def test_text_key_collision(s):
+  with TD()as d,warnings.catch_warnings(record=True)as alerts:
+   warnings.simplefilter('always')
+   a=start(rank=0,output_dir=d,config=recipe({1:'first','1':'second'}))
+   b=start(rank=0,output_dir=d,config=recipe({1:'changed','1':'second'}))
+   s.eq(a.config,b.config)
+   s.yes(any('collis'in str(w.message)or 'config-mismatch'in str(w.message)for w in alerts))
+ def test_container_delta_types(s):
+  for a,b in (([1,2],(1,2)),((1,2),[1,2]),([1,2],{1,2})):
+   with s.subTest(a=a,b=b):s.yes(wbkit.config_deltas(recipe({'lr':a}),recipe({'lr':b})))
+ def test_dotted_key_collision(s):
+  s.yes(wbkit.config_deltas({'train.lr':9,'train':{'lr':1}},
+                           {'train.lr':8,'train':{'lr':1}}))
+ def test_class_item(s):
+  class Foo:
+   def item(self):return 1
+  r=start(rank=0,config=recipe({'cls':Foo}))
+  s.eq(r.config['train']['cls'],str(Foo))
+ def test_string_secret_keys(s):
+  with TD()as d:
+   r=start(rank=0,output_dir=d,secret_keys='project_key',config=recipe({'project_key':S}))
+   s.clean(r,S)
+   for p in Path(d).glob(CG):s.lacks(S,p.read_text())
+ def test_list_equality_contract(s):
+  a,b=[True,False],[1,0]
+  s.yes(type(a)is type(b)and a==b)
+  s.eq(wbkit.config_deltas(recipe({'layers':a}),recipe({'layers':b})),{})
+
 if __name__=='__main__':
  unittest.main()
