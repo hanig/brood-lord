@@ -5,6 +5,10 @@ underscore/period names pass. Group one question under YYYYMMDD-question.
 Model-data-deltas-s{seed} labels default to 64 characters; ids carry identity.
 Only changed hyperparameters appear as deltas. <!-- declaration: logging.conventions -->
 
+The sanitizer recognizes labeled credentials, including token-value fields and
+credential labels in glued short options.
+Tokenizer fields such as pad_token and eos_token remain public configuration.
+
 ```text
 H: hypothesis or baseline purpose
 Expect: val/loss < 0.5
