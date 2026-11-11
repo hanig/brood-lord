@@ -446,14 +446,15 @@ class ContinuationTwo(Checks):
   cmd=[sys.executable,'-B','-c',"from tests.test_wandb_logging import start; r=start(rank=0,config={'data':{'sequence':'A'*1000000}}); assert r.config['data']['sequence']=='A'*1000000"]
   s.eq(subprocess.run(cmd,capture_output=True,timeout=10).returncode,0)
  def test_mismatch_warning(s):
-  with TD()as d:
-   start(rank=0,output_dir=d,config=recipe({'lr':.1}))
-   training=recipe({'lr':.9})
-   with warnings.catch_warnings(record=True)as found:
-    warnings.simplefilter('always')
-    r=start(rank=0,output_dir=d,config=training)
-   s.eq(training['train']['lr'],.9);s.eq(r.config['train']['lr'],.1)
-   s.assertTrue(any('config-mismatch'in str(w.message)for w in found))
+  for old,new in ((.1,.9),(1.,1),(1,True),([1.],[1]),({'a':1.},{'a':1})):
+   with s.subTest(old=old,new=new),TD()as d:
+    start(rank=0,output_dir=d,config=recipe({'lr':old}))
+    training=recipe({'lr':new})
+    with warnings.catch_warnings(record=True)as found:
+     warnings.simplefilter('always');r=start(rank=0,output_dir=d,config=training)
+    s.eq(training['train']['lr'],new)
+    s.eq(json.dumps(r.config['train']['lr']),json.dumps(old))
+    s.assertTrue(any('config-mismatch'in str(w.message)for w in found))
 class KnownValueSanitizer(Checks):
 
  def test_persisted_digest_migration(s):
@@ -532,11 +533,17 @@ class ExactRedaction(Checks):
    ('https://example.org/a?token=CANARY','https://example.org/a'),
    ('ssh://user@[::1]:22/a','ssh://[::1]:22/a'),
    ('not a URL',None),('https://[broken/a',None),('https://example.org:bad/a',None))
-  for raw,want in cases:
+  for (raw,want),source in itertools.product(cases,(None,'wandb_provenance.json','wandb_config.json','wandb_config.backup.json')):
    with s.subTest(raw=raw),TD()as d:
     def git(*args,**kw):return raw if args[:2]==('config','--get')else None
     with patch.object(wbkit,'_git',side_effect=git):
      r=wbkit.start_run(FakeWandb(),project='sample',family='sample',job_type='train',model='m',data='d',hypothesis='A hypothesis.',config=recipe({}),output_dir=d,rank=0)
+    if source:
+     p=Path(d)/source;v=json.loads(p.read_text())
+     prov=v if source=='wandb_provenance.json'else v['config']['provenance']
+     prov['git_remote']=raw;p.write_text(json.dumps(v))
+     if source.endswith('backup.json'):(Path(d)/'wandb_config.json').unlink()
+     r=start(rank=0,output_dir=d)
     s.eq(r.config['provenance']['git_remote'],want)
     for p in Path(d).glob('*.json'):s.lacks('CANARY',p.read_text())
  def test_sdk_arguments(s):
@@ -546,6 +553,19 @@ class ExactRedaction(Checks):
     return super().init(config=config,**kw)
   r=start(Strict(),rank=0,config=recipe({'api_key':'config','default_token':'config'}))
   s.eq(r.config['train'],{'default_token':'config'})
+
+class RoundOneRepairs(Checks):
+ def test_generated_provenance(s):
+  with TD()as d:
+   for i in range(2):
+    r=start(rank=0,output_dir=d,config=recipe({'provenance':H}),secret_keys=['provenance'])
+    s.eq(r.config['provenance']['redacted_keys'],['train.provenance']);s.clean(r)
+ def test_new_secret_on_resume(s):
+  with TD()as d:
+   c=recipe({'project_key':H})
+   a=start(rank=0,output_dir=d,config=c,base_config=recipe({}))
+   r=start(rank=0,output_dir=d,config=c,base_config=recipe({}),secret_keys=['project_key'])
+   s.clean(r);s.lacks(H,(Path(d)/'wandb_config.json').read_text())
 
 if __name__=='__main__':
  unittest.main()
