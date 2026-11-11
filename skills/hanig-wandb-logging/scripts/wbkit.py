@@ -98,9 +98,12 @@ def _redact_argv(argv):
   'positional_count':positional_count,
  }
 def _migrate_command(prov,current):
- if isinstance(prov,Mapping)and (isinstance(prov.get('command'),str)or isinstance(prov.get('command'),Mapping)and 'argv_sha256'in prov['command']):
+ if not isinstance(prov,Mapping):return prov
+ prov=dict(prov)
+ if isinstance(prov.get('command'),str)or isinstance(prov.get('command'),Mapping)and 'argv_sha256'in prov['command']:
   warnings.warn('provenance.legacy-command: replaced with current launch identity')
-  return {**prov,'command':current}
+  prov['command']=current
+ if 'git_remote'in prov:prov['git_remote']=_remote(prov['git_remote'])
  return prov
 def _now():return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec='seconds')
 def provenance(wandb,cwd=None):
@@ -224,20 +227,20 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   p0=_load(pf)if again else{}
   if not p0:p0=(saved.get('config')or{}).get('provenance')or prov
   p0=_migrate_command(p0,prov['command'])
-  p0=_redact(p0,secret_keys,removed)
   p0['redacted_keys']=sorted(set(p0.get('redacted_keys',()))|removed)
   _atomic(pf,json.dumps(p0)+'\n')
  else:
   p0=prov
- cfg=_norm({**config,'family':family,'provenance':p0},secret_keys,removed)
+ cfg={**config,'family':family,'provenance':p0}
  if again and isinstance(saved.get('config'),Mapping):
-  cfg=_norm(saved['config'],secret_keys,removed)
+  prior=saved['config']
+  cfg=_norm({k:v for k,v in prior.items()if k!='provenance'},secret_keys,removed)
+  cfg['provenance']=prior.get('provenance',p0)
   old={k:v for k,v in cfg.items()if k!='provenance'}
   current={k:v for k,v in _norm({**config,'family':family}).items()if k!='provenance'}
-  if current!=old:warnings.warn('resume.config-mismatch: saved logging config retained; restore caller training config separately')
+  if json.dumps(current,sort_keys=True)!=json.dumps(old,sort_keys=True):warnings.warn('resume.config-mismatch: saved logging config retained; restore caller training config separately')
  if isinstance(cfg.get('provenance'),Mapping):
   cfg['provenance']=_migrate_command(cfg['provenance'],prov['command'])
- cfg=_norm(cfg,secret_keys,removed)
  if isinstance(cfg.get('provenance'),Mapping):cfg['provenance']['redacted_keys']=sorted(set(cfg['provenance'].get('redacted_keys',()))|removed)
  rc=int(saved.get('resume_count',0))+1 if again else 0
  f=_flat(cfg)
