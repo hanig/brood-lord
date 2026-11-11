@@ -843,7 +843,7 @@ class PartTwo(Checks):
  def test_review_secret_edges(s):
   with patch.dict(os.environ,{'SLURM_JOB_ID':S}):s.lacks(S,shown(start(secret_keys=('job_id',))))
   with TD()as d:
-   start(output_dir=d,config=recipe({'custom_key':S}));p=Path(d);(p/CF).write_text(json.dumps([{'custom_key':S}]));start(output_dir=d,config=None);start(output_dir=d,config=None,secret_keys=('custom_key',))
+   start(output_dir=d,config=recipe({'custom_key':S}),base_config=recipe({}));p=Path(d);(p/CF).write_text('['+(p/CF).read_text()+']');start(output_dir=d,config=None);start(output_dir=d,config=None,secret_keys=('custom_key',))
    for f in p.glob('*.corrupt-*'):s.lacks(S,f.read_text())
    (p/CF).write_text('{"'+chr(92)+'u0070assword" "CANARY_VALUE"}');start(output_dir=d,config=None)
    for f in p.glob('*.corrupt-*'):s.lacks('CANARY_VALUE',f.read_text())
