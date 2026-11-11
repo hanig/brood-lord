@@ -12,7 +12,7 @@ R3: 6 keys x3 wrappers; URLs 2 schemes x4 passwords x3 suffixes x3 wrappers;
 from pathlib import Path
 import argparse,hashlib,collections,importlib,importlib.util,itertools,dataclasses
 from enum import Enum
-import json,os,sys
+import json,os,sys,subprocess,warnings
 from tempfile import TemporaryDirectory as TD
 import types,unittest
 from unittest.mock import patch
@@ -545,5 +545,56 @@ class AcceptedRecovery(Checks):
    for f in ('wandb_config.ready','wandb_config.json','wandb_config.backup.json'):(p/f).unlink()
    b=start(rank=0,output_dir=d,config=recipe({'lr':.9}))
    s.eq(b.id,a.id);s.eq(b.config['train']['lr'],.9)
+class ContinuationTwo(Checks):
+ def test_spaced_labels(s):
+  for k in ('API key','private key','secret key','secret access key'):
+   with s.subTest(key=k):
+    text=k+': '+T
+    r=start(rank=0,hypothesis=text,config=recipe({'note':text,k:T}))
+    s.clean(r,T)
+ def test_multiline(s):
+  for key,sep in itertools.product(K,('\n','\r\n','\r')):
+   with s.subTest(key=key,sep=sep):
+    text=key+':'+sep+T+sep+'Expect: val/loss < 0.5'
+    r=start(rank=0,hypothesis=text,config=recipe({'note':text}))
+    s.clean(r,T);s.assertIn('Expect: val/loss < 0.5',r.notes)
+ def test_pem(s):
+  for kind in ('PRIVATE KEY','RSA PRIVATE KEY','OPENSSH PRIVATE KEY'):
+   with s.subTest(kind=kind):
+    text='private_key:\n-----BEGIN '+kind+'-----\n'+T+'\n-----END '+kind+'-----'
+    s.clean(start(rank=0,hypothesis=text,config=recipe({'note':text})),T)
+ def test_metric_token(s):
+  for ns in wbkit.METRIC_NAMESPACES:
+   q=ns+'/token';expect=q+' == 0.5'
+   r=start(rank=0,expect=expect)
+   wbkit.log_step(r,1,{q:.5})
+   s.eq(r.logged[-1][q],.5);s.assertIn('Expect: '+expect,r.notes)
+ def test_filename_bytes(s):
+  with TD()as d:
+   raw=os.fsencode(d)+b'/data-\xff'
+   s.eq(os.fsencode(os.fsdecode(raw)),raw)
+   argv=['train.py',os.fsdecode(raw)]
+   with patch.object(sys,'argv',argv):
+    got=start(rank=0).config['provenance']['command']
+   s.eq(got['argv_sha256'],hashlib.sha256(b'train.py\0'+raw).hexdigest())
+ def test_public_token_keys(s):
+  keys=('stop_token','end_token','image_token','max_token')
+  c=recipe(dict.fromkeys(keys,'<end>'))
+  r=start(rank=0,config=c,base_config=recipe(dict.fromkeys(keys,'<old>')))
+  s.eq(r.config['train'],c['train'])
+  s.eq(set(wbkit.config_deltas(c,recipe({}))),{'train.'+k for k in keys})
+ def test_long_string(s):
+  # Exhaustive single 1,000,000-character string; child deadline 10 seconds.
+  cmd=[sys.executable,'-B','-c',"from tests.test_wandb_logging import start; r=start(rank=0,config={'data':{'sequence':'A'*1000000}}); assert r.config['data']['sequence']=='A'*1000000"]
+  s.eq(subprocess.run(cmd,capture_output=True,timeout=10).returncode,0)
+ def test_mismatch_warning(s):
+  with TD()as d:
+   start(rank=0,output_dir=d,config=recipe({'lr':.1}))
+   training=recipe({'lr':.9})
+   with warnings.catch_warnings(record=True)as found:
+    warnings.simplefilter('always')
+    r=start(rank=0,output_dir=d,config=training)
+   s.eq(training['train']['lr'],.9);s.eq(r.config['train']['lr'],.1)
+   s.assertTrue(any('config-mismatch'in str(w.message)for w in found))
 if __name__=='__main__':
  unittest.main()
