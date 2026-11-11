@@ -234,7 +234,11 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
  cfg={**config,'family':family,'provenance':p0}
  if again and isinstance(saved.get('config'),Mapping):
   prior=saved['config']
-  cfg=_norm({k:v for k,v in prior.items()if k!='provenance'},secret_keys,removed)
+  newly_removed=set()
+  cfg=_norm({k:v for k,v in prior.items()if k!='provenance'},secret_keys,newly_removed)
+  removed.update(newly_removed)
+  if newly_removed:
+   warnings.warn('resume.new-secret: '+', '.join(sorted(newly_removed))+'; first launch already sent its value; start a new output_dir with complete secret_keys from the first launch')
   cfg['provenance']=prior.get('provenance',p0)
   old={k:v for k,v in cfg.items()if k!='provenance'}
   current={k:v for k,v in _norm({**config,'family':family}).items()if k!='provenance'}
