@@ -9,9 +9,8 @@ description: >-
 # hanig-wandb-logging
 
 Pass credentials through the environment, never through config, notes or names.
-Declare project-specific secret keys with `secret_keys=()`. Only exact listed
-keys are protected; credentials under other keys or in free text are sent as
-written. There is no value matching or credential detection in free text.
+Declare project keys in secret_keys. Only listed keys are protected; other
+keys and free text are sent as written. No value matching or text scanning.
 
 ## Host capability boundary
 
