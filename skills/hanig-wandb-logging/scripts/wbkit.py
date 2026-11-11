@@ -39,7 +39,7 @@ def _record(o):
  if isinstance(o,tuple)and hasattr(o,'_asdict'):return o._asdict()
  return o
 def _secret_values(o):
- """Collect verbatim leaf values beneath secret keys, before masking."""
+ """Collect secret leaves."""
  found=set()
  def visit(v,secret=False):
   v=_record(v)
