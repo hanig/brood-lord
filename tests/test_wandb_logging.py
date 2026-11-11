@@ -429,7 +429,7 @@ class LastReview(Checks):
    if v==v:s.eq(got,v)
    else:s.assertNotEqual(got,got)
 class CommandProvenance(Checks):
- """Exhaustive: 9 token shapes x 2 values; all value changes alter digest."""
+ """Exhaustive: 12 token shapes x 2 values; all value changes alter digest."""
  def test_shapes(s):
   for value in ('VALUE_CANARY_A','VALUE_CANARY_B'):
    cases=(
@@ -441,6 +441,9 @@ class CommandProvenance(Checks):
     (['-'],['-'],0),
     (['--'],['--'],0),
     ([value],[],1),
+    (['--','--'+value],['--'],1),
+    (['--shift','-1'],['--shift'],1),
+    (['--shift','-0.5','-1e-3'],['--shift'],2),
     (['--config',json.dumps({'api_key':value})],['--config'],1),
    )
    for tokens,flags,count in cases:
@@ -482,8 +485,20 @@ class CommandProvenance(Checks):
   s.eq(wbkit._redact_argv(argv)['positional_count'],4)
   s.lacks('SECRET',repr(wbkit._redact_argv(argv)))
   s.eq(wbkit._redact_argv([])['program'],'')
-  # Tokens after a terminator follow the same per-token classification.
-  s.eq(wbkit._redact_argv(['train.py','--','--flag=value'])['flags'],['--','--flag'])
+ def test_terminator(s):
+  argv=['train.py','--','--CANARY']
+  s.eq(wbkit._redact_argv(argv)['flags'],['--'])
+  s.eq(wbkit._redact_argv(argv)['positional_count'],1)
+  s.assertNotEqual(wbkit._redact_argv(argv)['argv_sha256'],wbkit._redact_argv(argv[:-1]+['--CHANGED'])['argv_sha256'])
+ def test_numeric(s):
+  for value in ('-1','-0.5','-1e-3'):
+   with s.subTest(value=value):
+    argv=['train.py','--shift',value]
+    got=wbkit._redact_argv(argv)
+    s.eq(got['flags'],['--shift']);s.eq(got['positional_count'],1)
+    s.assertNotEqual(got['argv_sha256'],wbkit._redact_argv(argv[:-1]+[value+'0'])['argv_sha256'])
+ def test_option_shaped_limit(s):
+  s.eq(wbkit._redact_argv(['train.py','--name','--CANARY'])['flags'],['--name','--CANARY'])
 class ContinuationReview(Checks):
  def test_credential_labels(s):
   # Exhaustive 8 labels x 2 case variants x 3 wrappers.
@@ -514,5 +529,21 @@ class ContinuationReview(Checks):
    (p/'wandb_config.json').write_text(good)
    b=start(rank=0,output_dir=d,config=recipe({'lr':.9}))
    s.eq((b.id,b.config),(a.id,a.config))
+class AcceptedRecovery(Checks):
+ def test_corrupt_refusal(s):
+  with TD()as d:
+   start(rank=0,output_dir=d);p=Path(d);sdk=FakeWandb()
+   files=[p/'wandb_config.json',p/'wandb_config.backup.json']
+   for f in files:f.write_text('{')
+   before=[f.read_bytes()for f in files]
+   with s.assertRaisesRegex(ValueError,'recover'):start(sdk,rank=0,output_dir=d)
+   s.eq([f.read_bytes()for f in files],before)
+   s.assertFalse(hasattr(sdk,'run'))
+ def test_unmarked_legacy(s):
+  with TD()as d:
+   a=start(rank=0,output_dir=d,config=recipe({'lr':.1}));p=Path(d)
+   for f in ('wandb_config.ready','wandb_config.json','wandb_config.backup.json'):(p/f).unlink()
+   b=start(rank=0,output_dir=d,config=recipe({'lr':.9}))
+   s.eq(b.id,a.id);s.eq(b.config['train']['lr'],.9)
 if __name__=='__main__':
  unittest.main()
