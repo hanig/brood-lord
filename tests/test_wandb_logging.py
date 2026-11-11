@@ -75,6 +75,8 @@ class CoreCases(Checks):
     s.eq(start().disabled,g!='0')
  def test_axis(s):
   r=start(summaries={'eval/loss':'min'})
+  wbkit.log_step(r,5,{'extra/loss':.3})
+  s.assertIn(('extra/*',AX,None),r.definitions)
   wbkit.define_metrics(r,namespaces=('aux',))
   wbkit.define_metrics(r,step_metric='train/global_step')
   defs={n:(axis,summary)for n,axis,summary in r.definitions}
@@ -412,14 +414,15 @@ class ContinuationReview(Checks):
    s.eq((b.id,b.config),(a.id,a.config))
 class AcceptedRecovery(Checks):
  def test_corrupt_refusal(s):
-  with TD()as d:
-   start(rank=0,output_dir=d);p=Path(d);sdk=FakeWandb()
-   files=[p/'wandb_config.json',p/'wandb_config.backup.json']
-   for f in files:f.write_text('{')
-   before=[f.read_bytes()for f in files]
-   with s.assertRaisesRegex(ValueError,'recover'):start(sdk,rank=0,output_dir=d)
-   s.eq([f.read_bytes()for f in files],before)
-   s.assertFalse(hasattr(sdk,'run'))
+  for raw in (b'{',b'\xff\xfe'):
+   with TD()as d:
+    start(rank=0,output_dir=d);p=Path(d);sdk=FakeWandb()
+    files=[p/'wandb_config.json',p/'wandb_config.backup.json']
+    for f in files:f.write_bytes(raw)
+    before=[f.read_bytes()for f in files]
+    with s.assertRaisesRegex(ValueError,'recover'):start(sdk,rank=0,output_dir=d)
+    s.eq([f.read_bytes()for f in files],before)
+    s.assertFalse(hasattr(sdk,'run'))
  def test_unmarked_legacy(s):
   with TD()as d:
    a=start(rank=0,output_dir=d,config=recipe({'lr':.1}));p=Path(d)
@@ -524,11 +527,12 @@ class ExactRedaction(Checks):
   for k in ('SecretAccessKey','secret_access_key','secret-access-key','secret.access.key','secret access key'):
    s.eq(wbkit._redact({k:S,'secretory':S}),{'secretory':S})
  def test_remote(s):
-  # Exhaustive: 9 URL shapes, safe synthetic values only.
+  # Exhaustive: 10 URL shapes, safe synthetic values only.
   cases=(
    ('https://user:CANARY@example.org:443/a.git?token=CANARY#CANARY','https://example.org:443/a.git'),
    ('ssh://user:CANARY@example.org/a.git','ssh://example.org/a.git'),
    ('user@example.org:a.git','example.org:a.git'),
+   ('user:CANARY@example.org:a.git',None),
    ('example.org:a.git?token=CANARY#CANARY','example.org:a.git'),
    ('https://example.org/a?token=CANARY','https://example.org/a'),
    ('ssh://user@[::1]:22/a','ssh://[::1]:22/a'),
@@ -556,10 +560,12 @@ class ExactRedaction(Checks):
 
 class RoundOneRepairs(Checks):
  def test_generated_provenance(s):
-  with TD()as d:
-   for i in range(2):
-    r=start(rank=0,output_dir=d,config=recipe({'provenance':H}),secret_keys=['provenance'])
-    s.eq(r.config['provenance']['redacted_keys'],['train.provenance']);s.clean(r)
+  for key in ('provenance','family'):
+   with TD()as d:
+    for i in range(2):
+     r=start(rank=0,output_dir=d,config=recipe({key:H}),secret_keys=[key])
+     s.eq(r.config['provenance']['redacted_keys'],['train.'+key]);s.clean(r)
+     s.eq(r.config['family'],'sample')
  def test_new_secret_on_resume(s):
   with TD()as d:
    c=recipe({'project_key':H})
@@ -585,6 +591,17 @@ class RoundOneRepairs(Checks):
     b=start(rank=0,output_dir=d,config=c,secret_keys=['project_key'])
    s.eq((b.name,b.notes),(a.name,a.notes))
    s.assertFalse(any('resume.new-secret'in str(w.message)for w in found))
+
+class ObjectContract(Checks):
+ def test_attribute_secret(s):
+  class M:
+   api_key=S
+   width=8
+   def __str__(self):return "api_key='"+self.api_key+"' width=8"
+  with TD()as d:
+   r=start(rank=0,output_dir=d,config=recipe(M()))
+   s.clean(r,S)
+   for p in Path(d).glob('*.json'):s.lacks(S,p.read_text())
 
 if __name__=='__main__':
  unittest.main()
