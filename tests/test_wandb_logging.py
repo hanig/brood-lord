@@ -493,6 +493,15 @@ class ExactRedaction(Checks):
    r=start(rank=0,config=recipe({k:S,'token':7}),secret_keys=['project_key'],base_config=recipe({}))
    s.eq(r.config['train'],{'token':7})
    s.eq(r.config['provenance']['redacted_keys'],['train.'+k])
+ def test_iterable(s):
+  with TD()as d:
+   for p in ('config','base_config'):
+    r=start(rank=0,output_dir=d,secret_keys=iter(['custom']),**{p:recipe({'custom':S})})
+    s.assertIn('train.custom',r.config['provenance']['redacted_keys'])
+   for p in Path(d).glob('wandb_config*.json'):
+    v=json.loads(p.read_text());v['config']['train']['custom']=S;p.write_text(json.dumps(v))
+   s.clean(start(rank=0,output_dir=d,secret_keys=iter(['custom'])),S)
+  s.lacks(S,wbkit.run_name('m','d',{'train':{'custom':S}},secret_keys=iter(['custom'])))
  def test_public(s):
   # Exhaustive: 9 public keys; values equal a removed secret on purpose.
   keys=('token','max_tokens','pad_token','tokenizer','val/token','secretory',
