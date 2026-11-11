@@ -59,7 +59,7 @@ def _redact(o,secret_keys=(),removed=None):
     if _secret(k,keys):
      if removed is not None:removed.add(q)
     else:
-     if k in out and removed is not None:warnings.warn('config.key-collision: '+q)
+     if k in out:warnings.warn('config.key-collision: '+q)
      out[k]=clean(x,q+'.')
    return out
   if isinstance(v,(set,frozenset)):
@@ -134,9 +134,10 @@ def _flat(d,p=''):
    f[q]=v
  return f
 def config_deltas(config,base,secret_keys=()):
- secret_keys=tuple(secret_keys)
+ return _deltas(config,base,tuple(secret_keys))
+def _deltas(config,base,secret_keys,cur=None,ref=None):
  if not base:return{}
- cur,ref=(_flat(_norm(config,secret_keys)),_flat(_norm(base,secret_keys)))
+ if cur is None:cur,ref=(_flat(_norm(config,secret_keys)),_flat(_norm(base,secret_keys)))
  ct,rt=_type_leaves(config,secret_keys),_type_leaves(base,secret_keys)
  skip=('provenance.','family.')
  return{k:v for k,v in cur.items()if k not in('family','provenance')and not k.startswith(skip)and(k not in ref or ct.get(k)!=rt.get(k))}
@@ -197,11 +198,11 @@ def _load(p,secret_keys=()):
   archive=json.dumps(_norm(json.loads(data),secret_keys)).encode()
  except (ValueError,UnicodeError):
   text=data.decode('utf-8',errors='replace')
-  suspicious=any(_key(k) in _key(text) for k in DEFAULT_SECRET_KEYS)
+  suspicious=any(_key(k) in _key(text) for k in DEFAULT_SECRET_KEYS) or bool(re.search(r':\s*\S',text))
   archive=b'{"recovery":"unparseable bytes withheld to protect secrets"}' if secret_keys or suspicious else data
  bak=p.with_name(p.name+'.corrupt-'+hashlib.sha256(data).hexdigest())
  if not bak.exists()or bak.read_bytes()!=archive:_atomic(bak,archive)
- print('[wbkit] recovered metadata; bytes kept',file=sys.stderr)
+ print('[wbkit] recovered metadata; archive written',file=sys.stderr)
  return{}
 def _json(v):
  if isinstance(v,Enum):return v.value
@@ -230,7 +231,7 @@ def _type_leaves(v,secret_keys=()):
  sig=_signature(v,secret_keys)
  return {k:json.dumps(x,sort_keys=True) for k,x in _flat(sig or {}).items()}
 def _config_signature(v,secret_keys=()):
- return _signature({k:x for k,x in (v or {}).items() if k not in ('family','provenance')},secret_keys)
+ return _signature({k:x for k,x in (_record(v) or {}).items() if k not in ('family','provenance')},secret_keys)
 def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expect=None,base_config=None,group=None,tags=(),summaries=None,entity=None,output_dir=None,name=None,rank=None,secret_keys=(),**kw):
  if isinstance(secret_keys,(str,bytes)):raise ValueError('expected secret_keys=("name",)')
  secret_keys=tuple(secret_keys)
@@ -297,7 +298,7 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
  rc=int(saved.get('resume_count',0))+1 if again else 0
  f=_flat(cfg)
  seed=f.get('train.seed',f.get('seed'))
- deltas=config_deltas(cfg,base_config,secret_keys) if again else config_deltas(original_config,original_base,secret_keys)
+ deltas=config_deltas(cfg,base_config,secret_keys) if again else _deltas(original_config,original_base,secret_keys,_flat(config or {}),_flat(base_config or {}))
  name=saved.get('name')or name
  if not name:
   if again and saved:
@@ -320,20 +321,20 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   _atomic(out/'wandb_config.json',rec)
   _atomic(out/'wandb_config.backup.json',rec)
   _atomic(out/'wandb_config.ready',rid+'\n')
+ inputs,lp=[],None
+ if output_dir is not None:
+  lp=out/'wandb_inputs.json'
+  if lp.exists():
+   lineage=json.loads(lp.read_text())
+   if lineage.get('id')!=rid:raise ValueError('recover matching input lineage')
+   inputs=lineage['inputs']
  args=dict(entity=entity,project=project,group=group,job_type=job_type,name=name,notes=notes,tags=sorted(set(tag_list)),config=cfg,allow_val_change=again,id=rid,resume='allow' if rid else None,**kw)
  run=wandb.init(**args)
  if again:
   run.summary['provenance/last_resume']=prov
   run.summary['provenance/resume_count']=rc
  state=_metrics(run)
- state.update(secret_keys=secret_keys,inputs=[],lineage_path=None)
- if output_dir is not None:
-  lp=out/'wandb_inputs.json'
-  if lp.exists():
-   lineage=json.loads(lp.read_text())
-   if lineage.get('id')!=rid:raise ValueError('recover matching input lineage')
-   state['inputs']=lineage['inputs']
-  state['lineage_path']=lp
+ state.update(secret_keys=secret_keys,inputs=inputs,lineage_path=lp)
  define_metrics(run,summaries=summaries)
  return run
 def define_metrics(run,step_metric=STEP_METRIC,namespaces=METRIC_NAMESPACES,summaries=None):
@@ -394,210 +395,162 @@ def lint_run(*,name,notes,group,job_type,config,summary_keys,tags=(),state=None,
 
 ARTIFACT_TYPES = ("dataset", "model", "predictions", "eval-results", "code")
 _ARTIFACT_NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}")
-_VERSIONISH_NAME_RE = re.compile(r"(^|[-_.])(final|latest|best|new|old|v[0-9]+|[0-9]{8})([-_.]|$)")
+_VERSIONISH_NAME_RE = re.compile(r"(^|[-_.])(final|latest|best|new|old|v[0-9]+|[0-9]{8}|20[0-9]{2}-[0-9]{2}-[0-9]{2})([-_.]|$)")
 
 def artifact_name(kind, *parts):
-    """Stable logical name; alphabetic digests cannot encode dates/versions."""
-    prefix = {"dataset":"data", "model":"ckpt", "predictions":"preds", "eval-results":"evals", "code":"code"}[kind]
-    name = prefix + "-" + "-".join(_slugify(p).lower() for p in parts)
-    try:
-        _check_artifact_name(name)
-    except ValueError:
-        raw = json.dumps([str(p) for p in parts], ensure_ascii=True)
-        digest = hashlib.sha256(raw.encode()).hexdigest().translate(str.maketrans('0123456789abcdef','abcdefghijklmnop'))
-        name = prefix + "-id" + digest
-    return name
+ """Stable logical name; alphabetic digests cannot encode dates/versions."""
+ prefix = {"dataset":"data", "model":"ckpt", "predictions":"preds", "eval-results":"evals", "code":"code"}[kind]
+ name = prefix + "-" + "-".join(_slugify(p).lower() for p in parts)
+ try:
+  _check_artifact_name(name)
+ except ValueError:
+  raw = json.dumps([str(p) for p in parts], ensure_ascii=True)
+  digest = hashlib.sha256(raw.encode()).hexdigest().translate(str.maketrans('0123456789abcdef','abcdefghijklmnop'))
+  name = prefix + "-id" + digest
+ return name
 
 def use_input(run, ref, type=None):
-    """Use and persist the resolved, qualified version, never just its alias."""
-    if getattr(run, 'disabled', False):
-        return None
-    if not re.search(r':v[0-9]+$', ref):
-        warnings.warn('input.unpinned: pin :vN; resolved version recorded')
-    art = run.use_artifact(ref, type=type)
-    qualified = f"{art.entity}/{art.project}/{art.name.split(':')[0]}:{art.version}"
-    state = _metrics(run)
-    inputs = list(dict.fromkeys([*state.get('inputs', []), qualified]))
-    path = state.get('lineage_path')
-    if path is not None:
-        _atomic(path, json.dumps({'id':run.id, 'inputs':inputs}) + '\n')
-    state['inputs'] = inputs
-    return art
+ """Use and persist the resolved, qualified version, never just its alias."""
+ if getattr(run, 'disabled', False):
+  return None
+ if not re.search(r':v[0-9]+$', ref):
+  warnings.warn('input.unpinned: pin :vN; resolved version recorded')
+ art = run.use_artifact(ref, type=type)
+ qualified = f"{art.entity}/{art.project}/{art.name.split(':')[0]}:{art.version}"
+ state = _metrics(run)
+ inputs = list(dict.fromkeys([*state.get('inputs', []), qualified]))
+ path = state.get('lineage_path')
+ if path is not None:
+  _atomic(path, json.dumps({'id':run.id, 'inputs':inputs}) + '\n')
+ state['inputs'] = inputs
+ return art
 
-def artifact_card(
-    *,
-    summary,
-    contents,
-    intended_use,
-    run=None,
-    inputs = None,
-    caveats = None,
-):
-    """Render an artifact description card."""
-    lines = [summary.strip(), ""]
-    if run is not None and getattr(run, "id", None):
-        prov = dict(run.config.get("provenance") or {})
-        sha = (prov.get("git_commit") or "unknown")[:10]
-        dirty = " (dirty tree)" if prov.get("git_dirty") else ""
-        url = getattr(run, "url", None)
-        who = f"[{run.name}]({url})" if url else f"`{run.name}` ({run.id})"
-        lines.append(f"**Produced by:** {who}, job_type `{run.job_type}`, commit `{sha}`{dirty}")
-        if prov.get("command"):
-            lines.append(f"**Command:** `{prov['command']}`")
-    ins = list(inputs) if inputs is not None else _metrics(run).get('inputs', [])
-    lines.append("**Inputs:** " + (", ".join(f"`{i}`" for i in ins) if ins else "none recorded"))
-    lines.append(f"**Contents:** {contents.strip()}")
-    lines.append(f"**Intended use:** {intended_use.strip()}")
-    lines.append(f"**Caveats:** {caveats.strip() if caveats else 'none known'}")
-    return "\n".join(lines)
-
+def artifact_card(*,summary,contents,intended_use,run=None,inputs = None,caveats = None,):
+ lines = [summary.strip(), ""]
+ if run is not None and getattr(run, "id", None):
+  prov = dict(run.config.get("provenance") or {})
+  sha = (prov.get("git_commit") or "unknown")[:10]
+  dirty = " (dirty tree)" if prov.get("git_dirty") else ""
+  url = getattr(run, "url", None)
+  who = f"[{run.name}]({url})" if url else f"`{run.name}` ({run.id})"
+  lines.append(f"**Produced by:** {who}, job_type `{run.job_type}`, commit `{sha}`{dirty}")
+  if prov.get("command"):
+   lines.append(f"**Command:** `{prov['command']}`")
+ ins = list(inputs) if inputs is not None else _metrics(run).get('inputs', [])
+ lines.append("**Inputs:** " + (", ".join(f"`{i}`" for i in ins) if ins else "none recorded"))
+ lines.append(f"**Contents:** {contents.strip()}")
+ lines.append(f"**Intended use:** {intended_use.strip()}")
+ lines.append(f"**Caveats:** {caveats.strip() if caveats else 'none known'}")
+ return "\n".join(lines)
 
 def _local_stats(path: Path):
-    if path.is_file():
-        return {"n_files": 1, "total_bytes": path.stat().st_size}
-    files = [p for p in path.rglob("*") if p.is_file()]
-    return {"n_files": len(files), "total_bytes": sum(p.stat().st_size for p in files)}
-
+ if path.is_file():
+  return {"n_files": 1, "total_bytes": path.stat().st_size}
+ files = [p for p in path.rglob("*") if p.is_file()]
+ return {"n_files": len(files), "total_bytes": sum(p.stat().st_size for p in files)}
 
 def _check_artifact_name(name):
-    if not _ARTIFACT_NAME_RE.fullmatch(name):
-        raise ValueError(f"artifact name {name!r} must be lowercase [a-z0-9._-]")
-    if _VERSIONISH_NAME_RE.search(name):
-        raise ValueError(
-            f"artifact name {name!r} encodes a version, date or status; "
-            "W&B versions artifacts, so use aliases (best, candidate) instead"
-        )
-
+ if not _ARTIFACT_NAME_RE.fullmatch(name):
+  raise ValueError(f"artifact name {name!r} must be lowercase [a-z0-9._-]")
+ if _VERSIONISH_NAME_RE.search(name):
+  raise ValueError(
+   f"artifact name {name!r} encodes a version, date or status; "
+   "W&B versions artifacts, so use aliases (best, candidate) instead"
+  )
 
 def _add_source(art, source, reference, checksum):
-    src = str(source)
-    if "://" in src:
-        art.add_reference(src, checksum=checksum)
-        return {"source_uri": src, "storage": "reference"}
-    path = Path(src).resolve()
-    stats = _local_stats(path)
-    if reference is None:
-        reference = stats["total_bytes"] > 2 * 1024**3
-    if reference:
-        art.add_reference(path.as_uri(), checksum=checksum)
-        storage = "reference"
-    elif path.is_dir():
-        art.add_dir(str(path))
-        storage = "upload"
-    else:
-        art.add_file(str(path))
-        storage = "upload"
-    return {"source_uri": path.as_uri(), "storage": storage, **stats}
+ src = str(source)
+ if "://" in src:
+  art.add_reference(src, checksum=checksum)
+  return {"source_uri": src, "storage": "reference"}
+ path = Path(src).resolve()
+ stats = _local_stats(path)
+ if reference is None:
+  reference = stats["total_bytes"] > 2 * 1024**3
+ if reference:
+  art.add_reference(path.as_uri(), checksum=checksum)
+  storage = "reference"
+ elif path.is_dir():
+  art.add_dir(str(path))
+  storage = "upload"
+ else:
+  art.add_file(str(path))
+  storage = "upload"
+ return {"source_uri": path.as_uri(), "storage": storage, **stats}
 
+def log_dataset(wandb,run,name,source,*,summary,contents,intended_use,caveats = None,metadata = None,reference = None,checksum = True,aliases: Iterable[str] = (),type = "dataset",):
+ if getattr(run, "disabled", False):
+  return None
+ _check_artifact_name(name)
+ if type not in ARTIFACT_TYPES:
+  raise ValueError(f"type {type!r} not in {ARTIFACT_TYPES}")
+ art = wandb.Artifact(name, type=type)
+ md = _add_source(art, source, reference, checksum)
+ md.update(metadata or {})
+ art.description = artifact_card(
+  summary=summary, contents=contents, intended_use=intended_use, run=run, caveats=caveats
+ )
+ art.metadata = _norm(md, _metrics(run).get('secret_keys', ()))
+ return run.log_artifact(art, aliases=list(aliases))
 
-def log_dataset(
-    wandb,
-    run,
-    name,
-    source,
-    *,
-    summary,
-    contents,
-    intended_use,
-    caveats = None,
-    metadata = None,
-    reference = None,
-    checksum = True,
-    aliases: Iterable[str] = (),
-    type = "dataset",
-):
-    """Log a dataset and card; default to references above 2 GiB."""
-    if getattr(run, "disabled", False):
-        return None
-    _check_artifact_name(name)
-    if type not in ARTIFACT_TYPES:
-        raise ValueError(f"type {type!r} not in {ARTIFACT_TYPES}")
-    art = wandb.Artifact(name, type=type)
-    md = _add_source(art, source, reference, checksum)
-    md.update(metadata or {})
-    art.description = artifact_card(
-        summary=summary, contents=contents, intended_use=intended_use, run=run, caveats=caveats
-    )
-    art.metadata = _norm(md, _metrics(run).get('secret_keys', ()))
-    return run.log_artifact(art, aliases=list(aliases))
-
-
-def log_model(
-    wandb,
-    run,
-    path,
-    *,
-    step,
-    metrics = None,
-    is_best = False,
-    sanity_checkpoint = False,
-    post_hoc = False,
-    name = None,
-    summary = None,
-    intended_use = "Resume training, or evaluate with the arch config in metadata.",
-    caveats = None,
-    reference = None,
-    aliases: Iterable[str] = (),
-):
-    """Log checkpoint metadata/card with step-N/best aliases."""
-    if getattr(run, "disabled", False):
-        return None
-    if not name:
-        name = artifact_name("model", run.id)
-    _check_artifact_name(name)
-    if sanity_checkpoint:
-        is_best = False
-        aliases = [a for a in aliases if a != "best"]
-        caveats = ((caveats + "; ") if caveats else "") + "Sanity checkpoint; never selected as best."
-    if post_hoc:
-        caveats = ((caveats + "; ") if caveats else "") + "Post hoc selection after seeing results."
-    metrics = dict(_norm(metrics or {}, _metrics(run).get('secret_keys', ())))
-    shown = ", ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in metrics.items())
-    art = wandb.Artifact(name, type="model")
-    md = _add_source(art, path, reference, checksum=True)
-    md.update(
-        {
-            "step": step,
-            "sanity_checkpoint": sanity_checkpoint,
-            "post_hoc": post_hoc,
-            "metrics": metrics,
-            "family": run.config.get("family"),
-            "arch": dict(run.config.get("arch") or {}),
-            "run_name": run.name,
-            "run_id": run.id,
-        }
-    )
-    art.metadata = _norm(md, _metrics(run).get('secret_keys', ()))
-    art.description = artifact_card(
-        summary=summary or f"Checkpoint of `{run.name}` at step {step}.",
-        contents=f"{md.get('n_files', '?')} file(s), {md.get('total_bytes', 0) / 1e6:.1f} MB. "
-        + (f"Metrics at save: {shown}." if shown else "No metrics attached."),
-        intended_use=intended_use,
-        run=run,
-        caveats=caveats,
-    )
-    al = [f"step-{step}", *aliases] + (["best"] if is_best else [])
-    return run.log_artifact(art, aliases=al)
-
+def log_model(wandb,run,path,*,step,metrics = None,is_best = False,sanity_checkpoint = False,post_hoc = False,name = None,summary = None,intended_use = "Resume training, or evaluate with the arch config in metadata.",caveats = None,reference = None,aliases: Iterable[str] = (),):
+ if getattr(run, "disabled", False):
+  return None
+ if not name:
+  name = artifact_name("model", run.id)
+ _check_artifact_name(name)
+ if sanity_checkpoint:
+  is_best = False
+  aliases = [a for a in aliases if a != "best"]
+  caveats = ((caveats + "; ") if caveats else "") + "Sanity checkpoint; never selected as best."
+ if post_hoc:
+  caveats = ((caveats + "; ") if caveats else "") + "Post hoc selection after seeing results."
+ metrics = dict(_norm(metrics or {}, _metrics(run).get('secret_keys', ())))
+ shown = ", ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in metrics.items())
+ art = wandb.Artifact(name, type="model")
+ md = _add_source(art, path, reference, checksum=True)
+ md.update(
+  {
+   "step": step,
+   "sanity_checkpoint": sanity_checkpoint,
+   "post_hoc": post_hoc,
+   "metrics": metrics,
+   "family": run.config.get("family"),
+   "arch": dict(run.config.get("arch") or {}),
+   "run_name": run.name,
+   "run_id": run.id,
+  }
+ )
+ art.metadata = _norm(md, _metrics(run).get('secret_keys', ()))
+ art.description = artifact_card(
+  summary=summary or f"Checkpoint of `{run.name}` at step {step}.",
+  contents=f"{md.get('n_files', '?')} file(s), {md.get('total_bytes', 0) / 1e6:.1f} MB. "
+  + (f"Metrics at save: {shown}." if shown else "No metrics attached."),
+  intended_use=intended_use,
+  run=run,
+  caveats=caveats,
+ )
+ al = [f"step-{step}", *aliases] + (["best"] if is_best else [])
+ return run.log_artifact(art, aliases=al)
 
 def lint_artifact(*, name, type, description, metadata):
-    """Lint an artifact collection."""
-    if type.startswith("wandb-") or type in ("run_table", "job"):
-        return []
-    issues = []
-    desc = (description or "").strip()
-    if len(desc) < 40:
-        issues.append("artifact.no-description: description missing or under 40 chars")
-    else:
-        absent = [f for f in ("Produced by", "Contents", "Intended use") if f not in desc]
-        if absent:
-            issues.append(f"artifact.thin-card: description lacks {', '.join(absent)}")
-    if not metadata:
-        issues.append("artifact.no-metadata: metadata empty")
-    if _VERSIONISH_NAME_RE.search(name):
-        issues.append("artifact.versioned-name: name encodes a version, date or status")
-    if type not in ARTIFACT_TYPES:
-        issues.append(f"artifact.nonstandard-type: {type!r}")
-    return issues
+ if type.startswith("wandb-") or type in ("run_table", "job"):
+  return []
+ issues = []
+ if not _ARTIFACT_NAME_RE.fullmatch(name):issues.append("artifact.invalid-name: lowercase [a-z0-9._-], <=128 chars")
+ desc = (description or "").strip()
+ if len(desc) < 40:
+  issues.append("artifact.no-description: description missing or under 40 chars")
+ else:
+  absent = [f for f in ("Produced by", "Contents", "Intended use") if f not in desc]
+  if absent:
+   issues.append(f"artifact.thin-card: description lacks {', '.join(absent)}")
+ if not metadata:
+  issues.append("artifact.no-metadata: metadata empty")
+ if _VERSIONISH_NAME_RE.search(name):
+  issues.append("artifact.versioned-name: name encodes a version, date or status")
+ if type not in ARTIFACT_TYPES:
+  issues.append(f"artifact.nonstandard-type: {type!r}")
+ return issues
 
 __all__ += 'ARTIFACT_TYPES artifact_name use_input artifact_card log_dataset log_model lint_artifact'.split()
