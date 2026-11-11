@@ -1,7 +1,7 @@
 # Naming
 
 Use team entity/project per metric schema; kebab-case is advice.
-Group YYYYMMDD-question. Default names: model-data-deltas-s{seed}, <=64 chars.
+Group YYYYMMDD-question. Default names: model-data-deltas-s{seed}, 64 chars.
 Only changed hyperparameters appear as deltas. <!-- declaration: logging.conventions -->
 
 
