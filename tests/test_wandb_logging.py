@@ -1,4 +1,4 @@
-"""Exhaustive finite cases; bounds recorded in evidence.md and local comments."""
+"""Core regressions."""
 from pathlib import Path
 import argparse,hashlib,collections,importlib,importlib.util,itertools,dataclasses
 from enum import Enum
