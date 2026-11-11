@@ -262,7 +262,10 @@ DEBRIEF_DECLARATIONS = ("purpose.scope", "capability.programs",
                         "paths.skill-directory", "approval.packet",
                         'workflow.draft', 'workflow.classify', 'workflow.packet', 'workflow.approve', 'workflow.triage')
 
+WANDB_DECLARATIONS = ('logging.conventions', 'logging.boundary', 'capability.host', 'paths.skill-directory', 'logging.credentials', 'approval.shared-state')
+
 DECLARATION_INVENTORIES = {
+    "hanig-wandb-logging": WANDB_DECLARATIONS,
     "hanig-debrief": DEBRIEF_DECLARATIONS,
     "hanig-project": PROJECT_DECLARATIONS,
     "hanig-orchestrate": ORCHESTRATE_DECLARATIONS,
@@ -270,6 +273,7 @@ DECLARATION_INVENTORIES = {
 }
 
 REFERENCE_ELABORATION_INVENTORIES = {
+    "hanig-wandb-logging": (("references/frameworks.md", "logging.conventions", 1), ("references/naming.md", "logging.conventions", 1), ("references/naming.md", "logging.credentials", 1)),
     "hanig-debrief": (
         ('references/contract.md', 'purpose.scope', 17),
         ('references/contract.md', 'workflow.triage', 1),
@@ -935,6 +939,12 @@ class TestAuthoredSkillShape(unittest.TestCase):
                  "linked file is absent: paren-missing.md",
                  "linked file is absent: paren-hidden.md"],
             )
+
+    def test_wandb_declarations_and_reference_modals(self):
+        skill = SKILLS / "hanig-wandb-logging"
+        self.assertEqual(DECLARATION_REGISTRY.body_diff(skill), "")
+        self.assertEqual(DECLARATION_REGISTRY.reference_problems(skill), [])
+        self.assertEqual(_reference_elaboration_problems(skill), [])
 
     def test_swarm_declaration_block_matches_the_canonical_registry(self):
         skill = SKILLS / "hanig-swarm"

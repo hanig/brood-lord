@@ -38,6 +38,7 @@ SHIPPED_SKILLS = (
     "hanig-review-gate", "hanig-swarm", "hanig-verified-workflow",
     "paseo", "paseo-advisor", "paseo-committee", "paseo-handoff",
     "paseo-loop", "pi-fleet", "start-a-sprint",
+    "hanig-wandb-logging",
 )
 
 
