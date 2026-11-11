@@ -3,7 +3,7 @@ name: hanig-wandb-logging
 description: >-
   Instrument training, eval and preprocessing with W&B names, hypothesis notes,
   nested config, metric axes/summaries, rank-zero logging and requeue ids.
-  Use for adding W&B or framework logging. Never judges outcomes.
+  Use for W&B instrumentation; never judges outcomes.
 ---
 
 # hanig-wandb-logging
@@ -68,7 +68,7 @@ otherwise str(key)). Every Mapping, list, tuple, deque, set, frozenset and conve
 record recurses; deques/sets become lists, sets sorted if orderable, else iteration order.
 Metrics bind to trainer/step or the configured axis; config_deltas equality
 requires identical types/equal values, subject to limits below.
-run_name respects integer max_len>=1, cutting if needed; <1 raises ValueError.
+run_name fits integer max_len>=1; <1 raises ValueError.
 
 ## Known limits (to be fixed in part 2)
 
