@@ -1,11 +1,11 @@
 """Exhaustive: 6 keys x 3 shapes; 4 records x 3 wrappers;
-2x2(x2 counts) ranks; 6 keys x 3 argv layouts x 3 shapes; 5 prefixes x 2 names;
+2x2(x2 counts) ranks; 5 prefixes x 2 names;
 8 token fields/3 credentials; 3 verbatim strings; 4 interrupted writes and 1 archive interruption/repair.
-R2: 3 secretory fields/3 credentials, 2 names/2x2 argv layouts, 3 JSON shapes, depths 300/400 at recursion limit 200, 4^3 rank environments,
+R2: 3 secretory fields/3 credentials, 2 names, depths 300/400 at recursion limit 200, 4^3 rank environments,
 7 summary ops at lengths 1/2 plus None/empty/uppercase (59), 2 invalid.
 R3: 6 credential keys x 3 wrappers; 2 URI schemes x 4 passwords x 3 suffixes x 3 wrappers;
 10 tokenizer prefixes x 2 separators x 2 cases; 3x3 invalid snapshots except both absent;
-3 labeled short options x 2 layouts; 3 nonfinite floats. Exhaustive, no random sampling.
+3 nonfinite floats. Exhaustive, no random sampling.
 """
 from pathlib import Path
 import argparse,hashlib,collections,importlib,importlib.util,itertools,dataclasses
@@ -62,10 +62,7 @@ class Logging(Checks):
     s.clean(r)
   nc={'train':{'layers':[{'token':H,'lr':2}]}}
   s.lacks(H,repr(wbkit.config_deltas(nc,{'train':{}})))
- def test_argv(s):
-  t=wbkit._redact_argv(['train.py','--api-key=hidden','--token','hidden2','--lr','3'])
-  s.lacks('hidden',t)
-  s.assertIn('--lr 3',t)
+
  def test_resume(s):
   with TD()as tmp:
    a=start(output_dir=tmp)
@@ -163,16 +160,7 @@ class Offline(Checks):
    s.assertTrue(d.disabled)
    d.finish()
 class PartOne(Checks):
- def test_argv_json(s):
-  for k,m,q in itertools.product(K,('plain','equals','nested'),('scalar','mapping','list')):
-   v={'scalar':S,'mapping':{'inner':S},'list':[S]}[q]
-   obj={k:v,'lr':0.1}
-   t=json.dumps({'train':[obj]}if m=='nested' else obj)
-   argv=['train.py','--config='+t]if m=='equals' else['train.py','--config',t]
-   with s.subTest(key=k,layout=m),patch.object(sys,'argv',argv):
-    r=start()
-    s.lacks(S,repr(r.config))
-    s.assertIn('0.1',r.config['provenance']['command'])
+
  def test_advice(s):
   for project in('state3_pretrain','sample.train'):
    with s.subTest(project=project),s.assertWarns(UserWarning):
@@ -271,7 +259,7 @@ class RoundOne(Checks):
   with patch.object(sys,'argv',['train.py','--lrs=[1e-3,1e-4]']):
    r=start(expect=t)
   s.assertIn('Expect: '+t,r.notes)
-  s.eq(r.config['provenance']['command'],'train.py --lrs=[1e-3,1e-4]')
+  s.eq(r.config['provenance']['command']['flags'],['--lrs'])
 class Atomic(Checks):
  def test_writes(s):
   real=Path.write_bytes
@@ -365,22 +353,13 @@ class RoundTwo(Checks):
   r=start(hypothesis=t,config=recipe({'note':t,'lr':.1}),base_config=recipe({}),name=t)
   s.clean(r,T);s.assertIn('train.lr=0.1',r.notes)
  def test_json_phrase(s):
-  w='password=my '+T+' phrase';c='password=***'
-  for o,want in(({'note':w,'lr':.1},{'note':c,'lr':.1}),(w,c),([w],[c])):
-   with patch.object(sys,'argv',['--config='+json.dumps(o)]):r=start()
-   t=r.config['provenance']['command']
-   s.lacks(T,t);s.eq(json.loads(t.split('=',1)[1]),want)
   s.lacks(T,wbkit._redact('"Authorization": "Bearer '+T+'"'))
   limit=sys.getrecursionlimit()
   try:
    sys.setrecursionlimit(200)
    for t in('['*400,'['*300+'{"password":"'+T+'"}'+']'*300,'password='+'['*400+T):s.lacks(T,wbkit._redact(t))
   finally:sys.setrecursionlimit(limit)
- def test_argv_words(s):
-  for words in(['my '+T+' phrase'],['my',T,'phrase']):
-   for args in(['--password']+words,['--password='+words[0]]+words[1:]):
-    t=wbkit._redact_argv(['train.py']+args+['--lr','3'])
-    s.lacks(T,t);s.assertIn('--lr 3',t)
+
  def test_empty(s):
   keys=('RANK','SLURM_PROCID','LOCAL_RANK')
   for vals in itertools.product((None,'','0','4'),repeat=3):
@@ -394,7 +373,6 @@ class LastReview(Checks):
    with s.subTest(key=k):
     r=start(rank=0,config=recipe({k:w(T)}),base_config=recipe({}))
     s.clean(r,T)
-    s.lacks(T,wbkit._redact_argv(['train.py','--config='+json.dumps({k:w(T)})]))
  def test_url(s):
   for scheme,pw,suffix,w in itertools.product(('https','ssh'),(T,'first@'+T,T+'@last','first@@'+T),('','/path','/path?q=a@b#fragment'),(lambda v:v,lambda v:[v],lambda v:json.dumps({'url':v,'lr':.1}))):
    url=scheme+'://alice:'+pw+'@example.org'+suffix;want=scheme+'://example.org'+suffix
@@ -404,7 +382,6 @@ class LastReview(Checks):
     wbkit.log_step(r,1,{'train/source':url});s.eq(r.logged[-1]['train/source'],want)
     r.summary['source']=url;wbkit.finish(r,'Observed '+url,'inconclusive');s.clean(r,T)
     s.assertIn(want,r.notes)
-    s.eq(wbkit._redact_argv(['--config='+json.dumps({'url':url,'lr':.1})]),'--config='+json.dumps({'url':want,'lr':.1}))
  def test_array_base(s):
   class Array:
    def tolist(s):return[128,256]
@@ -442,19 +419,49 @@ class LastReview(Checks):
     s.assertFalse(hasattr(sdk,'run'))
     for f,v in zip(('wandb_config.json','wandb_config.backup.json'),(a,b)):
      if v is not None:s.eq((p/f).read_text(),v)
- def test_glued_secret(s):
-  s.lacks('mysecret',wbkit._redact_argv(['train.py','-pmysecret','--lr','3']))
- def test_opaque_short_option(s):
-  for flag,layout in itertools.product(('-pmysecret','-kapi_key','-pclient_secret'),('glued','separate')):
-   args=[flag+T]if layout=='glued'else[flag,T]
-   t=wbkit._redact_argv(['train.py']+args+['--lr','3'])
-   s.lacks(T,t);s.assertIn('--lr 3',t)
-  s.lacks(T,wbkit._redact_argv(['train.py','-p'+T]))
+
+
  def test_infinite_delta(s):
   for v in(float('inf'),float('-inf'),float('nan')):
    r=start(rank=0,config=recipe({'grad_clip':v}),base_config=recipe({'grad_clip':1.}))
    s.assertIn('clip',r.name);got=r.config['train']['grad_clip'];s.assertIsInstance(got,float)
    if v==v:s.eq(got,v)
    else:s.assertNotEqual(got,got)
+class CommandProvenance(Checks):
+ """Exhaustive: 9 token shapes x 2 values; all value changes alter digest."""
+ def test_shapes(s):
+  for value in ('VALUE_CANARY_A','VALUE_CANARY_B'):
+   cases=(
+    (['--k='+value],['--k'],0),
+    (['--k',value],['--k'],1),
+    (['-k'+value],['-k'],0),
+    (['-k',value],['-k'],1),
+    (['-xvf'],['-x'],0),
+    (['-'],['-'],0),
+    (['--'],['--'],0),
+    ([value],[],1),
+    (['--config',json.dumps({'api_key':value})],['--config'],1),
+   )
+   for tokens,flags,count in cases:
+    argv=['/private/project/train.py']+tokens
+    with s.subTest(tokens=tokens),patch.object(sys,'argv',argv):
+     want=dict(program='train.py',flags=flags,positional_count=count,
+               argv_sha256=hashlib.sha256('\0'.join(argv).encode('utf-8')).hexdigest())
+     got=wbkit._redact_argv(argv)
+     s.eq(got,want)
+     s.eq(start().config['provenance']['command'],want)
+     s.lacks(value,json.dumps(got));s.lacks('/private/project',json.dumps(got))
+     changed=[t.replace(value,value+'CHANGED')for t in argv]
+     if changed!=argv:
+      s.assertNotEqual(got['argv_sha256'],wbkit._redact_argv(changed)['argv_sha256'])
+ def test_combined(s):
+  argv=['train.py','--k=SECRET','--k','SECRET','-kSECRET','-k','SECRET',
+        '-xvf','-','--','positional','{"api_key":"SECRET"}']
+  s.eq(wbkit._redact_argv(argv)['flags'],['--k','--k','-k','-k','-x','-','--'])
+  s.eq(wbkit._redact_argv(argv)['positional_count'],4)
+  s.lacks('SECRET',repr(wbkit._redact_argv(argv)))
+  s.eq(wbkit._redact_argv([])['program'],'')
+  # Tokens after a terminator follow the same per-token classification.
+  s.eq(wbkit._redact_argv(['train.py','--','--flag=value'])['flags'],['--','--flag'])
 if __name__=='__main__':
  unittest.main()
