@@ -75,7 +75,7 @@ run_name fits integer max_len>=1; <1 raises ValueError.
 - 1/"1" collide: silent loss/no resume warning; use unique string keys.
 - tuple/list, set/list swaps hide name deltas/resume warnings; compare types.
 - "a.b"/nested a,b deltas collide; avoid dotted keys.
-- Sets whose sort raises TypeError fall back to iteration order; a set holding Decimal('NaN') raises decimal.InvalidOperation in start_run; use a list.
+- A set whose values cannot all be compared, for example values including Decimal('NaN'), may raise in start_run. Use a list.
 - Dtype class: start_run TypeError; exit loses init/preprocessing; use str(np.float32).
 - secret_keys needs full names: "api_token" iterates/leaks; use ("api_token",).
-- A key first declared in secret_keys on a resume that also finds a corrupt snapshot: recovery copies the old snapshot, value included, into a local corrupt-snapshot archive under output_dir before pruning; delete that archive, or use a new output_dir.
+- Resuming from a damaged snapshot may archive, copy or overwrite wandb_config snapshot files under output_dir. If you add a key to secret_keys on a resume, first move the run to a new output_dir. Then inspect, and delete or secure, every wandb_config* file left in the old directory.
