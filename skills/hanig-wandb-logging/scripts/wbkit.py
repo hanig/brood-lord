@@ -2,7 +2,7 @@
 from __future__ import annotations
 import argparse,dataclasses
 from enum import Enum
-import hashlib,datetime as _dt,importlib.metadata as _md,os,json,re,socket,subprocess,sys,types,warnings,weakref
+import hashlib,datetime as _dt,importlib.metadata as _md,math,os,json,re,socket,subprocess,sys,types,warnings,weakref
 from pathlib import Path
 from typing import Mapping
 __all__='JOB_TYPES VERDICTS provenance config_deltas run_name start_run define_metrics log_step finish lint_run'.split()
@@ -12,7 +12,8 @@ METRIC_NAMESPACES=('train','val','eval','test','opt','perf','data','trainer')
 STEP_METRIC='trainer/step'
 _SL=re.compile('^[a-z0-9][a-z0-9-]{0,62}$')
 _RN=re.compile('^[a-z]+-[a-z]+-\\d+$')
-_SEC=re.compile('(api[_-]?key|token(?=\\.|$)|secret(?![a-z])|authorization|passw(or)?d|credential)',re.I)
+_PUBLIC_TOKEN=('pad','eos','bos','cls','sep','unk','mask','sos','decoder_start','special')
+_SEC=re.compile(r'(api[_-]?key|'+''.join(r'(?<!'+p+r'[_-])'for p in _PUBLIC_TOKEN)+r'token(?=\.|$|[_-](?:value|secret|key|credential)(?:[._-]|$))|secret(?![a-z])|authorization|passw(or)?d|credential)',re.I)
 _AB=dict(zip('learning_rate lr weight_decay batch_size global_batch_size dropout num_layers n_layers hidden_dim d_model num_heads warmup_steps max_steps epochs max_epochs seed temperature mask_ratio grad_clip'.split(),'lr lr wd bs gbs do L L d d h wu steps ep ep s T mask clip'.split()))
 _MS={}
 def _metrics(run):
@@ -53,13 +54,20 @@ def _redact(o):
       j+=n
       continue
     except(ValueError,RecursionError):pass
+   uri=re.match(r'''[a-zA-Z][\w+.-]*://[^\s/?#<>"']+''',o[j:])
+   if uri:
+    scheme,authority=uri.group().split('://',1)
+    out.append(scheme+'://'+authority.rsplit('@',1)[-1]);j+=uri.end()
+    continue
    m=lab.match(o,j)
    if m and _SEC.search(re.split(r'\s*[:=]',m.group())[0].strip('"\'')):
     e=m.end();v=re.match(r'[^\r\n]+',o[e:]);e+=v.end()if v else 0
     out.append(o[j:m.end()]+'***');j=e
+   elif m:
+    out.append(m.group());j=m.end()
    else:
     out.append(o[j]);j+=1
-  return re.sub(r'([a-zA-Z][\w+.-]*://)[^/@\s]+@',r'\1',''.join(out))
+  return ''.join(out)
  return o
 def _redact_argv(argv):
  out,hide=[],False
@@ -73,6 +81,9 @@ def _redact_argv(argv):
    q,v=next(iter(_redact({q:v}).items()))
    out.append(q+'='+v)
    if _SEC.search(q):hide=q
+  elif re.fullmatch(r'-[^-][\w-]+',tok)and _SEC.search(tok):
+   out.append(next(iter(_redact({tok:tok}).values())))
+   hide=tok
   elif re.fullmatch(r'-+[\w-]+',tok)and _SEC.search(tok):
    out.append(_redact(tok))
    hide=tok
@@ -96,13 +107,13 @@ def _flat(d,p=''):
  return f
 def config_deltas(config,base):
  if not base:return{}
- cur,ref=(_flat(_redact(config)),_flat(_redact(base)))
+ cur,ref=(_flat(_norm(config)),_flat(_norm(base)))
  skip=('provenance.','family.')
  return{k:v for k,v in cur.items()if k not in('family','provenance')and not k.startswith(skip)and(not _SEC.search(k))and(k not in ref or ref[k]!=v)}
 def _fmt(v):
  if isinstance(v,bool):return '' if v else 'off'
  if isinstance(v,float):
-  if v!=0 and(abs(v)<0.01 or abs(v)>=100000.0):
+  if math.isfinite(v)and v!=0 and(abs(v)<0.01 or abs(v)>=100000.0):
    mant,exp=f'{v:.0e}'.split('e')
    return f'{mant}e{int(exp)}'
   return f'{v:g}'
@@ -162,6 +173,7 @@ def _json(v):
    c=convert()
    if c is not v:return c
  return str(v)
+def _norm(v):return _redact(json.loads(json.dumps(_redact(v),default=_json)))
 def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expect=None,base_config=None,group=None,tags=(),summaries=None,entity=None,output_dir=None,name=None,rank=None,**kw):
  rank=_rank()if rank is None else rank
  if rank!=0:return wandb.init(mode='disabled')
@@ -176,10 +188,11 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   out=Path(output_dir)
   out.mkdir(parents=True,exist_ok=True)
   sf=out/'wandb_config.json'
+  bf=out/'wandb_config.backup.json'
   saved=_load(sf)
   if not isinstance(saved.get('config'),Mapping):
-   saved=_load(out/'wandb_config.backup.json')
-   if sf.exists()and not isinstance(saved.get('config'),Mapping):raise ValueError('recover wandb_config.json')
+   saved=_load(bf)
+   if(sf.exists()or bf.exists())and not isinstance(saved.get('config'),Mapping):raise ValueError('recover wandb_config.json')
   idf=out/'wandb_run_id'
   rid=idf.read_text().strip()if idf.exists()else None
   rid=rid or saved.get('id')
@@ -196,12 +209,12 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   p0=prov
  cfg=_redact({**config,'family':family,'provenance':p0})
  if again and isinstance(saved.get('config'),Mapping):cfg=_redact(saved['config'])
- cfg=_redact(json.loads(json.dumps(cfg,default=_json)))
+ cfg=_norm(cfg)
  rc=int(saved.get('resume_count',0))+1 if again else 0
  f=_flat(cfg)
  seed=f.get('train.seed',f.get('seed'))
  deltas=config_deltas(cfg,base_config)
- name=name or saved.get('name')
+ name=saved.get('name')or name
  if not name:
   if again and saved:
    warnings.warn('resume.legacy-name: set name')
@@ -213,12 +226,14 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   notes+=f'\nExpect: {expect.strip()}'
  if deltas:
   notes+='\nDeltas vs base: '+', '.join(f'{k}={json.dumps(v)}' for k,v in deltas.items())
+ if again and saved and 'notes'not in saved:warnings.warn('resume.legacy-notes: supply original hypothesis/expect')
+ notes=_redact(saved.get('notes')or notes)
  tag_list=[t.lower()for t in tags]
  if prov['git_dirty']:tag_list.append('dirty-tree')
  for t in tag_list:
   if len(t)>64:warnings.warn('tag.long: recommend <=64 chars')
  if output_dir is not None:
-  rec=json.dumps({'id':rid,'config':cfg,'resume_count':rc,'name':name})+'\n'
+  rec=json.dumps({'id':rid,'config':cfg,'resume_count':rc,'name':name,'notes':notes})+'\n'
   _atomic(out/'wandb_config.json',rec)
   _atomic(out/'wandb_config.backup.json',rec)
  args=_redact(dict(entity=entity,project=project,group=group,job_type=job_type,name=name,notes=notes,tags=sorted(set(tag_list)),config=cfg,allow_val_change=again,id=rid,resume='allow' if rid else None,**kw))

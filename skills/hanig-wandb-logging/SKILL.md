@@ -45,9 +45,10 @@ Supply project/family/job_type/model/data, hypothesis/expect, nested config, opt
 base_config/group and output_dir in run_args; declare min/max summaries.
 
 Reuse output_dir across requeues; new experiments need new directories.
-It saves sanitized config/provenance, id and resume count.
+It saves sanitized config/provenance, original name/notes, id and resume count.
 Restore training checkpoints separately. Direct SDK writes remain caller-owned.
 
-Set original `name` for legacy state.
+Supply the original name/hypothesis/expect for legacy state missing these fields;
+the helper warns when it cannot reconstruct them.
 If both config copies are corrupt, restore known good `wandb_config.json`.
 Corrupt bytes are kept.
