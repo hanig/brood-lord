@@ -23,7 +23,7 @@ program basename, flag names, positional count and a SHA-256 digest of NUL-joine
 UTF-8 argv. Long flags drop =values; short flags keep two characters, including
 bundles. Lone - and -- stay. No argv values or positional tokens are recorded.
 Legacy argv strings in saved state are replaced by current-launch command
-metadata with a warning on resume. Resolve Hydra/OmegaConf.
+metadata with a warning on resume. Resolve Hydra/OmegaConf. <!-- declaration: logging.credentials -->
 
 Use train/loss, val/loss, eval/loss, opt/lr, perf/samples_per_s, perf/gpu_mem_gb
 and data/samples_seen on trainer/step. Log the restored optimizer step instead
