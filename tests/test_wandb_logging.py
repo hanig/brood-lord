@@ -969,5 +969,38 @@ class ReservedFields(Checks):
    warnings.simplefilter(C1);delta(a,a)
   s.eq([str(w.message)for w in ws if C3 in str(w.message)],[C7])
 
+# Recovery-only expected-correct assertions. These intentionally fail on the
+# reviewed head and are not a passing verification or permission to merge.
+class FinalDiagnostics(Checks):
+ def test_raw_list_resume(s):
+  # Exhaustive four ordinary unsized middle values.
+  for x in (1,None,1.5,False):
+   with s.subTest(x=x),TD()as d:
+    c=recipe({'order':['row',x,'unordered']});start(config=c,output_dir=d);start(config=c,output_dir=d)
+ def test_raw_list_disagreement(s):
+  with TD()as d:
+   p=Path(d);c=recipe({'pipeline':['load',[1,2],'unordered']});start(config=c,output_dir=d)
+   obj=json.loads((p/CF).read_text());obj[CFG][TR]['pipeline'][1]=[2,1];(p/CF).write_text(json.dumps(obj));before=(p/BF).read_bytes();sdk=FakeWandb()
+   with s.raises(ValueError,'disagree'):start(sdk,config=c,output_dir=d)
+   s.no(hasattr(sdk,'run'));s.eq((p/BF).read_bytes(),before)
+ def test_command_reserved(s):
+  for key in ('program','flags','positional_count'):
+   with s.subTest(key=key),TD()as d:
+    sdk=FakeWandb()
+    with s.raises(ValueError,'reserved'):start(sdk,output_dir=d,secret_keys=(key,))
+    s.no(hasattr(sdk,'run'));s.eq(list(Path(d).iterdir()),[])
+ def test_empty_base_collision(s):
+  for base in ({},None):
+   with s.subTest(base=base),warnings.catch_warnings(record=True)as ws:
+    warnings.simplefilter('always');wbkit.config_deltas(recipe({1:'old','1':'new'}),base)
+    s.eq([str(w.message)for w in ws],['config.key-collision: train.1'])
+ def test_explicit_empty_name(s):
+  sdk=ArtifactSDK();r=start(sdk)
+  with s.assertRaises(ValueError):wbkit.log_model(sdk,r,'s3://example/weights',step=1,name='')
+ def test_lint_report_not_reproduced(s):
+  name=wbkit.run_name('sample','cells',seed=2);s.eq(name,'sample-cells-s2')
+  issues=wbkit.lint_run(name=name,notes='H: valid hypothesis here',group='g',job_type='train',config={'family':'sample','arch':{},'train':{},'data':{}},summary_keys=[],tags=[])
+  s.no(any(x.startswith('name.random:')for x in issues))
+
 if __name__=='__main__':
  unittest.main()
