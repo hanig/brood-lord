@@ -189,10 +189,13 @@ def _atomic(p,t):
 def _keys(v):
  if isinstance(v,(str,bytes)):raise ValueError('use secret_keys=("name",)')
  return tuple(v)
-def _archive(data,secret_keys):
- try:return json.dumps(_norm(json.loads(data),secret_keys)).encode()
+def _archive(data,keys):
+ try:
+  removed=set();clean=_norm(json.loads(data),keys,removed)
+  if keys or removed:raise ValueError
+  return json.dumps(clean).encode()
  except (ValueError,UnicodeError):
-  if not secret_keys and re.fullmatch(rb'\s*\{\s*(?:"[^"\\]*"\s*:\s*)?',data):return data
+  if not keys and re.fullmatch(rb'\s*\{\s*(?:"[^"\\]*"\s*:\s*)?',data):return data
   return b'{"recovery":"unsafe bytes withheld"}'
 def _load(p,secret_keys=()):
  if not p.exists():return{}
@@ -205,7 +208,7 @@ def _load(p,secret_keys=()):
  archive=_archive(data,secret_keys)
  bak=p.with_name(p.name+'.corrupt-'+hashlib.sha256(data).hexdigest())
  if not bak.exists()or bak.read_bytes()!=archive:_atomic(bak,archive)
- print('[wbkit] recovery archive',file=sys.stderr)
+ print('[wbkit] archive',file=sys.stderr)
  return{}
 def _json(v):
  if isinstance(v,Enum):return v.value
