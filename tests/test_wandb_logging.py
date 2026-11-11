@@ -1017,5 +1017,54 @@ class FinalDiagnostics(Checks):
   issues=wbkit.lint_run(name=name,notes='H: valid hypothesis here',group='g',job_type='train',config={'family':'sample','arch':{},'train':{},'data':{}},summary_keys=[],tags=[])
   s.no(any(x.startswith('name.random:')for x in issues))
 
+# Recovery diagnostics only: not a passing candidate or permission to merge.
+class FinalReviewDiagnostics(Checks):
+ def test_distinct_same_named_types(s):
+  # Exhaustive two subclass shapes, same names but distinct identities.
+  for cls,arg in ((list,[1,2]),(float,1.0)):
+   with s.subTest(cls=cls):
+    a=recipe({'x':type('Vec',(cls,),{})(arg)});b=recipe({'x':type('Vec',(cls,),{})(arg)})
+    s.yes(delta(b,a))
+    with TD()as d:
+     start(config=a,output_dir=d)
+     with s.warns(UserWarning,'config-mismatch'):start(config=b,output_dir=d)
+ def test_unreadable_archive_diagnostic(s):
+  with TD()as d:
+   start(output_dir=d);p=Path(d);(p/CF).write_bytes((p/CF).read_bytes()+b' ')
+   archive=p/'wandb_provenance.json.corrupt-synthetic';archive.write_bytes(b'{}');real=Path.read_bytes
+   def unreadable(path):
+    if path==archive:raise PermissionError('synthetic archive')
+    return real(path)
+   with patch.object(Path,'read_bytes',unreadable),s.raises(ValueError,'restore one from the other by hand')as err:start(output_dir=d)
+   for f in (CF,BF):s.has(str(p/f),str(err.exception))
+ def test_uppercase_status(s):
+  with s.assertWarns(UserWarning):check_name('Model-BEST')
+  s.has('artifact.versioned-name',[x.split(':')[0]for x in lint_art(name='Model-BEST',type='model',description='Produced by Contents Intended use '*3,metadata={'x':1})])
+ def test_resume_collision_not_reproduced(s):
+  with TD()as d:
+   c=recipe({1:'a','1':'b'})
+   with warnings.catch_warnings():
+    warnings.simplefilter('ignore');start(config=c,base_config=c,output_dir=d)
+   with warnings.catch_warnings(record=True)as ws:
+    warnings.simplefilter('always');start(config=c,base_config=c,output_dir=d)
+   s.eq([str(w.message)for w in ws if 'key-collision'in str(w.message)],[C7])
+ def test_interrupted_pair_policy(s):
+  with TD()as d:
+   start(output_dir=d);p=Path(d);real=wbkit._atomic
+   def stop(path,content):
+    if path==p/BF:raise InterruptedError('synthetic kill')
+    return real(path,content)
+   with patch.object(wbkit,'_atomic',stop),s.assertRaises(InterruptedError):start(output_dir=d)
+   s.assertNotEqual((p/CF).read_bytes(),(p/BF).read_bytes())
+   before={f.name:f.read_bytes()for f in p.iterdir()};sdk=FakeWandb()
+   with s.raises(ValueError,'restore one from the other by hand'):start(sdk,output_dir=d)
+   s.no(hasattr(sdk,'run'));s.eq({f.name:f.read_bytes()for f in p.iterdir()},before)
+ def test_matching_run_state(s):
+  # Retain the original identity-refusal assertion from the rewritten recovery test.
+  with TD()as d:
+   start(output_dir=d);p=Path(d);(p/IDF).write_text('different');sdk=FakeWandb()
+   with s.raises(ValueError,'recover matching run state'):start(sdk,output_dir=d)
+   s.no(hasattr(sdk,'run'))
+
 if __name__=='__main__':
  unittest.main()
