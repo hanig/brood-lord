@@ -12,7 +12,6 @@ import wbkit
 H='CANARY'
 S='synthetic-hidden'
 T='SENTINEL'
-K=('api_key','TOKEN','secret','password','passwd','credential')
 AX='trainer/step'
 V='val/loss'
 def recipe(train):return{'arch':{},'train':train,'data':{}}
@@ -42,19 +41,8 @@ class Logging(Checks):
   s.eq(wbkit.run_name('sample','cells',{'train.lr':0.0003},2),'sample-cells-lr3e-4-s2')
   s.eq(wbkit.config_deltas({'train':{'lr':2,'seed':1}},{'train':{'lr':1,'seed':1}}),{'train.lr':2})
   s.eq(wbkit.config_deltas({'lr':1},None),{})
-  s.lacks(S,wbkit.run_name(S,S,{'api_key':S},S))
+  s.lacks(S,wbkit.run_name('sample','cells',{'api_key':S}))
   s.assertLessEqual(len(wbkit.run_name('x'*90,'cells')),64)
- def test_secrets(s):
-  for k,q in itertools.product(K,('scalar','mapping','list')):
-   v={'scalar':H,'mapping':{'lr':H},'list':[{'lr':H}]}[q]
-   with s.subTest(key=k,shape=q):
-    c=recipe({k:v})
-    s.lacks(H,repr(wbkit._redact(c)))
-    s.lacks(H,wbkit.run_name('sample','cells',{k:v}))
-    r=start(config=c,base_config={'train':{'lr':1}})
-    s.clean(r)
-  nc={'train':{'layers':[{'token':H,'lr':2}]}}
-  s.lacks(H,repr(wbkit.config_deltas(nc,{'train':{}})))
  def test_resume(s):
   with TD()as tmp:
    a=start(output_dir=tmp)
@@ -80,13 +68,6 @@ class Logging(Checks):
   for q in['name.random','notes.empty','group.missing','config.flat','metrics.unnamespaced']:
    s.assertTrue(any((i.startswith(q+':')for i in xs)))
 class CoreCases(Checks):
- def test_seeds(s):
-  for i in([{'api_key':H}],{'token':H}):
-   with s.subTest(container=i):
-    c=recipe({'seed':i})
-    r=start(rank=0,config=c)
-    s.clean(r)
-    s.lacks(H,wbkit.run_name('sample','cells',seed=i))
  def test_rank(s):
   for g,l in itertools.product(('0','4'),('0','1')):
    env={'SLURM_NTASKS':'8','SLURM_PROCID':g,'LOCAL_RANK':l}
@@ -127,8 +108,8 @@ class RecordCases(Checks):
   r=start(config=c,base_config=base)
   s.eq(r.config['train'],c['train'])
   s.eq(wbkit.config_deltas(c,base),{'train.'+k:v for k,v in c['train'].items()})
-  for k in('token','access_token','api_key','client_secret','password','credential'):
-   s.eq(wbkit._redact({k:H})[k],'***')
+  for k in('access_token','api_key','client_secret','password','credentials'):
+   s.eq(wbkit._redact({k:H}),{})
  def test_rank(s):
   for p,l,n in itertools.product(('0','4'),('0','1'),(None,'8')):
    env={'SLURM_PROCID':p,'LOCAL_RANK':l}
@@ -177,8 +158,7 @@ class RoundOne(Checks):
   s.eq(r.config['train'],c['train'])
   s.eq(wbkit.config_deltas(c,{'train':{}}),{'train.'+k:8192 for k in f})
   for k in f:s.assertIn(k+'=8192',r.notes)
-  for k in('token','access_token','train.token.value'):
-   s.eq(wbkit._redact({k:T})[k],'***')
+  s.eq(wbkit._redact({'token':T,'access_token':T}),{'token':T})
  def test_metrics(s):
   r=start()
   wbkit.log_step(r,5,{'train/token_acc':.91})
@@ -251,15 +231,6 @@ class Atomic(Checks):
       else:s.assertRegex(t,r'^[a-z0-9]{8}\n$')
     s.assertTrue(start(output_dir=tmp).id)
 class RoundTwo(Checks):
- def test_auth(s):
-  t='Authorization: Bearer '+T
-  with TD()as tmp,patch.object(sys,'argv',['train.py','--header',t]):
-   r=start(output_dir=tmp,config=recipe({'header':t,'Authorization':'Bearer '+T}),hypothesis=t,name=t)
-   for p in Path(tmp).iterdir():s.lacks(T,p.read_text())
-  s.clean(r,T)
-  r.summary['text']=t
-  wbkit.finish(r,t,'inconclusive')
-  s.clean(r,T)
  def test_secretory(s):
   f=('secretory_cell_fraction','secreted_protein','secretome_size')
   c={'data':dict.fromkeys(f,.25)}
@@ -269,7 +240,7 @@ class RoundTwo(Checks):
   wbkit.log_step(r,1,{'data/'+k:.25 for k in f})
   for k in f:s.eq(r.logged[-1]['data/'+k],.25)
   for k in('secret','client_secret','secret_key'):
-   s.eq(wbkit._redact({k:T})[k],'***')
+   s.eq(wbkit._redact({k:T}),{})
  def test_priority(s):
   with patch.dict(os.environ,{'SLURM_PROCID':'0','LOCAL_RANK':'1'},clear=True):
    s.assertFalse(start().disabled)
@@ -323,11 +294,6 @@ class RoundTwo(Checks):
    with s.subTest(env=env),patch.dict(os.environ,env,clear=True):
     s.eq(start().disabled,want!=0)
 class LastReview(Checks):
- def test_credential_suffix(s):
-  for k,w in itertools.product(('access_token_value','access-token-value','token_value','refresh_token_value','AUTH_TOKEN_VALUE','train.token.value'),(lambda v:v,lambda v:[v],lambda v:{'nested':v})):
-   with s.subTest(key=k):
-    r=start(rank=0,config=recipe({k:w(T)}),base_config=recipe({}))
-    s.clean(r,T)
  def test_array_base(s):
   class Array:
    def tolist(s):return[128,256]
@@ -337,12 +303,6 @@ class LastReview(Checks):
   s.eq(r.config['train']['layers'],[128,256]);s.lacks('layers=',r.notes)
   s.eq(wbkit.config_deltas(c,c),{})
   s.eq(wbkit.config_deltas(c,recipe({'layers':[64]})),{'train.layers':[128,256]})
- def test_tokenizer(s):
-  keys=[(p+sep+'token').upper()if upper else p+sep+'token'for p,sep,upper in itertools.product(('pad','eos','bos','cls','sep','unk','mask','sos','decoder_start','special'),('_','-'),(False,True))]
-  c=recipe(dict.fromkeys(keys,'<pad>'));r=start(rank=0,config=c,base_config=recipe(dict.fromkeys(keys,'<unk>')))
-  s.eq(r.config['train'],c['train'])
-  for k in keys:s.assertIn(k+'=',r.notes)
-  s.eq(wbkit.config_deltas(c,recipe({})),{'train.'+k:'<pad>'for k in keys})
  def test_resume_contract(s):
   with TD()as d:
    a=start(rank=0,output_dir=d,name='small-cells',expect='val/loss < 0.5',config=recipe({'width':8}))
@@ -372,7 +332,7 @@ class LastReview(Checks):
    if v==v:s.eq(got,v)
    else:s.assertNotEqual(got,got)
 class CommandProvenance(Checks):
- """Exhaustive: 12 token shapes x 2 values; all value changes alter digest."""
+ """Exhaustive: 12 token shapes x 2 values; exact dictionaries, no digest."""
  def test_shapes(s):
   for value in ('VALUE_CANARY_A','VALUE_CANARY_B'):
    cases=(
@@ -437,14 +397,6 @@ class CommandProvenance(Checks):
  def test_option_shaped_limit(s):
   s.eq(wbkit._redact_argv(['train.py','--name','--CANARY'])['flags'],['--name','--CANARY'])
 class ContinuationReview(Checks):
- def test_credential_labels(s):
-  # Exhaustive: 8 keys x 2 cases x 3 wrappers.
-  keys=('private_key','private-key','privateKey','secretKey','SecretAccessKey','clientSecretKey','secret_access_key','secret-access-key')
-  for key,upper,wrap in itertools.product(keys,(False,True),(lambda v:v,lambda v:[v],lambda v:{'inner':v})):
-   k=key.upper()if upper else key
-   with s.subTest(key=k):
-    r=start(rank=0,config=recipe({k:wrap(T)}),base_config=recipe({}))
-    s.clean(r,T)
  def test_lost_snapshots(s):
   with TD()as d:
    a=start(rank=0,output_dir=d,config=recipe({'lr':.1}));a.finish()
@@ -475,12 +427,6 @@ class AcceptedRecovery(Checks):
    b=start(rank=0,output_dir=d,config=recipe({'lr':.9}))
    s.eq(b.id,a.id);s.eq(b.config['train']['lr'],.9)
 class ContinuationTwo(Checks):
- def test_spaced_labels(s):
-  for k in ('API key','private key','secret key','secret access key'):
-   with s.subTest(key=k):
-    text=k+': '+T
-    r=start(rank=0,hypothesis=text,config=recipe({'note':text,k:T}))
-    s.clean(r,T)
  def test_metric_token(s):
   for ns in wbkit.METRIC_NAMESPACES:
    q=ns+'/token';expect=q+' == 0.5'
@@ -495,12 +441,6 @@ class ContinuationTwo(Checks):
    with patch.object(sys,'argv',argv):
     got=start(rank=0).config['provenance']['command']
    s.eq(got,dict(program='train.py',flags=[],positional_count=1))
- def test_public_token_keys(s):
-  keys=('stop_token','end_token','image_token','max_token')
-  c=recipe(dict.fromkeys(keys,'<end>'))
-  r=start(rank=0,config=c,base_config=recipe(dict.fromkeys(keys,'<old>')))
-  s.eq(r.config['train'],c['train'])
-  s.eq(set(wbkit.config_deltas(c,recipe({}))),{'train.'+k for k in keys})
  def test_long_string(s):
   # Bound: 1M characters, 10s child.
   cmd=[sys.executable,'-B','-c',"from tests.test_wandb_logging import start; r=start(rank=0,config={'data':{'sequence':'A'*1000000}}); assert r.config['data']['sequence']=='A'*1000000"]
@@ -515,47 +455,7 @@ class ContinuationTwo(Checks):
    s.eq(training['train']['lr'],.9);s.eq(r.config['train']['lr'],.1)
    s.assertTrue(any('config-mismatch'in str(w.message)for w in found))
 class KnownValueSanitizer(Checks):
- def test_array(s):
-  class A:
-   def tolist(s):return{'api_key':S}
-  s.clean(start(config=recipe({'array':A()}),name=S,hypothesis=S),S)
 
- def test_egress(s):
-  # Exhaustive: 3 shapes x 2 values.
-  for secret,wrap in itertools.product(('hidden-value','hidden-value-with-spaces'),(lambda x:x,lambda x:[x],lambda x:{'inner':x})):
-   with s.subTest(secret=secret,wrap=wrap):
-    r=start(rank=0,config=recipe({'privateKey':wrap(secret),'copy':secret}),
-      model=secret,data=secret,name='run '+secret,hypothesis='Test '+secret,
-      expect='val/loss < 1 '+secret,group=secret,tags=[secret],entity=secret,
-      settings={'note':secret},summaries={'val/'+secret:'min'})
-    s.clean(r,secret)
-    wbkit.log_step(r,1,{'train/'+secret:secret})
-    wbkit.define_metrics(r,namespaces=(secret,))
-    r.summary['summary/'+secret]=secret
-    wbkit.finish(r,'Observed '+secret,'inconclusive')
-    s.clean(r,secret)
- def test_boundaries(s):
-  # Exhaustive: lengths 1..8 x known/unknown.
-  for length,known in itertools.product(range(1,9),(False,True)):
-   secret='X'*length;cfg=recipe({'api_key':secret}if known else{})
-   text='password='+secret+' val/token == 0.5'
-   r=start(rank=0,config=cfg,name=text,hypothesis=text)
-   want=text.replace(secret,'***')if known and length>=6 else text
-   s.eq(r.name,want);s.eq(r.notes.splitlines()[0],'H: '+want)
-   if known:s.eq(r.config['train']['api_key'],'***')
- def test_verbatim(s):
-  # Exhaustive: 4 values.
-  secrets=('abcdef','abcdefghi','line1\nline2','quoted "value"')
-  raw={str(i):{'secret':v,'copy':v}for i,v in enumerate(secrets)}
-  clean=wbkit._redact(raw)
-  for i in raw:s.eq(clean[i],{'secret':'***','copy':'***'})
-  r=start(rank=0,config=recipe(raw),hypothesis=' '.join(secrets))
-  for secret in secrets:s.clean(r,secret)
- def test_run_isolation(s):
-  a=start(rank=0,config=recipe({'api_key':S}))
-  b=start(rank=0,config=recipe({}))
-  wbkit.log_step(a,1,{'train/text':S});wbkit.log_step(b,1,{'train/text':S})
-  s.eq(a.logged[-1]['train/text'],'***');s.eq(b.logged[-1]['train/text'],S)
  def test_persisted_digest_migration(s):
   # Exhaustive: 3 sources.
   for source in ('wandb_provenance.json','wandb_config.json','wandb_config.backup.json'):
@@ -568,5 +468,75 @@ class KnownValueSanitizer(Checks):
     with s.assertWarnsRegex(UserWarning,'legacy-command'):b=start(rank=0,output_dir=d)
     s.eq(a.id,b.id);s.lacks('argv_sha256',repr(b.config))
     for f in Path(d).glob('*.json'):s.lacks('argv_sha256',f.read_text())
+class ExactRedaction(Checks):
+ # Exhaustive: 20 defaults x 3 spellings x 2 depths x 2 sources x 3 shapes.
+ WORDS=('api_key','wandb_api_key','password','passwd','passphrase','secret',
+        'secret_key','client_secret','secret_access_key','aws_secret_access_key',
+        'access_token','refresh_token','auth_token','bearer_token','session_token',
+        'hf_token','github_token','private_key','encryption_key','credentials')
+ def test_defaults(s):
+  s.eq(wbkit.DEFAULT_SECRET_KEYS,frozenset(k.replace('_','')for k in s.WORDS))
+  for word,spelling,depth,source,shape in itertools.product(s.WORDS,range(3),(1,2),('config','base_config'),range(3)):
+   parts=word.split('_')
+   k=(word,parts[0]+''.join(p.title()for p in parts[1:]),word.replace('_','-'))[spelling]
+   val=(S,{'nested':S},[S])[shape]
+   cfg={k:val}if depth==1 else {'train':{k:val}}
+   path=k if depth==1 else 'train.'+k
+   with s.subTest(key=k,depth=depth,source=source,shape=shape),TD()as d:
+    r=start(rank=0,output_dir=d,**{source:cfg})
+    s.clean(r,S)
+    s.assertIn(path,r.config['provenance']['redacted_keys'])
+    for p in Path(d).glob('*.json'):s.lacks(S,p.read_text())
+    s.lacks(S,repr(wbkit.config_deltas(cfg,{},secret_keys=())))
+ def test_custom(s):
+  for k in ('ProjectKey','project_key','project-key','project.key','project key'):
+   r=start(rank=0,config=recipe({k:S,'token':7}),secret_keys=['project_key'],base_config=recipe({}))
+   s.eq(r.config['train'],{'token':7})
+   s.eq(r.config['provenance']['redacted_keys'],['train.'+k])
+ def test_public(s):
+  # Exhaustive: 9 public keys; values equal a removed secret on purpose.
+  keys=('token','max_tokens','pad_token','tokenizer','val/token','secretory',
+        'assistant_token','passphrase_len','train_config')
+  cfg=recipe(dict.fromkeys(keys,S));cfg['train']['api_key']=S
+  r=start(rank=0,config=cfg,base_config=recipe({}),name=S,hypothesis=S,
+          expect=S,tags=[S],settings={'value':S},entity=S,group=S)
+  s.eq(r.config['train'],dict.fromkeys(keys,S))
+  s.eq(r.name,S);s.eq(r.notes.splitlines()[:2],['H: '+S,'Expect: '+S])
+  s.eq(r.tags,[S]);s.eq(r.settings,{'value':S});s.eq(r.entity,S);s.eq(r.group,S)
+  for k in keys:s.assertIn(k+'=',r.notes)
+  wbkit.log_step(r,1,{'val/password_accuracy':S,'val/token':.5})
+  s.eq(r.logged[-1]['val/password_accuracy'],S)
+  r.summary['password']=S
+  wbkit.finish(r,S,'supported')
+  s.eq(r.summary['password'],S);s.eq(r.summary['verdict'],'supported')
+  s.assertIn('Outcome (supported): '+S,r.notes)
+ def test_normalization(s):
+  for k in ('SecretAccessKey','secret_access_key','secret-access-key','secret.access.key','secret access key'):
+   s.eq(wbkit._redact({k:S,'secretory':S}),{'secretory':S})
+ def test_remote(s):
+  # Exhaustive: 9 URL shapes, safe synthetic values only.
+  cases=(
+   ('https://user:CANARY@example.org:443/a.git?token=CANARY#CANARY','https://example.org:443/a.git'),
+   ('ssh://user:CANARY@example.org/a.git','ssh://example.org/a.git'),
+   ('user@example.org:a.git','example.org:a.git'),
+   ('example.org:a.git?token=CANARY#CANARY','example.org:a.git'),
+   ('https://example.org/a?token=CANARY','https://example.org/a'),
+   ('ssh://user@[::1]:22/a','ssh://[::1]:22/a'),
+   ('not a URL',None),('https://[broken/a',None),('https://example.org:bad/a',None))
+  for raw,want in cases:
+   with s.subTest(raw=raw),TD()as d:
+    def git(*args,**kw):return raw if args[:2]==('config','--get')else None
+    with patch.object(wbkit,'_git',side_effect=git):
+     r=wbkit.start_run(FakeWandb(),project='sample',family='sample',job_type='train',model='m',data='d',hypothesis='A hypothesis.',config=recipe({}),output_dir=d,rank=0)
+    s.eq(r.config['provenance']['git_remote'],want)
+    for p in Path(d).glob('*.json'):s.lacks('CANARY',p.read_text())
+ def test_sdk_arguments(s):
+  class Strict(FakeWandb):
+   def init(self,*,config=None,**kw):
+    s.assertIn('allow_val_change',kw)
+    return super().init(config=config,**kw)
+  r=start(Strict(),rank=0,config=recipe({'api_key':'config','default_token':'config'}))
+  s.eq(r.config['train'],{'default_token':'config'})
+
 if __name__=='__main__':
  unittest.main()

@@ -5,6 +5,7 @@ from enum import Enum
 import hashlib,datetime as _dt,importlib.metadata as _md,math,os,json,re,socket,subprocess,sys,types,warnings,weakref
 from pathlib import Path
 from typing import Mapping
+from urllib.parse import urlsplit, urlunsplit
 __all__='JOB_TYPES VERDICTS provenance config_deltas run_name start_run define_metrics log_step finish lint_run'.split()
 JOB_TYPES=('preprocess','train','finetune','eval','predict','sweep-trial','debug')
 VERDICTS=('supported','refuted','inconclusive','broken')
@@ -12,8 +13,9 @@ METRIC_NAMESPACES=('train','val','eval','test','opt','perf','data','trainer')
 STEP_METRIC='trainer/step'
 _SL=re.compile('^[a-z0-9][a-z0-9-]{0,62}$')
 _RN=re.compile('^[a-z]+-[a-z]+-\\d+$')
-_PUBLIC_TOKEN=('pad','eos','bos','cls','sep','unk','mask','sos','decoder_start','special','stop','end','image','max')
-_SEC=re.compile(r'(api[ _-]?key|'+''.join(r'(?<!'+p+r'[_-])'for p in _PUBLIC_TOKEN)+r'(?<!/)token(?=\.|$|[_-](?:value|secret|key|credential)(?:[._-]|$))|private[ _-]?key|secret[ _-]?(?:access[ _-]?)?key|secret(?![a-z])|authorization|passw(or)?d|credential)',re.I)
+DEFAULT_SECRET_KEYS=frozenset('apikey wandbapikey password passwd passphrase secret secretkey clientsecret secretaccesskey awssecretaccesskey accesstoken refreshtoken authtoken bearertoken sessiontoken hftoken githubtoken privatekey encryptionkey credentials'.split())
+def _key(key):return str(key).lower().translate(str.maketrans('', '', '_-. '))
+def _secret(key,keys):return _key(key) in keys
 _AB=dict(zip('learning_rate lr weight_decay batch_size global_batch_size dropout num_layers n_layers hidden_dim d_model num_heads warmup_steps max_steps epochs max_epochs seed temperature mask_ratio grad_clip'.split(),'lr lr wd bs gbs do L L d d h wu steps ep ep s T mask clip'.split()))
 _MS={}
 def _metrics(run):
@@ -38,33 +40,38 @@ def _record(o):
  if isinstance(o,(argparse.Namespace,types.SimpleNamespace)):return vars(o)
  if isinstance(o,tuple)and hasattr(o,'_asdict'):return o._asdict()
  return o
-def _secret_values(o):
- """Collect secret leaves."""
- found=set()
- def visit(v,secret=False):
+def _redact(o,secret_keys=(),removed=None):
+ # Remove exact normalized secret leaf keys.
+ keys=DEFAULT_SECRET_KEYS|frozenset(_key(k)for k in secret_keys)
+ def clean(v,path=''):
   v=_record(v)
   if isinstance(v,Mapping):
-   for k,x in v.items():visit(x,secret or bool(_SEC.search(str(k))))
-  elif isinstance(v,(list,tuple)):
-   for x in v:visit(x,secret)
-  elif not isinstance(v,(str,int,float,bool,type(None))):
-   x=_json(v)
-   if x is not v:visit(x,secret)
-  elif secret and len(str(v))>=6:found.add(str(v))
- visit(o)
- return found
-def _redact(o,known=()):
- """Mask secret-keyed config and known values; never scan free-text labels."""
- secrets=sorted(set(known)|_secret_values(o),key=lambda v:(-len(v),v))
- def clean(v):
-  v=_record(v)
-  if isinstance(v,Mapping):return{clean(k):'***'if _SEC.search(str(k))else clean(x)for k,x in v.items()}
-  if isinstance(v,(list,tuple)):return[clean(x)for x in v]
-  if isinstance(v,str):
-   for secret in secrets:v=v.replace(secret,'***')
+   out={}
+   for k,x in v.items():
+    q=path+str(k)
+    if _secret(k,keys):
+     if removed is not None:removed.add(q)
+    else:out[k]=clean(x,q+'.')
+   return out
+  if isinstance(v,(list,tuple)):return[clean(x,path+str(i)+'.')for i,x in enumerate(v)]
+  if not isinstance(v,(str,int,float,bool,type(None))):return clean(_json(v),path)
   return v
  return clean(o)
-def _sent(run,o):return _redact(o,_metrics(run).get('secrets',()))
+def _remote(value):
+ # Drop userinfo/query/fragment.
+ if not value:return None
+ try:
+  if any(c.isspace()for c in value):return None
+  if '://'not in value:
+   match=re.fullmatch(r'(?:[^@/:]+@)?([^@/:?#]+):([^?#]+)(?:[?#].*)?',value)
+   return match[1]+':'+match[2]if match else None
+  u=urlsplit(value)
+  if not u.scheme or not u.hostname:return None
+  host=u.hostname
+  if ':'in host:host='['+host+']'
+  if u.port is not None:host+=':'+str(u.port)
+  return urlunsplit((u.scheme,host,u.path,'',''))
+ except (ValueError,TypeError):return None
 def _redact_argv(argv):
  """Command identity; option-shaped values before -- follow the flag rule."""
  flags=[]
@@ -101,7 +108,7 @@ def provenance(wandb,cwd=None):
  ev=os.environ
  ks='JOB_ID ARRAY_JOB_ID ARRAY_TASK_ID JOB_PARTITION JOB_NUM_NODES NTASKS RESTART_COUNT CLUSTER_NAME'.split()
  slurm={k.lower():ev['SLURM_'+k]for k in ks if 'SLURM_'+k in ev}
- return{'git_commit':sha,'git_dirty':bool(_git('status','--porcelain',cwd=cwd))if sha else None,'git_branch':_git('rev-parse','--abbrev-ref','HEAD',cwd=cwd),'git_remote':_redact(_git('config','--get','remote.origin.url',cwd=cwd)),'command':_redact_argv(sys.argv),'cwd':os.getcwd(),'host':socket.gethostname(),'python':sys.version.split()[0],'torch':_pkg('torch'),'wandb':wandb.__version__,'cuda_visible_devices':ev.get('CUDA_VISIBLE_DEVICES'),'slurm':slurm or None,'started_at':_now()}
+ return{'git_commit':sha,'git_dirty':bool(_git('status','--porcelain',cwd=cwd))if sha else None,'git_branch':_git('rev-parse','--abbrev-ref','HEAD',cwd=cwd),'git_remote':_remote(_git('config','--get','remote.origin.url',cwd=cwd)),'command':_redact_argv(sys.argv),'cwd':os.getcwd(),'host':socket.gethostname(),'python':sys.version.split()[0],'torch':_pkg('torch'),'wandb':wandb.__version__,'cuda_visible_devices':ev.get('CUDA_VISIBLE_DEVICES'),'slurm':slurm or None,'started_at':_now()}
 def _flat(d,p=''):
  f={}
  for k,v in d.items():
@@ -110,11 +117,11 @@ def _flat(d,p=''):
   else:
    f[q]=v
  return f
-def config_deltas(config,base):
+def config_deltas(config,base,secret_keys=()):
  if not base:return{}
- cur,ref=(_flat(_norm(config)),_flat(_norm(base)))
+ cur,ref=(_flat(_norm(config,secret_keys)),_flat(_norm(base,secret_keys)))
  skip=('provenance.','family.')
- return{k:v for k,v in cur.items()if k not in('family','provenance')and not k.startswith(skip)and(not _SEC.search(k))and(k not in ref or ref[k]!=v)}
+ return{k:v for k,v in cur.items()if k not in('family','provenance')and not k.startswith(skip)and(k not in ref or ref[k]!=v)}
 def _fmt(v):
  if isinstance(v,bool):return '' if v else 'off'
  if isinstance(v,float):
@@ -122,22 +129,21 @@ def _fmt(v):
    mant,exp=f'{v:.0e}'.split('e')
    return f'{mant}e{int(exp)}'
   return f'{v:g}'
- return _redact(str(v))
+ return str(v)
 def _slugify(s):
- s=re.sub('[^A-Za-z0-9.+-]+','-',_redact(str(s))).strip('-')
+ s=re.sub('[^A-Za-z0-9.+-]+','-',str(s)).strip('-')
  return re.sub('-{2,}','-',s)
-def run_name(model,data,deltas=None,seed=None,max_len=64):
- known=_secret_values({'deltas':deltas,'seed':seed})
- ps=[_slugify(_redact(model,known)),_slugify(_redact(data,known))]
- for q,val in _redact(deltas or{},known).items():
-  if _SEC.search(str(q)):
-   continue
+def run_name(model,data,deltas=None,seed=None,max_len=64,secret_keys=()):
+ ps=[_slugify(model),_slugify(data)]
+ keys=DEFAULT_SECRET_KEYS|frozenset(_key(k)for k in secret_keys)
+ for q,val in _redact(deltas or{},secret_keys).items():
+  if _secret(q.rsplit('.',1)[-1],keys):continue
   leaf=q.rsplit('.',1)[-1]
   if leaf=='seed':
    continue
   ab=_AB.get(leaf,leaf.replace('_','')[:10])
   ps.append(_slugify(f'{ab}{_fmt(val)}'))
- if seed is not None:ps.append(_slugify(f's{_redact(seed,known)}'))
+ if seed is not None:ps.append(_slugify(f's{_redact(seed,secret_keys)}'))
  name='-'.join((p for p in ps if p))
  if len(name)>max_len:
   digest=hashlib.sha1(name.encode()).hexdigest()[:6]
@@ -179,8 +185,8 @@ def _json(v):
    c=convert()
    if c is not v:return c
  return str(v)
-def _norm(v):return _redact(json.loads(json.dumps(_redact(v),default=_json)))
-def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expect=None,base_config=None,group=None,tags=(),summaries=None,entity=None,output_dir=None,name=None,rank=None,**kw):
+def _norm(v,secret_keys=(),removed=None):return json.loads(json.dumps(_redact(v,secret_keys,removed),default=_json))
+def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expect=None,base_config=None,group=None,tags=(),summaries=None,entity=None,output_dir=None,name=None,rank=None,secret_keys=(),**kw):
  rank=_rank()if rank is None else rank
  if rank!=0:return wandb.init(mode='disabled')
  _slug(project,'project')
@@ -188,8 +194,11 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
  if job_type not in JOB_TYPES:warnings.warn('job_type.nonstandard: use JOB_TYPES')
  if not hypothesis or len(hypothesis.strip())<10:warnings.warn('notes.short-hypothesis: recommend 10+ chars')
  if group is not None and len(group)>128:warnings.warn('group.long: recommend <=128 chars')
- known=_secret_values(config)
- prov=_redact(provenance(wandb),known)
+ removed=set()
+ config=_norm(config,secret_keys,removed)
+ base_config=_norm(base_config,secret_keys,removed)
+ prov=provenance(wandb)
+ prov['redacted_keys']=sorted(removed)
  rid,again,saved=None,False,{}
  if output_dir is not None:
   out=Path(output_dir)
@@ -212,37 +221,39 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   p0=_load(pf)if again else{}
   if not p0:p0=(saved.get('config')or{}).get('provenance')or prov
   p0=_migrate_command(p0,prov['command'])
-  _atomic(pf,json.dumps(_redact(p0,known))+'\n')
+  p0=_redact(p0,secret_keys,removed)
+  p0['redacted_keys']=sorted(set(p0.get('redacted_keys',()))|removed)
+  _atomic(pf,json.dumps(p0)+'\n')
  else:
   p0=prov
- cfg=_redact({**config,'family':family,'provenance':p0})
+ cfg=_norm({**config,'family':family,'provenance':p0},secret_keys,removed)
  if again and isinstance(saved.get('config'),Mapping):
-  cfg=_redact(saved['config'])
+  cfg=_norm(saved['config'],secret_keys,removed)
   old={k:v for k,v in cfg.items()if k!='provenance'}
   current={k:v for k,v in _norm({**config,'family':family}).items()if k!='provenance'}
   if current!=old:warnings.warn('resume.config-mismatch: saved logging config retained; restore caller training config separately')
  if isinstance(cfg.get('provenance'),Mapping):
   cfg['provenance']=_migrate_command(cfg['provenance'],prov['command'])
- cfg=_redact(_norm(cfg),known)
+ cfg=_norm(cfg,secret_keys,removed)
+ if isinstance(cfg.get('provenance'),Mapping):cfg['provenance']['redacted_keys']=sorted(set(cfg['provenance'].get('redacted_keys',()))|removed)
  rc=int(saved.get('resume_count',0))+1 if again else 0
  f=_flat(cfg)
  seed=f.get('train.seed',f.get('seed'))
- deltas=config_deltas(cfg,base_config)
+ deltas=config_deltas(cfg,base_config,secret_keys)
  name=saved.get('name')or name
  if not name:
   if again and saved:
    warnings.warn('resume.legacy-name: set name')
    model,data='resume',rid
-  name=run_name(_redact(model,known),_redact(data,known),deltas,seed)
- name=_redact(name,known)
+  name=run_name(model,data,deltas,seed,secret_keys=secret_keys)
  notes=f"H: {(hypothesis or '').strip()}"
  if expect:
   notes+=f'\nExpect: {expect.strip()}'
  if deltas:
   notes+='\nDeltas vs base: '+', '.join(f'{k}={json.dumps(v)}' for k,v in deltas.items())
  if again and saved and 'notes'not in saved:warnings.warn('resume.legacy-notes: supply original hypothesis/expect')
- notes=_redact(saved.get('notes')or notes,known)
- tag_list=[t.lower()for t in tags]
+ notes=saved.get('notes')or notes
+ tag_list=list(tags)
  if prov['git_dirty']:tag_list.append('dirty-tree')
  for t in tag_list:
   if len(t)>64:warnings.warn('tag.long: recommend <=64 chars')
@@ -251,9 +262,8 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   _atomic(out/'wandb_config.json',rec)
   _atomic(out/'wandb_config.backup.json',rec)
   _atomic(out/'wandb_config.ready',rid+'\n')
- args=_redact(dict(entity=entity,project=project,group=group,job_type=job_type,name=name,notes=notes,tags=sorted(set(tag_list)),config=cfg,allow_val_change=again,id=rid,resume='allow' if rid else None,**kw),known)
+ args=dict(entity=entity,project=project,group=group,job_type=job_type,name=name,notes=notes,tags=sorted(set(tag_list)),config=cfg,allow_val_change=again,id=rid,resume='allow' if rid else None,**kw)
  run=wandb.init(**args)
- _metrics(run)['secrets']=known
  if again:
   run.summary['provenance/last_resume']=prov
   run.summary['provenance/resume_count']=rc
@@ -263,29 +273,24 @@ def define_metrics(run,step_metric=STEP_METRIC,namespaces=METRIC_NAMESPACES,summ
  state=_metrics(run)
  defs={**state['summaries'],**(summaries or{})}
  namespaces=tuple(dict.fromkeys((*state['namespaces'],*namespaces)))
- run.define_metric(_sent(run,step_metric))
+ run.define_metric(step_metric)
  for ns in namespaces:
-  run.define_metric(_sent(run,f'{ns}/*'),step_metric=_sent(run,step_metric))
+  run.define_metric(f'{ns}/*',step_metric=step_metric)
  for q,how in defs.items():
   if how and not set(how.lower().split(','))<=set('min max mean last first copy none'.split()):raise ValueError('invalid summary')
-  run.define_metric(_sent(run,q),step_metric=_sent(run,step_metric),summary=how)
+  run.define_metric(q,step_metric=step_metric,summary=how)
  state.update(summaries=defs,axis=step_metric,namespaces=namespaces)
 _warned:set[str]=set()
 def log_step(run,step,metrics,commit=None):
  for k in metrics:
   if '/' not in k and k not in _warned:
    _warned.add(k)
-   warnings.warn(f'metric {_sent(run,k)!r} needs a namespace')
- run.log(_sent(run,{**metrics,_metrics(run)['axis']:step}),commit=commit)
+   warnings.warn(f'metric {k!r} needs a namespace')
+ run.log({**metrics,_metrics(run)['axis']:step},commit=commit)
 def finish(run,outcome,verdict,exit_code=None):
  if verdict not in VERDICTS:raise ValueError(f'verdict {verdict!r} not in {VERDICTS}')
  if getattr(run,'disabled',False)or not getattr(run,'id',None):return[]
- run.notes=_sent(run,(run.notes or '')+f'\nOutcome ({verdict}): {outcome.strip()}')
- sm=_sent(run,dict(run.summary))
- for q in list(run.summary.keys()):
-  if q not in sm:
-   del run.summary[q]
- run.summary.update(sm)
+ run.notes=(run.notes or '')+f'\nOutcome ({verdict}): {outcome.strip()}'
  run.summary['verdict']=verdict
  if verdict=='broken':run.tags=tuple(sorted(set(run.tags or())|{'broken'}))
  xs=lint_run(name=run.name,notes=run.notes,group=run.group,job_type=run.job_type,config=dict(run.config),summary_keys=list(run.summary.keys()),tags=list(run.tags or()))
