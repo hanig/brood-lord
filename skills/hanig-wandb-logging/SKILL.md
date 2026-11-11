@@ -78,14 +78,10 @@ run_name fits integer max_len>=1; <1 raises ValueError.
 
 [Artifacts](references/artifacts.md) covers log_dataset/log_model with the
 caller-supplied SDK, cards, metadata, aliases and persistent input lineage.
-Use artifact_name for generated names. Set sanity_checkpoint=True for sanity
-saves and post_hoc=True for choices made after seeing results.
+Use artifact_name for names; sanity_checkpoint=True for sanity saves and
+post_hoc=True for choices after results.
 
-```python
-import wandb, wbkit
-wbkit.use_input(run, "team/project/data-cells:v3")
-wbkit.log_model(wandb, run, "outputs/checkpoint", step=100, post_hoc=True)
-```
+
 
 Snapshot disagreement refuses before init; restore matching snapshots.
 Recovery archives prune launch secrets; unsafe malformed bytes become a notice.
