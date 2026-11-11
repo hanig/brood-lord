@@ -931,5 +931,29 @@ class ArtifactSDK(FakeWandb):
   def log(art,aliases=()):art.aliases=list(aliases);return art
   r.log_artifact=log;r.use_artifact=lambda ref,type=None:types.SimpleNamespace(entity='team',project='project',name='cells:v3',version='v3');return r
 
+# Recovery-only regressions for open findings. Not ready for merge.
+class RecoveryDiagnostics(Checks):
+ def test_provenance_secret(s):
+  with patch.dict(os.environ,{'SLURM_JOB_ID':'SYNTHETIC_CANARY'}):
+   r=start(secret_keys=('provenance',))
+  s.lacks('SYNTHETIC_CANARY',repr(r.config))
+ def test_name_secrets(s):
+  # Exhaustive model/data/seed labels.
+  for key in ('model','data','seed'):
+   name=wbkit.run_name('CANARY'if key=='model'else 'model','CANARY'if key=='data'else 'cells',seed='CANARY'if key=='seed'else None,secret_keys=(key,))
+   s.lacks('CANARY',name)
+ def test_signed_zero_sets(s):
+  a=recipe({'x':{0.0,-1.0,'a'}});b=recipe({'x':{-0.0,-1.0,'a'}})
+  s.eq(a,b);s.eq(wbkit.config_deltas(a,b),{})
+ def test_remote_size(s):
+  sdk=ArtifactSDK();r=start(sdk)
+  art=wbkit.log_model(sdk,r,'s3://example/weights',step=1)
+  s.lacks('0.0 MB',art.description)
+ def test_helper_collision(s):
+  a=recipe({1:'a','1':'b'})
+  with warnings.catch_warnings(record=True)as ws:
+   warnings.simplefilter('always');wbkit.config_deltas(a,a)
+  s.eq([str(w.message)for w in ws if 'key-collision'in str(w.message)],['config.key-collision: train.1'])
+
 if __name__=='__main__':
  unittest.main()
