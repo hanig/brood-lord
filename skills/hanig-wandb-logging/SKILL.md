@@ -8,17 +8,15 @@ description: >-
 
 # hanig-wandb-logging
 
-Pass credentials through the environment, never through config, notes or names.
-Declare project keys in secret_keys. Only listed keys are protected; other
-keys and free text are sent as written. No value matching or text scanning.
-Config should use mappings, sequences, scalars, dataclasses or namespaces;
-credentials in attributes of other object types are the caller's responsibility.
+Use environment credentials, never config, notes or names. Declare project
+secret_keys; unlisted keys/free text are sent as written, without value scanning.
+Use mappings, named containers, scalars, dataclasses or namespaces; credentials
+in other objects' attributes are caller-owned.
 
 ## Host capability boundary
 
-Copy [wbkit](scripts/wbkit.py) into project code with authorized access.
-Installs no package/credential. Measured: wandb 0.31.0; others best effort.
-Policy: hanig-project/hanig-swarm.
+Copy [wbkit](scripts/wbkit.py) with authorized access. No package/credential
+install. Measured: wandb 0.31.0; others best effort. Policy: hanig-project/hanig-swarm.
 
 <!-- BEGIN GENERATED DECLARATIONS: declarations.json -->
 
@@ -44,17 +42,14 @@ wbkit.log_step(run, step, metrics)
 wbkit.finish(run, outcome, contract_verdict)
 ```
 
-Reuse output_dir for requeues; new experiments need new directories.
-Restore training checkpoints separately. Direct SDK writes remain caller-owned.
-Resume retains config/name/notes and warns on caller-config differences.
-Legacy missing name/notes fields warn; supply their original values.
-A ready marker records completed metadata before SDK init.
-Both corrupt or lost ready snapshots refuse before init, retaining original
-bytes. Operator recovery: restore known-good wandb_config.json or use a new
-output_dir/id. Legacy directories without marker and snapshots use caller
-config; restore snapshots before resume or use a new output_dir/id.
-Option-shaped values before -- follow the flag rule; omit them or put
-positionals after -- if the caller supports it.
+Reuse output_dir for requeues; restore training checkpoints separately.
+Resume retains config/name/notes; mismatches/missing labels warn. SDK writes
+are caller-owned. Ready marker precedes init.
+Corrupt or lost ready snapshots refuse before init, preserving original bytes.
+Recovery: restore known-good wandb_config.json or start a new output_dir/id.
+Legacy directories without marker/snapshots use caller config; restore first
+or start anew. Option-shaped values before -- follow the flag rule; omit them
+or use a supported -- terminator.
 
 ## Supported envelope and accepted limits
 
@@ -67,19 +62,23 @@ secretaccesskey awssecretaccesskey accesstoken refreshtoken authtoken bearertoke
 sessiontoken hftoken githubtoken privatekey encryptionkey credentials
 ```
 
-Orchestrator amendment, 2026-11-10: dataclass instances (fields, no deep copy),
-argparse.Namespace and SimpleNamespace become mappings recursively before
-key removal. Other object types keep their existing serialization.
+Orchestrator amendment, 2026-11-10: dataclasses (fields, no deepcopy),
+argparse.Namespace and SimpleNamespace recurse as mappings; others serialize unchanged.
 
-Caller secret_keys adds normalized names. Remove matching entries at every depth
-in config/base_config before deriving names/notes or writing metadata.
-Record dotted paths in provenance.redacted_keys. Other keys/values/SDK args
-stay unchanged, including token/max_tokens/pad_token/tokenizer.
-Metrics/log payloads/summaries/tags/verdicts are untouched.
+secret_keys adds normalized names. Remove entries recursively in config/base_config
+before deriving labels or metadata; record paths in provenance.redacted_keys.
+Other keys/values/SDK args and metrics/logs/summaries/tags/verdicts stay unchanged.
 git_remote drops userinfo/query/fragment; unparseable remotes become null.
-The option-shaped-value and missing-marker limits above still apply.
 
-Orchestrator amendment, 2026-11-10: secret_keys protects from the launch where
-a key is first declared. A key declared only on resume is pruned from then on,
-with one warning naming its path and earlier exposure. Original labels stay.
-Recovery: start a new output_dir with complete secret_keys from first launch.
+Orchestrator amendment, 2026-11-10: protection starts when declared. Newly secret
+resume keys are pruned with one path/earlier-exposure warning; labels stay.
+Recovery: new output_dir with complete secret_keys.
+
+Owner amendment, 2026-11-11: keys become text on launch/resume: Enum string
+value or name, otherwise str(key). Recurse through every Mapping, list, tuple,
+deque, set, frozenset and converted record. Deques/sets become lists; sets sort
+if mutually orderable, otherwise keep iteration order.
+Every metric binds to trainer/step (or the explicitly configured axis).
+config_deltas equality requires identical types and equal values.
+run_name never exceeds integer max_len>=1; cut when shortening cannot fit.
+max_len<1 raises ValueError.
