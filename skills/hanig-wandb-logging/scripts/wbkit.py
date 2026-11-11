@@ -36,6 +36,7 @@ def _pkg(name):
   return _md.version(name)
  except _md.PackageNotFoundError:return None
 def _record(o):
+ """Treat structured config as mappings without deep-copying values."""
  if dataclasses.is_dataclass(o)and not isinstance(o,type):return{f.name:getattr(o,f.name)for f in dataclasses.fields(o)}
  if isinstance(o,(argparse.Namespace,types.SimpleNamespace)):return vars(o)
  if isinstance(o,tuple)and hasattr(o,'_asdict'):return o._asdict()
