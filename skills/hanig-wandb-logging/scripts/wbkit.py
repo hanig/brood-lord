@@ -6,7 +6,7 @@ import hashlib,datetime as _dt,importlib.metadata as _md,math,os,json,re,socket,
 from pathlib import Path
 from collections.abc import Mapping
 from collections import deque
-from typing import Any, Iterable
+from typing import Iterable
 from urllib.parse import urlsplit, urlunsplit
 __all__='JOB_TYPES VERDICTS provenance config_deltas run_name start_run define_metrics log_step finish lint_run'.split()
 JOB_TYPES=('preprocess','train','finetune','eval','predict','sweep-trial','debug')
@@ -193,8 +193,6 @@ def _load(p,secret_keys=()):
  except (ValueError,UnicodeError):
   pass
  data=p.read_bytes()
- # Malformed JSON cannot be pruned structurally. With launch-specific keys,
- # retain a recovery notice rather than copying potentially secret bytes.
  try:
   archive=json.dumps(_norm(json.loads(data),secret_keys)).encode()
  except (ValueError,UnicodeError):
@@ -260,11 +258,7 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   saved=_load(sf,secret_keys)
   backup=_load(bf,secret_keys)
   if isinstance(saved.get("config"),Mapping) and isinstance(backup.get("config"),Mapping):
-   def comparable(rec):
-    c=dict(rec["config"])
-    if "provenance" in c:c["provenance"]=_migrate_command(c["provenance"],prov["command"])
-    return json.dumps(c,sort_keys=True)
-   if saved.get("id")!=backup.get("id") or comparable(saved)!=comparable(backup):raise ValueError("recover disagreeing snapshots; backup retained")
+   if saved.get("id")!=backup.get("id") or json.dumps(saved['config'],sort_keys=True)!=json.dumps(backup['config'],sort_keys=True):raise ValueError("recover disagreeing snapshots; backup retained")
   if not isinstance(saved.get('config'),Mapping):
    saved=backup
    if(sf.exists()or bf.exists()or(out/'wandb_config.ready').exists())and not isinstance(saved.get('config'),Mapping):raise ValueError('recover wandb_config.json')
@@ -295,7 +289,6 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
    warnings.warn('resume.new-secret: '+', '.join(sorted(newly_removed))+'; first launch already sent its value; start a new output_dir with complete secret_keys from the first launch')
   cfg['provenance']=prior.get('provenance',p0)
   old={k:v for k,v in cfg.items()if k!='provenance'}
-  current={k:v for k,v in _norm({**(config or {}),'family':family}).items()if k!='provenance'}
   previous_signature=_norm(saved.get('config_types',_config_signature(old,secret_keys)),secret_keys)
   if config_given and (caller_signature!=previous_signature or family!=cfg.get('family')):warnings.warn('resume.config-mismatch: saved logging config retained; restore caller training config separately')
  if isinstance(cfg.get('provenance'),Mapping):
@@ -323,7 +316,7 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
  for t in tag_list:
   if len(t)>64:warnings.warn('tag.long: recommend <=64 chars')
  if output_dir is not None:
-  rec=json.dumps({'id':rid,'config':cfg,'resume_count':rc,'name':name,'notes':notes,'config_types':_norm(saved.get('config_types',caller_signature),secret_keys) if again else caller_signature})+'\n'
+  rec=json.dumps({'id':rid,'config':cfg,'resume_count':rc,'name':name,'notes':notes,'config_types':_norm(saved.get('config_types',_config_signature(cfg,secret_keys)),secret_keys) if again else caller_signature})+'\n'
   _atomic(out/'wandb_config.json',rec)
   _atomic(out/'wandb_config.backup.json',rec)
   _atomic(out/'wandb_config.ready',rid+'\n')
@@ -513,7 +506,7 @@ def log_dataset(
     aliases: Iterable[str] = (),
     type = "dataset",
 ):
-    """Log a dataset/card; above 2 GiB default to references requiring a shared mount."""
+    """Log a dataset and card; default to references above 2 GiB."""
     if getattr(run, "disabled", False):
         return None
     _check_artifact_name(name)
@@ -546,7 +539,7 @@ def log_model(
     reference = None,
     aliases: Iterable[str] = (),
 ):
-    """Log checkpoint metadata/card with step-N/best aliases in one run collection."""
+    """Log checkpoint metadata/card with step-N/best aliases."""
     if getattr(run, "disabled", False):
         return None
     if not name:
@@ -588,7 +581,7 @@ def log_model(
 
 
 def lint_artifact(*, name, type, description, metadata):
-    """Rules for one artifact collection, judged on its newest version."""
+    """Lint an artifact collection."""
     if type.startswith("wandb-") or type in ("run_table", "job"):
         return []
     issues = []
