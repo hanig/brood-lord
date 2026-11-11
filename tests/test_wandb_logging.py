@@ -394,6 +394,7 @@ class CommandProvenance(Checks):
      obj=json.loads(f.read_text());obj[CFG][PR]['command']=command
      if source=='backup':(p/CF).unlink()
     f.write_text(json.dumps(obj))
+    if source=='primary':(p/BF).write_text(json.dumps(obj))
     with s.warns(UserWarning,'legacy-command'):
      b=start(output_dir=d,config=recipe({'lr':9}))
     s.eq(a.id,b.id);s.eq(b.config[TR],a.config[TR])
@@ -488,6 +489,7 @@ class KnownValueSanitizer(Checks):
     prov=v if source==PF else v[CFG][PR]
     prov['command']['argv_sha256']='old-digest'
     p.write_text(json.dumps(v))
+    if source==CF:(Path(d)/BF).write_text(json.dumps(v))
     if source.endswith('backup.json'):(Path(d)/CF).unlink()
     with s.warns(UserWarning,'legacy-command'):b=start(rank=0,output_dir=d)
     s.eq(a.id,b.id);s.lacks('argv_sha256',repr(b.config))
@@ -566,6 +568,7 @@ class ExactRedaction(Checks):
      p=Path(d)/source;v=json.loads(p.read_text())
      prov=v if source==PF else v[CFG][PR]
      prov['git_remote']=raw;p.write_text(json.dumps(v))
+     if source==CF:(Path(d)/BF).write_text(json.dumps(v))
      if source.endswith('backup.json'):(Path(d)/CF).unlink()
      r=start(rank=0,output_dir=d)
     s.eq(r.config[PR]['git_remote'],want)
@@ -777,6 +780,14 @@ class PartTwo(Checks):
     s.eq(mismatch,a is not b)
     s.eq(r.config[TR]['values'],[1,2])
  def test_mixed_set_resume(s):
+  class OrderedSet(set):
+   def __init__(self,reverse):super().__init__((1,'a'));self.reverse=reverse
+   def __iter__(self):return iter(sorted(super().__iter__(),key=str,reverse=self.reverse))
+  with TD()as d:
+   start(config=recipe({'values':OrderedSet(False)}),output_dir=d)
+   with warnings.catch_warnings(record=True)as ws:
+    warnings.simplefilter('always');start(config=recipe({'values':OrderedSet(True)}),output_dir=d)
+   s.no(any('resume.config-mismatch' in str(w.message)for w in ws))
   with TD()as d:
    start(config=recipe({'values':{1,'a'}}),output_dir=d)
    with warnings.catch_warnings(record=True)as ws:
