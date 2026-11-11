@@ -1,14 +1,4 @@
-"""Exhaustive, no randomness:
-6 keys x3 shapes; 4 records x3 wrappers; ranks 2x2 (+2 count settings).
-5 prefixes x2 names; 8 token fields/3 credentials; 3 verbatim strings;
-5 interrupted writes and 1 archive interruption/repair.
-R2: 3 secretory fields/3 credentials; 2 names;
-4^3 rank envs; 7 summary ops at lengths 1/2 plus None/empty/uppercase (59),
-2 invalid ops.
-R3: 6 keys x3 wrappers; URLs 2 schemes x4 passwords x3 suffixes x3 wrappers;
-10 tokenizer prefixes x2 separators x2 cases; 3x3 snapshots minus both absent;
-3 nonfinite floats. Continuation bounds appear in their test methods.
-"""
+"""Exhaustive finite cases; bounds recorded in evidence.md and local comments."""
 from pathlib import Path
 import argparse,hashlib,collections,importlib,importlib.util,itertools,dataclasses
 from enum import Enum
