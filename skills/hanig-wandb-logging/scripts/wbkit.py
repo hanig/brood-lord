@@ -12,8 +12,8 @@ METRIC_NAMESPACES=('train','val','eval','test','opt','perf','data','trainer')
 STEP_METRIC='trainer/step'
 _SL=re.compile('^[a-z0-9][a-z0-9-]{0,62}$')
 _RN=re.compile('^[a-z]+-[a-z]+-\\d+$')
-_PUBLIC_TOKEN=('pad','eos','bos','cls','sep','unk','mask','sos','decoder_start','special')
-_SEC=re.compile(r'(api[_-]?key|'+''.join(r'(?<!'+p+r'[_-])'for p in _PUBLIC_TOKEN)+r'token(?=\.|$|[_-](?:value|secret|key|credential)(?:[._-]|$))|private[_-]?key|secret[_-]?(?:access[_-]?)?key|secret(?![a-z])|authorization|passw(or)?d|credential)',re.I)
+_PUBLIC_TOKEN=('pad','eos','bos','cls','sep','unk','mask','sos','decoder_start','special','stop','end','image','max')
+_SEC=re.compile(r'(api[ _-]?key|'+''.join(r'(?<!'+p+r'[_-])'for p in _PUBLIC_TOKEN)+r'(?<!/)token(?=\.|$|[_-](?:value|secret|key|credential)(?:[._-]|$))|private[ _-]?key|secret[ _-]?(?:access[ _-]?)?key|secret(?![a-z])|authorization|passw(or)?d|credential)',re.I)
 _AB=dict(zip('learning_rate lr weight_decay batch_size global_batch_size dropout num_layers n_layers hidden_dim d_model num_heads warmup_steps max_steps epochs max_epochs seed temperature mask_ratio grad_clip'.split(),'lr lr wd bs gbs do L L d d h wu steps ep ep s T mask clip'.split()))
 _MS={}
 def _metrics(run):
@@ -41,8 +41,11 @@ def _redact(o):
  if isinstance(o,Mapping):return{_redact(k):'***' if _SEC.search(str(k))else _redact(v)for k,v in o.items()}
  if isinstance(o,(list,tuple)):return[_redact(v)for v in o]
  if isinstance(o,str):
+  o=re.sub(r'-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----.*?-----END \1-----','***',o,flags=re.S)
   dec=json.JSONDecoder()
-  lab=re.compile(r"[\"']?[\w./-]+[\"']?[^\S\r\n]*[:=][^\S\r\n]*")
+  uri_pattern=re.compile(r'''[a-zA-Z][\w+.-]*://[^\s/?#<>"']+''')
+  word_pattern=re.compile(r'[\w./-]+')
+  lab=re.compile(r"[\"']?(?:api[ \t]+key|private[ \t]+key|secret[ \t]+(?:access[ \t]+)?key|[\w./-]+)[\"']?[^\S\r\n]*[:=][^\S\r\n]*",re.I)
   out,j=[],0
   while j<len(o):
    if o[j]in '{["':
@@ -54,19 +57,25 @@ def _redact(o):
       j+=n
       continue
     except(ValueError,RecursionError):pass
-   uri=re.match(r'''[a-zA-Z][\w+.-]*://[^\s/?#<>"']+''',o[j:])
+   uri=uri_pattern.match(o,j)
    if uri:
     scheme,authority=uri.group().split('://',1)
-    out.append(scheme+'://'+authority.rsplit('@',1)[-1]);j+=uri.end()
+    out.append(scheme+'://'+authority.rsplit('@',1)[-1]);j=uri.end()
     continue
    m=lab.match(o,j)
    if m and _SEC.search(re.split(r'\s*[:=]',m.group())[0].strip('"\'')):
-    e=m.end();v=re.match(r'[^\r\n]+',o[e:]);e+=v.end()if v else 0
+    e=m.end()
+    if e<len(o)and o[e]in '\r\n':
+     n=re.match(r'\r\n|[\r\n]',o[e:]).end()+e
+     if n<len(o)and not re.match(r'(?:H:|Expect:|Deltas vs base:|Outcome \()',o[n:]):e=n
+    v=re.match(r'[^\r\n]+',o[e:]);e+=v.end()if v else 0
     out.append(o[j:m.end()]+'***');j=e
    elif m:
     out.append(m.group());j=m.end()
    else:
-    out.append(o[j]);j+=1
+    word=word_pattern.match(o,j)
+    if word:out.append(word.group());j=word.end()
+    else:out.append(o[j]);j+=1
   return ''.join(out)
  return o
 def _redact_argv(argv):
@@ -93,7 +102,7 @@ def _redact_argv(argv):
   'program':os.path.basename(argv[0])if argv else '',
   'flags':flags,
   'positional_count':positional_count,
-  'argv_sha256':hashlib.sha256('\0'.join(argv).encode('utf-8')).hexdigest(),
+  'argv_sha256':hashlib.sha256('\0'.join(argv).encode('utf-8','surrogateescape')).hexdigest(),
  }
 def _migrate_command(prov,current):
  if isinstance(prov,Mapping)and isinstance(prov.get('command'),str):
@@ -219,7 +228,11 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
  else:
   p0=prov
  cfg=_redact({**config,'family':family,'provenance':p0})
- if again and isinstance(saved.get('config'),Mapping):cfg=_redact(saved['config'])
+ if again and isinstance(saved.get('config'),Mapping):
+  cfg=_redact(saved['config'])
+  old={k:v for k,v in cfg.items()if k!='provenance'}
+  current={k:v for k,v in _norm({**config,'family':family}).items()if k!='provenance'}
+  if current!=old:warnings.warn('resume.config-mismatch: saved logging config retained; restore caller training config separately')
  if isinstance(cfg.get('provenance'),Mapping):
   cfg['provenance']=_migrate_command(cfg['provenance'],prov['command'])
  cfg=_norm(cfg)
