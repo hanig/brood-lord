@@ -72,3 +72,8 @@ stay unchanged, including token/max_tokens/pad_token/tokenizer.
 Metrics/log payloads/summaries/tags/verdicts are untouched.
 git_remote drops userinfo/query/fragment; unparseable remotes become null.
 The option-shaped-value and missing-marker limits above still apply.
+
+Orchestrator amendment, 2026-11-10: secret_keys protects from the launch where
+a key is first declared. A key declared only on resume is pruned from then on,
+with one warning naming its path and earlier exposure. Original labels stay.
+Recovery: start a new output_dir with complete secret_keys from first launch.
