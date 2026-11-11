@@ -768,7 +768,7 @@ class PartTwo(Checks):
   s.eq(messages,['config.key-collision: train.1','config.key-collision: train.2'])
   s.eq(r.config[TR],{'1':'kept','2':'new'})
  def test_container_types(s):
-  # Exhaustive: four container types x four types, then resume each pair.
+  # Exhaustive 4 x 4 container pairs.
   for a,b in itertools.product((list,tuple,set,frozenset),repeat=2):
    x,y=recipe({'values':a([1,2])}),recipe({'values':b([1,2])})
    with s.subTest(a=a,b=b),TD()as d:
@@ -794,7 +794,6 @@ class PartTwo(Checks):
     warnings.simplefilter('always');start(config=recipe({'values':{'a',1}}),output_dir=d)
    s.no(any('resume.config-mismatch' in str(w.message)for w in ws))
  def test_snapshot_disagreement(s):
-  # Exhaustive two disagreement fields, primary and backup remain byte exact.
   for field in ('id','config'):
    with TD()as d:
     start(output_dir=d);p=Path(d);obj=json.loads((p/CF).read_text())
@@ -804,7 +803,6 @@ class PartTwo(Checks):
     with s.raises(ValueError,'disagree'):start(sdk,output_dir=d)
     s.no(hasattr(sdk,'run'));s.eq([(p/f).read_bytes()for f in (CF,BF)],before)
  def test_archive_secret(s):
-  # Exhaustive valid-but-invalid snapshot and truncated JSON; custom/default key.
   for key,raw in itertools.product(('custom_key','password'),('list','truncated')):
    with TD()as d:
     start(config=recipe({key:S}),output_dir=d);p=Path(d)
@@ -822,7 +820,7 @@ class PartTwo(Checks):
     warnings.simplefilter('always');b=start(output_dir=d,config=None)
    s.eq(b.config,a.config);s.no(any('config-mismatch' in str(w.message)for w in ws))
  def test_builders(s):
-  # Exhaustive 5 kinds x 9 token shapes x 2 suffixes, includes date-shaped ids.
+  # Exhaustive 5 kinds x 9 tokens x 2 suffixes.
   for kind,token,suffix in itertools.product(wbkit.ARTIFACT_TYPES,('20261109','v2','final','latest','best','cells','with spaces','A'*200,''),('val','20261110')):
    name=wbkit.artifact_name(kind,token,suffix)
    wbkit._check_artifact_name(name)
@@ -851,11 +849,38 @@ class PartTwo(Checks):
    r=start(ArtifactSDK(),output_dir=d)
    wbkit.use_input(r,'team/project/cells:v3')
    s.has('team/project/cells:v3',wbkit.artifact_card(summary='Cells',contents='x',intended_use='x',run=r))
-   # A fresh interpreter cannot inherit any in-memory registry.
    cmd=[sys.executable,'-B','-c',"from tests.test_wandb_logging import *; r=start(ArtifactSDK(),output_dir=sys.argv[1]); print(wbkit.artifact_card(summary='x',contents='x',intended_use='x',run=r))",d]
    child=subprocess.run(cmd,capture_output=True,text=True,timeout=20)
    s.eq(child.returncode,0,child.stderr);s.has('team/project/cells:v3',child.stdout)
    s.eq(json.loads((Path(d)/'wandb_inputs.json').read_text())['id'],r.id)
+ def test_root_records(s):
+  @dataclasses.dataclass
+  class Root:
+   arch:dict
+   train:dict
+   data:dict
+  for cls in (argparse.Namespace,types.SimpleNamespace,Root):
+   with TD()as d:
+    c=cls(**recipe({'width':8}))
+    a=start(config=c,base_config=cls(**recipe({'width':4})),output_dir=d)
+    b=start(config=c,output_dir=d)
+    s.eq(a.config,b.config);s.eq(a.config[TR]['width'],8)
+ def test_escaped_archive(s):
+  for raw in ('{"\\u0070assword":"CANARY_VALUE",','{"password":"\\u0043ANARY_VALUE",'):
+   with TD()as d:
+    start(output_dir=d);p=Path(d);(p/CF).write_text(raw)
+    start(output_dir=d)
+    for f in p.glob('*.corrupt-*'):
+     s.lacks('CANARY_VALUE',f.read_text());s.lacks('ANARY_VALUE',f.read_text())
+ def test_review_edges(s):
+  with s.warns(UserWarning,'key-collision'):
+   wbkit.config_deltas(recipe({1:'changed','1':'same'}),recipe({'1':'same'}))
+  for name,rule in (('cells-2026-11-09','versioned-name'),('Cells','invalid-name')):
+   s.yes(any(rule in x for x in wbkit.lint_artifact(name=name,type='dataset',description='Produced by Contents Intended use '*3,metadata={'x':1})))
+  with TD()as d:
+   start(output_dir=d);Path(d,'wandb_inputs.json').write_text('{"id":"other","inputs":[]}');sdk=FakeWandb()
+   with s.raises(ValueError,'lineage'):start(sdk,output_dir=d)
+   s.no(hasattr(sdk,'run'))
 class FakeArtifact:
  def __init__(s,name,type):s.name=name;s.type=type;s.metadata={};s.description='';s.sources=[]
  def add_file(s,path):s.sources.append(('file',path))
