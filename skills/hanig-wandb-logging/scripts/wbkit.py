@@ -70,26 +70,27 @@ def _redact(o):
   return ''.join(out)
  return o
 def _redact_argv(argv):
- out,hide=[],False
- for tok in argv:
-  if hide and not re.match(r'-+[A-Za-z]',tok):
-   out.append(next(iter(_redact({hide:tok}).values())))
-   continue
-  hide=False
-  if tok.startswith('-')and '=' in tok:
-   q,v=tok.split('=',1)
-   q,v=next(iter(_redact({q:v}).items()))
-   out.append(q+'='+v)
-   if _SEC.search(q):hide=q
-  elif re.fullmatch(r'-[^-][\w-]+',tok)and _SEC.search(tok):
-   out.append(next(iter(_redact({tok:tok}).values())))
-   hide=tok
-  elif re.fullmatch(r'-+[\w-]+',tok)and _SEC.search(tok):
-   out.append(_redact(tok))
-   hide=tok
+ """Record command identity and option names, never argument values.
+
+ Tokens after argv[0] are classified independently, including after --.
+ Short options retain only their first two characters, so attached values
+ and bundled options have the same bounded representation.
+ """
+ flags=[]
+ positional_count=0
+ for token in argv[1:]:
+  if token.startswith('--'):
+   flags.append(token.split('=',1)[0])
+  elif token.startswith('-'):
+   flags.append(token[:2])
   else:
-   out.append(_redact(tok))
- return ' '.join(out)
+   positional_count+=1
+ return {
+  'program':os.path.basename(argv[0])if argv else '',
+  'flags':flags,
+  'positional_count':positional_count,
+  'argv_sha256':hashlib.sha256('\0'.join(argv).encode('utf-8')).hexdigest(),
+ }
 def _now():return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec='seconds')
 def provenance(wandb,cwd=None):
  sha=_git('rev-parse','HEAD',cwd=cwd)
