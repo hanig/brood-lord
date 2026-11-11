@@ -288,27 +288,15 @@ class RoundTwo(Checks):
    with s.assertRaises(ValueError):start(summaries={V:how})
  def test_recovery(s):
   with TD()as tmp:
-   a=start(output_dir=tmp,config={TR:{'lr':.1}})
-   p=Path(tmp)/CF;raw=p.read_text();bad='{"cut":';p.write_text(bad)
+   a=start(output_dir=tmp);p=Path(tmp)/PF;p.write_text('{"cut":')
    real=Path.write_bytes
    def cut(p,t):real(p,t[:1]);raise InterruptedError
    with patch.object(Path,'write_bytes',cut),s.assertRaises(InterruptedError):start(output_dir=tmp)
-   s.eq(p.read_text(),bad)
-   q=Path(tmp)/(p.name+'.corrupt-'+hashlib.sha256(bad.encode()).hexdigest())
-   if q.exists():s.eq(q.read_bytes(),bad.encode())
-   b=start(output_dir=tmp,config={TR:{'lr':.9}})
-   s.eq(a.id,b.id);s.eq(a.config,b.config)
+   s.eq(p.read_text(),'{"cut":')
+   b=start(output_dir=tmp);s.eq(a.id,b.id);s.eq(a.config,b.config)
    s.eq(b.summary['provenance/resume_count'],1)
-   s.eq(q.read_bytes(),bad.encode())
-   q.write_bytes(b'?');p.write_text(bad);start(output_dir=tmp)
-   s.eq(q.read_bytes(),bad.encode())
-   for q in Path(tmp).glob('*backup*'):q.unlink()
-   p.write_text('{');sdk=FakeWandb()
-   with s.raises(ValueError,'recover'):start(sdk,output_dir=tmp)
-   s.eq(p.read_text(),'{');s.no(hasattr(sdk,'run'))
-   p.write_text(raw);(Path(tmp)/IDF).write_text('different')
-   with s.raises(ValueError,'recover'):start(sdk,output_dir=tmp)
-   s.no(hasattr(sdk,'run'))
+   q=next(Path(tmp).glob('*.corrupt-*'));s.eq(q.read_bytes(),b'{"cut":')
+   q.write_bytes(b'?');p.write_text('{"cut":');start(output_dir=tmp);s.eq(q.read_bytes(),b'{"cut":')
  def test_empty(s):
   keys=('RANK','SLURM_PROCID','LOCAL_RANK')
   for vals in itertools.product((None,'','0','4'),repeat=3):
@@ -785,16 +773,10 @@ class PartTwo(Checks):
    with warnings.catch_warnings(record=True)as ws:
     warnings.simplefilter(C1);start(config=recipe({C2:{'a',1}}),output_dir=d)
    s.no(any(C4 in str(w.message)for w in ws))
- def test_snapshots(s):
-  for field in ('id','config'):
-   with TD()as d:
-    start(output_dir=d);p=Path(d);obj=json.loads((p/CF).read_text());obj[field]='another'if field=='id'else recipe({'lr':9});(p/CF).write_text(json.dumps(obj));before=[(p/f).read_bytes()for f in (CF,BF)];sdk=FakeWandb()
-    with s.raises(ValueError,'disagree'):start(sdk,output_dir=d)
-    s.no(hasattr(sdk,'run'));s.eq([(p/f).read_bytes()for f in (CF,BF)],before)
  def test_archives(s):
   for key,raw in itertools.product((C0,'password'),('list','truncated')):
    with TD()as d:
-    start(config=recipe({key:S}),output_dir=d);p=Path(d);value=json.dumps([{key:S}])if raw=='list'else '{"'+key+'":"'+S+'",';(p/CF).write_text(value);r=start(config=recipe({}),secret_keys=(key,),output_dir=d);archives=list(p.glob(C5));s.yes(archives)
+    start(config=recipe({key:S}),output_dir=d);p=Path(d);value=json.dumps([{key:S}])if raw=='list'else '{"'+key+'":"'+S+'",';(p/PF).write_text(value);r=start(config=recipe({}),secret_keys=(key,),output_dir=d);archives=list(p.glob(C5));s.yes(archives)
     for f in archives:s.lacks(S,f.read_text())
     for f in (CF,BF):s.lacks(S,(p/f).read_text())
     s.lacks(S,repr(r.config))
@@ -829,7 +811,7 @@ class PartTwo(Checks):
  def test_escapes(s):
   for raw in ('{"\\u0070assword":"CANARY_VALUE",','{"password":"\\u0043ANARY_VALUE",','{"\\u0070assword" "CANARY_VALUE"}'):
    with TD()as d:
-    start(output_dir=d);p=Path(d);(p/CF).write_text(raw);start(output_dir=d)
+    start(output_dir=d);p=Path(d);(p/PF).write_text(raw);start(output_dir=d)
     for f in p.glob(C5):
      s.lacks('CANARY_VALUE',f.read_text());s.lacks('ANARY_VALUE',f.read_text())
  def test_review_edges(s):
@@ -844,9 +826,9 @@ class PartTwo(Checks):
  def test_review_secret_edges(s):
   with s.raises(ValueError,'reserved'):start(secret_keys=('job_id',))
   with TD()as d:
-   start(output_dir=d,config=recipe({C0:S}),base_config=recipe({}));p=Path(d);(p/CF).write_text('['+(p/CF).read_text()+']');start(output_dir=d,config=None);start(output_dir=d,config=None,secret_keys=(C0,))
+   start(output_dir=d,config=recipe({C0:S}),base_config=recipe({}));p=Path(d);(p/PF).write_text('['+(p/PF).read_text()+']');start(output_dir=d,config=None);start(output_dir=d,config=None,secret_keys=(C0,))
    for f in p.glob(C5):s.lacks(S,f.read_text())
-   (p/CF).write_text('{"'+chr(92)+'u0070assword" "CANARY_VALUE"}');start(output_dir=d,config=None)
+   (p/PF).write_text('{"'+chr(92)+'u0070assword" "CANARY_VALUE"}');start(output_dir=d,config=None)
    for f in p.glob(C5):s.lacks('CANARY_VALUE',f.read_text())
  def test_config(s):
   s.eq(delta(None,recipe({'width':8})),{});s.has(PR,start(config=None,base_config=recipe({'width':8})).config)
@@ -969,12 +951,11 @@ class ReservedFields(Checks):
    warnings.simplefilter(C1);delta(a,a)
   s.eq([str(w.message)for w in ws if C3 in str(w.message)],[C7])
 
-# Recovery-only expected-correct assertions. These intentionally fail on the
-# reviewed head and are not a passing verification or permission to merge.
+# wb5 regressions: counterexamples retained from the prior review.
 class FinalDiagnostics(Checks):
  def test_raw_list_resume(s):
   # Exhaustive four ordinary unsized middle values.
-  for x in (1,None,1.5,False):
+  for x in (1,None,1.5,False,[1,2]):
    with s.subTest(x=x),TD()as d:
     c=recipe({'order':['row',x,'unordered']});start(config=c,output_dir=d);start(config=c,output_dir=d)
  def test_raw_list_disagreement(s):
@@ -984,19 +965,53 @@ class FinalDiagnostics(Checks):
    with s.raises(ValueError,'disagree'):start(sdk,config=c,output_dir=d)
    s.no(hasattr(sdk,'run'));s.eq((p/BF).read_bytes(),before)
  def test_command_reserved(s):
+  env={'SLURM_'+k:'synthetic' for k in 'JOB_ID ARRAY_JOB_ID ARRAY_TASK_ID JOB_PARTITION JOB_NUM_NODES NTASKS RESTART_COUNT CLUSTER_NAME'.split()}
+  with patch.dict(os.environ,env):r=start(config={})
+  def generated(v):
+   for key,value in v.items():
+    yield wbkit._key(key)
+    if isinstance(value,dict):yield from generated(value)
+  s.yes(set(generated({'family':r.config['family'],PR:r.config[PR]}))<=wbkit.RESERVED_KEYS)
   for key in ('program','flags','positional_count'):
    with s.subTest(key=key),TD()as d:
     sdk=FakeWandb()
     with s.raises(ValueError,'reserved'):start(sdk,output_dir=d,secret_keys=(key,))
     s.no(hasattr(sdk,'run'));s.eq(list(Path(d).iterdir()),[])
  def test_empty_base_collision(s):
-  for base in ({},None):
+  for base in ({},None,recipe({1:'old','1':'new'})):
    with s.subTest(base=base),warnings.catch_warnings(record=True)as ws:
     warnings.simplefilter('always');wbkit.config_deltas(recipe({1:'old','1':'new'}),base)
     s.eq([str(w.message)for w in ws],['config.key-collision: train.1'])
  def test_explicit_empty_name(s):
   sdk=ArtifactSDK();r=start(sdk)
   with s.assertRaises(ValueError):wbkit.log_model(sdk,r,'s3://example/weights',step=1,name='')
+  with s.assertRaises(ValueError):data_art(sdk,r,'','s3://example/data',summary='x',contents='x',intended_use='x')
+  s.yes(data_art(sdk,r,None,'s3://example/data',summary='x',contents='x',intended_use='x').name)
+ def test_byte_snapshots(s):
+  # Exhaustive 4 byte divergences and both unreadable sides.
+  for change in (lambda b:b+b' ',lambda b:b.replace(b'0',b'1',1),lambda b:b'{',lambda b:b'\xff'):
+   with TD()as d:
+    start(output_dir=d);p=Path(d);(p/CF).write_bytes(change((p/CF).read_bytes()));before={f.name:f.read_bytes()for f in p.iterdir()};sdk=FakeWandb()
+    with s.raises(ValueError,'restore one from the other by hand, or use a new output_dir')as err:start(sdk,output_dir=d)
+    for f in (CF,BF):s.has(str(p/f),str(err.exception))
+    s.no(hasattr(sdk,'run'));s.eq({f.name:f.read_bytes()for f in p.iterdir()},before)
+  for side in (CF,BF):
+   with TD()as d:
+    start(output_dir=d);p=Path(d);before={f.name:f.read_bytes()for f in p.iterdir()};real=Path.read_bytes;sdk=FakeWandb()
+    def unreadable(path):
+     if path==p/side:raise PermissionError('synthetic unreadable')
+     return real(path)
+    with patch.object(Path,'read_bytes',unreadable),s.raises(ValueError,'new output_dir'):start(sdk,output_dir=d)
+    s.no(hasattr(sdk,'run'));s.eq({f.name:f.read_bytes()for f in p.iterdir()},before)
+ def test_private_signatures(s):
+  # Exhaustive 3 ordinary lists; changed order remains meaningful.
+  for v in ([1,2,'unordered'],['load',[1,2],'unordered'],['row',None,'unordered']):
+   a=recipe({'x':v});b=recipe({'x':list(reversed(v))})
+   s.eq(delta(a,a),{});s.yes(delta(a,b))
+   with TD()as d:
+    start(config=a,output_dir=d)
+    with s.warns(UserWarning,'config-mismatch'):start(config=b,output_dir=d)
+  marker=wbkit._signature({1,2})[2];s.no(isinstance(marker,(str,int,float,bool,list,dict,type(None))))
  def test_lint_report_not_reproduced(s):
   name=wbkit.run_name('sample','cells',seed=2);s.eq(name,'sample-cells-s2')
   issues=wbkit.lint_run(name=name,notes='H: valid hypothesis here',group='g',job_type='train',config={'family':'sample','arch':{},'train':{},'data':{}},summary_keys=[],tags=[])

@@ -43,7 +43,9 @@ Requeues reuse output_dir; restore training separately. Config/name/notes persis
 mismatches/missing labels warn. SDK writes are caller-owned; kit state persists only after successful init.
 Pre-init refusal changes no output_dir file or resume_count.
 Corrupt/lost ready snapshots refuse before init, preserving bytes: restore
-wandb_config.json or use a new output_dir/id. Legacy directories without marker/
+both wandb_config.json and wandb_config.backup.json by hand, or use a new output_dir/id.
+Both present: bytes must match and be readable before init or any write;
+restore one from the other by hand on disagreement. One present: legacy/interrupted-write rules apply. Legacy directories without marker/
 snapshots use caller config: restore first or start anew. Omit option-shaped
 values before -- or use --.
 
@@ -73,16 +75,18 @@ Collisions warn once/path/launch; last entry stays. Metrics, including loss/pass
 Explicit names accept W&B letters/digits/-/_/., 1..128 chars; dates/versions/status warn.
 Status words match whole tokens; old-faithful-geyser never warns.
 RESERVED_KEYS is a normalized frozenset: provenance family model data seed name notes group,
-gitcommit gitdirty gitbranch gitremote command cwd host python torch wandb
+gitcommit gitdirty gitbranch gitremote command program flags positionalcount cwd host python torch wandb
 cudavisibledevices slurm startedat redactedkeys jobid arrayjobid arraytaskid
 jobpartition jobnumnodes ntasks restartcount clustername.
 secret_keys may not name these generated fields: ValueError before SDK calls/writes.
 Reserved config entries remain subject to the default secret list (no overlap).
 Explicit run_name model/data/seed/deltas are caller labels used as written,
 like free text; the helper validates secret_keys but does not redact labels.
+In-memory set signatures use a private sentinel, distinct from caller lists.
 Set signatures compare members by value, including signed zero, independent of order.
 Unknown remote card sizes say size unknown. Direct config_deltas warns once/path
-across config and base_config together.
+across config and base_config together, including empty/absent base.
+Explicit empty artifact names refuse; only None selects a generated name.
 run_name fits integer max_len>=1; <1 raises ValueError.
 
 ## Known limits

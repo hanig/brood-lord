@@ -14,7 +14,7 @@ METRIC_NAMESPACES=('train','val','eval','test','opt','perf','data','trainer')
 STEP_METRIC='trainer/step'
 _SL=re.compile('^[a-z0-9][a-z0-9-]{0,62}$')
 _RN=re.compile('^[a-z]+-[a-z]+-\\d+$')
-RESERVED_KEYS=frozenset('provenance family model data seed name notes group gitcommit gitdirty gitbranch gitremote command cwd host python torch wandb cudavisibledevices slurm startedat redactedkeys jobid arrayjobid arraytaskid jobpartition jobnumnodes ntasks restartcount clustername'.split())
+RESERVED_KEYS=frozenset('provenance family model data seed name notes group gitcommit gitdirty gitbranch gitremote command program flags positionalcount cwd host python torch wandb cudavisibledevices slurm startedat redactedkeys jobid arrayjobid arraytaskid jobpartition jobnumnodes ntasks restartcount clustername'.split())
 DEFAULT_SECRET_KEYS=frozenset('apikey wandbapikey password passwd passphrase secret secretkey clientsecret secretaccesskey awssecretaccesskey accesstoken refreshtoken authtoken bearertoken sessiontoken hftoken githubtoken privatekey encryptionkey credentials'.split())
 def _text(key):
  if isinstance(key,Enum):return key.value if isinstance(key.value,str)else key.name
@@ -138,9 +138,9 @@ def _flat(d,p=''):
 def config_deltas(config,base,secret_keys=()):
  return _deltas(config,base,_keys(secret_keys))
 def _deltas(config,base,secret_keys,cur=None,ref=None):
- if not base:return{}
  if cur is None:
-  warned=set();cur,ref=(_flat(_norm(config or {},secret_keys,warned=warned)),_flat(_norm(base,secret_keys,warned=warned)))
+  warned=set();cur,ref=(_flat(_norm(config or {},secret_keys,warned=warned)),_flat(_norm(base or {},secret_keys,warned=warned)))
+ if not base:return{}
  ct,rt=_type_leaves(config,secret_keys),_type_leaves(base,secret_keys)
  skip=('provenance.','family.')
  return{k:v for k,v in cur.items()if k not in('family','provenance')and not k.startswith(skip)and(k not in ref or not _same(ct.get(k),rt.get(k)))}
@@ -227,6 +227,17 @@ def _json(v):
    if c is not v:return c
  return str(v)
 def _norm(v,secret_keys=(),removed=None,warned=None):return json.loads(json.dumps(_redact(v,secret_keys,removed,warned),default=_json))
+class _SetMarker:pass
+_UNORDERED=_SetMarker()
+def _pack_signature(v):
+ return json.loads(json.dumps(v,default=lambda marker:None))
+def _unpack_signature(v):
+ if isinstance(v,dict):return {k:_unpack_signature(x) for k,x in v.items()}
+ if isinstance(v,list):
+  if len(v)==3 and (v[2] is None or v[2]=='unordered'):
+   return [v[0],_unpack_signature(v[1]),_UNORDERED]
+  return [_unpack_signature(x) for x in v]
+ return v
 def _signature(v,secret_keys=()):
  v=_record(v)
  if isinstance(v,Mapping):
@@ -234,7 +245,7 @@ def _signature(v,secret_keys=()):
   return {str(_text(k)):_signature(x,secret_keys) for k,x in v.items() if not _secret(k,keys)}
  if isinstance(v,(list,tuple,deque,set,frozenset)):
   parts=[_signature(x,secret_keys) for x in v]
-  if isinstance(v,(set,frozenset)):return [type(v).__name__,parts,'unordered']
+  if isinstance(v,(set,frozenset)):return [type(v).__name__,parts,_UNORDERED]
   return [type(v).__name__,parts]
  if not isinstance(v,(str,int,float,bool,type(None))):return _signature(_json(v),secret_keys)
  return [type(v).__name__,_norm(v,secret_keys)]
@@ -245,7 +256,7 @@ def _same(a,b):
  if type(a)is not type(b):return False
  if isinstance(a,dict):return a.keys()==b.keys() and all(_same(a[k],b[k])for k in a)
  if isinstance(a,list):
-  if len(a)==len(b)==3 and a[2]==b[2]=='unordered':
+  if len(a)==len(b)==3 and a[2] is b[2] is _UNORDERED:
    if a[0]!=b[0]or len(a[1])!=len(b[1]):return False
    remaining=list(b[1])
    for x in a[1]:
@@ -280,10 +291,15 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   for archive in out.glob('wandb_*.json.corrupt-*'):pending.append((archive,_archive(archive.read_bytes(),secret_keys)))
   sf=out/'wandb_config.json'
   bf=out/'wandb_config.backup.json'
+  if sf.exists() and bf.exists():
+   try:
+    primary_bytes,backup_bytes=sf.read_bytes(),bf.read_bytes()
+   except OSError as exc:
+    raise ValueError(f'recover {sf} and {bf}: restore one from the other by hand, or use a new output_dir') from exc
+   if primary_bytes!=backup_bytes:
+    raise ValueError(f'recover disagreeing snapshots {sf} and {bf}: restore one from the other by hand, or use a new output_dir')
   saved=_load(sf,secret_keys,pending)
   backup=_load(bf,secret_keys,pending)
-  if isinstance(saved.get("config"),Mapping) and isinstance(backup.get("config"),Mapping):
-   if saved.get("id")!=backup.get("id") or not _same(saved['config'],backup['config']):raise ValueError("recover disagreeing snapshots")
   if not isinstance(saved.get('config'),Mapping):
    saved=backup
    if(sf.exists()or bf.exists()or(out/'wandb_config.ready').exists())and not isinstance(saved.get('config'),Mapping):raise ValueError('recover wandb_config.json')
@@ -316,7 +332,7 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
    warnings.warn('resume.new-secret: '+', '.join(sorted(newly_removed))+'; first launch already sent its value; start a new output_dir with complete secret_keys from the first launch')
   cfg['provenance']=prior.get('provenance',p0)
   old={k:v for k,v in cfg.items()if k!='provenance'}
-  saved_sig=_norm(saved.get('config_types',_config_signature(old,secret_keys)),secret_keys)
+  saved_sig=_unpack_signature(_norm(saved['config_types'],secret_keys)) if 'config_types'in saved else _config_signature(old,secret_keys)
   if config_given and (not _same(signature,saved_sig) or ('family'in cfg and family!=cfg['family'])):warnings.warn('resume.config-mismatch: saved logging config retained; restore caller training config separately')
  if isinstance(cfg.get('provenance'),Mapping):
   cfg['provenance']=_norm(_migrate_command(cfg['provenance'],prov.get('command')),secret_keys,removed)
@@ -350,7 +366,7 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
  for t in tag_list:
   if len(t)>64:warnings.warn('tag.long: recommend <=64 chars')
  if output_dir is not None:
-  rec=json.dumps({'id':rid,'config':cfg,'resume_count':rc,'name':name,'notes':notes,'config_types':_norm(saved.get('config_types',_config_signature(cfg,secret_keys)),secret_keys) if again else signature})+'\n'
+  rec=json.dumps({'id':rid,'config':cfg,'resume_count':rc,'name':name,'notes':notes,'config_types':_norm(saved.get('config_types',_pack_signature(_config_signature(cfg,secret_keys))),secret_keys) if again else _pack_signature(signature)})+'\n'
   pending.extend(((out/'wandb_config.json',rec),(out/'wandb_config.backup.json',rec),(out/'wandb_config.ready',rid+'\n')))
  inputs,lp=[],None
  if output_dir is not None:
@@ -478,6 +494,7 @@ def _add_source(art,source,reference,checksum):
 def log_dataset(wandb,run,name,source,*,summary,contents,intended_use,caveats=None,metadata=None,reference=None,checksum=True,aliases=(),type="dataset",):
  if getattr(run,"disabled",False):
   return None
+ if name is None:name=artifact_name(type,run.id)
  _check_artifact_name(name)
  if type not in ARTIFACT_TYPES:
   raise ValueError(f"type {type!r} not in {ARTIFACT_TYPES}")
@@ -489,7 +506,7 @@ def log_dataset(wandb,run,name,source,*,summary,contents,intended_use,caveats=No
 def log_model(wandb,run,path,*,step,metrics=None,is_best=False,sanity_checkpoint=False,post_hoc=False,name=None,summary=None,intended_use="Resume training/evaluate using arch metadata.",caveats=None,reference=None,aliases=(),):
  if getattr(run,"disabled",False):
   return None
- if not name:
+ if name is None:
   name=artifact_name("model",run.id)
  _check_artifact_name(name)
  if sanity_checkpoint:
