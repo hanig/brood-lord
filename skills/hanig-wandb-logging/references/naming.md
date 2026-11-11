@@ -15,8 +15,7 @@ Outcome (supported|refuted|inconclusive|broken): caller's contract result
 Arc Bench family/arch/train/data/provenance maps to architecture.config,
 training.config/seed, training_data and run.commit/repository.
 Provenance: Git/dirty, versions, host/scheduler. <!-- declaration: logging.credentials -->
-Commands: program basename, flags, positional count; no digest. Long flags drop
-=values; short/bundled flags keep two characters. Keep lone -/--; count/omit
+Commands: program basename, flags, positional count; no digest. Long flags drop =values; short/bundled flags keep two characters. Keep lone -/--; count/omit
 post-- and negative float() tokens. Option-shaped values before -- are flags.
 Legacy command strings/digests become current metadata with a warning.
 
