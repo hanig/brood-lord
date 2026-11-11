@@ -70,11 +70,20 @@ def _redact(o):
   return ''.join(out)
  return o
 def _redact_argv(argv):
- """Per-token command metadata; never retain values. Bundles keep two chars."""
+ """Command identity; option-shaped values before -- follow the flag rule."""
  flags=[]
  positional_count=0
+ terminated=False
  for token in argv[1:]:
-  if token.startswith('--'):
+  numeric=False
+  if token.startswith('-'):
+   try:float(token);numeric=True
+   except ValueError:pass
+  if terminated or numeric:
+   positional_count+=1
+  elif token=='--':
+   flags.append(token);terminated=True
+  elif token.startswith('--'):
    flags.append(token.split('=',1)[0])
   elif token.startswith('-'):
    flags.append(token[:2])
