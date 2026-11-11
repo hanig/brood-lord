@@ -4,7 +4,8 @@ import argparse,dataclasses
 from enum import Enum
 import hashlib,datetime as _dt,importlib.metadata as _md,math,os,json,re,socket,subprocess,sys,types,warnings,weakref
 from pathlib import Path
-from typing import Mapping
+from collections.abc import Mapping
+from collections import deque
 from urllib.parse import urlsplit, urlunsplit
 __all__='JOB_TYPES VERDICTS provenance config_deltas run_name start_run define_metrics log_step finish lint_run'.split()
 JOB_TYPES=('preprocess','train','finetune','eval','predict','sweep-trial','debug')
@@ -14,7 +15,10 @@ STEP_METRIC='trainer/step'
 _SL=re.compile('^[a-z0-9][a-z0-9-]{0,62}$')
 _RN=re.compile('^[a-z]+-[a-z]+-\\d+$')
 DEFAULT_SECRET_KEYS=frozenset('apikey wandbapikey password passwd passphrase secret secretkey clientsecret secretaccesskey awssecretaccesskey accesstoken refreshtoken authtoken bearertoken sessiontoken hftoken githubtoken privatekey encryptionkey credentials'.split())
-def _key(key):return str(key).lower().translate(str.maketrans('', '', '_-. '))
+def _text(key):
+ if isinstance(key,Enum):return key.value if isinstance(key.value,str)else key.name
+ return key if isinstance(key,str)else str(key)
+def _key(key):return _text(key).lower().translate(str.maketrans('', '', '_-. '))
 def _secret(key,keys):return _key(key) in keys
 _AB=dict(zip('learning_rate lr weight_decay batch_size global_batch_size dropout num_layers n_layers hidden_dim d_model num_heads warmup_steps max_steps epochs max_epochs seed temperature mask_ratio grad_clip'.split(),'lr lr wd bs gbs do L L d d h wu steps ep ep s T mask clip'.split()))
 _MS={}
@@ -49,12 +53,16 @@ def _redact(o,secret_keys=(),removed=None):
   if isinstance(v,Mapping):
    out={}
    for k,x in v.items():
-    q=path+str(k)
+    k=_text(k)
+    q=path+k
     if _secret(k,keys):
      if removed is not None:removed.add(q)
     else:out[k]=clean(x,q+'.')
    return out
-  if isinstance(v,(list,tuple)):return[clean(x,path+str(i)+'.')for i,x in enumerate(v)]
+  if isinstance(v,(set,frozenset)):
+   try:v=sorted(v)
+   except TypeError:v=list(v)
+  if isinstance(v,(list,tuple,deque)):return[clean(x,path+str(i)+'.')for i,x in enumerate(v)]
   if not isinstance(v,(str,int,float,bool,type(None))):return clean(_json(v),path)
   return v
  return clean(o)
@@ -127,7 +135,7 @@ def config_deltas(config,base,secret_keys=()):
  if not base:return{}
  cur,ref=(_flat(_norm(config,secret_keys)),_flat(_norm(base,secret_keys)))
  skip=('provenance.','family.')
- return{k:v for k,v in cur.items()if k not in('family','provenance')and not k.startswith(skip)and(k not in ref or ref[k]!=v)}
+ return{k:v for k,v in cur.items()if k not in('family','provenance')and not k.startswith(skip)and(k not in ref or type(ref[k])is not type(v)or ref[k]!=v)}
 def _fmt(v):
  if isinstance(v,bool):return '' if v else 'off'
  if isinstance(v,float):
@@ -140,6 +148,7 @@ def _slugify(s):
  s=re.sub('[^A-Za-z0-9.+-]+','-',str(s)).strip('-')
  return re.sub('-{2,}','-',s)
 def run_name(model,data,deltas=None,seed=None,max_len=64,secret_keys=()):
+ if max_len<1:raise ValueError('max_len must be >=1')
  secret_keys=tuple(secret_keys)
  ps=[_slugify(model),_slugify(data)]
  keys=DEFAULT_SECRET_KEYS|frozenset(_key(k)for k in secret_keys)
@@ -154,7 +163,7 @@ def run_name(model,data,deltas=None,seed=None,max_len=64,secret_keys=()):
  name='-'.join((p for p in ps if p))
  if len(name)>max_len:
   digest=hashlib.sha1(name.encode()).hexdigest()[:6]
-  name=name[:max_len-7].rstrip('-')+'-'+digest
+  name=name[:max_len-7].rstrip('-')+'-'+digest if max_len>=7 else name[:max_len]
  return name
 def _rank():
  for q in('RANK','SLURM_PROCID','LOCAL_RANK'):
@@ -299,6 +308,7 @@ def log_step(run,step,metrics,commit=None):
  extra={k.split('/',1)[0]for k in metrics if '/'in k}-set(state['namespaces'])
  if extra:define_metrics(run,step_metric=state['axis'],namespaces=sorted(extra))
  for k in metrics:
+  if '/'not in k:run.define_metric(k,step_metric=state['axis'])
   if '/' not in k and k not in _warned:
    _warned.add(k)
    warnings.warn(f'metric {k!r} needs a namespace')
