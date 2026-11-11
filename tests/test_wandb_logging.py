@@ -2,7 +2,7 @@
 6 keys x3 shapes; 4 records x3 wrappers; ranks 2x2 (+2 count settings).
 5 prefixes x2 names; 8 token fields/3 credentials; 3 verbatim strings;
 5 interrupted writes and 1 archive interruption/repair.
-R2: 3 secretory fields/3 credentials; 2 names; depths 300/400 at limit 200;
+R2: 3 secretory fields/3 credentials; 2 names;
 4^3 rank envs; 7 summary ops at lengths 1/2 plus None/empty/uppercase (59),
 2 invalid ops.
 R3: 6 keys x3 wrappers; URLs 2 schemes x4 passwords x3 suffixes x3 wrappers;
@@ -172,21 +172,6 @@ class PartOne(Checks):
    xs=wbkit.lint_run(name=r.name,notes=r.notes,group=r.group,job_type=r.job_type,config=r.config,summary_keys=[],project=project)
    s.assertTrue(any((x.startswith('project.slug:')for x in xs)))
    s.assertTrue(any((x.startswith('notes.short-hypothesis:')for x in xs)))
- def test_egress(s):
-  x=S
-  sdk=FakeWandb()
-  r=start(sdk,model='model token='+x,data='cells',name='sample secret='+x,hypothesis='Check password='+x,expect='val/loss < 1; api_key='+x,tags=['secret='+x],group='group token='+x,config={'arch':{'note token='+x:'public'},'train':{'note':'token='+x},'data':{}})
-  s.clean(r,x)
-  wbkit.log_step(r,1,{'train/text':'token='+x})
-  with s.assertWarns(UserWarning)as w:
-   wbkit.log_step(r,1,{'token='+x:1})
-  s.lacks(x,str(w.warning))
-  r.summary['message']='secret='+x
-  r.summary['note token='+x]='public'
-  wbkit.finish(r,'token='+x,'inconclusive')
-  s.clean(r,x)
-  s.assertTrue(r.finished)
-  s.assertIn('Outcome (inconclusive):',r.notes)
  def test_resumes(s):
   with TD()as tmp:
    a=start(output_dir=tmp)
@@ -196,14 +181,6 @@ class PartOne(Checks):
    s.eq(c.config,a.config)
    s.eq(c.summary['provenance/resume_count'],2)
 class RoundOne(Checks):
- def test_punctuation(s):
-  for sep,custom in itertools.product(',;})]',(False,True)):
-   v='password='+sep+T
-   with s.subTest(delimiter=sep,custom=custom),patch.object(sys,'argv',['train.py','--'+v]):
-    kw=dict(config={'train':{'note':v}},base_config={'train':{'note':'public'}},hypothesis='Testing '+v)
-    if custom:kw['name']=v
-    r=start(**kw)
-    s.clean(r,T)
  def test_config(s):
   f=('token_count','token_embedding_dim','pad_token_id','mask_token_id','token_acc','token_loss','token_budget','token-count')
   c={'train':dict.fromkeys(f,8192)}
@@ -349,18 +326,6 @@ class RoundTwo(Checks):
    p.write_text(raw);(Path(tmp)/'wandb_run_id').write_text('different')
    with s.assertRaisesRegex(ValueError,'recover'):start(sdk,output_dir=tmp)
    s.assertFalse(hasattr(sdk,'run'))
- def test_passphrase(s):
-  t='password=my '+T+' phrase'
-  s.lacks(T,wbkit._redact(t))
-  r=start(hypothesis=t,config=recipe({'note':t,'lr':.1}),base_config=recipe({}),name=t)
-  s.clean(r,T);s.assertIn('train.lr=0.1',r.notes)
- def test_json_phrase(s):
-  s.lacks(T,wbkit._redact('"Authorization": "Bearer '+T+'"'))
-  limit=sys.getrecursionlimit()
-  try:
-   sys.setrecursionlimit(200)
-   for t in('['*400,'['*300+'{"password":"'+T+'"}'+']'*300,'password='+'['*400+T):s.lacks(T,wbkit._redact(t))
-  finally:sys.setrecursionlimit(limit)
 
  def test_empty(s):
   keys=('RANK','SLURM_PROCID','LOCAL_RANK')
@@ -375,15 +340,6 @@ class LastReview(Checks):
    with s.subTest(key=k):
     r=start(rank=0,config=recipe({k:w(T)}),base_config=recipe({}))
     s.clean(r,T)
- def test_url(s):
-  for scheme,pw,suffix,w in itertools.product(('https','ssh'),(T,'first@'+T,T+'@last','first@@'+T),('','/path','/path?q=a@b#fragment'),(lambda v:v,lambda v:[v],lambda v:json.dumps({'url':v,'lr':.1}))):
-   url=scheme+'://alice:'+pw+'@example.org'+suffix;want=scheme+'://example.org'+suffix
-   with s.subTest(url=url):
-    r=start(rank=0,config=recipe({'url':w(url)}),hypothesis=w(url)if isinstance(w(url),str)else url)
-    s.clean(r,T);s.eq(r.config['train']['url'],w(want))
-    wbkit.log_step(r,1,{'train/source':url});s.eq(r.logged[-1]['train/source'],want)
-    r.summary['source']=url;wbkit.finish(r,'Observed '+url,'inconclusive');s.clean(r,T)
-    s.assertIn(want,r.notes)
  def test_array_base(s):
   class Array:
    def tolist(s):return[128,256]
@@ -449,15 +405,11 @@ class CommandProvenance(Checks):
    for tokens,flags,count in cases:
     argv=['/private/project/train.py']+tokens
     with s.subTest(tokens=tokens),patch.object(sys,'argv',argv):
-     want=dict(program='train.py',flags=flags,positional_count=count,
-               argv_sha256=hashlib.sha256('\0'.join(argv).encode('utf-8')).hexdigest())
+     want=dict(program='train.py',flags=flags,positional_count=count)
      got=wbkit._redact_argv(argv)
      s.eq(got,want)
      s.eq(start().config['provenance']['command'],want)
      s.lacks(value,json.dumps(got));s.lacks('/private/project',json.dumps(got))
-     changed=[t.replace(value,value+'CHANGED')for t in argv]
-     if changed!=argv:
-      s.assertNotEqual(got['argv_sha256'],wbkit._redact_argv(changed)['argv_sha256'])
  def test_legacy_snapshot(s):
   # Exhaustive 3 persisted sources x 2 value layouts.
   for source,command in itertools.product(
@@ -489,14 +441,12 @@ class CommandProvenance(Checks):
   argv=['train.py','--','--CANARY']
   s.eq(wbkit._redact_argv(argv)['flags'],['--'])
   s.eq(wbkit._redact_argv(argv)['positional_count'],1)
-  s.assertNotEqual(wbkit._redact_argv(argv)['argv_sha256'],wbkit._redact_argv(argv[:-1]+['--CHANGED'])['argv_sha256'])
  def test_numeric(s):
   for value in ('-1','-0.5','-1e-3'):
    with s.subTest(value=value):
     argv=['train.py','--shift',value]
     got=wbkit._redact_argv(argv)
     s.eq(got['flags'],['--shift']);s.eq(got['positional_count'],1)
-    s.assertNotEqual(got['argv_sha256'],wbkit._redact_argv(argv[:-1]+[value+'0'])['argv_sha256'])
  def test_option_shaped_limit(s):
   s.eq(wbkit._redact_argv(['train.py','--name','--CANARY'])['flags'],['--name','--CANARY'])
 class ContinuationReview(Checks):
@@ -507,15 +457,7 @@ class ContinuationReview(Checks):
    k=key.upper()if upper else key
    with s.subTest(key=k):
     r=start(rank=0,config=recipe({k:wrap(T)}),base_config=recipe({}))
-    s.clean(r,T);s.lacks(T,wbkit._redact(k+'='+T))
- def test_line_boundary(s):
-  # Exhaustive 6 labels x 3 line endings; actual notes consumer too.
-  for key,sep in itertools.product(K,('\n','\r\n','\r')):
-   with s.subTest(key=key,separator=sep):
-    text=wbkit._redact('Predict '+key+':'+sep+'Expect: val/loss < 0.5')
-    s.assertIn(sep+'Expect: val/loss < 0.5',text)
-    r=start(hypothesis='Predict the word after '+key+':',expect='val/loss < 0.5')
-    s.assertIn('\nExpect: val/loss < 0.5',r.notes)
+    s.clean(r,T)
  def test_lost_snapshots(s):
   with TD()as d:
    a=start(rank=0,output_dir=d,config=recipe({'lr':.1}));a.finish()
@@ -552,17 +494,6 @@ class ContinuationTwo(Checks):
     text=k+': '+T
     r=start(rank=0,hypothesis=text,config=recipe({'note':text,k:T}))
     s.clean(r,T)
- def test_multiline(s):
-  for key,sep in itertools.product(K,('\n','\r\n','\r')):
-   with s.subTest(key=key,sep=sep):
-    text=key+':'+sep+T+sep+'Expect: val/loss < 0.5'
-    r=start(rank=0,hypothesis=text,config=recipe({'note':text}))
-    s.clean(r,T);s.assertIn('Expect: val/loss < 0.5',r.notes)
- def test_pem(s):
-  for kind in ('PRIVATE KEY','RSA PRIVATE KEY','OPENSSH PRIVATE KEY'):
-   with s.subTest(kind=kind):
-    text='private_key:\n-----BEGIN '+kind+'-----\n'+T+'\n-----END '+kind+'-----'
-    s.clean(start(rank=0,hypothesis=text,config=recipe({'note':text})),T)
  def test_metric_token(s):
   for ns in wbkit.METRIC_NAMESPACES:
    q=ns+'/token';expect=q+' == 0.5'
@@ -576,7 +507,7 @@ class ContinuationTwo(Checks):
    argv=['train.py',os.fsdecode(raw)]
    with patch.object(sys,'argv',argv):
     got=start(rank=0).config['provenance']['command']
-   s.eq(got['argv_sha256'],hashlib.sha256(b'train.py\0'+raw).hexdigest())
+   s.eq(got,dict(program='train.py',flags=[],positional_count=1))
  def test_public_token_keys(s):
   keys=('stop_token','end_token','image_token','max_token')
   c=recipe(dict.fromkeys(keys,'<end>'))
@@ -596,5 +527,54 @@ class ContinuationTwo(Checks):
     r=start(rank=0,output_dir=d,config=training)
    s.eq(training['train']['lr'],.9);s.eq(r.config['train']['lr'],.1)
    s.assertTrue(any('config-mismatch'in str(w.message)for w in found))
+class KnownValueSanitizer(Checks):
+ def test_egress(s):
+  # Exhaustive 3 leaf shapes x 2 lengths, through every SDK consumer.
+  for secret,wrap in itertools.product(('hidden-value','hidden-value-with-spaces'),(lambda x:x,lambda x:[x],lambda x:{'inner':x})):
+   with s.subTest(secret=secret,wrap=wrap):
+    r=start(rank=0,config=recipe({'privateKey':wrap(secret),'copy':secret}),
+      model=secret,data=secret,name='run '+secret,hypothesis='Test '+secret,
+      expect='val/loss < 1 '+secret,group=secret,tags=[secret],entity=secret,
+      settings={'note':secret},summaries={'val/'+secret:'min'})
+    s.clean(r,secret)
+    wbkit.log_step(r,1,{'train/'+secret:secret})
+    wbkit.define_metrics(r,namespaces=(secret,))
+    r.summary['summary/'+secret]=secret
+    wbkit.finish(r,'Observed '+secret,'inconclusive')
+    s.clean(r,secret)
+ def test_boundaries(s):
+  # Exhaustive secret lengths 1..8, with and without a secret config key.
+  for length,known in itertools.product(range(1,9),(False,True)):
+   secret='X'*length;cfg=recipe({'api_key':secret}if known else{})
+   text='password='+secret+' val/token == 0.5'
+   r=start(rank=0,config=cfg,name=text,hypothesis=text)
+   want=text.replace(secret,'***')if known and length>=6 else text
+   s.eq(r.name,want);s.eq(r.notes.splitlines()[0],'H: '+want)
+   if known:s.eq(r.config['train']['api_key'],'***')
+ def test_verbatim(s):
+  # Exhaustive 4 values, including overlap and multiline data.
+  secrets=('abcdef','abcdefghi','line1\nline2','quoted "value"')
+  raw={str(i):{'secret':v,'copy':v}for i,v in enumerate(secrets)}
+  clean=wbkit._redact(raw)
+  for i in raw:s.eq(clean[i],{'secret':'***','copy':'***'})
+  r=start(rank=0,config=recipe(raw),hypothesis=' '.join(secrets))
+  for secret in secrets:s.clean(r,secret)
+ def test_run_isolation(s):
+  a=start(rank=0,config=recipe({'api_key':S}))
+  b=start(rank=0,config=recipe({}))
+  wbkit.log_step(a,1,{'train/text':S});wbkit.log_step(b,1,{'train/text':S})
+  s.eq(a.logged[-1]['train/text'],'***');s.eq(b.logged[-1]['train/text'],S)
+ def test_persisted_digest_migration(s):
+  # Exhaustive all 3 persisted sources; keep id/config while dropping old digest.
+  for source in ('wandb_provenance.json','wandb_config.json','wandb_config.backup.json'):
+   with s.subTest(source=source),TD()as d:
+    a=start(rank=0,output_dir=d);p=Path(d)/source;v=json.loads(p.read_text())
+    prov=v if source=='wandb_provenance.json'else v['config']['provenance']
+    prov['command']['argv_sha256']='old-digest'
+    p.write_text(json.dumps(v))
+    if source.endswith('backup.json'):(Path(d)/'wandb_config.json').unlink()
+    with s.assertWarnsRegex(UserWarning,'legacy-command'):b=start(rank=0,output_dir=d)
+    s.eq(a.id,b.id);s.lacks('argv_sha256',repr(b.config))
+    for f in Path(d).glob('*.json'):s.lacks('argv_sha256',f.read_text())
 if __name__=='__main__':
  unittest.main()
