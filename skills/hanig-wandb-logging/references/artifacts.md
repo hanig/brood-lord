@@ -18,13 +18,13 @@ or prediction eval_set/n_rows/columns/model. Launch secret_keys apply to metadat
 model metrics are pruned before cards. No free-text scanning occurs. Never put credentials in URIs or text. <!-- declaration: logging.credentials -->
 
 Local sources above 2 GiB default to references; reference=True/False overrides.
-URI sources always use add_reference. file:// requires the same mounted storage;
-object URIs require caller credentials. checksum=False fits immutable storage
+URI sources always use add_reference. file:// requires the same mounted storage; <!-- declaration: logging.conventions -->
+object URIs require caller credentials. checksum=False fits immutable storage <!-- declaration: logging.conventions -->
 only; record the caveat. Example: shared-storage:/path/to/data requires its mount. <!-- declaration: logging.conventions -->
 
 use_input(run, "team/project/data-cells:v3") records the resolved qualified
 version. Unpinned aliases warn. Atomic output_dir/wandb_inputs.json is bound to
-the run id and reloaded on resume. Without output_dir, lineage lasts only for
+the run id and reloaded on resume. Without output_dir, lineage lasts only for <!-- declaration: logging.conventions -->
 the run object's lifetime. Direct disk reads create no edge. Parent checkpoints are inputs too. <!-- declaration: logging.conventions -->
 
 latest means newest. Model aliases include step-N and caller-selected best.

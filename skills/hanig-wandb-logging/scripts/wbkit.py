@@ -401,7 +401,7 @@ def lint_run(*,name,notes,group,job_type,config,summary_keys,tags=(),state=None,
 
 ARTIFACT_TYPES = ("dataset", "model", "predictions", "eval-results", "code")
 _ARTIFACT_NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}")
-_VERSIONISH_NAME_RE = re.compile(r"(^|[-_.])(final|latest|best|new|old|v[0-9]+|20[0-9]{6})([-_.]|$)")
+_VERSIONISH_NAME_RE = re.compile(r"(^|[-_.])(final|latest|best|new|old|v[0-9]+|[0-9]{8})([-_.]|$)")
 
 def artifact_name(kind, *parts):
     """Stable logical name; alphabetic digests cannot encode dates/versions."""
@@ -433,13 +433,13 @@ def use_input(run, ref, type=None):
 
 def artifact_card(
     *,
-    summary: str,
-    contents: str,
-    intended_use: str,
+    summary,
+    contents,
+    intended_use,
     run=None,
-    inputs: Iterable[str] | None = None,
-    caveats: str | None = None,
-) -> str:
+    inputs = None,
+    caveats = None,
+):
     """Render an artifact description card."""
     lines = [summary.strip(), ""]
     if run is not None and getattr(run, "id", None):
@@ -459,14 +459,14 @@ def artifact_card(
     return "\n".join(lines)
 
 
-def _local_stats(path: Path) -> dict[str, Any]:
+def _local_stats(path: Path):
     if path.is_file():
         return {"n_files": 1, "total_bytes": path.stat().st_size}
     files = [p for p in path.rglob("*") if p.is_file()]
     return {"n_files": len(files), "total_bytes": sum(p.stat().st_size for p in files)}
 
 
-def _check_artifact_name(name: str) -> None:
+def _check_artifact_name(name):
     if not _ARTIFACT_NAME_RE.fullmatch(name):
         raise ValueError(f"artifact name {name!r} must be lowercase [a-z0-9._-]")
     if _VERSIONISH_NAME_RE.search(name):
@@ -476,7 +476,7 @@ def _check_artifact_name(name: str) -> None:
         )
 
 
-def _add_source(art, source: str | os.PathLike, reference: bool | None, checksum: bool) -> dict:
+def _add_source(art, source, reference, checksum):
     src = str(source)
     if "://" in src:
         art.add_reference(src, checksum=checksum)
@@ -500,18 +500,18 @@ def _add_source(art, source: str | os.PathLike, reference: bool | None, checksum
 def log_dataset(
     wandb,
     run,
-    name: str,
-    source: str | os.PathLike,
+    name,
+    source,
     *,
-    summary: str,
-    contents: str,
-    intended_use: str,
-    caveats: str | None = None,
-    metadata: Mapping[str, Any] | None = None,
-    reference: bool | None = None,
-    checksum: bool = True,
+    summary,
+    contents,
+    intended_use,
+    caveats = None,
+    metadata = None,
+    reference = None,
+    checksum = True,
     aliases: Iterable[str] = (),
-    type: str = "dataset",
+    type = "dataset",
 ):
     """Log a dataset/card; above 2 GiB default to references requiring a shared mount."""
     if getattr(run, "disabled", False):
@@ -532,18 +532,18 @@ def log_dataset(
 def log_model(
     wandb,
     run,
-    path: str | os.PathLike,
+    path,
     *,
-    step: int,
-    metrics: Mapping[str, Any] | None = None,
-    is_best: bool = False,
-    sanity_checkpoint: bool = False,
-    post_hoc: bool = False,
-    name: str | None = None,
-    summary: str | None = None,
-    intended_use: str = "Resume training, or evaluate with the arch config in metadata.",
-    caveats: str | None = None,
-    reference: bool | None = None,
+    step,
+    metrics = None,
+    is_best = False,
+    sanity_checkpoint = False,
+    post_hoc = False,
+    name = None,
+    summary = None,
+    intended_use = "Resume training, or evaluate with the arch config in metadata.",
+    caveats = None,
+    reference = None,
     aliases: Iterable[str] = (),
 ):
     """Log checkpoint metadata/card with step-N/best aliases in one run collection."""
@@ -587,7 +587,7 @@ def log_model(
     return run.log_artifact(art, aliases=al)
 
 
-def lint_artifact(*, name: str, type: str, description: str | None, metadata: Mapping | None) -> list[str]:
+def lint_artifact(*, name, type, description, metadata):
     """Rules for one artifact collection, judged on its newest version."""
     if type.startswith("wandb-") or type in ("run_table", "job"):
         return []
