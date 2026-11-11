@@ -5,9 +5,6 @@ underscore/period names pass. Group one question under YYYYMMDD-question.
 Model-data-deltas-s{seed} labels default to 64 characters; ids carry identity.
 Only changed hyperparameters appear as deltas. <!-- declaration: logging.conventions -->
 
-Mask secret-keyed config and its known values of 6+ characters.
-Free text is otherwise unscanned. Credentials belong in the environment.
-Tokenizer fields such as pad_token and eos_token remain public configuration.
 
 ```text
 H: hypothesis or baseline purpose
