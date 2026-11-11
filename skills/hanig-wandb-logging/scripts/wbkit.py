@@ -63,6 +63,7 @@ def _remote(value):
  try:
   if any(c.isspace()for c in value):return None
   if '://'not in value:
+   if re.match(r'[^@/:]+:[^@/]*@',value):return None
    match=re.fullmatch(r'(?:[^@/:]+@)?([^@/:?#]+):([^?#]+)(?:[?#].*)?',value)
    return match[1]+':'+match[2]if match else None
   u=urlsplit(value)
@@ -235,7 +236,8 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
  if again and isinstance(saved.get('config'),Mapping):
   prior=saved['config']
   newly_removed=set()
-  cfg=_norm({k:v for k,v in prior.items()if k!='provenance'},secret_keys,newly_removed)
+  cfg=_norm({k:v for k,v in prior.items()if k not in('family','provenance')},secret_keys,newly_removed)
+  if 'family'in prior:cfg['family']=prior['family']
   removed.update(newly_removed)
   if newly_removed:
    warnings.warn('resume.new-secret: '+', '.join(sorted(newly_removed))+'; first launch already sent its value; start a new output_dir with complete secret_keys from the first launch')
@@ -292,6 +294,9 @@ def define_metrics(run,step_metric=STEP_METRIC,namespaces=METRIC_NAMESPACES,summ
  state.update(summaries=defs,axis=step_metric,namespaces=namespaces)
 _warned:set[str]=set()
 def log_step(run,step,metrics,commit=None):
+ state=_metrics(run)
+ extra={k.split('/',1)[0]for k in metrics if '/'in k}-set(state['namespaces'])
+ if extra:define_metrics(run,step_metric=state['axis'],namespaces=sorted(extra))
  for k in metrics:
   if '/' not in k and k not in _warned:
    _warned.add(k)
