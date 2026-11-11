@@ -3,6 +3,9 @@
 8 token fields/3 credentials; 3 verbatim strings; 4 interrupted writes and 1 archive interruption/repair.
 R2: 3 secretory fields/3 credentials, 2 names/2x2 argv layouts, 3 JSON shapes, depths 300/400 at recursion limit 200, 4^3 rank environments,
 7 summary ops at lengths 1/2 plus None/empty/uppercase (59), 2 invalid.
+R3: 6 credential keys x 3 wrappers; 2 URI schemes x 4 passwords x 3 suffixes x 3 wrappers;
+10 tokenizer prefixes x 2 separators x 2 cases; 3x3 invalid snapshots except both absent;
+3 labeled short options x 2 layouts; 3 nonfinite floats. Exhaustive, no random sampling.
 """
 from pathlib import Path
 import argparse,hashlib,collections,importlib,importlib.util,itertools,dataclasses
@@ -385,5 +388,73 @@ class RoundTwo(Checks):
    want=next((int(v)for v in vals if v),0)
    with s.subTest(env=env),patch.dict(os.environ,env,clear=True):
     s.eq(start().disabled,want!=0)
+class LastReview(Checks):
+ def test_credential_suffix(s):
+  for k,w in itertools.product(('access_token_value','access-token-value','token_value','refresh_token_value','AUTH_TOKEN_VALUE','train.token.value'),(lambda v:v,lambda v:[v],lambda v:{'nested':v})):
+   with s.subTest(key=k):
+    r=start(rank=0,config=recipe({k:w(T)}),base_config=recipe({}))
+    s.clean(r,T)
+    s.lacks(T,wbkit._redact_argv(['train.py','--config='+json.dumps({k:w(T)})]))
+ def test_url(s):
+  for scheme,pw,suffix,w in itertools.product(('https','ssh'),(T,'first@'+T,T+'@last','first@@'+T),('','/path','/path?q=a@b#fragment'),(lambda v:v,lambda v:[v],lambda v:json.dumps({'url':v,'lr':.1}))):
+   url=scheme+'://alice:'+pw+'@example.org'+suffix;want=scheme+'://example.org'+suffix
+   with s.subTest(url=url):
+    r=start(rank=0,config=recipe({'url':w(url)}),hypothesis=w(url)if isinstance(w(url),str)else url)
+    s.clean(r,T);s.eq(r.config['train']['url'],w(want))
+    wbkit.log_step(r,1,{'train/source':url});s.eq(r.logged[-1]['train/source'],want)
+    r.summary['source']=url;wbkit.finish(r,'Observed '+url,'inconclusive');s.clean(r,T)
+    s.assertIn(want,r.notes)
+    s.eq(wbkit._redact_argv(['--config='+json.dumps({'url':url,'lr':.1})]),'--config='+json.dumps({'url':want,'lr':.1}))
+ def test_array_base(s):
+  class Array:
+   def tolist(s):return[128,256]
+   def __ne__(s,other):return s
+   def __bool__(s):raise ValueError('ambiguous truth value')
+  c=recipe({'layers':Array()});r=start(rank=0,config=c,base_config=c)
+  s.eq(r.config['train']['layers'],[128,256]);s.lacks('layers=',r.notes)
+  s.eq(wbkit.config_deltas(c,c),{})
+  s.eq(wbkit.config_deltas(c,recipe({'layers':[64]})),{'train.layers':[128,256]})
+ def test_tokenizer(s):
+  keys=[(p+sep+'token').upper()if upper else p+sep+'token'for p,sep,upper in itertools.product(('pad','eos','bos','cls','sep','unk','mask','sos','decoder_start','special'),('_','-'),(False,True))]
+  c=recipe(dict.fromkeys(keys,'<pad>'));r=start(rank=0,config=c,base_config=recipe(dict.fromkeys(keys,'<unk>')))
+  s.eq(r.config['train'],c['train'])
+  for k in keys:s.assertIn(k+'=',r.notes)
+  s.eq(wbkit.config_deltas(c,recipe({})),{'train.'+k:'<pad>'for k in keys})
+ def test_resume_contract(s):
+  with TD()as d:
+   a=start(rank=0,output_dir=d,name='small-cells',expect='val/loss < 0.5',config=recipe({'width':8}))
+   for i in range(2):
+    if i:(Path(d)/'wandb_config.json').unlink()
+    b=start(rank=0,output_dir=d,name='large-images',hypothesis='A changed hypothesis.',expect='val/loss < 0.9',config=recipe({'width':64}))
+    s.eq((a.id,a.config,a.name,a.notes),(b.id,b.config,b.name,b.notes))
+    s.eq(b.summary['provenance/resume_count'],i+1)
+ def test_missing_snapshot(s):
+  for a,b in itertools.product((None,'{','[]'),repeat=2):
+   if a is None and b is None:continue
+   with s.subTest(primary=a,backup=b),TD()as d:
+    start(rank=0,output_dir=d,config=recipe({'lr':.1}));p=Path(d)
+    for f,v in zip(('wandb_config.json','wandb_config.backup.json'),(a,b)):
+     q=p/f
+     if v is None:q.unlink()
+     else:q.write_text(v)
+    sdk=FakeWandb()
+    with s.assertRaisesRegex(ValueError,'recover'):start(sdk,rank=0,output_dir=d,config=recipe({'lr':.9}))
+    s.assertFalse(hasattr(sdk,'run'))
+    for f,v in zip(('wandb_config.json','wandb_config.backup.json'),(a,b)):
+     if v is not None:s.eq((p/f).read_text(),v)
+ def test_glued_secret(s):
+  s.lacks('mysecret',wbkit._redact_argv(['train.py','-pmysecret','--lr','3']))
+ def test_opaque_short_option(s):
+  for flag,layout in itertools.product(('-pmysecret','-kapi_key','-pclient_secret'),('glued','separate')):
+   args=[flag+T]if layout=='glued'else[flag,T]
+   t=wbkit._redact_argv(['train.py']+args+['--lr','3'])
+   s.lacks(T,t);s.assertIn('--lr 3',t)
+  s.lacks(T,wbkit._redact_argv(['train.py','-p'+T]))
+ def test_infinite_delta(s):
+  for v in(float('inf'),float('-inf'),float('nan')):
+   r=start(rank=0,config=recipe({'grad_clip':v}),base_config=recipe({'grad_clip':1.}))
+   s.assertIn('clip',r.name);got=r.config['train']['grad_clip'];s.assertIsInstance(got,float)
+   if v==v:s.eq(got,v)
+   else:s.assertNotEqual(got,got)
 if __name__=='__main__':
  unittest.main()
