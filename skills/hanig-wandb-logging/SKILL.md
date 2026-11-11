@@ -11,6 +11,8 @@ description: >-
 Pass credentials through the environment, never through config, notes or names.
 Declare project keys in secret_keys. Only listed keys are protected; other
 keys and free text are sent as written. No value matching or text scanning.
+Config should use mappings, sequences, scalars, dataclasses or namespaces;
+credentials in attributes of other object types are the caller's responsibility.
 
 ## Host capability boundary
 
@@ -64,6 +66,10 @@ apikey wandbapikey password passwd passphrase secret secretkey clientsecret
 secretaccesskey awssecretaccesskey accesstoken refreshtoken authtoken bearertoken
 sessiontoken hftoken githubtoken privatekey encryptionkey credentials
 ```
+
+Orchestrator amendment, 2026-11-10: dataclass instances (fields, no deep copy),
+argparse.Namespace and SimpleNamespace become mappings recursively before
+key removal. Other object types keep their existing serialization.
 
 Caller secret_keys adds normalized names. Remove matching entries at every depth
 in config/base_config before deriving names/notes or writing metadata.
