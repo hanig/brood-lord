@@ -13,8 +13,8 @@ Unlisted keys/free text pass unchanged; other objects' attributes are caller-own
 
 ## Host capability boundary
 
-Copy [wbkit](scripts/wbkit.py) with authorized access; no package/credential install.
-Measured: wandb 0.31.0; others best effort. Policy: hanig-project/hanig-swarm.
+Copy [wbkit](scripts/wbkit.py) with authorized access; no installs.
+wandb 0.31.0 measured; others best effort. Policy: hanig-project/hanig-swarm.
 
 <!-- BEGIN GENERATED DECLARATIONS: declarations.json -->
 
@@ -60,9 +60,7 @@ sessiontoken hftoken githubtoken privatekey encryptionkey credentials
 Orchestrator, 2026-11-10: dataclass fields (no deepcopy),
 argparse.Namespace and SimpleNamespace recurse as mappings; others serialize unchanged.
 secret_keys adds normalized names; config/base_config entries are removed before
-labels/metadata, with paths in provenance.redacted_keys. Other keys/values/SDK args,
-metrics/logs/summaries/tags/verdicts stay unchanged. git_remote drops userinfo/query/
-fragment; unparseable becomes null. Newly secret resume keys are pruned with one
+labels/metadata, with paths in provenance.redacted_keys. git_remote drops userinfo/query/fragment; unparseable becomes null. Newly secret resume keys are pruned with one
 path/earlier-exposure warning; labels stay: use a new output_dir with complete secret_keys.
 
 Owner, 2026-11-11: launch/resume keys become text (Enum string value/name,
