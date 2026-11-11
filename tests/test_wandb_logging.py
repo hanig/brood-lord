@@ -1,11 +1,13 @@
-"""Exhaustive: 6 keys x 3 shapes; 4 records x 3 wrappers;
-2x2(x2 counts) ranks; 5 prefixes x 2 names;
-8 token fields/3 credentials; 3 verbatim strings; 4 interrupted writes and 1 archive interruption/repair.
-R2: 3 secretory fields/3 credentials, 2 names, depths 300/400 at recursion limit 200, 4^3 rank environments,
-7 summary ops at lengths 1/2 plus None/empty/uppercase (59), 2 invalid.
-R3: 6 credential keys x 3 wrappers; 2 URI schemes x 4 passwords x 3 suffixes x 3 wrappers;
-10 tokenizer prefixes x 2 separators x 2 cases; 3x3 invalid snapshots except both absent;
-3 nonfinite floats. Exhaustive, no random sampling.
+"""Exhaustive, no randomness:
+6 keys x3 shapes; 4 records x3 wrappers; ranks 2x2 (+2 count settings).
+5 prefixes x2 names; 8 token fields/3 credentials; 3 verbatim strings;
+5 interrupted writes and 1 archive interruption/repair.
+R2: 3 secretory fields/3 credentials; 2 names; depths 300/400 at limit 200;
+4^3 rank envs; 7 summary ops at lengths 1/2 plus None/empty/uppercase (59),
+2 invalid ops.
+R3: 6 keys x3 wrappers; URLs 2 schemes x4 passwords x3 suffixes x3 wrappers;
+10 tokenizer prefixes x2 separators x2 cases; 3x3 snapshots minus both absent;
+3 nonfinite floats. Continuation bounds appear in their test methods.
 """
 from pathlib import Path
 import argparse,hashlib,collections,importlib,importlib.util,itertools,dataclasses
@@ -263,7 +265,7 @@ class RoundOne(Checks):
 class Atomic(Checks):
  def test_writes(s):
   real=Path.write_bytes
-  for stop in range(4):
+  for stop in range(5):
    with s.subTest(stop=stop),TD()as tmp:
     calls=[0]
     def partial(p,t,*args,**kw):
@@ -420,7 +422,6 @@ class LastReview(Checks):
     for f,v in zip(('wandb_config.json','wandb_config.backup.json'),(a,b)):
      if v is not None:s.eq((p/f).read_text(),v)
 
-
  def test_infinite_delta(s):
   for v in(float('inf'),float('-inf'),float('nan')):
    r=start(rank=0,config=recipe({'grad_clip':v}),base_config=recipe({'grad_clip':1.}))
@@ -483,5 +484,35 @@ class CommandProvenance(Checks):
   s.eq(wbkit._redact_argv([])['program'],'')
   # Tokens after a terminator follow the same per-token classification.
   s.eq(wbkit._redact_argv(['train.py','--','--flag=value'])['flags'],['--','--flag'])
+class ContinuationReview(Checks):
+ def test_credential_labels(s):
+  # Exhaustive 8 labels x 2 case variants x 3 wrappers.
+  keys=('private_key','private-key','privateKey','secretKey','SecretAccessKey','clientSecretKey','secret_access_key','secret-access-key')
+  for key,upper,wrap in itertools.product(keys,(False,True),(lambda v:v,lambda v:[v],lambda v:{'inner':v})):
+   k=key.upper()if upper else key
+   with s.subTest(key=k):
+    r=start(rank=0,config=recipe({k:wrap(T)}),base_config=recipe({}))
+    s.clean(r,T);s.lacks(T,wbkit._redact(k+'='+T))
+ def test_line_boundary(s):
+  # Exhaustive 6 labels x 3 line endings; actual notes consumer too.
+  for key,sep in itertools.product(K,('\n','\r\n','\r')):
+   with s.subTest(key=key,separator=sep):
+    text=wbkit._redact('Predict '+key+':'+sep+'Expect: val/loss < 0.5')
+    s.assertIn(sep+'Expect: val/loss < 0.5',text)
+    r=start(hypothesis='Predict the word after '+key+':',expect='val/loss < 0.5')
+    s.assertIn('\nExpect: val/loss < 0.5',r.notes)
+ def test_lost_snapshots(s):
+  with TD()as d:
+   a=start(rank=0,output_dir=d,config=recipe({'lr':.1}));a.finish()
+   p=Path(d);good=(p/'wandb_config.json').read_text()
+   for f in ('wandb_config.json','wandb_config.backup.json'):(p/f).unlink()
+   sdk=FakeWandb()
+   with s.assertRaisesRegex(ValueError,'recover'):
+    start(sdk,rank=0,output_dir=d,config=recipe({'lr':.9}))
+   s.assertFalse(hasattr(sdk,'run'))
+   s.eq((p/'wandb_run_id').read_text().strip(),a.id)
+   (p/'wandb_config.json').write_text(good)
+   b=start(rank=0,output_dir=d,config=recipe({'lr':.9}))
+   s.eq((b.id,b.config),(a.id,a.config))
 if __name__=='__main__':
  unittest.main()
