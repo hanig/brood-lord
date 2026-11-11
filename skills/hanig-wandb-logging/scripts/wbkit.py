@@ -91,6 +91,12 @@ def _redact_argv(argv):
   'positional_count':positional_count,
   'argv_sha256':hashlib.sha256('\0'.join(argv).encode('utf-8')).hexdigest(),
  }
+def _migrate_command(prov,current):
+ """Old argv strings cannot reconstruct argv identity; use this launch."""
+ if isinstance(prov,Mapping)and isinstance(prov.get('command'),str):
+  warnings.warn('provenance.legacy-command: replaced with current launch identity')
+  return {**prov,'command':current}
+ return prov
 def _now():return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec='seconds')
 def provenance(wandb,cwd=None):
  sha=_git('rev-parse','HEAD',cwd=cwd)
@@ -205,11 +211,14 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   pf=out/'wandb_provenance.json'
   p0=_load(pf)if again else{}
   if not p0:p0=(saved.get('config')or{}).get('provenance')or prov
+  p0=_migrate_command(p0,prov['command'])
   _atomic(pf,json.dumps(_redact(p0))+'\n')
  else:
   p0=prov
  cfg=_redact({**config,'family':family,'provenance':p0})
  if again and isinstance(saved.get('config'),Mapping):cfg=_redact(saved['config'])
+ if isinstance(cfg.get('provenance'),Mapping):
+  cfg['provenance']=_migrate_command(cfg['provenance'],prov['command'])
  cfg=_norm(cfg)
  rc=int(saved.get('resume_count',0))+1 if again else 0
  f=_flat(cfg)
