@@ -6,7 +6,7 @@ Model-data-deltas-s{seed} labels default to 64 characters; ids carry identity.
 Only changed hyperparameters appear as deltas. <!-- declaration: logging.conventions -->
 
 The sanitizer recognizes labeled credentials, including token-value fields and
-credential labels in glued short options.
+credential labels in prose.
 Tokenizer fields such as pad_token and eos_token remain public configuration.
 
 ```text
@@ -18,7 +18,11 @@ Outcome (supported|refuted|inconclusive|broken): caller's contract result
 
 Family/arch/train/data/provenance matches Arc Bench Training architecture.config,
 training.config/seed, training_data splits/mixtures and run.commit/repository.
-Provenance adds Git/dirty, argv, versions, host/scheduler. Resolve Hydra/OmegaConf.
+Provenance adds Git/dirty, versions and host/scheduler. Commands contain only
+program basename, flag names, positional count and a SHA-256 digest of NUL-joined
+UTF-8 argv. Long flags drop =values; short flags keep two characters, including
+bundles. Lone - and -- stay. No argv values or positional tokens are recorded.
+Resolve Hydra/OmegaConf.
 
 Use train/loss, val/loss, eval/loss, opt/lr, perf/samples_per_s, perf/gpu_mem_gb
 and data/samples_seen on trainer/step. Log the restored optimizer step instead
