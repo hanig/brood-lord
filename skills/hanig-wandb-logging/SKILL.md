@@ -87,24 +87,13 @@ it never evaluates checkpoint quality or decides convergence.
 
 ```python
 import wandb, wbkit
-run = wbkit.start_run(wandb, **run_args)
 wbkit.use_input(run, "team/project/data-cells:v3")
-wbkit.log_dataset(wandb, run, wbkit.artifact_name("dataset", "cells", "filtered"),
-                  "data/cells", summary="Filtered cells.",
-                  contents="Count matrices and split manifest.",
-                  intended_use="Train with the declared split.")
-wbkit.log_model(wandb, run, "outputs/checkpoint", step=100,
-                is_best=False, sanity_checkpoint=False, post_hoc=True)
+wbkit.log_model(wandb, run, "outputs/checkpoint", step=100, post_hoc=True)
 ```
 
-Container types are recorded separately from JSON logging values, so tuple,
-list, set and frozenset changes produce deltas and resume warnings. Text-key
-collisions warn at their dotted paths; the last entry still wins. Bare str/bytes
-secret_keys are refused with the tuple form in the error. Conversion methods
-run only on instances; exceptions fall back to str(value).
-
-Snapshot disagreement refuses before SDK init and leaves the backup intact.
-Restore matching snapshots before resuming. Recovery archives prune launch
-secret keys; unparseable bytes with declared keys are replaced by a recovery
-notice because structural pruning cannot safely recover them. Archives are
-recovery evidence, never a substitute for an intact config snapshot.
+Container-type-only changes warn on resume and appear in deltas. Text-key
+collisions warn; the last entry wins. Bare str/bytes secret_keys are refused.
+Conversion exceptions fall back to str(value), without calling class methods.
+Snapshot disagreement refuses before init; restore matching snapshots. Recovery
+archives prune launch secrets; unparseable bytes with declared keys become a
+recovery notice. Archives cannot replace intact config snapshots.
