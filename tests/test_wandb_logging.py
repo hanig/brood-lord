@@ -636,5 +636,31 @@ class ObjectContract(Checks):
     s.eq(json.loads(p.read_text())['config']['train'],{'child':str(obj)})
 
 
+class FinalRoundCounterexamples(Checks):
+ # Final gate failed; retained regressions only, no repair or extra round.
+ def test_enum_key(s):
+  class Key(str,Enum):
+   PASSWORD='password'
+  with TD()as d:
+   a=start(rank=0,output_dir=d,config=recipe({Key.PASSWORD:S}))
+   b=start(rank=0,output_dir=d,config=recipe({Key.PASSWORD:S}))
+   s.clean(a,S)
+   s.eq(a.config,b.config)
+   for p in Path(d).glob('wandb_config*.json'):s.lacks(S,p.read_text())
+ def test_deque_entry(s):
+  with TD()as d:
+   r=start(rank=0,output_dir=d,config=recipe({'sched':collections.deque([{'api_key':S}])}))
+   s.clean(r,S)
+   s.assertIn('train.sched.0.api_key',r.config['provenance']['redacted_keys'])
+   for p in Path(d).glob('wandb_config*.json'):s.lacks(S,p.read_text())
+ def test_unnamespaced_axis(s):
+  r=start(rank=0)
+  with s.assertWarns(UserWarning):wbkit.log_step(r,10000,{'loss':.2})
+  s.assertIn(('loss',AX,None),r.definitions)
+ def test_delta_types(s):
+  s.eq(wbkit.config_deltas(recipe({'warmup':True}),recipe({'warmup':1})),{'train.warmup':True})
+ def test_small_name_bound(s):
+  s.assertLessEqual(len(wbkit.run_name('abcdefgh','ijklmn',{},max_len=5)),5)
+
 if __name__=='__main__':
  unittest.main()
