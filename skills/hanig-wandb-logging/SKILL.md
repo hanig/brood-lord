@@ -14,7 +14,7 @@ keys and free text are sent as written. No value matching or text scanning.
 
 ## Host capability boundary
 
-Copy [wbkit](scripts/wbkit.py) into project code using authorized access.
+Copy [wbkit](scripts/wbkit.py) into project code with authorized access.
 Installs no package/credential. Measured: wandb 0.31.0; others best effort.
 Policy: hanig-project/hanig-swarm.
 
@@ -43,7 +43,7 @@ wbkit.log_step(run, step, metrics)
 wbkit.finish(run, outcome, contract_verdict)
 ```
 
-Reuse output_dir across requeues; new experiments need new directories.
+Reuse output_dir for requeues; new experiments need new directories.
 Restore training checkpoints separately. Direct SDK writes remain caller-owned.
 Resume retains config/name/notes and warns on caller-config differences.
 Legacy missing name/notes fields warn; supply their original values.
