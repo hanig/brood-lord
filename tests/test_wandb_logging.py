@@ -54,7 +54,6 @@ class Logging(Checks):
     s.clean(r)
   nc={'train':{'layers':[{'token':H,'lr':2}]}}
   s.lacks(H,repr(wbkit.config_deltas(nc,{'train':{}})))
-
  def test_resume(s):
   with TD()as tmp:
    a=start(output_dir=tmp)
@@ -152,7 +151,6 @@ class Offline(Checks):
    s.assertTrue(d.disabled)
    d.finish()
 class PartOne(Checks):
-
  def test_advice(s):
   for project in('state3_pretrain','sample.train'):
    with s.subTest(project=project),s.assertWarns(UserWarning):
@@ -316,7 +314,6 @@ class RoundTwo(Checks):
    p.write_text(raw);(Path(tmp)/'wandb_run_id').write_text('different')
    with s.assertRaisesRegex(ValueError,'recover'):start(sdk,output_dir=tmp)
    s.assertFalse(hasattr(sdk,'run'))
-
  def test_empty(s):
   keys=('RANK','SLURM_PROCID','LOCAL_RANK')
   for vals in itertools.product((None,'','0','4'),repeat=3):
@@ -367,7 +364,6 @@ class LastReview(Checks):
     s.assertFalse(hasattr(sdk,'run'))
     for f,v in zip(('wandb_config.json','wandb_config.backup.json'),(a,b)):
      if v is not None:s.eq((p/f).read_text(),v)
-
  def test_infinite_delta(s):
   for v in(float('inf'),float('-inf'),float('nan')):
    r=start(rank=0,config=recipe({'grad_clip':v}),base_config=recipe({'grad_clip':1.}))
@@ -401,7 +397,7 @@ class CommandProvenance(Checks):
      s.eq(start().config['provenance']['command'],want)
      s.lacks(value,json.dumps(got));s.lacks('/private/project',json.dumps(got))
  def test_legacy_snapshot(s):
-  # Exhaustive 3 persisted sources x 2 value layouts.
+  # Exhaustive: 3 sources x 2 layouts.
   for source,command in itertools.product(
     ('primary','backup','provenance'),
     ('train.py -k LEGACY_VALUE_CANARY','train.py --k=LEGACY_VALUE_CANARY')):
@@ -441,7 +437,7 @@ class CommandProvenance(Checks):
   s.eq(wbkit._redact_argv(['train.py','--name','--CANARY'])['flags'],['--name','--CANARY'])
 class ContinuationReview(Checks):
  def test_credential_labels(s):
-  # Exhaustive 8 labels x 2 case variants x 3 wrappers.
+  # Exhaustive: 8 keys x 2 cases x 3 wrappers.
   keys=('private_key','private-key','privateKey','secretKey','SecretAccessKey','clientSecretKey','secret_access_key','secret-access-key')
   for key,upper,wrap in itertools.product(keys,(False,True),(lambda v:v,lambda v:[v],lambda v:{'inner':v})):
    k=key.upper()if upper else key
@@ -505,7 +501,7 @@ class ContinuationTwo(Checks):
   s.eq(r.config['train'],c['train'])
   s.eq(set(wbkit.config_deltas(c,recipe({}))),{'train.'+k for k in keys})
  def test_long_string(s):
-  # Exhaustive single 1,000,000-character string; child deadline 10 seconds.
+  # Bound: 1M characters, 10s child.
   cmd=[sys.executable,'-B','-c',"from tests.test_wandb_logging import start; r=start(rank=0,config={'data':{'sequence':'A'*1000000}}); assert r.config['data']['sequence']=='A'*1000000"]
   s.eq(subprocess.run(cmd,capture_output=True,timeout=10).returncode,0)
  def test_mismatch_warning(s):
@@ -519,7 +515,7 @@ class ContinuationTwo(Checks):
    s.assertTrue(any('config-mismatch'in str(w.message)for w in found))
 class KnownValueSanitizer(Checks):
  def test_egress(s):
-  # Exhaustive 3 leaf shapes x 2 lengths, through every SDK consumer.
+  # Exhaustive: 3 shapes x 2 values.
   for secret,wrap in itertools.product(('hidden-value','hidden-value-with-spaces'),(lambda x:x,lambda x:[x],lambda x:{'inner':x})):
    with s.subTest(secret=secret,wrap=wrap):
     r=start(rank=0,config=recipe({'privateKey':wrap(secret),'copy':secret}),
@@ -533,7 +529,7 @@ class KnownValueSanitizer(Checks):
     wbkit.finish(r,'Observed '+secret,'inconclusive')
     s.clean(r,secret)
  def test_boundaries(s):
-  # Exhaustive secret lengths 1..8, with and without a secret config key.
+  # Exhaustive: lengths 1..8 x known/unknown.
   for length,known in itertools.product(range(1,9),(False,True)):
    secret='X'*length;cfg=recipe({'api_key':secret}if known else{})
    text='password='+secret+' val/token == 0.5'
@@ -542,7 +538,7 @@ class KnownValueSanitizer(Checks):
    s.eq(r.name,want);s.eq(r.notes.splitlines()[0],'H: '+want)
    if known:s.eq(r.config['train']['api_key'],'***')
  def test_verbatim(s):
-  # Exhaustive 4 values, including overlap and multiline data.
+  # Exhaustive: 4 values.
   secrets=('abcdef','abcdefghi','line1\nline2','quoted "value"')
   raw={str(i):{'secret':v,'copy':v}for i,v in enumerate(secrets)}
   clean=wbkit._redact(raw)
@@ -555,7 +551,7 @@ class KnownValueSanitizer(Checks):
   wbkit.log_step(a,1,{'train/text':S});wbkit.log_step(b,1,{'train/text':S})
   s.eq(a.logged[-1]['train/text'],'***');s.eq(b.logged[-1]['train/text'],S)
  def test_persisted_digest_migration(s):
-  # Exhaustive all 3 persisted sources; keep id/config while dropping old digest.
+  # Exhaustive: 3 sources.
   for source in ('wandb_provenance.json','wandb_config.json','wandb_config.backup.json'):
    with s.subTest(source=source),TD()as d:
     a=start(rank=0,output_dir=d);p=Path(d)/source;v=json.loads(p.read_text())
