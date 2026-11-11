@@ -20,7 +20,9 @@ training.config/seed, training_data splits/mixtures and run.commit/repository.
 Provenance adds Git/dirty, versions and host/scheduler. Commands contain only <!-- declaration: logging.credentials -->
 program basename, flag names, positional count and a SHA-256 digest of NUL-joined
 UTF-8 argv. Long flags drop =values; short flags keep two characters, including
-bundles. Lone - and -- stay. No argv values or positional tokens are recorded.
+bundles. Lone - and -- stay. After the first --, all tokens are counted only;
+negative tokens accepted by float() are counted only. Option-shaped values
+before -- follow the flag rule, since no caller option parser is available.
 Legacy argv strings become current-launch command metadata with a warning.
 Resolve Hydra/OmegaConf.
 
