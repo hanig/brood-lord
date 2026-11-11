@@ -118,6 +118,7 @@ def _flat(d,p=''):
    f[q]=v
  return f
 def config_deltas(config,base,secret_keys=()):
+ secret_keys=tuple(secret_keys)
  if not base:return{}
  cur,ref=(_flat(_norm(config,secret_keys)),_flat(_norm(base,secret_keys)))
  skip=('provenance.','family.')
@@ -134,6 +135,7 @@ def _slugify(s):
  s=re.sub('[^A-Za-z0-9.+-]+','-',str(s)).strip('-')
  return re.sub('-{2,}','-',s)
 def run_name(model,data,deltas=None,seed=None,max_len=64,secret_keys=()):
+ secret_keys=tuple(secret_keys)
  ps=[_slugify(model),_slugify(data)]
  keys=DEFAULT_SECRET_KEYS|frozenset(_key(k)for k in secret_keys)
  for q,val in _redact(deltas or{},secret_keys).items():
@@ -187,6 +189,7 @@ def _json(v):
  return str(v)
 def _norm(v,secret_keys=(),removed=None):return json.loads(json.dumps(_redact(v,secret_keys,removed),default=_json))
 def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expect=None,base_config=None,group=None,tags=(),summaries=None,entity=None,output_dir=None,name=None,rank=None,secret_keys=(),**kw):
+ secret_keys=tuple(secret_keys)
  rank=_rank()if rank is None else rank
  if rank!=0:return wandb.init(mode='disabled')
  _slug(project,'project')
