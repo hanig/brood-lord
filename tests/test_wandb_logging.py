@@ -515,6 +515,11 @@ class ContinuationTwo(Checks):
    s.eq(training['train']['lr'],.9);s.eq(r.config['train']['lr'],.1)
    s.assertTrue(any('config-mismatch'in str(w.message)for w in found))
 class KnownValueSanitizer(Checks):
+ def test_array(s):
+  class A:
+   def tolist(s):return{'api_key':S}
+  s.clean(start(config=recipe({'array':A()}),name=S,hypothesis=S),S)
+
  def test_egress(s):
   # Exhaustive: 3 shapes x 2 values.
   for secret,wrap in itertools.product(('hidden-value','hidden-value-with-spaces'),(lambda x:x,lambda x:[x],lambda x:{'inner':x})):
