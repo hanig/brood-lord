@@ -1,12 +1,11 @@
 # Frameworks
 
-`import wandb; wbkit.start_run(wandb, **run_args)`.
+Caller: `import wandb; wbkit.start_run(wandb, **run_args)`.
 
-- Torch/DDP: start per rank (RANK > SLURM_PROCID > LOCAL_RANK); reduce first.
-  Nonzero ranks: disabled.
-- Lightning/HF: start on global zero after rank setup; attach logger.
-  Use namespaced metrics, trainer/step optimizer callbacks or framework axis
-  via define_metrics (keeps summaries/namespaces).
+- Torch/DDP: reduce first; start per rank (RANK > SLURM_PROCID > LOCAL_RANK); nonzero disabled.
+- Lightning/HF: after rank setup, start on global zero; attach logger; namespaced
+  metrics on trainer/step optimizer callbacks or define_metrics framework axis
+  (retains summaries/namespaces).
 - Accelerate: reduce; start/log in is_main_process.
 - Sweeps: SDK run; run_name/define_metrics; wbkit._redact on direct writes;
   job_type=sweep-trial; group=question.
