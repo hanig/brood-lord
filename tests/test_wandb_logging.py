@@ -564,8 +564,27 @@ class RoundOneRepairs(Checks):
   with TD()as d:
    c=recipe({'project_key':H})
    a=start(rank=0,output_dir=d,config=c,base_config=recipe({}))
-   r=start(rank=0,output_dir=d,config=c,base_config=recipe({}),secret_keys=['project_key'])
-   s.clean(r);s.lacks(H,(Path(d)/'wandb_config.json').read_text())
+   with warnings.catch_warnings(record=True)as found:
+    warnings.simplefilter('always')
+    r=start(rank=0,output_dir=d,config=c,base_config=recipe({}),secret_keys=['project_key'])
+   s.eq((r.id,r.name,r.notes),(a.id,a.name,a.notes))
+   s.assertIn(H,r.name);s.assertIn(H,r.notes)
+   s.lacks('project_key',r.config['train'])
+   s.assertIn('train.project_key',r.config['provenance']['redacted_keys'])
+   alerts=[str(w.message)for w in found if 'resume.new-secret'in str(w.message)]
+   s.eq(len(alerts),1)
+   for text in ('train.project_key','first launch already sent its value','new output_dir','complete secret_keys'):
+    s.assertIn(text,alerts[0])
+   s.lacks(H,alerts[0])
+   for p in Path(d).glob('wandb_config*.json'):
+    saved=json.loads(p.read_text())
+    s.eq((saved['name'],saved['notes']),(a.name,a.notes))
+    s.lacks('project_key',saved['config']['train'])
+   with warnings.catch_warnings(record=True)as found:
+    warnings.simplefilter('always')
+    b=start(rank=0,output_dir=d,config=c,secret_keys=['project_key'])
+   s.eq((b.name,b.notes),(a.name,a.notes))
+   s.assertFalse(any('resume.new-secret'in str(w.message)for w in found))
 
 if __name__=='__main__':
  unittest.main()
