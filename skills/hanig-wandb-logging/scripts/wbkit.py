@@ -240,7 +240,7 @@ def _unpack_signature(v):
  return v
 def _signature(v,secret_keys=()):
  v=_record(v)
- kind=type(v).__module__+"."+type(v).__qualname__
+ kind=[type(v).__module__,type(v).__qualname__]
  if isinstance(v,Mapping):
   keys=DEFAULT_SECRET_KEYS|frozenset(_key(k)for k in _keys(secret_keys))
   return {str(_text(k)):_signature(x,secret_keys) for k,x in v.items() if not _secret(k,keys)}

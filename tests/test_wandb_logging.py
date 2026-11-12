@@ -1031,6 +1031,15 @@ class PartThreeRegressions(Checks):
     s.yes(delta(c,d));s.eq(delta(c,c),{})
     start(config=c,output_dir=out)
     with s.warns(UserWarning,'config-mismatch'):start(config=d,output_dir=out)
+ def test_type_pair_boundaries(s):
+  # Exhaustive dotted-boundary collision and None/string module identities.
+  for left,right in ((('fixture.scope','Value'),('fixture','scope.Value')),((None,'Value'),('fixture','Value'))):
+   a,b=(type('Value',(list,),{'__module__':module,'__qualname__':qual})([1])for module,qual in (left,right))
+   x,y=recipe({'x':a}),recipe({'x':b})
+   with s.subTest(left=left,right=right),TD()as out:
+    s.yes(delta(x,y));s.eq(delta(x,x),{})
+    start(config=x,output_dir=out)
+    with s.warns(UserWarning,'config-mismatch'):start(config=y,output_dir=out)
  def test_unreadable_archive(s):
   # Exhaustive equal/disagreeing snapshot states with synthetic read failure.
   for disagree in (False,True):
