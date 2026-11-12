@@ -159,7 +159,9 @@ nonblocking by default.
 - loss or silent corruption of data, results or preserved work, including a
   run, unit or merge reported as succeeded when it did not;
 - a weakened test, guard or assertion;
-- failure on the main path of the unit's intended use.
+- failure on the main path of the unit's intended use;
+- a change that performs an unauthorized or destructive action, fabricates or
+  misbinds evidence, or compromises closure or verifier authority.
 
 **Unchanged.** The Bounded-by list, the non-overridable process requirements
 (no fabricated evidence, no unauthorized or destructive action, green required
@@ -170,7 +172,8 @@ refuted claim is corrected in the pull-request body, not endorsed.
 **Record.** The pull-request body lists each overruled finding in one line with
 the reason it does not block. Findings worth fixing later go into one follow-up
 issue per unit. The five-question record below is not required in research
-mode.
+mode. That line, together with the unrelabelled verdict, is what honesty in the
+record requires here.
 
 Where the `hanig-orchestrate` skill or a task preamble restates the stricter
 rule, this section governs until that text is updated.
@@ -399,8 +402,9 @@ happens before cleanup, every time:
 ### When the gate's rounds are spent
 
 In research mode the orchestrator decides when rounds are spent: it merges with
-the open findings recorded, or stops the unit, without a committee step. The
-committee remains available when the orchestrator is unsure.
+the open findings recorded, or abandons or supersedes the unit, without a
+committee step. Stopping one unit is not stopping the run. The committee
+remains available when the orchestrator is unsure.
 
 `MAX_ROUNDS` is three. A fourth round is a decision about scope, not a question
 the gate can answer, and it goes to the committee with the findings, the
