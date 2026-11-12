@@ -82,6 +82,7 @@ mandate; do not generalise a tool's gate into a standing obligation to consult.
 - Open pull requests from an anchored attempt ref.
 - Merge pull requests that satisfy the adjudication policy below.
 - Use orchestrator judgment under the policy below; consult Astra only when unsure.
+- Overrule reviewer findings under *Research mode* below, unless the owner selected SWE mode.
 - Defer a reproduced finding outside a task's declared supported envelope, without concurrence, under *Findings outside the supported envelope* below.
 - Record merge receipts, advance the DAG, drain tracker intents.
 - File, update and close issues in this project.
@@ -130,6 +131,66 @@ This list is complete. Nothing outside it is a reason to stop a confirmed run.
 - Custody cannot be established under the defined process-death protocol.
 - Authority records or scope registrations conflict or require consent to be invented.
 - The requested operation is outside the supported envelope or permissions.
+
+## Review modes (owner decision, 2026-11-12)
+
+Two review modes exist. **Research mode is the default.** **SWE mode** is the
+stricter policy this mandate carried before research mode: the adjudication
+policy, the concurrence rule, the envelope rule and the round-limit rule below,
+applied as written, with this section ignored.
+
+SWE mode applies only when the owner selects it for a project, plan or unit.
+The selection is recorded, with the owner's words and date, at the top of that
+plan's PLAN.md decision ledger and in each affected task prompt. Without that
+record, research mode applies. The orchestrator never selects SWE mode on its
+own, and never drops it once selected.
+
+### Research mode
+
+Most work here is research tooling, not production code. Its programs are run
+by orchestrator sessions, which notice and repair failures. Review exists to
+catch the defects that would hurt a research run, not to certify every input.
+In research mode this section governs wherever the adjudication policy, the
+concurrence rule, the envelope rule or the round-limit rule below conflicts
+with it.
+
+**One review round by default.** A unit gates once. The worker repairs the
+reproduced findings on the hard-block list below, plus any other reproduced
+finding it can fix in a small change, and hands back. A second or third round
+is run only when a hard-block finding was repaired and its repair needs
+review. Three rounds remain the ceiling.
+
+**The orchestrator alone may overrule any reproduced finding not on the
+hard-block list**, in any round and after any verdict, including
+`REVIEW_FAIL` and `REVIEW_CLAIMS_REFUTED`. It needs no concurrence from Astra
+and no committee step, and it does not ask the owner. A finding that needs a
+contrived input, a hostile caller or an interleaving no real run produces is
+nonblocking by default.
+
+**Hard-block list.** These still block the merge until repaired:
+
+- exposure of a secret or credential, or a secret committed to the repository;
+- loss or silent corruption of data, results or preserved work, including a
+  run, unit or merge reported as succeeded when it did not;
+- a weakened test, guard or assertion;
+- failure on the main path of the unit's intended use;
+- a change that performs an unauthorized or destructive action, fabricates or
+  misbinds evidence, or compromises closure or verifier authority.
+
+**Unchanged.** The Bounded-by list, the non-overridable process requirements
+(no fabricated evidence, no unauthorized or destructive action, green required
+checks and the merge verifier on the actual candidate), branch protection, and
+honesty in the record all still apply. `REVIEW_FAIL` is never called a pass. A
+refuted claim is corrected in the pull-request body, not endorsed.
+
+**Record.** The pull-request body lists each overruled finding in one line with
+the reason it does not block. Findings worth fixing later go into one follow-up
+issue per unit. The five-question record below is not required in research
+mode. That line, together with the unrelabelled verdict, is what honesty in the
+record requires here.
+
+Where the `hanig-orchestrate` skill or a task preamble restates the stricter
+rule, this section governs until that text is updated.
 
 ## Adjudication policy
 
@@ -353,6 +414,11 @@ happens before cleanup, every time:
   not imply otherwise.
 
 ### When the gate's rounds are spent
+
+In research mode the orchestrator decides when rounds are spent: it merges with
+the open findings recorded, or abandons or supersedes the unit, without a
+committee step. Stopping one unit is not stopping the run. The committee
+remains available when the orchestrator is unsure.
 
 `MAX_ROUNDS` is three. A fourth round is a decision about scope, not a question
 the gate can answer, and it goes to the committee with the findings, the
