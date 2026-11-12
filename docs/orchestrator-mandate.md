@@ -82,7 +82,7 @@ mandate; do not generalise a tool's gate into a standing obligation to consult.
 - Open pull requests from an anchored attempt ref.
 - Merge pull requests that satisfy the adjudication policy below.
 - Use orchestrator judgment under the policy below; consult Astra only when unsure.
-- Overrule reviewer findings under *Research mode* below.
+- Overrule reviewer findings under *Research mode* below, unless the owner selected SWE mode.
 - Defer a reproduced finding outside a task's declared supported envelope, without concurrence, under *Findings outside the supported envelope* below.
 - Record merge receipts, advance the DAG, drain tracker intents.
 - File, update and close issues in this project.
@@ -132,13 +132,27 @@ This list is complete. Nothing outside it is a reason to stop a confirmed run.
 - Authority records or scope registrations conflict or require consent to be invented.
 - The requested operation is outside the supported envelope or permissions.
 
-## Research mode (owner decision, 2026-11-12)
+## Review modes (owner decision, 2026-11-12)
 
-This repository is research tooling, not production code. Its programs are run
+Two review modes exist. **Research mode is the default.** **SWE mode** is the
+stricter policy this mandate carried before research mode: the adjudication
+policy, the concurrence rule, the envelope rule and the round-limit rule below,
+applied as written, with this section ignored.
+
+SWE mode applies only when the owner selects it for a project, plan or unit.
+The selection is recorded, with the owner's words and date, at the top of that
+plan's PLAN.md decision ledger and in each affected task prompt. Without that
+record, research mode applies. The orchestrator never selects SWE mode on its
+own, and never drops it once selected.
+
+### Research mode
+
+Most work here is research tooling, not production code. Its programs are run
 by orchestrator sessions, which notice and repair failures. Review exists to
 catch the defects that would hurt a research run, not to certify every input.
-This section governs wherever the adjudication policy, the concurrence rule,
-the envelope rule or the round-limit rule below conflicts with it.
+In research mode this section governs wherever the adjudication policy, the
+concurrence rule, the envelope rule or the round-limit rule below conflicts
+with it.
 
 **One review round by default.** A unit gates once. The worker repairs the
 reproduced findings on the hard-block list below, plus any other reproduced
