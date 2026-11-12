@@ -8,7 +8,11 @@ The startup presentation reads the complete grant, bounds, and stop lists from t
 
 Without valid grant and custody the session follows the current mandate's narrow mode, whose contents remain authoritative there rather than in this skill. <!-- declaration: authority.narrow-mode -->
 
-## Findings
+## Research mode (default)
+
+The mandate's "Review modes" section governs: research mode defaults; SWE mode requires recorded owner selection. Research mode: one review round by default; further rounds only to review a hard-block repair; three rounds remain the ceiling. The orchestrator alone may overrule any reproduced finding outside that section's hard-block list, without concurrence or committee, including outside the envelope. Record one line per overruled finding and reason in the PR body; collect later fixes in one follow-up issue per unit, without the five-question record. Honesty, green required checks and the merge verifier still bind. <!-- declaration: adjudication.matrix -->
+
+## Findings in SWE mode
 
 The matrix distinguishes evidence that disproves a finding, a confirmed required defect, a confirmed excluded defect, and an unresolved finding. The review gate's digest-keyed `--dispositions` entries retain `location`, `summary`, `disposition` and a one-line `reason`. A `reproduced` or `not-reproduced` entry includes a `reproduction` object with non-empty `setup`, `command`, `expected`, `observed` and `revision` strings; `revision` is the full lowercase 40- or 64-hex commit id tested. A `deferred` entry needs no reproduction. Missing or malformed reproduction evidence is a configuration error before network access. Reviewers receive the evidence with the prior finding, subject to the gate's existing removal of recognized prior-review decision text. The record supports refutation and adjudication, never automatic severity downgrading or execution of reviewer-supplied commands. Inability to reproduce is evidence for the adjudicator, not proof of harmlessness. <!-- declaration: adjudication.matrix -->
 
