@@ -1149,6 +1149,20 @@ class AuditRepairs(Checks):
     for method in ('artifacts','versions'):
      with s.subTest(order=order,method=method):
       s.assertIs(audit._latest(NS(**{method:lambda:iter(versions)})),expected)
+ def test_version_subclass_order(s):
+  class Descending(str):
+   def __getitem__(self,key):return Descending(super().__getitem__(key))
+   def lstrip(self,chars=None):return Descending(super().lstrip(chars))
+   def __lt__(self,other):return str.__gt__(self,other)
+   def __gt__(self,other):return str.__lt__(self,other)
+  audit=s.load()
+  # Exhaustive 3! orders x 2 APIs; compare numeric values, retaining first ties.
+  for order in itertools.permutations(('v1','v2','v02')):
+   versions=[NS(version=Descending(v))for v in order]
+   expected=max(versions,key=lambda art:int(art.version[1:]))
+   for method in ('artifacts','versions'):
+    with s.subTest(order=order,method=method):
+     s.assertIs(audit._latest(NS(**{method:lambda:iter(versions)})),expected)
  def test_version_selection_without_int(s):
   audit=s.load()
   # Exhaustive 3 pairs x 2 orders x 2 APIs, including long zero prefixes.

@@ -18,9 +18,10 @@ def _latest(coll):
     versions = coll.artifacts() if hasattr(coll, "artifacts") else coll.versions()
     def number(art):
         v = getattr(art, "version", "")
-        if not isinstance(v, str) or not re.fullmatch(r"v[0-9]+", v):
+        match = re.fullmatch(r"v[0-9]+", v) if isinstance(v, str) else None
+        if match is None:
             return (-1, "")
-        digits = v[1:].lstrip("0") or "0"
+        digits = match.group()[1:].lstrip("0") or "0"
         return (len(digits), digits)
     first = latest = None
     top, missing = (-1, ""), False
