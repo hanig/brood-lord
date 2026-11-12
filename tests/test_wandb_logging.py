@@ -1133,6 +1133,52 @@ class AuditRepairs(Checks):
    with s.subTest(order=order,method=method),warnings.catch_warnings(record=True)as ws:
     warnings.simplefilter('always');s.has('artifact.no-metadata',audit.audit(api,'team/project',0)['by_rule'])
     if None in order:s.yes(any('version-order'in str(w.message)for w in ws))
+ def test_version_beyond_integer_limit(s):
+  for method in ('artifacts','versions'):
+   audit=s.load();versions=[NS(version='v1'),NS(version='v'+'9'*4301)]
+   with s.subTest(method=method):
+    s.assertIs(audit._latest(NS(**{method:lambda:iter(versions)})),versions[1])
+ def test_numeric_version_equivalence(s):
+  # Exhaustive permutations of every subset of 7 forms: 13,700 orders x 2 APIs.
+  forms=('v0','v00','v000','v2','v02','v10','v010')
+  audit=s.load()
+  for size in range(len(forms)+1):
+   for order in itertools.permutations(forms,size):
+    versions=[NS(version=v)for v in order]
+    expected=max(versions,key=lambda art:int(art.version[1:]),default=None)
+    for method in ('artifacts','versions'):
+     with s.subTest(order=order,method=method):
+      s.assertIs(audit._latest(NS(**{method:lambda:iter(versions)})),expected)
+ def test_version_subclass_order(s):
+  class Descending(str):
+   def __getitem__(self,key):return Descending(super().__getitem__(key))
+   def lstrip(self,chars=None):return Descending(super().lstrip(chars))
+   def __lt__(self,other):return str.__gt__(self,other)
+   def __gt__(self,other):return str.__lt__(self,other)
+  audit=s.load()
+  # Exhaustive 3! orders x 2 APIs; compare numeric values, retaining first ties.
+  for order in itertools.permutations(('v1','v2','v02')):
+   versions=[NS(version=Descending(v))for v in order]
+   expected=max(versions,key=lambda art:int(art.version[1:]))
+   for method in ('artifacts','versions'):
+    with s.subTest(order=order,method=method):
+     s.assertIs(audit._latest(NS(**{method:lambda:iter(versions)})),expected)
+ def test_version_selection_without_int(s):
+  audit=s.load()
+  # Exhaustive 3 pairs x 2 orders x 2 APIs, including long zero prefixes.
+  for pair,method in itertools.product((('v0','v'+'0'*4301),('v2','v'+'0'*4301+'10'),('v'+'9'*4301,'v1'+'0'*4301)),('artifacts','versions')):
+   for order in itertools.permutations(pair):
+    versions=[NS(version=v)for v in order]
+    expected=versions[0]if pair[0]== 'v0' else versions[order.index(pair[1])]
+    with s.subTest(pair=pair,method=method,order=order),patch.object(audit,'int',side_effect=AssertionError('version converted to int'),create=True):
+     s.assertIs(audit._latest(NS(**{method:lambda:iter(versions)})),expected)
+ def test_missing_version_fallback(s):
+  audit=s.load()
+  # Exhaustive 9 malformed values x 3! orders x 2 APIs.
+  for value,method in itertools.product((None,'','v','v-1','v1\n','v١','v1.0',1,'V1'),('artifacts','versions')):
+   for order in itertools.permutations((NS(version=value),NS(version='v2'),NS(version='v10'))):
+    with s.subTest(value=value,method=method),s.warns(UserWarning,'audit.version-order: missing vN metadata; first returned version used'):
+     s.assertIs(audit._latest(NS(**{method:lambda:iter(order)})),order[0])
  def test_blank_description(s):
   for blank in ('',None):
    audit=s.load();latest=NS(description=blank,metadata={'n':1});coll=NS(name='cells',description='Produced by Contents Intended use '*3,artifacts=lambda:[latest]);api=NS(artifact_types=lambda **kw:[NS(name='model',collections=lambda:[coll])])
