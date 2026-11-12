@@ -21,12 +21,12 @@ def _code(issue: str) -> str:
 def audit(api, path: str, limit: int = 200) -> dict:
     if len(path.split("/")) != 2 or not all(path.split("/")):
         raise ValueError("path must be entity/project")
-    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
-        raise ValueError("limit must be a positive integer")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+        raise ValueError("limit must be a nonnegative integer")
     if hasattr(api, "Api"):
         api = api.Api(timeout=120)
     entity, project = path.split("/", 1)
-    runs = api.runs(path, order="-created_at", per_page=min(limit, 100))
+    runs = api.runs(path, order="-created_at", per_page=min(limit, 100)) if limit else []
     run_rows = []
     for run in runs[:limit]:
         issues = wbkit.lint_run(

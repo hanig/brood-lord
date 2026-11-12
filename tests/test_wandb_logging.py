@@ -1097,11 +1097,15 @@ class ProjectAudit(Checks):
    Path(out,'wbkit.py').write_text('raise AssertionError("path shadow executed")')
    audit=s.load();api,*_=s.fixture();rep=audit.audit(api,'team/project',1)
    s.eq(Path(audit.wbkit.__file__).resolve(),(SCRIPTS/'wbkit.py').resolve());s.has('notes.empty',rep['by_rule']);s.assertIs(sys.modules['wbkit'],shadow)
+ def test_zero_runs(s):
+  audit=s.load();api,*_=s.fixture()
+  rep=audit.audit(api,'team/project',0)
+  s.eq(rep['runs_checked'],0);s.eq(rep['artifact_collections_checked'],2)
  def test_validation_and_errors(s):
   audit=s.load();api,*_=s.fixture()
   for path in ('team','/project','team/','team/project/extra'):
    with s.subTest(path=path),s.assertRaises(ValueError):audit.audit(api,path)
-  for limit in (0,-1,True,1.5):
+  for limit in (-1,True,1.5):
    with s.subTest(limit=limit),s.assertRaises(ValueError):audit.audit(api,'team/project',limit)
   def failure(*a,**kw):raise RuntimeError('synthetic API unavailable')
   api.runs=failure
