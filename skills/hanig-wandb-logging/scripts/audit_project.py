@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Read-only per-rule run/artifact audit; call audit(api, "entity/project", 200)."""
 
-from __future__ import annotations
-
 import argparse
 import collections
 import json
@@ -16,18 +14,21 @@ _spec = importlib.util.spec_from_file_location("_audit_wbkit", Path(__file__).wi
 wbkit = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(wbkit)
 
-def _code(issue: str) -> str:
-    return issue.split(":", 1)[0]
-
-
 def _latest(coll):
     versions = coll.artifacts() if hasattr(coll, "artifacts") else coll.versions()
     def number(art):
         v = getattr(art, "version", "")
         return int(v[1:]) if isinstance(v, str) and re.fullmatch(r"v[0-9]+", v) else -1
-    latest = max(versions, key=number, default=None)
-    if latest is not None and number(latest) < 0:
+    first = latest = None
+    top, missing = -1, False
+    for art in versions:
+        if first is None: first = art
+        n = number(art)
+        missing |= n < 0
+        if n > top: latest, top = art, n
+    if missing:
         warnings.warn("audit.version-order: missing vN metadata; first returned version used")
+        return first
     return latest
 
 
@@ -42,7 +43,6 @@ def audit(api, path: str, limit: int = 200) -> dict:
     _validate(path, limit)
     if hasattr(api, "Api"):
         api = api.Api(timeout=120)
-    entity, project = path.split("/", 1)
     runs = api.runs(path, order="-created_at", per_page=min(limit, 100)) if limit else []
     run_rows = []
     for run in runs[:limit]:
@@ -75,10 +75,10 @@ def audit(api, path: str, limit: int = 200) -> dict:
     by_rule: dict[str, list[str]] = collections.defaultdict(list)
     for r in run_rows:
         for i in r["issues"]:
-            by_rule[_code(i)].append(r["name"] or r["id"])
+            by_rule[i.split(":", 1)[0]].append(r["name"] or r["id"])
     for a in art_rows:
         for i in a["issues"]:
-            by_rule[_code(i)].append(a["name"])
+            by_rule[i.split(":", 1)[0]].append(a["name"])
 
     clean_runs = sum(1 for r in run_rows if not r["issues"])
     clean_arts = sum(1 for a in art_rows if not a["issues"])

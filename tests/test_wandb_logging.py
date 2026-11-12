@@ -1125,12 +1125,14 @@ class ProjectAudit(Checks):
 class AuditRepairs(Checks):
  load=ProjectAudit.load
  def test_version_order(s):
-  # Exhaustive 3! orders x 2 APIs; v10 > v2.
-  for order,method in itertools.product(itertools.permutations(('v0','v2','v10')),('artifacts','versions')):
-   audit=s.load();versions=[NS(version=v,description='Produced by Contents Intended use '*3,metadata=None if v=='v10' else {'n':1})for v in order]
+  # Exhaustive (3! orders + mixed metadata) x 2 APIs; v10 > v2.
+  for order,method in itertools.product(itertools.chain(itertools.permutations(('v0','v2','v10')),((None,'v0'),)),('artifacts','versions')):
+   audit=s.load();versions=[NS(version=v,description='Produced by Contents Intended use '*3,metadata=None if v in ('v10',None) else {'n':1})for v in order]
    coll=NS(name='cells',**{method:lambda:iter(versions)})
    api=NS(artifact_types=lambda **kw:[NS(name='model',collections=lambda:[coll])])
-   with s.subTest(order=order,method=method):s.has('artifact.no-metadata',audit.audit(api,'team/project',0)['by_rule'])
+   with s.subTest(order=order,method=method),warnings.catch_warnings(record=True)as ws:
+    warnings.simplefilter('always');s.has('artifact.no-metadata',audit.audit(api,'team/project',0)['by_rule'])
+    if None in order:s.yes(any('version-order'in str(w.message)for w in ws))
  def test_blank_description(s):
   for blank in ('',None):
    audit=s.load();latest=NS(description=blank,metadata={'n':1});coll=NS(name='cells',description='Produced by Contents Intended use '*3,artifacts=lambda:[latest]);api=NS(artifact_types=lambda **kw:[NS(name='model',collections=lambda:[coll])])
