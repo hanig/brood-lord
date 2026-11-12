@@ -2,7 +2,8 @@
 from pathlib import Path
 import argparse,hashlib,collections,importlib,importlib.util,itertools,dataclasses
 from enum import Enum
-import json,os,sys,subprocess,warnings
+import json,os,sys,subprocess,warnings,io
+from contextlib import redirect_stderr
 from tempfile import TemporaryDirectory as TD
 import types,unittest
 from unittest.mock import patch
@@ -1016,6 +1017,154 @@ class FinalDiagnostics(Checks):
   name=wbkit.run_name('sample','cells',seed=2);s.eq(name,'sample-cells-s2')
   issues=wbkit.lint_run(name=name,notes='H: valid hypothesis here',group='g',job_type='train',config={'family':'sample','arch':{},'train':{},'data':{}},summary_keys=[],tags=[])
   s.no(any(x.startswith('name.random:')for x in issues))
+
+NS=types.SimpleNamespace
+class PartThreeRegressions(Checks):
+ def test_type_identity(s):
+  # Exhaustive 2 base types x 2 identity dimensions, including persisted resume.
+  for base,dimension in itertools.product((list,float),('module','qualname')):
+   attrs={'__module__':'fixture.one','__qualname__':'Scope.Value'}
+   a=type('Value',(base,),attrs)
+   attrs=dict(attrs);attrs['__'+dimension+'__']='fixture.two' if dimension=='module' else 'Other.Value'
+   b=type('Value',(base,),attrs)
+   x,y=(cls([1,2]) if base is list else cls(1.0) for cls in (a,b))
+   c,d=recipe({'x':x}),recipe({'x':y})
+   with s.subTest(base=base,dimension=dimension),TD()as out:
+    s.yes(delta(c,d));s.eq(delta(c,c),{})
+    start(config=c,output_dir=out)
+    with s.warns(UserWarning,'config-mismatch'):start(config=d,output_dir=out)
+ def test_type_pair_boundaries(s):
+  # Exhaustive dotted-boundary collision and None/string module identities.
+  for left,right in ((('fixture.scope','Value'),('fixture','scope.Value')),((None,'Value'),('fixture','Value'))):
+   a,b=(type('Value',(list,),{'__module__':module,'__qualname__':qual})([1])for module,qual in (left,right))
+   x,y=recipe({'x':a}),recipe({'x':b})
+   with s.subTest(left=left,right=right),TD()as out:
+    s.yes(delta(x,y));s.eq(delta(x,x),{})
+    start(config=x,output_dir=out)
+    with s.warns(UserWarning,'config-mismatch'):start(config=y,output_dir=out)
+ def test_unreadable_archive(s):
+  # Exhaustive equal/disagreeing snapshot states with synthetic read failure.
+  for disagree in (False,True):
+   with s.subTest(disagree=disagree),TD()as out:
+    start(output_dir=out);p=Path(out)
+    archive=p/'wandb_config.json.corrupt-fixture';archive.write_bytes(b'{}')
+    if disagree:(p/CF).write_bytes((p/CF).read_bytes()+b' ')
+    before={f.name:f.read_bytes()for f in p.iterdir()};real=Path.read_bytes;sdk=FakeWandb()
+    def read(path):
+     if path==archive:raise PermissionError('synthetic unreadable archive')
+     return real(path)
+    with patch.object(Path,'read_bytes',read),s.raises(ValueError,'restore one from the other by hand, or use a new output_dir')as err:
+     start(sdk,output_dir=out)
+    for name in (CF,BF):s.has(str(p/name),str(err.exception))
+    s.no(hasattr(sdk,'run'));s.eq({f.name:f.read_bytes()for f in p.iterdir()},before)
+ def test_status_case(s):
+  # Exhaustive 5 tokens x 3 cases x 3 token positions, both lint consumers.
+  for token,case,wrap in itertools.product(('best','final','latest','v2','20261109'),(str.lower,str.upper,str.title),('{}','model-{}','model.{}_data')):
+   name=wrap.format(case(token))
+   with s.subTest(name=name),s.warns(UserWarning,'artifact.versioned-name'):check_name(name)
+   s.yes(any(x.startswith('artifact.versioned-name:')for x in lint_art(name=name,type='model',description='Produced by Contents Intended use '*3,metadata={'x':1})))
+  for name in ('old-faithful-geyser','BESTbuy','latestmodel'):
+   with warnings.catch_warnings(record=True)as ws:
+    warnings.simplefilter('always');check_name(name)
+   s.eq(ws,[])
+
+class ProjectAudit(Checks):
+ def load(s):
+  spec=importlib.util.spec_from_file_location('fixture_audit',SCRIPTS/'audit_project.py')
+  module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+ def fixture(s):
+  ns=NS
+  run=ns(id='run1',name='happy-fox-2',notes='',group=None,job_type=None,config={},summary_metrics={'loss':1},tags=[],state='finished',url='https://example.invalid/run1')
+  latest=ns(description='Produced by Contents Intended use '*3,metadata={'n':1})
+  coll=ns(name='Model-BEST',artifacts=lambda:iter([latest]))
+  legacy=ns(name='cells',description='short',versions=lambda:iter([]))
+  atype=ns(name='model',collections=lambda:iter([coll,legacy]))
+  def forbidden():raise AssertionError('internal collection traversed')
+  calls=[]
+  def runs(path,**kw):calls.append(('runs',path,kw));return [run,run]
+  def artifact_types(**kw):calls.append(('types',kw));return [ns(name='wandb-history',collections=forbidden),ns(name='job',collections=forbidden),atype]
+  return ns(runs=runs,artifact_types=artifact_types),run,coll,legacy,calls
+ def test_audit(s):
+  audit=s.load();api,run,coll,legacy,calls=s.fixture();before=repr((run,coll,legacy))
+  rep=audit.audit(api,'team/project',1)
+  expected=wbkit.lint_run(name=run.name,notes=run.notes,group=run.group,job_type=run.job_type,config=run.config,summary_keys=list(run.summary_metrics),tags=run.tags,state=run.state)
+  s.eq(rep['runs'][0]['issues'],expected);s.eq(rep['runs_checked'],1);s.eq(rep['runs_clean'],0)
+  s.eq(rep['artifact_collections_checked'],2);s.eq(rep['artifact_collections_clean'],0)
+  s.eq(rep['artifacts'][0]['issues'],['artifact.versioned-name: use aliases'])
+  s.eq(rep['by_rule']['artifact.versioned-name'],['Model-BEST'])
+  s.eq(rep['by_rule']['notes.empty'],['happy-fox-2'])
+  s.eq(rep['by_rule']['artifact.no-metadata'],['cells'])
+  s.eq(calls,[('runs','team/project',{'order':'-created_at','per_page':1}),('types',{'project':'team/project'})])
+  s.eq(before,repr((run,coll,legacy)));json.dumps(rep)
+ def test_module_and_empty(s):
+  audit=s.load();calls=[]
+  api=NS(runs=lambda *a,**k:[],artifact_types=lambda **k:[])
+  def factory(**kw):calls.append(kw);return api
+  rep=audit.audit(NS(Api=factory),'team/project')
+  s.eq(calls,[{'timeout':120}]);s.eq(rep['by_rule'],{});s.eq(rep['runs_checked'],0);s.eq(rep['artifact_collections_checked'],0)
+ def test_shadowing(s):
+  shadow=types.ModuleType('wbkit');shadow.lint_run=lambda **kw: (_ for _ in ()).throw(AssertionError('shadow called'))
+  with TD()as out,patch.dict(sys.modules,{'wbkit':shadow}),patch.object(sys,'path',[out]+sys.path):
+   Path(out,'wbkit.py').write_text('raise AssertionError("path shadow executed")')
+   audit=s.load();api,*_=s.fixture();rep=audit.audit(api,'team/project',1)
+   s.eq(Path(audit.wbkit.__file__).resolve(),(SCRIPTS/'wbkit.py').resolve());s.has('notes.empty',rep['by_rule']);s.assertIs(sys.modules['wbkit'],shadow)
+ def test_zero_runs(s):
+  audit=s.load();api,*_=s.fixture()
+  rep=audit.audit(api,'team/project',0)
+  s.eq(rep['runs_checked'],0);s.eq(rep['artifact_collections_checked'],2)
+ def test_validation_and_errors(s):
+  audit=s.load();api,*_=s.fixture()
+  for path in ('team','/project','team/','team/project/extra'):
+   with s.subTest(path=path),s.assertRaises(ValueError):audit.audit(api,path)
+  for limit in (-1,True,1.5):
+   with s.subTest(limit=limit),s.assertRaises(ValueError):audit.audit(api,'team/project',limit)
+  def failure(*a,**kw):raise RuntimeError('synthetic API unavailable')
+  api.runs=failure
+  with s.raises(RuntimeError,'synthetic API unavailable'):audit.audit(api,'team/project')
+
+class AuditRepairs(Checks):
+ load=ProjectAudit.load
+ def test_version_order(s):
+  # Exhaustive (3! orders + mixed metadata) x 2 APIs; v10 > v2.
+  for order,method in itertools.product(itertools.chain(itertools.permutations(('v0','v2','v10')),((None,'v0'),)),('artifacts','versions')):
+   audit=s.load();versions=[NS(version=v,description='Produced by Contents Intended use '*3,metadata=None if v in ('v10',None) else {'n':1})for v in order]
+   coll=NS(name='cells',**{method:lambda:iter(versions)})
+   api=NS(artifact_types=lambda **kw:[NS(name='model',collections=lambda:[coll])])
+   with s.subTest(order=order,method=method),warnings.catch_warnings(record=True)as ws:
+    warnings.simplefilter('always');s.has('artifact.no-metadata',audit.audit(api,'team/project',0)['by_rule'])
+    if None in order:s.yes(any('version-order'in str(w.message)for w in ws))
+ def test_blank_description(s):
+  for blank in ('',None):
+   audit=s.load();latest=NS(description=blank,metadata={'n':1});coll=NS(name='cells',description='Produced by Contents Intended use '*3,artifacts=lambda:[latest]);api=NS(artifact_types=lambda **kw:[NS(name='model',collections=lambda:[coll])])
+   s.has('artifact.no-description',audit.audit(api,'team/project',0)['by_rule'])
+ def test_internal_documentation(s):
+  doc=(SCRIPTS.parent/'SKILL.md').read_text()
+  for token in ('wandb-','run_table','job'):s.has('`'+token+'`',doc)
+ def test_cli_validation(s):
+  for value,flag in (('team/','path'),('-1','limit')):
+   args=['audit',value] if flag=='path' else ['audit','team/project','--limit',value]
+   with patch.object(sys,'argv',args),redirect_stderr(io.StringIO())as err,s.assertRaises(SystemExit)as exit:s.load().main(NS())
+   s.eq(exit.exception.code,2);s.lacks('Traceback',err.getvalue())
+
+class LegacyDiagnostics(Checks):
+ def test_legacy(s):
+  # Exhaustive 2 values, legacy signature.
+  for x in (1,2):
+   with TD()as out:
+    start(config=recipe({'x':[1]}),output_dir=out);p=Path(out)
+    for name in (CF,BF):
+     obj=json.loads((p/name).read_text());obj['config_types']={'arch':{},TR:{'x':['list',[['int',1]]]},'data':{}};(p/name).write_text(json.dumps(obj))
+    with warnings.catch_warnings(record=True)as ws:
+     warnings.simplefilter('always');r=start(config=recipe({'x':[x]}),output_dir=out)
+    messages=[str(w.message)for w in ws];s.yes(any('resume.legacy-types'in m for m in messages));s.eq(any('config-mismatch'in m for m in messages),x!=1);s.eq(r.config[TR]['x'],[1])
+ def test_archive_diagnostic(s):
+  with TD()as out:
+   start(output_dir=out);p=Path(out);archive=p/'wandb_config.json.corrupt-fixture';archive.write_text('{}');real=Path.read_bytes
+   def read(path):
+    if path==archive:raise PermissionError('synthetic unreadable')
+    return real(path)
+   with patch.object(Path,'read_bytes',read),s.raises(ValueError,'make it readable')as err:start(output_dir=out)
+   s.has(str(archive),str(err.exception))
 
 if __name__=='__main__':
  unittest.main()

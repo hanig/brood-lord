@@ -92,6 +92,31 @@ run_name fits integer max_len>=1; <1 raises ValueError.
 ## Known limits
 
 - "a.b"/nested a,b deltas collide; avoid dotted keys.
+- Pre-upgrade snapshots lack module/qualname identity: resume warns legacy-types,
+  compares normalized values, preserves the old evidence. Use a new output_dir
+  to record full identities; restore training independently.
+- An interrupted snapshot write can leave differing snapshots; the next start
+  refuses before init. Preserve both, copy the newer intact snapshot over the
+  other, or use a new output_dir. This follows the owner byte-equality rule.
+
+## Read-only project audit
+
+[audit_project.py](scripts/audit_project.py) reuses adjacent wbkit lint rules,
+loaded by file identity. With authorized read access:
+
+```python
+import wandb, audit_project
+report = audit_project.audit(wandb.Api(), "entity/project", limit=200)
+```
+
+A wandb module also works. The limit bounds runs; noninternal artifact collections are checked; `wandb-` prefixes, `run_table` and `job`
+are omitted, matching wbkit lint exclusions. The greatest numeric vN version
+is selected across the iterator. Adapters without vN metadata warn and use the
+first version; supply vN metadata before relying on results.
+Reports group issues by rule with rows and clean totals.
+API errors propagate; restore access and retry. No run or artifact is edited.
+Unreadable archives name the archive: preserve it and make it readable, or use a new output_dir.
+For CLI rendering, call audit_project.main(wandb.Api()); W&B stays caller-supplied.
 
 ## Artifacts and lineage
 
