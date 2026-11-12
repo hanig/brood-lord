@@ -18,13 +18,16 @@ def _latest(coll):
     versions = coll.artifacts() if hasattr(coll, "artifacts") else coll.versions()
     def number(art):
         v = getattr(art, "version", "")
-        return int(v[1:]) if isinstance(v, str) and re.fullmatch(r"v[0-9]+", v) else -1
+        if not isinstance(v, str) or not re.fullmatch(r"v[0-9]+", v):
+            return (-1, "")
+        digits = v[1:].lstrip("0") or "0"
+        return (len(digits), digits)
     first = latest = None
-    top, missing = -1, False
+    top, missing = (-1, ""), False
     for art in versions:
         if first is None: first = art
         n = number(art)
-        missing |= n < 0
+        missing |= n[0] < 0
         if n > top: latest, top = art, n
     if missing:
         warnings.warn("audit.version-order: missing vN metadata; first returned version used")
