@@ -2,7 +2,8 @@
 from pathlib import Path
 import argparse,hashlib,collections,importlib,importlib.util,itertools,dataclasses
 from enum import Enum
-import json,os,sys,subprocess,warnings
+import json,os,sys,subprocess,warnings,io
+from contextlib import redirect_stderr
 from tempfile import TemporaryDirectory as TD
 import types,unittest
 from unittest.mock import patch
@@ -1017,6 +1018,7 @@ class FinalDiagnostics(Checks):
   issues=wbkit.lint_run(name=name,notes='H: valid hypothesis here',group='g',job_type='train',config={'family':'sample','arch':{},'train':{},'data':{}},summary_keys=[],tags=[])
   s.no(any(x.startswith('name.random:')for x in issues))
 
+NS=types.SimpleNamespace
 class PartThreeRegressions(Checks):
  def test_type_identity(s):
   # Exhaustive 2 base types x 2 identity dimensions, including persisted resume.
@@ -1071,7 +1073,7 @@ class ProjectAudit(Checks):
   spec=importlib.util.spec_from_file_location('fixture_audit',SCRIPTS/'audit_project.py')
   module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
  def fixture(s):
-  ns=types.SimpleNamespace
+  ns=NS
   run=ns(id='run1',name='happy-fox-2',notes='',group=None,job_type=None,config={},summary_metrics={'loss':1},tags=[],state='finished',url='https://example.invalid/run1')
   latest=ns(description='Produced by Contents Intended use '*3,metadata={'n':1})
   coll=ns(name='Model-BEST',artifacts=lambda:iter([latest]))
@@ -1096,9 +1098,9 @@ class ProjectAudit(Checks):
   s.eq(before,repr((run,coll,legacy)));json.dumps(rep)
  def test_module_and_empty(s):
   audit=s.load();calls=[]
-  api=types.SimpleNamespace(runs=lambda *a,**k:[],artifact_types=lambda **k:[])
+  api=NS(runs=lambda *a,**k:[],artifact_types=lambda **k:[])
   def factory(**kw):calls.append(kw);return api
-  rep=audit.audit(types.SimpleNamespace(Api=factory),'team/project')
+  rep=audit.audit(NS(Api=factory),'team/project')
   s.eq(calls,[{'timeout':120}]);s.eq(rep['by_rule'],{});s.eq(rep['runs_checked'],0);s.eq(rep['artifact_collections_checked'],0)
  def test_shadowing(s):
   shadow=types.ModuleType('wbkit');shadow.lint_run=lambda **kw: (_ for _ in ()).throw(AssertionError('shadow called'))
@@ -1119,6 +1121,48 @@ class ProjectAudit(Checks):
   def failure(*a,**kw):raise RuntimeError('synthetic API unavailable')
   api.runs=failure
   with s.raises(RuntimeError,'synthetic API unavailable'):audit.audit(api,'team/project')
+
+class AuditRepairs(Checks):
+ load=ProjectAudit.load
+ def test_version_order(s):
+  # Exhaustive 3! orders x 2 APIs; v10 > v2.
+  for order,method in itertools.product(itertools.permutations(('v0','v2','v10')),('artifacts','versions')):
+   audit=s.load();versions=[NS(version=v,description='Produced by Contents Intended use '*3,metadata=None if v=='v10' else {'n':1})for v in order]
+   coll=NS(name='cells',**{method:lambda:iter(versions)})
+   api=NS(artifact_types=lambda **kw:[NS(name='model',collections=lambda:[coll])])
+   with s.subTest(order=order,method=method):s.has('artifact.no-metadata',audit.audit(api,'team/project',0)['by_rule'])
+ def test_blank_description(s):
+  for blank in ('',None):
+   audit=s.load();latest=NS(description=blank,metadata={'n':1});coll=NS(name='cells',description='Produced by Contents Intended use '*3,artifacts=lambda:[latest]);api=NS(artifact_types=lambda **kw:[NS(name='model',collections=lambda:[coll])])
+   s.has('artifact.no-description',audit.audit(api,'team/project',0)['by_rule'])
+ def test_internal_documentation(s):
+  doc=(SCRIPTS.parent/'SKILL.md').read_text()
+  for token in ('wandb-','run_table','job'):s.has('`'+token+'`',doc)
+ def test_cli_validation(s):
+  for value,flag in (('team/','path'),('-1','limit')):
+   args=['audit',value] if flag=='path' else ['audit','team/project','--limit',value]
+   with patch.object(sys,'argv',args),redirect_stderr(io.StringIO())as err,s.assertRaises(SystemExit)as exit:s.load().main(NS())
+   s.eq(exit.exception.code,2);s.lacks('Traceback',err.getvalue())
+
+class LegacyDiagnostics(Checks):
+ def test_legacy(s):
+  # Exhaustive 2 values, legacy signature.
+  for x in (1,2):
+   with TD()as out:
+    start(config=recipe({'x':[1]}),output_dir=out);p=Path(out)
+    for name in (CF,BF):
+     obj=json.loads((p/name).read_text());obj['config_types']={'arch':{},TR:{'x':['list',[['int',1]]]},'data':{}};(p/name).write_text(json.dumps(obj))
+    with warnings.catch_warnings(record=True)as ws:
+     warnings.simplefilter('always');r=start(config=recipe({'x':[x]}),output_dir=out)
+    messages=[str(w.message)for w in ws];s.yes(any('resume.legacy-types'in m for m in messages));s.eq(any('config-mismatch'in m for m in messages),x!=1);s.eq(r.config[TR]['x'],[1])
+ def test_archive_diagnostic(s):
+  with TD()as out:
+   start(output_dir=out);p=Path(out);archive=p/'wandb_config.json.corrupt-fixture';archive.write_text('{}');real=Path.read_bytes
+   def read(path):
+    if path==archive:raise PermissionError('synthetic unreadable')
+    return real(path)
+   with patch.object(Path,'read_bytes',read),s.raises(ValueError,'make it readable')as err:start(output_dir=out)
+   s.has(str(archive),str(err.exception))
 
 if __name__=='__main__':
  unittest.main()

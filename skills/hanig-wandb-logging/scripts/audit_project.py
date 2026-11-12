@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import re
+import warnings
 import importlib.util
 import sys
 from pathlib import Path
@@ -18,11 +20,26 @@ def _code(issue: str) -> str:
     return issue.split(":", 1)[0]
 
 
-def audit(api, path: str, limit: int = 200) -> dict:
+def _latest(coll):
+    versions = coll.artifacts() if hasattr(coll, "artifacts") else coll.versions()
+    def number(art):
+        v = getattr(art, "version", "")
+        return int(v[1:]) if isinstance(v, str) and re.fullmatch(r"v[0-9]+", v) else -1
+    latest = max(versions, key=number, default=None)
+    if latest is not None and number(latest) < 0:
+        warnings.warn("audit.version-order: missing vN metadata; first returned version used")
+    return latest
+
+
+def _validate(path, limit):
     if len(path.split("/")) != 2 or not all(path.split("/")):
         raise ValueError("path must be entity/project")
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
         raise ValueError("limit must be a nonnegative integer")
+
+
+def audit(api, path: str, limit: int = 200) -> dict:
+    _validate(path, limit)
     if hasattr(api, "Api"):
         api = api.Api(timeout=120)
     entity, project = path.split("/", 1)
@@ -46,11 +63,11 @@ def audit(api, path: str, limit: int = 200) -> dict:
         if atype.name.startswith("wandb-") or atype.name in ("run_table", "job"):
             continue
         for coll in atype.collections():
-            latest = next(iter(coll.artifacts()), None) if hasattr(coll, "artifacts") else next(iter(coll.versions()), None)
+            latest = _latest(coll)
             issues = wbkit.lint_artifact(
                 name=coll.name,
                 type=atype.name,
-                description=(getattr(latest, "description", None) or getattr(coll, "description", None)),
+                description=(getattr(latest, "description", None) if latest is not None else getattr(coll, "description", None)),
                 metadata=getattr(latest, "metadata", None),
             )
             art_rows.append({"name": coll.name, "type": atype.name, "issues": issues})
@@ -83,8 +100,10 @@ def main(api=None) -> int:
     ap.add_argument("--limit", type=int, default=200, help="newest N runs to check")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
-    if "/" not in args.path:
-        ap.error("path must be entity/project")
+    try:
+        _validate(args.path, args.limit)
+    except ValueError as exc:
+        ap.error(str(exc))
     if api is None:
         ap.error("pass an Api object to main(api), or call audit(api, path, limit) from your own caller")
     rep = audit(api, args.path, args.limit)

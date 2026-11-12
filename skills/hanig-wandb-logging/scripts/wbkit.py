@@ -267,6 +267,9 @@ def _same(a,b):
    return True
   return len(a)==len(b) and all(_same(x,y)for x,y in zip(a,b))
  return a==b or isinstance(a,float)and math.isnan(a)and math.isnan(b)
+def _legacy_types(sig):
+ if isinstance(sig,dict):return any(_legacy_types(x) for x in sig.values())
+ return isinstance(sig,list) and bool(sig) and isinstance(sig[0],str)
 def _config_signature(v,secret_keys=()):
  return _signature({k:x for k,x in (_record(v) or {}).items() if k not in ('family','provenance')},secret_keys)
 def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expect=None,base_config=None,group=None,tags=(),summaries=None,entity=None,output_dir=None,name=None,rank=None,secret_keys=(),**kw):
@@ -298,10 +301,11 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
     raise ValueError(f'recover {sf} and {bf}: restore one from the other by hand, or use a new output_dir') from exc
    if primary_bytes!=backup_bytes:
     raise ValueError(f'recover disagreeing snapshots {sf} and {bf}: restore one from the other by hand, or use a new output_dir')
+  archive=out
   try:
    for archive in out.glob('wandb_*.json.corrupt-*'):pending.append((archive,_archive(archive.read_bytes(),secret_keys)))
   except OSError as exc:
-   raise ValueError(f'recover {sf} and {bf}: restore one from the other by hand, or use a new output_dir') from exc
+   raise ValueError(f'unreadable archive {archive}: make it readable; recover {sf} and {bf}: restore one from the other by hand, or use a new output_dir') from exc
   saved=_load(sf,secret_keys,pending)
   backup=_load(bf,secret_keys,pending)
   if not isinstance(saved.get('config'),Mapping):
@@ -337,7 +341,10 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
   cfg['provenance']=prior.get('provenance',p0)
   old={k:v for k,v in cfg.items()if k!='provenance'}
   saved_sig=_unpack_signature(_norm(saved['config_types'],secret_keys)) if 'config_types'in saved else _config_signature(old,secret_keys)
-  if config_given and (not _same(signature,saved_sig) or ('family'in cfg and family!=cfg['family'])):warnings.warn('resume.config-mismatch: saved logging config retained; restore caller training config separately')
+  legacy=_legacy_types(saved_sig)
+  if legacy:warnings.warn('resume.legacy-types: module/qualname identity unavailable; saved logging config retained; use a new output_dir to record identities')
+  comparable=_same(_config_signature(config,secret_keys),_config_signature(old,secret_keys)) if legacy else _same(signature,saved_sig)
+  if config_given and (not comparable or ('family'in cfg and family!=cfg['family'])):warnings.warn('resume.config-mismatch: saved logging config retained; restore caller training config separately')
  if isinstance(cfg.get('provenance'),Mapping):
   cfg['provenance']=_norm(_migrate_command(cfg['provenance'],prov.get('command')),secret_keys,removed)
  if isinstance(cfg.get('provenance'),Mapping):cfg['provenance']['redacted_keys']=sorted(set(cfg['provenance'].get('redacted_keys',()))|removed)
