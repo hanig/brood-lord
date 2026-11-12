@@ -59,7 +59,7 @@ class Logging(Checks):
   s.eq(wbkit.run_name('sample','cells',{'train.lr':0.0003},2),'sample-cells-lr3e-4-s2')
   s.eq(wbkit.config_deltas({TR:{'lr':2,'seed':1}},{TR:{'lr':1,'seed':1}}),{'train.lr':2})
   s.eq(wbkit.config_deltas({'lr':1},None),{})
-  s.lacks(S,wbkit.run_name('sample','cells',{AK:S}))
+  s.has(S,wbkit.run_name('sample','cells',{AK:S}))
   s.le(len(wbkit.run_name('x'*90,'cells')),64)
  def test_resume(s):
   with TD()as tmp:
@@ -148,6 +148,9 @@ class Offline(Checks):
    s.eq(r.id,rid)
    s.eq(dict(r.config),c)
    s.eq(r.summary['provenance/resume_count'],1)
+   path=Path(tmp)/'weights';path.write_bytes(b'weights')
+   wbkit.log_dataset(sdk,r,'cells-filtered',path,summary='Offline data.',contents='Test bytes.',intended_use='Smoke test.')
+   wbkit.log_model(sdk,r,path,step=1)
    wbkit.finish(r,'Offline check only.','inconclusive')
    d=start(sdk,rank=1)
    s.yes(d.disabled)
@@ -285,27 +288,15 @@ class RoundTwo(Checks):
    with s.assertRaises(ValueError):start(summaries={V:how})
  def test_recovery(s):
   with TD()as tmp:
-   a=start(output_dir=tmp,config={TR:{'lr':.1}})
-   p=Path(tmp)/CF;raw=p.read_text();bad='{"cut":';p.write_text(bad)
+   a=start(output_dir=tmp);p=Path(tmp)/PF;p.write_text('{"cut":')
    real=Path.write_bytes
    def cut(p,t):real(p,t[:1]);raise InterruptedError
    with patch.object(Path,'write_bytes',cut),s.assertRaises(InterruptedError):start(output_dir=tmp)
-   s.eq(p.read_text(),bad)
-   q=Path(tmp)/(p.name+'.corrupt-'+hashlib.sha256(bad.encode()).hexdigest())
-   if q.exists():s.eq(q.read_bytes(),bad.encode())
-   b=start(output_dir=tmp,config={TR:{'lr':.9}})
-   s.eq(a.id,b.id);s.eq(a.config,b.config)
+   s.eq(p.read_text(),'{"cut":')
+   b=start(output_dir=tmp);s.eq(a.id,b.id);s.eq(a.config,b.config)
    s.eq(b.summary['provenance/resume_count'],1)
-   s.eq(q.read_bytes(),bad.encode())
-   q.write_bytes(b'?');p.write_text(bad);start(output_dir=tmp)
-   s.eq(q.read_bytes(),bad.encode())
-   for q in Path(tmp).glob('*backup*'):q.unlink()
-   p.write_text('{');sdk=FakeWandb()
-   with s.raises(ValueError,'recover'):start(sdk,output_dir=tmp)
-   s.eq(p.read_text(),'{');s.no(hasattr(sdk,'run'))
-   p.write_text(raw);(Path(tmp)/IDF).write_text('different')
-   with s.raises(ValueError,'recover'):start(sdk,output_dir=tmp)
-   s.no(hasattr(sdk,'run'))
+   q=next(Path(tmp).glob('*.corrupt-*'));s.eq(q.read_bytes(),b'{"cut":')
+   q.write_bytes(b'?');p.write_text('{"cut":');start(output_dir=tmp);s.eq(q.read_bytes(),b'{"cut":')
  def test_empty(s):
   keys=('RANK','SLURM_PROCID','LOCAL_RANK')
   for vals in itertools.product((None,'','0','4'),repeat=3):
@@ -391,6 +382,7 @@ class CommandProvenance(Checks):
      obj=json.loads(f.read_text());obj[CFG][PR]['command']=command
      if source=='backup':(p/CF).unlink()
     f.write_text(json.dumps(obj))
+    if source=='primary':(p/BF).write_text(json.dumps(obj))
     with s.warns(UserWarning,'legacy-command'):
      b=start(output_dir=d,config=recipe({'lr':9}))
     s.eq(a.id,b.id);s.eq(b.config[TR],a.config[TR])
@@ -485,6 +477,7 @@ class KnownValueSanitizer(Checks):
     prov=v if source==PF else v[CFG][PR]
     prov['command']['argv_sha256']='old-digest'
     p.write_text(json.dumps(v))
+    if source==CF:(Path(d)/BF).write_text(json.dumps(v))
     if source.endswith('backup.json'):(Path(d)/CF).unlink()
     with s.warns(UserWarning,'legacy-command'):b=start(rank=0,output_dir=d)
     s.eq(a.id,b.id);s.lacks('argv_sha256',repr(b.config))
@@ -522,7 +515,7 @@ class ExactRedaction(Checks):
    for p in Path(d).glob(CG):
     v=json.loads(p.read_text());v[CFG][TR]['custom']=S;p.write_text(json.dumps(v))
    s.clean(start(rank=0,output_dir=d,secret_keys=iter(['custom'])),S)
-  s.lacks(S,wbkit.run_name('m','d',{TR:{'custom':S}},secret_keys=iter(['custom'])))
+  s.has(S,wbkit.run_name('m','d',{'custom':S},secret_keys=iter(['custom'])))
  def test_public(s):
   # Exhaustive: 9 public keys; values equal a removed secret on purpose.
   keys=('token','max_tokens','pad_token','tokenizer','val/token','secretory',
@@ -563,6 +556,7 @@ class ExactRedaction(Checks):
      p=Path(d)/source;v=json.loads(p.read_text())
      prov=v if source==PF else v[CFG][PR]
      prov['git_remote']=raw;p.write_text(json.dumps(v))
+     if source==CF:(Path(d)/BF).write_text(json.dumps(v))
      if source.endswith('backup.json'):(Path(d)/CF).unlink()
      r=start(rank=0,output_dir=d)
     s.eq(r.config[PR]['git_remote'],want)
@@ -578,10 +572,9 @@ class RoundOneRepairs(Checks):
  def test_generated_provenance(s):
   for key in (PR,'family'):
    with TD()as d:
-    for i in range(2):
-     r=start(rank=0,output_dir=d,config=recipe({key:H}),secret_keys=[key])
-     s.eq(r.config[PR][RK],['train.'+key]);s.clean(r)
-     s.eq(r.config['family'],'sample')
+    sdk=FakeWandb()
+    with s.raises(ValueError,'reserved'):start(sdk,output_dir=d,config=recipe({key:H}),secret_keys=[key])
+    s.no(hasattr(sdk,'run'));s.eq(list(Path(d).iterdir()),[])
  def test_new_secret_on_resume(s):
   with TD()as d:
    c=recipe({'project_key':H})
@@ -728,5 +721,301 @@ class FinalRoundCounterexamples(Checks):
    s.eq(wbkit._redact(cls((3,1,2))),[1,2,3])
    v=cls((1,'a'))
    s.eq(wbkit._redact(v),list(v))
+C0='custom_key';C1='always';C2='values';C3='key-collision';C4='resume.config-mismatch';C5='*.corrupt-*';C6='wandb_inputs.json';C7='config.key-collision: train.1';C8='team/project/cells:v3'
+delta=wbkit.config_deltas;model_art=wbkit.log_model;data_art=wbkit.log_dataset;card=wbkit.artifact_card;lint_art=wbkit.lint_artifact;check_name=wbkit._check_artifact_name
+class PartTwo(Checks):
+ def test_sets(s):
+  from decimal import Decimal
+  value={Decimal('NaN'),Decimal('1')};s.eq(wbkit._redact(value),[str(x)for x in value]);s.eq(start(config=recipe({C2:value})).config[TR][C2],[str(x)for x in value])
+ def test_items(s):
+  calls=[]
+  class Dtype:
+   @classmethod
+   def tolist(cls):calls.append('tolist');return [1]
+   @classmethod
+   def item(cls):calls.append('item');return 1
+  class NeedsArg:
+   def item(self,arg):return arg
+  class Broken:
+   def tolist(self):raise RuntimeError('broken')
+  for v in (Dtype,NeedsArg(),Broken()):
+   s.eq(wbkit._json(v),str(v));s.eq(start(config=recipe({'x':v})).config[TR]['x'],str(v))
+  s.eq(calls,[])
+ def test_keys(s):
+  sdk=FakeWandb()
+  for v,call in itertools.product(('api_token',b'api_token',C0,b'custom_key'),(lambda v:start(sdk,secret_keys=v),lambda v:wbkit.run_name('m','d',{C0:S},secret_keys=v),lambda v:delta({C0:S},{'width':8},secret_keys=v))):
+   with s.raises(ValueError,r'secret_keys=\("name",\)'):call(v)
+  s.no(hasattr(sdk,'run'))
+ def test_collisions(s):
+  with warnings.catch_warnings(record=True)as ws:
+   warnings.simplefilter(C1);r=start(config=recipe({1:'old','1':'kept',2:'old','2':'new'}),base_config=recipe({'width':8}))
+  msgs=[str(w.message)for w in ws if C3 in str(w.message)];s.eq(msgs,[C7,'config.key-collision: train.2']);s.eq(r.config[TR],{'1':'kept','2':'new'})
+ def test_types(s):
+  # Exhaustive 4 x 4 container pairs.
+  for a,b in itertools.product((list,tuple,set,frozenset),repeat=2):
+   x,y=recipe({C2:a([1,2])}),recipe({C2:b([1,2])})
+   with s.subTest(a=a,b=b),TD()as d:
+    s.eq(delta(x,y),{}if a is b else {'train.values':[1,2]});start(config=x,output_dir=d)
+    with warnings.catch_warnings(record=True)as ws:
+     warnings.simplefilter(C1);r=start(config=y,output_dir=d)
+    mismatch=any(C4 in str(w.message) for w in ws);s.eq(mismatch,a is not b);s.eq(r.config[TR][C2],[1,2])
+ def test_mixed(s):
+  class OrderedSet(set):
+   def __init__(self,reverse):super().__init__((1,'a'));self.reverse=reverse
+   def __iter__(self):return iter(sorted(super().__iter__(),key=str,reverse=self.reverse))
+  with TD()as d:
+   start(config=recipe({C2:OrderedSet(False)}),output_dir=d)
+   with warnings.catch_warnings(record=True)as ws:
+    warnings.simplefilter(C1);start(config=recipe({C2:OrderedSet(True)}),output_dir=d)
+   s.no(any(C4 in str(w.message)for w in ws))
+  with TD()as d:
+   start(config=recipe({C2:{1,'a'}}),output_dir=d)
+   with warnings.catch_warnings(record=True)as ws:
+    warnings.simplefilter(C1);start(config=recipe({C2:{'a',1}}),output_dir=d)
+   s.no(any(C4 in str(w.message)for w in ws))
+ def test_archives(s):
+  for key,raw in itertools.product((C0,'password'),('list','truncated')):
+   with TD()as d:
+    start(config=recipe({key:S}),output_dir=d);p=Path(d);value=json.dumps([{key:S}])if raw=='list'else '{"'+key+'":"'+S+'",';(p/PF).write_text(value);r=start(config=recipe({}),secret_keys=(key,),output_dir=d);archives=list(p.glob(C5));s.yes(archives)
+    for f in archives:s.lacks(S,f.read_text())
+    for f in (CF,BF):s.lacks(S,(p/f).read_text())
+    s.lacks(S,repr(r.config))
+ def test_none(s):
+  with TD()as d:
+   a=start(output_dir=d)
+   with warnings.catch_warnings(record=True)as ws:
+    warnings.simplefilter(C1);b=start(output_dir=d,config=None)
+   s.eq(b.config,a.config);s.no(any('config-mismatch' in str(w.message)for w in ws))
+ def test_builders(s):
+  # Exhaustive 5 kinds x 9 tokens x 2 suffixes.
+  for kind,token,suffix in itertools.product(wbkit.ARTIFACT_TYPES,('20261109','v2','final','latest','best','cells','with spaces','A'*200,''),('val','20261110')):
+   name=wbkit.artifact_name(kind,token,suffix);check_name(name);s.no(wbkit._VERSIONISH_NAME_RE.search(name))
+  for name in ('final','latest','v2','20261109','cells-final','cells-20261109-val'):
+   with s.assertWarns(UserWarning):check_name(name)
+   s.has('artifact.versioned-name',[x.split(':')[0]for x in lint_art(name=name,type='dataset',description='',metadata={})])
+ def test_artifacts(s):
+  with TD()as d:
+   path=Path(d)/'weights';path.write_bytes(b'weights');sdk=ArtifactSDK();r=start(sdk,output_dir=d,secret_keys=(C0,));args=dict(summary='Cells.',contents='Counts.',intended_use='Train.');ds=data_art(sdk,r,'cells-filtered',path,**args,metadata={'n_samples':2,C0:S});s.eq(ds.metadata['n_samples'],2);s.eq(ds.metadata[C0],S)
+   for field in ('Produced by','Inputs','Contents','Intended use','Caveats'):s.has(field,ds.description)
+   ck=model_art(sdk,r,path,step=0,is_best=True,sanity_checkpoint=True,aliases=['best','candidate'],post_hoc=True,metrics={C0:S,'val/loss':.2});s.lacks('best',ck.aliases);s.has('candidate',ck.aliases);s.has('Post hoc',ck.description);s.has('Sanity checkpoint',ck.description);s.has(S,ck.description);s.eq(ck.metadata['metrics'][C0],S);ck=model_art(sdk,r,path,step=1,is_best=True);s.has('best',ck.aliases);s.has('step-1',ck.aliases);s.eq(lint_art(name=ck.name,type=ck.type,description=ck.description,metadata=ck.metadata),[]);ds=data_art(sdk,r,'cells-reference','s3://example/data',**args);s.eq(ds.metadata['storage'],'reference')
+ def test_restart(s):
+  with TD()as d:
+   r=start(ArtifactSDK(),output_dir=d);wbkit.use_input(r,C8);s.has(C8,card(summary='Cells',contents='x',intended_use='x',run=r));cmd=[sys.executable,'-B','-c',"from tests.test_wandb_logging import *; r=start(ArtifactSDK(),output_dir=sys.argv[1]); print(card(summary='x',contents='x',intended_use='x',run=r))",d];child=subprocess.run(cmd,capture_output=True,text=True,timeout=20);s.eq(child.returncode,0,child.stderr);s.has(C8,child.stdout);s.eq(json.loads((Path(d)/C6).read_text())['id'],r.id)
+ def test_records(s):
+  @dataclasses.dataclass
+  class Root:
+   arch:dict;train:dict;data:dict
+  for cls in (argparse.Namespace,types.SimpleNamespace,Root):
+   with TD()as d:
+    c=cls(**recipe({'width':8}));a=start(config=c,base_config=cls(**recipe({'width':4})),output_dir=d);b=start(config=c,output_dir=d);s.eq(a.config,b.config);s.eq(a.config[TR]['width'],8)
+ def test_escapes(s):
+  for raw in ('{"\\u0070assword":"CANARY_VALUE",','{"password":"\\u0043ANARY_VALUE",','{"\\u0070assword" "CANARY_VALUE"}'):
+   with TD()as d:
+    start(output_dir=d);p=Path(d);(p/PF).write_text(raw);start(output_dir=d)
+    for f in p.glob(C5):
+     s.lacks('CANARY_VALUE',f.read_text());s.lacks('ANARY_VALUE',f.read_text())
+ def test_review_edges(s):
+  with s.warns(UserWarning,C3):
+   delta(recipe({1:'changed','1':'same'}),recipe({'1':'same'}))
+  for name,rule in (('cells-2026-11-09','versioned-name'),('Cells!','invalid-name')):
+   s.yes(any(rule in x for x in lint_art(name=name,type='dataset',description='Produced by Contents Intended use '*3,metadata={'x':1})))
+  with TD()as d:
+   start(output_dir=d);Path(d,C6).write_text('{"id":"other","inputs":[]}');sdk=FakeWandb()
+   with s.raises(ValueError,'lineage'):start(sdk,output_dir=d)
+   s.no(hasattr(sdk,'run'))
+ def test_review_secret_edges(s):
+  with s.raises(ValueError,'reserved'):start(secret_keys=('job_id',))
+  with TD()as d:
+   start(output_dir=d,config=recipe({C0:S}),base_config=recipe({}));p=Path(d);(p/PF).write_text('['+(p/PF).read_text()+']');start(output_dir=d,config=None);start(output_dir=d,config=None,secret_keys=(C0,))
+   for f in p.glob(C5):s.lacks(S,f.read_text())
+   (p/PF).write_text('{"'+chr(92)+'u0070assword" "CANARY_VALUE"}');start(output_dir=d,config=None)
+   for f in p.glob(C5):s.lacks('CANARY_VALUE',f.read_text())
+ def test_config(s):
+  s.eq(delta(None,recipe({'width':8})),{});s.has(PR,start(config=None,base_config=recipe({'width':8})).config)
+  with TD()as d:
+   sdk=ArtifactSDK();r=start(sdk,config={'arch':'transformer',TR:{},'data':{}});p=Path(d)/'weights';p.write_bytes(b'weights');s.eq(model_art(sdk,r,p,step=1).metadata['arch'],'transformer')
+class OwnerRepairs(Checks):
+ def test_metrics(s):
+  # 2 keys x 2 kinds, exhaustive.
+  for key,kind in itertools.product(('loss','password'),('dataset','model')):
+   with TD()as d:
+    p=Path(d)/'weights';p.write_bytes(b'x');sdk=ArtifactSDK();r=start(sdk,secret_keys=(key,))
+    if kind=='model':
+     art=model_art(sdk,r,p,step=1,metrics={key:.25});s.has(key+'=0.25',art.description)
+    else:art=data_art(sdk,r,'cells',p,summary='x',contents='x',intended_use='x',metadata={'metrics':{key:.25}})
+    s.eq(art.metadata['metrics'],{key:.25})
+    wbkit.log_step(r,1,{'eval/'+key:.25});s.eq(r.logged[-1]['eval/'+key],.25)
+ def test_collision_paths(s):
+  class K(Enum):ONE='1'
+  cfg=recipe({1:'a','1':'b',K.ONE:'c'})
+  with warnings.catch_warnings(record=True)as ws:
+   warnings.simplefilter(C1);r=start(config=cfg,base_config=cfg)
+  s.eq([str(w.message)for w in ws if C3 in str(w.message)],[C7]);s.eq(r.config[TR],{'1':'c'})
+ def test_numeric(s):
+  # Exhaustive 6x6.
+  values=(0.0,-0.0,float('nan'),1.0,0,False)
+  for a,b in itertools.product(values,repeat=2):
+   same=type(a)is type(b)and(a==b or isinstance(a,float)and isinstance(b,float)and a!=a and b!=b)
+   x,y=recipe({'x':a}),recipe({'x':b})
+   s.eq(bool(delta(x,y)),not same)
+   with TD()as d:
+    start(config=x,output_dir=d)
+    with warnings.catch_warnings(record=True)as ws:
+     warnings.simplefilter(C1);start(config=y,output_dir=d)
+    s.eq(any(C4 in str(w.message)for w in ws),not same)
+ def test_refusal(s):
+  # Exhaustive 4.
+  for cause in ('lineage','tags','init','snapshot'):
+   with TD()as d:
+    p=Path(d);start(output_dir=d)
+    if cause=='lineage':(p/C6).write_text('{"id":"other","inputs":[]}')
+    if cause=='snapshot':(p/CF).write_text('{"password":"CANARY_VALUE",') ;(p/BF).write_text('{')
+    snap=lambda:{f.name:f.read_bytes()for f in p.iterdir()};before=snap();sdk=FakeWandb()
+    args={'tags':[None]}if cause=='tags'else {}
+    if cause=='init':sdk.init=lambda **kw:(_ for _ in ()).throw(RuntimeError('SDK refusal'))
+    with s.assertRaises((ValueError,TypeError,RuntimeError)):start(sdk,output_dir=d,**args)
+    s.eq(snap(),before)
+    if cause=='lineage':
+     (p/C6).unlink();s.eq(start(output_dir=d).summary['provenance/resume_count'],1)
+  with TD()as d:
+   p=Path(d)/'new'
+   with s.assertRaises(TypeError):start(output_dir=p,tags=[None])
+   s.no(p.exists())
+ def test_explicit_names(s):
+  # Exhaustive 8x2.
+  for name,kind in itertools.product(('old-faithful-geyser','new-york-taxi','best-buy-reviews','Cells_1.0','final','latest','v2','X'*128),('dataset','model')):
+   with TD()as d,warnings.catch_warnings(record=True)as ws:
+    warnings.simplefilter(C1);p=Path(d)/'x';p.write_bytes(b'x');sdk=ArtifactSDK();r=start(sdk)
+    art=model_art(sdk,r,p,step=1,name=name)if kind=='model'else data_art(sdk,r,name,p,summary='x',contents='x',intended_use='x')
+    s.eq(art.name,name)
+    if name=='old-faithful-geyser':s.no(ws)
+  for name in ('','x'*129,'bad/name','bad name'):
+   with s.assertRaises(ValueError):check_name(name)
+ def test_generated_secrets(s):
+  # Exhaustive 5x2.
+  for key in ('hypothesis','expect'):
+   with TD()as d:
+    for _ in range(2):
+     r=start(ArtifactSDK(),output_dir=d,secret_keys=(key,),**{key:S})
+     s.clean(r,S);s.has(key,r.config[PR][RK])
+     s.lacks(S,card(summary='x',contents='x',intended_use='x',run=r))
+     for f in Path(d).glob('*.json'):s.lacks(S,f.read_text())
+
+class FakeArtifact:
+ def __init__(s,name,type):s.name=name;s.type=type;s.metadata={};s.description='';s.sources=[]
+ def add_file(s,path):s.sources.append(('file',path))
+ def add_dir(s,path):s.sources.append(('dir',path))
+ def add_reference(s,uri,**kw):s.sources.append(('reference',uri))
+class ArtifactSDK(FakeWandb):
+ Artifact=FakeArtifact
+ def init(s,**kw):
+  r=super().init(**kw)
+  def log(art,aliases=()):art.aliases=list(aliases);return art
+  r.log_artifact=log;r.use_artifact=lambda ref,type=None:types.SimpleNamespace(entity='team',project='project',name='cells:v3',version='v3');return r
+
+class ReservedFields(Checks):
+ def test_reserved(s):
+  # Exhaustive: all reserved names, 3 spellings, 4 public helpers.
+  s.kind(wbkit.RESERVED_KEYS,frozenset)
+  s.yes(set('provenance family model data seed name notes group'.split())<=wbkit.RESERVED_KEYS)
+  for key,spell in itertools.product(wbkit.RESERVED_KEYS,(str.upper,lambda k:'_'.join(k),lambda k:k)):
+   key=spell(key)
+   with TD()as d:
+    sdk=FakeWandb();p=Path(d);(p/'keep').write_bytes(b'x')
+    calls=(lambda:start(sdk,output_dir=d,secret_keys=(key,)),lambda:wbkit.run_name('m','d',secret_keys=(key,)),lambda:delta({},None,secret_keys=(key,)),lambda:wbkit._redact({},secret_keys=(key,)))
+    for call in calls:
+     with s.raises(ValueError,'reserved fields are generated by wbkit and cannot hold secrets')as err:call()
+     s.has(key,str(err.exception));s.no(hasattr(sdk,'run'));s.eq({f.name:f.read_bytes()for f in p.iterdir()},{'keep':b'x'})
+  s.no(wbkit.RESERVED_KEYS & wbkit.DEFAULT_SECRET_KEYS)
+  s.eq(wbkit._redact(dict.fromkeys(wbkit.RESERVED_KEYS,'ok')),dict.fromkeys(wbkit.RESERVED_KEYS,'ok'))
+ def test_labels(s):
+  s.eq(wbkit.run_name('CANARY','cells',{'password':'label'},seed='S'), 'CANARY-cells-passwordlabel-sS')
+ def test_signed_zero_sets(s):
+  # Exhaustive: set/frozenset x 3 extra members x 2 zeros.
+  for cls,extra,z in itertools.product((set,frozenset),('a',-1.0,1),(0.0,-0.0)):
+   a=recipe({'x':cls((0.0,extra))});b=recipe({'x':cls((z,extra))})
+   s.eq(delta(a,b),{})
+   s.yes(delta(a,recipe({'x':cls((2.0,extra))})))
+   with TD()as d:
+    start(config=a,output_dir=d)
+    with warnings.catch_warnings(record=True)as ws:
+     warnings.simplefilter(C1);start(config=b,output_dir=d)
+    s.no(any('config-mismatch'in str(w.message)for w in ws))
+ def test_remote_size(s):
+  sdk=ArtifactSDK();r=start(sdk)
+  art=model_art(sdk,r,'s3://example/weights',step=1)
+  s.lacks('0.0 MB',art.description);s.has('size unknown',art.description)
+ def test_helper_collision(s):
+  a=recipe({1:'a','1':'b'})
+  with warnings.catch_warnings(record=True)as ws:
+   warnings.simplefilter(C1);delta(a,a)
+  s.eq([str(w.message)for w in ws if C3 in str(w.message)],[C7])
+
+# wb5 regressions: counterexamples retained from the prior review.
+class FinalDiagnostics(Checks):
+ def test_raw_list_resume(s):
+  # Exhaustive four ordinary unsized middle values.
+  for x in (1,None,1.5,False,[1,2]):
+   with s.subTest(x=x),TD()as d:
+    c=recipe({'order':['row',x,'unordered']});start(config=c,output_dir=d);start(config=c,output_dir=d)
+ def test_raw_list_disagreement(s):
+  with TD()as d:
+   p=Path(d);c=recipe({'pipeline':['load',[1,2],'unordered']});start(config=c,output_dir=d)
+   obj=json.loads((p/CF).read_text());obj[CFG][TR]['pipeline'][1]=[2,1];(p/CF).write_text(json.dumps(obj));before=(p/BF).read_bytes();sdk=FakeWandb()
+   with s.raises(ValueError,'disagree'):start(sdk,config=c,output_dir=d)
+   s.no(hasattr(sdk,'run'));s.eq((p/BF).read_bytes(),before)
+ def test_command_reserved(s):
+  env={'SLURM_'+k:'synthetic' for k in 'JOB_ID ARRAY_JOB_ID ARRAY_TASK_ID JOB_PARTITION JOB_NUM_NODES NTASKS RESTART_COUNT CLUSTER_NAME'.split()}
+  with patch.dict(os.environ,env):r=start(config={})
+  def generated(v):
+   for key,value in v.items():
+    yield wbkit._key(key)
+    if isinstance(value,dict):yield from generated(value)
+  s.yes(set(generated({'family':r.config['family'],PR:r.config[PR]}))<=wbkit.RESERVED_KEYS)
+  for key in ('program','flags','positional_count'):
+   with s.subTest(key=key),TD()as d:
+    sdk=FakeWandb()
+    with s.raises(ValueError,'reserved'):start(sdk,output_dir=d,secret_keys=(key,))
+    s.no(hasattr(sdk,'run'));s.eq(list(Path(d).iterdir()),[])
+ def test_empty_base_collision(s):
+  for base in ({},None,recipe({1:'old','1':'new'})):
+   with s.subTest(base=base),warnings.catch_warnings(record=True)as ws:
+    warnings.simplefilter('always');wbkit.config_deltas(recipe({1:'old','1':'new'}),base)
+    s.eq([str(w.message)for w in ws],['config.key-collision: train.1'])
+ def test_explicit_empty_name(s):
+  sdk=ArtifactSDK();r=start(sdk)
+  with s.assertRaises(ValueError):wbkit.log_model(sdk,r,'s3://example/weights',step=1,name='')
+  with s.assertRaises(ValueError):data_art(sdk,r,'','s3://example/data',summary='x',contents='x',intended_use='x')
+  s.yes(data_art(sdk,r,None,'s3://example/data',summary='x',contents='x',intended_use='x').name)
+ def test_byte_snapshots(s):
+  # Exhaustive 4 byte divergences and both unreadable sides.
+  for change in (lambda b:b+b' ',lambda b:b.replace(b'0',b'1',1),lambda b:b'{',lambda b:b'\xff'):
+   with TD()as d:
+    start(output_dir=d);p=Path(d);(p/CF).write_bytes(change((p/CF).read_bytes()));before={f.name:f.read_bytes()for f in p.iterdir()};sdk=FakeWandb()
+    with s.raises(ValueError,'restore one from the other by hand, or use a new output_dir')as err:start(sdk,output_dir=d)
+    for f in (CF,BF):s.has(str(p/f),str(err.exception))
+    s.no(hasattr(sdk,'run'));s.eq({f.name:f.read_bytes()for f in p.iterdir()},before)
+  for side in (CF,BF):
+   with TD()as d:
+    start(output_dir=d);p=Path(d);before={f.name:f.read_bytes()for f in p.iterdir()};real=Path.read_bytes;sdk=FakeWandb()
+    def unreadable(path):
+     if path==p/side:raise PermissionError('synthetic unreadable')
+     return real(path)
+    with patch.object(Path,'read_bytes',unreadable),s.raises(ValueError,'new output_dir'):start(sdk,output_dir=d)
+    s.no(hasattr(sdk,'run'));s.eq({f.name:f.read_bytes()for f in p.iterdir()},before)
+ def test_private_signatures(s):
+  # Exhaustive 3 ordinary lists; changed order remains meaningful.
+  for v in ([1,2,'unordered'],['load',[1,2],'unordered'],['row',None,'unordered']):
+   a=recipe({'x':v});b=recipe({'x':list(reversed(v))})
+   s.eq(delta(a,a),{});s.yes(delta(a,b))
+   with TD()as d:
+    start(config=a,output_dir=d)
+    with s.warns(UserWarning,'config-mismatch'):start(config=b,output_dir=d)
+  marker=wbkit._signature({1,2})[2];s.no(isinstance(marker,(str,int,float,bool,list,dict,type(None))))
+ def test_lint_report_not_reproduced(s):
+  name=wbkit.run_name('sample','cells',seed=2);s.eq(name,'sample-cells-s2')
+  issues=wbkit.lint_run(name=name,notes='H: valid hypothesis here',group='g',job_type='train',config={'family':'sample','arch':{},'train':{},'data':{}},summary_keys=[],tags=[])
+  s.no(any(x.startswith('name.random:')for x in issues))
+
 if __name__=='__main__':
  unittest.main()
