@@ -240,15 +240,16 @@ def _unpack_signature(v):
  return v
 def _signature(v,secret_keys=()):
  v=_record(v)
+ kind=type(v).__module__+"."+type(v).__qualname__
  if isinstance(v,Mapping):
   keys=DEFAULT_SECRET_KEYS|frozenset(_key(k)for k in _keys(secret_keys))
   return {str(_text(k)):_signature(x,secret_keys) for k,x in v.items() if not _secret(k,keys)}
  if isinstance(v,(list,tuple,deque,set,frozenset)):
   parts=[_signature(x,secret_keys) for x in v]
-  if isinstance(v,(set,frozenset)):return [type(v).__name__,parts,_UNORDERED]
-  return [type(v).__name__,parts]
- if not isinstance(v,(str,int,float,bool,type(None))):return _signature(_json(v),secret_keys)
- return [type(v).__name__,_norm(v,secret_keys)]
+  if isinstance(v,(set,frozenset)):return [kind,parts,_UNORDERED]
+  return [kind,parts]
+ if not isinstance(v,(str,int,float,bool,type(None))):return [kind,_signature(_json(v),secret_keys)]
+ return [kind,_norm(v,secret_keys)]
 def _type_leaves(v,secret_keys=()):
  sig=_signature(v or {},secret_keys)
  return _flat(sig or {})
@@ -288,7 +289,6 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
  rid,again,saved=None,False,{}
  if output_dir is not None:
   out=Path(output_dir)
-  for archive in out.glob('wandb_*.json.corrupt-*'):pending.append((archive,_archive(archive.read_bytes(),secret_keys)))
   sf=out/'wandb_config.json'
   bf=out/'wandb_config.backup.json'
   if sf.exists() and bf.exists():
@@ -298,6 +298,10 @@ def start_run(wandb,*,project,family,job_type,model,data,hypothesis,config,expec
     raise ValueError(f'recover {sf} and {bf}: restore one from the other by hand, or use a new output_dir') from exc
    if primary_bytes!=backup_bytes:
     raise ValueError(f'recover disagreeing snapshots {sf} and {bf}: restore one from the other by hand, or use a new output_dir')
+  try:
+   for archive in out.glob('wandb_*.json.corrupt-*'):pending.append((archive,_archive(archive.read_bytes(),secret_keys)))
+  except OSError as exc:
+   raise ValueError(f'recover {sf} and {bf}: restore one from the other by hand, or use a new output_dir') from exc
   saved=_load(sf,secret_keys,pending)
   backup=_load(bf,secret_keys,pending)
   if not isinstance(saved.get('config'),Mapping):
@@ -443,7 +447,7 @@ def lint_run(*,name,notes,group,job_type,config,summary_keys,tags=(),state=None,
  return xs
 
 
-ARTIFACT_TYPES=("dataset","model","predictions","eval-results","code");_ARTIFACT_NAME_RE=re.compile(r"[A-Za-z0-9._-]{1,128}");_VERSIONISH_NAME_RE=re.compile(r"(^|[-_.])(final|latest|best|v[0-9]+|[0-9]{8}|20[0-9]{2}-[0-9]{2}-[0-9]{2})([-_.]|$)")
+ARTIFACT_TYPES=("dataset","model","predictions","eval-results","code");_ARTIFACT_NAME_RE=re.compile(r"[A-Za-z0-9._-]{1,128}");_VERSIONISH_NAME_RE=re.compile(r"(^|[-_.])(final|latest|best|v[0-9]+|[0-9]{8}|20[0-9]{2}-[0-9]{2}-[0-9]{2})([-_.]|$)",re.IGNORECASE)
 def artifact_name(kind,*parts):
  prefix={"dataset":"data","model":"ckpt","predictions":"preds","eval-results":"evals","code":"code"}[kind];name=prefix+"-"+"-".join(_slugify(p).lower() for p in parts)
  try:

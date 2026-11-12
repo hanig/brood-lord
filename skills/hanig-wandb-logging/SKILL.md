@@ -92,6 +92,26 @@ run_name fits integer max_len>=1; <1 raises ValueError.
 ## Known limits
 
 - "a.b"/nested a,b deltas collide; avoid dotted keys.
+- An interrupted snapshot write can leave differing snapshots; the next start
+  refuses before init. Preserve both, copy the newer intact snapshot over the
+  other, or use a new output_dir. This follows the owner byte-equality rule.
+
+## Read-only project audit
+
+[audit_project.py](scripts/audit_project.py) reuses adjacent wbkit lint rules,
+loaded by file identity. From caller code with authorized read access:
+
+```python
+import wandb, audit_project
+report = audit_project.audit(wandb.Api(), "entity/project", limit=200)
+```
+
+A supplied wandb module also works. The limit bounds newest runs; all artifact
+collections are checked using their newest version. Reports group issues by
+rule with run/artifact rows and clean totals. API errors propagate; retain an
+incomplete audit and retry after restoring access. No run or artifact is edited.
+For CLI rendering, caller code invokes audit_project.main(wandb.Api()); scripts
+never import W&B. Show exact proposed edits for confirmation before cleanup.
 
 ## Artifacts and lineage
 
