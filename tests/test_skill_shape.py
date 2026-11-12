@@ -366,7 +366,7 @@ REFERENCE_ELABORATION_INVENTORIES = {
         ("references/authority-adjudication.md",
          "adjudication.concurrence", 1),
         ("references/authority-adjudication.md", "adjudication.envelope", 1),
-        ("references/authority-adjudication.md", "adjudication.matrix", 1),
+        ("references/authority-adjudication.md", "adjudication.matrix", 2),
         ("references/authority-adjudication.md",
          "adjudication.nonoverridable", 1),
         ("references/authority-adjudication.md", "adjudication.record", 1),
@@ -1036,6 +1036,17 @@ class TestAuthoredSkillShape(unittest.TestCase):
                 self.assertIn(phrase, text)
         self.assertIn(text, (skill / "SKILL.md").read_text(encoding="utf-8"))
 
+    def test_orchestrate_review_modes_defer_to_mandate(self):
+        rules = {d["id"]: d["normative_text"] for d in
+                 DECLARATION_REGISTRY.load_registry(SKILLS / "hanig-orchestrate")}
+        for name in ("review.rounds", "adjudication.matrix", "adjudication.concurrence",
+                     "adjudication.envelope", "adjudication.record"):
+            with self.subTest(declaration=name):
+                research, swe = rules[name].split("SWE mode: ", 1)
+                self.assertIn('mandate\'s "Review modes" section', research)
+                self.assertIn("Research mode is the default", research)
+                self.assertIn("owner-selected SWE mode must be recorded per", research)
+                self.assertTrue(swe)
     def test_project_contract_requires_real_probe_and_synthetic_cases(self):
         skill = SKILLS / "hanig-project"
         declarations = DECLARATION_REGISTRY.load_registry(skill)
