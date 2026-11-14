@@ -380,15 +380,12 @@ ordering lock and exclusive-create round markers. Lock acquisition waits up to
 claiming a lower one or skipping the preceding round returns exit 4 before
 providers run. Exhaustion requires every round 1 through `MAX_ROUNDS` for the
 same cycle and profile; missing rounds are named. Only an explicit successor
-cycle permits another round 1, except a settled `REVIEW_UNAVAILABLE` with zero
-completed reviewers releases its own reservation for the same round to retry.
-The marker retains each reservation token, reservation time, unavailable verdict,
-zero completion count and release time. At most five consecutive releases of
-one round are allowed; the sixth unavailable run keeps its reservation and
-reports the cap. If a later round already exists, the older reservation is
-kept with a warning. Release settles the unavailable verdict after audit append
-returns; interruptions before that point and watchdog exits retain reservations.
-Other verdicts retain reservations. Unreadable or
+cycle permits another round 1, except settled zero-completion
+`REVIEW_UNAVAILABLE` runs may release. Markers retain tokens, times, verdict and
+zero completions. Five releases are allowed; the sixth keeps the round and warns. A later reserved
+round also keeps the older reservation with a warning. Atomic replacement after
+audit append settles release; earlier interruptions, watchdog exits and other
+verdicts keep reservations. Orphan staging files have no authority. Unreadable or
 partial state refuses review; retain and inspect it rather than deleting it
 to restart the bound. Plan reviews and offline size/list/adjudication commands
 do not reserve implementation rounds. The separate audit journal remains

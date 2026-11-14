@@ -295,12 +295,33 @@ def acquire_round_lock(lock):
             time.sleep(min(0.05, remaining))
 
 
-def reserve_round(identity, round_no, profile, fresh_from=None):
-    """Reserve before dispatch under flock; O_EXCL protects initial creation.
+def replace_round_marker(directory, name, record):
+    """Stage outside the identity grammar; rename is the settlement point."""
+    parent = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=directory)
+    pending = ".round-pending-" + os.urandom(16).hex()
+    fd = None
+    try:
+        fd = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(record, stream, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(pending, name, src_dir_fd=parent, dst_dir_fd=directory)
+        os.fsync(directory)
+    finally:
+        try:
+            if fd is not None:
+                os.unlink(pending, dir_fd=parent)
+        except FileNotFoundError:
+            pass
+        finally:
+            os.close(parent)
 
-    Only settled zero-completion unavailable runs may release, at most five times.
-    Partial markers fail closed; this operation never accesses the audit journal.
-    Local trusted-writer data cannot protect against owner edits or another home.
+
+def reserve_round(identity, round_no, profile, fresh_from=None):
+    """Reserve under flock and O_EXCL; only settled zero-completion unavailable
+    runs may release, five times. Partial markers fail closed. No audit access.
+    Local trusted-writer state cannot prevent owner edits or another state home.
     """
     if (not re.fullmatch(r"[0-9a-f]{64}", identity)
             or type(round_no) is not int or not 1 <= round_no <= MAX_ROUNDS
@@ -356,13 +377,7 @@ def reserve_round(identity, round_no, profile, fresh_from=None):
                 {"token": os.urandom(16).hex(), "reserved_at": now()}]
             name = round_marker_name(cycle, round_no)
             if retry:
-                # Under the ordering lock; a torn rewrite refuses future use.
-                fd = os.open(name, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW,
-                             dir_fd=directory)
-                with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                    json.dump(record, stream, sort_keys=True)
-                    stream.flush()
-                    os.fsync(stream.fileno())
+                replace_round_marker(directory, name, record)
                 return record
             try:
                 fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL,
@@ -411,11 +426,9 @@ def reserve_review_round(args):
     return record
 
 
-def finish_round_reservation(args, completed, verdict):
-    """Release only our own settled zero-completion unavailable reservation.
-
-    The watchdog and abnormal exits never call this. Failure to persist a
-    release fails closed; audit-journal success has no authority here.
+def release_round(args, completed, verdict):
+    """Release our settled zero-completion unavailable round, never a watchdog's.
+    Audit success is not authority. Persistence failure fails closed.
     """
     if verdict != "REVIEW_UNAVAILABLE" or completed:
         return
@@ -431,26 +444,20 @@ def finish_round_reservation(args, completed, verdict):
             if owned not in entries:
                 raise ValueError("reservation no longer belongs to this run")
             if entries[-1] != owned:
-                print("Round reservation kept: a later round is already reserved.", file=sys.stderr)
+                print("Round kept: later round reserved.", file=sys.stderr)
                 return
             attempts = owned["attempts"]
             if len(attempts) > MAX_ROUND_RELEASES:
-                print("Round reservation kept: consecutive release cap of 5 reached.", file=sys.stderr)
+                print("Round kept: release cap of 5 reached.", file=sys.stderr)
                 return
             record = dict(owned, attempts=attempts[:-1] + [dict(
                 attempts[-1], released_at=now(), verdict=verdict, completed=0)])
             name = round_marker_name(owned["cycle"], owned["round"])
-            fd = os.open(name, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW,
-                         dir_fd=directory)
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                json.dump(record, stream, sort_keys=True)
-                stream.flush()
-                os.fsync(stream.fileno())
+            replace_round_marker(directory, name, record)
         finally:
             os.close(lock)
     except (OSError, ValueError, TypeError, KeyError) as exc:
-        config_error("round release refused; reservation retained or ledger requires inspection: {}. "
-                     "Pass the ledger at {} to the operator for inspection before retrying.".format(exc, ledger))
+        config_error("round release refused: {}. Pass ledger {} to the operator for inspection.".format(exc, ledger))
     finally:
         if directory is not None:
             os.close(directory)
@@ -3535,7 +3542,7 @@ def _main():
     if not runnable:
         disarm_watchdog()
         journal = record_review_round(args, [], "REVIEW_UNAVAILABLE")
-        finish_round_reservation(args, [], "REVIEW_UNAVAILABLE")
+        release_round(args, [], "REVIEW_UNAVAILABLE")
         report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
                   "profile": profile, "profile_reason": profile_reason,
                   "reviewed": label, "unavailable": unavailable, "results": [],
@@ -3572,7 +3579,7 @@ def _main():
         if not completed and not failed:
             disarm_watchdog()
             journal = record_review_round(args, [], "REVIEW_UNAVAILABLE")
-            finish_round_reservation(args, [], "REVIEW_UNAVAILABLE")
+            release_round(args, [], "REVIEW_UNAVAILABLE")
             report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
                       "profile": profile, "profile_reason": profile_reason,
                       "reviewed": label, "unavailable": unavailable, "results": [],
@@ -3622,7 +3629,7 @@ def _main():
                          n_incomplete=len(incomplete))
     disarm_watchdog()
     journal = record_review_round(args, completed, state)
-    finish_round_reservation(args, completed, state)
+    release_round(args, completed, state)
 
     report = {
         "state": state, "checked_at": now(), "reviewed": label,

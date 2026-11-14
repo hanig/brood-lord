@@ -128,7 +128,6 @@ class TestRoundReservations(unittest.TestCase):
             review.round_ledger_root() / record["identity"], record))
 
     def test_unavailable_cli_releases_and_same_round_runs_again(self):
-        # Exercise both pre-dispatch refusal and settled transport errors.
         for mode in ("unavailable", "errors"):
             with self.subTest(mode=mode):
                 result = self.invoke(mode=mode)
@@ -151,7 +150,7 @@ class TestRoundReservations(unittest.TestCase):
         self.assertEqual(self.invoke()[0], 0)
 
     def test_sixth_unavailable_keeps_round_and_reports_cap(self):
-        # Exhaustive consecutive-attempt bound: five releases, sixth retained.
+        # Exhaustive attempts 1..6.
         for _ in range(5):
             self.assertEqual(self.invoke(mode="unavailable")[0], 2)
         sixth = self.invoke(mode="unavailable")
@@ -167,8 +166,7 @@ class TestRoundReservations(unittest.TestCase):
         self.assertEqual(self.invoke()[0], 4)
 
     def test_other_verdicts_and_zero_completion_interrupt_keep_round(self):
-        # Exhaustive declared verdict set, including defensive UNAVAILABLE
-        # with a completed reviewer. No verdict finalization models a crash.
+        # Exhaustive verdicts; None models interruption.
         for index, verdict in enumerate((None, "REVIEW_PARTIAL", "REVIEW_FAIL",
                 "REVIEW_PASS", "REVIEW_CLAIMS_REFUTED", "REVIEW_ERROR",
                 "REVIEW_INCOMPLETE", "REVIEW_UNAVAILABLE")):
@@ -176,7 +174,7 @@ class TestRoundReservations(unittest.TestCase):
             record = self.reserve(1, identity=selected)
             before = {p: p.read_bytes() for p in self.markers()}
             if verdict is not None:
-                review.finish_round_reservation(self.owned_args(record),
+                review.release_round(self.owned_args(record),
                     [object()] if verdict == "REVIEW_UNAVAILABLE" else [], verdict)
             self.assertEqual(before, {p: p.read_bytes() for p in self.markers()})
             with self.assertRaises(ValueError):
@@ -185,7 +183,7 @@ class TestRoundReservations(unittest.TestCase):
     def test_release_requires_current_owner_and_cannot_skip_released_round(self):
         first = self.reserve(1)
         args = self.owned_args(first)
-        review.finish_round_reservation(args, [], "REVIEW_UNAVAILABLE")
+        review.release_round(args, [], "REVIEW_UNAVAILABLE")
         for number, profile, fresh in ((2, "standard", None),
                 (1, "deep", None), (1, "standard", "standard")):
             with self.assertRaises(ValueError):
@@ -193,18 +191,17 @@ class TestRoundReservations(unittest.TestCase):
         second = self.reserve(1)
         before = self.markers()[0].read_bytes()
         with self.assertRaises(SystemExit) as stopped:
-            review.finish_round_reservation(args, [], "REVIEW_UNAVAILABLE")
+            review.release_round(args, [], "REVIEW_UNAVAILABLE")
         self.assertEqual(stopped.exception.code, 4)
         self.assertEqual(self.markers()[0].read_bytes(), before)
         self.assertNotEqual(first["attempts"][-1]["token"], second["attempts"][-1]["token"])
 
     def test_release_history_rejects_partial_unknown_and_truncated_records(self):
         record = self.reserve(1)
-        review.finish_round_reservation(self.owned_args(record), [], "REVIEW_UNAVAILABLE")
+        review.release_round(self.owned_args(record), [], "REVIEW_UNAVAILABLE")
         marker = self.markers()[0]
         saved = json.loads(marker.read_text())
-        # Exhaustively remove each required release field; unknown additions
-        # and actual truncated JSON must also fail through the CLI consumer.
+        # Exhaustive release fields, unknown keys and truncation.
         for field in ("token", "reserved_at", "released_at", "verdict", "completed", "unknown"):
             changed = json.loads(json.dumps(saved))
             if field == "unknown":
@@ -220,7 +217,7 @@ class TestRoundReservations(unittest.TestCase):
         first = self.reserve(1)
         self.reserve(2)
         before = {p: p.read_bytes() for p in self.markers()}
-        review.finish_round_reservation(self.owned_args(first), [], "REVIEW_UNAVAILABLE")
+        review.release_round(self.owned_args(first), [], "REVIEW_UNAVAILABLE")
         self.assertEqual(before, {p: p.read_bytes() for p in self.markers()})
 
     def test_release_directory_open_failure_is_actionable(self):
@@ -228,7 +225,7 @@ class TestRoundReservations(unittest.TestCase):
         before = self.markers()[0].read_bytes()
         with patch.object(review, "_open_directory_chain", side_effect=OSError("ENFILE")):
             with self.assertRaises(SystemExit) as stopped:
-                review.finish_round_reservation(self.owned_args(record), [], "REVIEW_UNAVAILABLE")
+                review.release_round(self.owned_args(record), [], "REVIEW_UNAVAILABLE")
         self.assertEqual(stopped.exception.code, 4)
         self.assertEqual(self.markers()[0].read_bytes(), before)
 
@@ -238,6 +235,31 @@ class TestRoundReservations(unittest.TestCase):
                 self.invoke(mode="unavailable")
         self.assertNotIn("released_at", json.loads(self.markers()[0].read_text())["attempts"][-1])
         self.assertEqual(self.invoke()[0], 4)
+
+    def test_interrupted_rewrites_preserve_markers(self):
+        dump = review.json.dump
+        for index, (retry, buffer) in enumerate(
+                ((False, False), (False, True), (True, False), (True, True))):
+            with self.subTest(retry=retry, buffer=buffer):
+                key = format(index, "064x")
+                rec = self.reserve(1, identity=key)
+                args = self.owned_args(rec)
+                if retry:
+                    review.release_round(args, [], "REVIEW_UNAVAILABLE")
+                marker = args.round_reservation[0] / review.round_marker_name(1, 1)
+                before = marker.read_bytes()
+                def stop(value, stream, **kwargs):
+                    if buffer:
+                        dump(value, stream, **kwargs)
+                    raise KeyboardInterrupt
+                with patch.object(review.json, "dump", side_effect=stop):
+                    with self.assertRaises(KeyboardInterrupt):
+                        if retry:
+                            self.reserve(1, identity=key)
+                        else:
+                            review.release_round(args, [], "REVIEW_UNAVAILABLE")
+                self.assertEqual(marker.read_bytes(), before)
+                self.reserve(1 if retry else 2, identity=key)
 
     @contextmanager
     def held_lock(self):
