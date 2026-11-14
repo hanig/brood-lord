@@ -15,6 +15,7 @@ import time
 import unittest
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -66,7 +67,7 @@ class TestRoundReservations(unittest.TestCase):
     def markers(self):
         return sorted((self.state / "hanig-review-gate/rounds").glob("*/*.json"))
 
-    def invoke(self, number=1, extra=(), fail_journal=False):
+    def invoke(self, number=1, extra=(), fail_journal=False, mode="pass"):
         calls, records = [], []
         roster = [{"name": n, "model": n, "provider": "stub",
                    "profiles": ["standard"], "enabled": True} for n in ("a", "b")]
@@ -74,6 +75,8 @@ class TestRoundReservations(unittest.TestCase):
         def answer(reviewer, *_args):
             calls.append(reviewer["name"])
             self.assertTrue(self.markers(), "provider ran before reservation")
+            if mode == "errors" or (mode == "partial" and reviewer["name"] == "b"):
+                return {"ok": False, "name": reviewer["name"], "error": "offline"}
             return {"ok": True, "name": reviewer["name"], "verdict": "upheld",
                     "findings": [], "claims": [], "elapsed_s": 0}
 
@@ -90,7 +93,7 @@ class TestRoundReservations(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with ExitStack() as stack:
             for name, replacement in (("load_effective_reviewers", lambda: roster),
-                                      ("availability", lambda _r: None),
+                                      ("availability", lambda _r: "offline" if mode == "unavailable" else None),
                                       ("run_one", answer),
                                       ("_run_journal_append", journal)):
                 stack.enter_context(patch.object(review, name, replacement))
@@ -100,6 +103,99 @@ class TestRoundReservations(unittest.TestCase):
             with self.assertRaises(SystemExit) as stopped:
                 guarded_main(review.main)
         return stopped.exception.code, out.getvalue(), err.getvalue(), calls, records
+
+    def owned_args(self, record):
+        return SimpleNamespace(round_reservation=(
+            review.round_ledger_root() / record["identity"], record))
+
+    def test_unavailable_cli_releases_and_same_round_runs_again(self):
+        # Exercise both pre-dispatch refusal and settled transport errors.
+        for mode in ("unavailable", "errors"):
+            with self.subTest(mode=mode):
+                result = self.invoke(mode=mode)
+                self.assertEqual(result[0], 2, result[2])
+                self.assertIn("reservation released", result[2])
+                record = json.loads(self.markers()[0].read_text())
+                attempt = record["attempts"][-1]
+                self.assertEqual(attempt["verdict"], "REVIEW_UNAVAILABLE")
+                self.assertEqual(attempt["completed"], 0)
+                self.assertTrue(attempt["released_at"])
+        self.assertEqual(self.invoke()[0], 0)
+        attempts = json.loads(self.markers()[0].read_text())["attempts"]
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(len({a["token"] for a in attempts}), 3)
+
+    def test_empty_escalation_releases_round(self):
+        with patch.object(review, "escalate", return_value=([], [], [], ["standard"])):
+            result = self.invoke(extra=("--escalate",))
+        self.assertEqual(result[0], 2, result[2])
+        self.assertEqual(self.invoke()[0], 0)
+
+    def test_sixth_unavailable_keeps_round_and_reports_cap(self):
+        # Exhaustive consecutive-attempt bound: five releases, sixth retained.
+        for _ in range(5):
+            self.assertEqual(self.invoke(mode="unavailable")[0], 2)
+        sixth = self.invoke(mode="unavailable")
+        self.assertEqual(sixth[0], 2, sixth[2])
+        self.assertIn("cap of 5 reached", sixth[2])
+        self.assertEqual(self.invoke()[0], 4)
+        record = json.loads(self.markers()[0].read_text())
+        self.assertEqual(len(record["attempts"]), 6)
+        self.assertNotIn("released_at", record["attempts"][-1])
+
+    def test_partial_cli_keeps_round(self):
+        self.assertEqual(self.invoke(mode="partial")[0], 3)
+        self.assertEqual(self.invoke()[0], 4)
+
+    def test_other_verdicts_and_zero_completion_interrupt_keep_round(self):
+        # Exhaustive declared verdict set, including defensive UNAVAILABLE
+        # with a completed reviewer. No verdict finalization models a crash.
+        for index, verdict in enumerate((None, "REVIEW_PARTIAL", "REVIEW_FAIL",
+                "REVIEW_PASS", "REVIEW_CLAIMS_REFUTED", "REVIEW_ERROR",
+                "REVIEW_INCOMPLETE", "REVIEW_UNAVAILABLE")):
+            selected = format(index, "064x")
+            record = self.reserve(1, identity=selected)
+            before = {p: p.read_bytes() for p in self.markers()}
+            if verdict is not None:
+                review.finish_round_reservation(self.owned_args(record),
+                    [object()] if verdict == "REVIEW_UNAVAILABLE" else [], verdict)
+            self.assertEqual(before, {p: p.read_bytes() for p in self.markers()})
+            with self.assertRaises(ValueError):
+                self.reserve(1, identity=selected)
+
+    def test_release_requires_current_owner_and_cannot_skip_released_round(self):
+        first = self.reserve(1)
+        args = self.owned_args(first)
+        review.finish_round_reservation(args, [], "REVIEW_UNAVAILABLE")
+        for number, profile, fresh in ((2, "standard", None),
+                (1, "deep", None), (1, "standard", "standard")):
+            with self.assertRaises(ValueError):
+                self.reserve(number, profile=profile, fresh=fresh)
+        second = self.reserve(1)
+        before = self.markers()[0].read_bytes()
+        with self.assertRaises(SystemExit) as stopped:
+            review.finish_round_reservation(args, [], "REVIEW_UNAVAILABLE")
+        self.assertEqual(stopped.exception.code, 4)
+        self.assertEqual(self.markers()[0].read_bytes(), before)
+        self.assertNotEqual(first["attempts"][-1]["token"], second["attempts"][-1]["token"])
+
+    def test_release_history_rejects_partial_unknown_and_truncated_records(self):
+        record = self.reserve(1)
+        review.finish_round_reservation(self.owned_args(record), [], "REVIEW_UNAVAILABLE")
+        marker = self.markers()[0]
+        saved = json.loads(marker.read_text())
+        # Exhaustively remove each required release field; unknown additions
+        # and actual truncated JSON must also fail through the CLI consumer.
+        for field in ("token", "reserved_at", "released_at", "verdict", "completed", "unknown"):
+            changed = json.loads(json.dumps(saved))
+            if field == "unknown":
+                changed["attempts"][-1][field] = True
+            else:
+                del changed["attempts"][-1][field]
+            marker.write_text(json.dumps(changed))
+            self.assertEqual(self.invoke()[0], 4, field)
+        marker.write_text(json.dumps(saved)[:-5])
+        self.assertEqual(self.invoke()[0], 4)
 
     @contextmanager
     def held_lock(self):

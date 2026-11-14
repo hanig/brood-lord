@@ -12,8 +12,9 @@ from unittest.mock import patch
 
 
 def isolated_reservation(module, original, args):
-    with tempfile.TemporaryDirectory(prefix="review-round-fixture-") as root, \
-            patch.object(module, "round_ledger_root", return_value=Path(root).resolve()), \
+    args._reservation_fixture = tempfile.TemporaryDirectory(prefix="review-round-fixture-")
+    root = args._reservation_fixture.name
+    with patch.object(module, "round_ledger_root", return_value=Path(root).resolve()), \
             patch.object(module, "change_identity", return_value="a" * 64):
         if args.fresh_cycle_from:
             for number in range(1, module.MAX_ROUNDS + 1):
