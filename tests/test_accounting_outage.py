@@ -118,6 +118,33 @@ class TestAccountingOutage(unittest.TestCase):
                 report = self.advance(10000)
                 self.assertEqual(self.state['units']['u']['state'], expected, report)
 
+    def test_job_specific_failure_does_not_block_another_job(self):
+        self.plan['units'].append(dict(self.plan['units'][0], id='v', write_scopes=['v/']))
+        self.add_attempt('v', '43')
+        program = self.bin / 'sacct'
+        program.write_text("#!/bin/sh\ncase \"$*\" in *'-j 42 '*) exit 1;; "
+                           "*) echo 'COMPLETED|0:0|" + self.submitted + "|' ;; esac\n")
+        program.chmod(0o755)
+        for now in (10000, 10601, 20000):
+            report = self.advance(now)
+            self.assertEqual(self.state['units']['u']['state'], 'INCOMPLETE', report)
+            self.assertEqual(self.state['units']['v']['state'], 'DONE', report)
+            self.assertNotIn('v: accounting unavailable', report)
+
+    def test_unqueried_invalid_output_does_not_inherit_another_jobs_outage(self):
+        self.plan['units'].append(dict(self.plan['units'][0], id='v', write_scopes=['v/']))
+        us = self.add_attempt('v', '43')
+        output = Path(us['attempt_dir']) / 'out'
+        outside = self.tmp / 'synthetic-output'
+        outside.write_text('fixture bytes')
+        output.unlink()
+        output.symlink_to(outside)
+        self.accounting('failed')
+        for now, expected in ((10000, 'INCOMPLETE'), (10601, 'FAILED_EVIDENCE')):
+            report = self.advance(now)
+            self.assertEqual(self.state['units']['v']['state'], expected, report)
+            self.assertNotIn('v: accounting unavailable', report)
+
     def test_cached_outage_reports_each_skipped_unit(self):
         self.plan['units'].append(dict(self.plan['units'][0], id='v', write_scopes=['v/']))
         self.add_attempt('v', '43')

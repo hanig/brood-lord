@@ -2452,6 +2452,7 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
 
     # 1. Re-check anything with a live attempt. The coordinator does not judge;
     #    unit.py does, and its exit code is the whole input.
+    accounting_job_id = None
     for uid, u in units.items():
         # Each `_check` can take its own timeout, and a synchronous pipeline
         # engine takes far longer. Renewing between units keeps mutual
@@ -2502,6 +2503,13 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
         ran_check = not (u.get("kind") == "code" and pinned_before)
         protocol_problem = None
         if ran_check:
+            if u.get("kind") == "slurm":
+                # A query error can be specific to one job. Retain the
+                # breaker for repeated checks of that job, not other jobs.
+                job_id = us.get("job_id")
+                if job_id != accounting_job_id:
+                    U.SACCT_UNAVAILABLE = False
+                    accounting_job_id = job_id
             isolation_facts = SE.trusted_isolation_facts(state, u, attempt)
             check_args = (
                 attempt, launch_facts,
