@@ -4,7 +4,6 @@ from tests.watchdog_guard import guarded_main
 import concurrent.futures
 import importlib.util
 import io
-import itertools
 import json
 import os
 import stat
@@ -13,6 +12,7 @@ import sys
 import tempfile
 import threading
 import time
+import itertools
 import unittest
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
