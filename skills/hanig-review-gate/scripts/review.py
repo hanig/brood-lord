@@ -102,6 +102,7 @@ DEFAULT_PROFILE = "standard"
 # That is the signal to step back to root cause, not to review again.
 MAX_ROUNDS = 3
 ROUND_LOCK_WAIT_SECONDS = 5
+MAX_ROUND_RELEASES = 5
 
 
 def change_identity(target="origin/main", plan_name=None, unit=None):
@@ -160,6 +161,8 @@ def round_marker_name(cycle, number):
 
 def require_exhausted_rounds(entries):
     """A validated prefix is exhausted only when all MAX_ROUNDS exist."""
+    if entries[-1].get("attempts", [{}])[-1].get("released_at"):
+        raise ValueError("released round is not exhausted")
     cycle = entries[-1]["cycle"]
     missing = list(range(entries[-1]["round"] + 1, MAX_ROUNDS + 1))
     if missing:
@@ -193,13 +196,41 @@ def validate_round_history(directory, identity):
                 raise ValueError("oversized marker")
             record = json.loads(content, object_pairs_hook=reject_duplicate_keys)
             if (not isinstance(record, dict)
-                    or set(record) != {"identity", "cycle", "round", "profile", "predecessor"}
+                    or set(record) not in (
+                        {"identity", "cycle", "round", "profile", "predecessor"},
+                        {"identity", "cycle", "round", "profile", "predecessor", "attempts"})
                     or record["identity"] != identity
                     or type(record["cycle"]) is not int or record["cycle"] != cycle
                     or type(record["round"]) is not int or record["round"] != number
                     or not 1 <= number <= MAX_ROUNDS
                     or record["profile"] not in ("plan", *LADDER)):
                 raise ValueError("invalid marker fields")
+            if "attempts" in record:
+                attempts = record["attempts"]
+                if not isinstance(attempts, list) or not 1 <= len(attempts) <= MAX_ROUND_RELEASES + 1:
+                    raise ValueError("invalid reservation attempts")
+                tokens = set()
+                for index, attempt in enumerate(attempts):
+                    if (not isinstance(attempt, dict)
+                            or set(attempt) not in ({"token", "reserved_at"},
+                                {"token", "reserved_at", "released_at", "verdict", "completed"})
+                            or not isinstance(attempt.get("token"), str)
+                            or not re.fullmatch(r"[0-9a-f]{32}", attempt["token"])
+                            or attempt["token"] in tokens):
+                        raise ValueError("invalid reservation attempt")
+                    tokens.add(attempt["token"])
+                    released = "released_at" in attempt
+                    if ((index < len(attempts) - 1 and not released)
+                            or (released and (index >= MAX_ROUND_RELEASES
+                                or attempt["verdict"] != "REVIEW_UNAVAILABLE"
+                                or type(attempt["completed"]) is not int
+                                or attempt["completed"] != 0))):
+                        raise ValueError("invalid round release")
+                    for field in (("reserved_at", "released_at") if released else ("reserved_at",)):
+                        if (not isinstance(attempt[field], str)
+                                or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d{4}", attempt[field])):
+                            raise ValueError("invalid reservation timestamp")
+                        datetime.datetime.strptime(attempt[field], "%Y-%m-%dT%H:%M:%S%z")
         except (OSError, ValueError, TypeError, RecursionError) as exc:
             raise ValueError("invalid round ledger marker {}: {}".format(name, exc)) from exc
         cycles.setdefault(cycle, []).append(record)
@@ -217,6 +248,8 @@ def validate_round_history(directory, identity):
             raise ValueError("{}: missing rounds: {}; files: {}".format(
                 names, ", ".join(map(str, missing)), ", ".join(
                     round_marker_name(cycle, number) for number in missing)))
+        if any(e.get("attempts", [{}])[-1].get("released_at") for e in entries[:-1]):
+            raise ValueError("{}: released round before a later reservation".format(names))
         if any(e["profile"] != entries[0]["profile"] for e in entries):
             raise ValueError("{}: profiles differ within cycle".format(names))
         expected = None
@@ -262,14 +295,33 @@ def acquire_round_lock(lock):
             time.sleep(min(0.05, remaining))
 
 
-def reserve_round(identity, round_no, profile, fresh_from=None):
-    """Reserve before dispatch, serializing ordering and exclusive creation.
+def replace_round_marker(directory, name, record):
+    """Stage outside the identity grammar; rename is the settlement point."""
+    parent = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=directory)
+    pending = ".round-pending-" + os.urandom(16).hex()
+    fd = None
+    try:
+        fd = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(record, stream, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(pending, name, src_dir_fd=parent, dst_dir_fd=directory)
+        os.fsync(directory)
+    finally:
+        try:
+            if fd is not None:
+                os.unlink(pending, dir_fd=parent)
+        except FileNotFoundError:
+            pass
+        finally:
+            os.close(parent)
 
-    Reservations survive failure, unavailable providers and interrupted runs.
-    A partial marker fails closed. The audit journal is neither read nor written.
-    flock orders different round numbers; O_EXCL makes each marker single-use.
-    State is local, trusted-writer data, not protection against its owner editing
-    or deleting it or choosing a different state home.
+
+def reserve_round(identity, round_no, profile, fresh_from=None):
+    """Reserve under flock and O_EXCL; only settled zero-completion unavailable
+    runs may release, five times. Partial markers fail closed. No audit access.
+    Local trusted-writer state cannot prevent owner edits or another state home.
     """
     if (not re.fullmatch(r"[0-9a-f]{64}", identity)
             or type(round_no) is not int or not 1 <= round_no <= MAX_ROUNDS
@@ -290,7 +342,12 @@ def reserve_round(identity, round_no, profile, fresh_from=None):
             cycle = last["cycle"] if last else 1
             predecessor = last["predecessor"] if last else None
             names = ", ".join(round_marker_name(cycle, e["round"]) for e in entries)
-            if last and round_no == 1 and fresh_from is not None:
+            retry = bool(last and last.get("attempts", [{}])[-1].get("released_at"))
+            if retry:
+                if (round_no != last["round"] or profile != last["profile"]
+                        or fresh_from != (predecessor["profile"] if predecessor else None)):
+                    raise ValueError("released round must be reserved again with the same profile and predecessor")
+            elif last and round_no == 1 and fresh_from is not None:
                 require_exhausted_rounds(entries)
                 if fresh_from != last["profile"]:
                     raise ValueError("{}: --fresh-cycle-from must name the exhausted "
@@ -316,7 +373,12 @@ def reserve_round(identity, round_no, profile, fresh_from=None):
                                      "recorded predecessor; a new cycle needs exhaustion".format(names))
             record = {"identity": identity, "cycle": cycle, "round": round_no,
                       "profile": profile, "predecessor": predecessor}
+            record["attempts"] = (last["attempts"][:] if retry else []) + [
+                {"token": os.urandom(16).hex(), "reserved_at": now()}]
             name = round_marker_name(cycle, round_no)
+            if retry:
+                replace_round_marker(directory, name, record)
+                return record
             try:
                 fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL,
                              0o600, dir_fd=directory)
@@ -360,7 +422,45 @@ def reserve_review_round(args):
         config_error("round reservation refused: {}. Inspect the enforcing ledger "
                      "and XDG_STATE_HOME/HOME; pass the next admissible round; do not delete "
                      "reservations to restart a review.".format(exc))
+    args.round_reservation = (round_ledger_root() / identity, record)
     return record
+
+
+def release_round(args, completed, verdict):
+    """Release our settled zero-completion unavailable round, never a watchdog's.
+    Audit success is not authority. Persistence failure fails closed.
+    """
+    if verdict != "REVIEW_UNAVAILABLE" or completed:
+        return
+    ledger, owned = args.round_reservation
+    directory = None
+    try:
+        directory = _open_directory_chain(ledger)
+        lock = os.open("lock", os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
+                       dir_fd=directory)
+        try:
+            acquire_round_lock(lock)
+            entries = validate_round_history(directory, owned["identity"])
+            if owned not in entries:
+                raise ValueError("reservation no longer belongs to this run")
+            if entries[-1] != owned:
+                print("Round kept: later round reserved.", file=sys.stderr)
+                return
+            attempts = owned["attempts"]
+            if len(attempts) > MAX_ROUND_RELEASES:
+                print("Round kept: release cap of 5 reached.", file=sys.stderr)
+                return
+            record = dict(owned, attempts=attempts[:-1] + [dict(
+                attempts[-1], released_at=now(), verdict=verdict, completed=0)])
+            name = round_marker_name(owned["cycle"], owned["round"])
+            replace_round_marker(directory, name, record)
+        finally:
+            os.close(lock)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        config_error("round release refused: {}. Pass ledger {} to the operator for inspection.".format(exc, ledger))
+    finally:
+        if directory is not None:
+            os.close(directory)
 
 HONEST_RUN_CLAIM = "This change cannot make an honest run fail."
 DISPOSITIONS = {"reproduced", "not-reproduced", "deferred"}
@@ -3442,6 +3542,7 @@ def _main():
     if not runnable:
         disarm_watchdog()
         journal = record_review_round(args, [], "REVIEW_UNAVAILABLE")
+        release_round(args, [], "REVIEW_UNAVAILABLE")
         report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
                   "profile": profile, "profile_reason": profile_reason,
                   "reviewed": label, "unavailable": unavailable, "results": [],
@@ -3478,6 +3579,7 @@ def _main():
         if not completed and not failed:
             disarm_watchdog()
             journal = record_review_round(args, [], "REVIEW_UNAVAILABLE")
+            release_round(args, [], "REVIEW_UNAVAILABLE")
             report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
                       "profile": profile, "profile_reason": profile_reason,
                       "reviewed": label, "unavailable": unavailable, "results": [],
@@ -3527,6 +3629,7 @@ def _main():
                          n_incomplete=len(incomplete))
     disarm_watchdog()
     journal = record_review_round(args, completed, state)
+    release_round(args, completed, state)
 
     report = {
         "state": state, "checked_at": now(), "reviewed": label,

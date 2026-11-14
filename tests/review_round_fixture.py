@@ -6,14 +6,17 @@ transport, verdict or journal assertions is bypassed. Cross-invocation and Git
 identity behavior is exercised separately by test_review_rounds.
 """
 
+import shutil
 import tempfile
+import weakref
 from pathlib import Path
 from unittest.mock import patch
 
 
 def isolated_reservation(module, original, args):
-    with tempfile.TemporaryDirectory(prefix="review-round-fixture-") as root, \
-            patch.object(module, "round_ledger_root", return_value=Path(root).resolve()), \
+    root = tempfile.mkdtemp(prefix="review-round-fixture-")
+    weakref.finalize(args, shutil.rmtree, root)
+    with patch.object(module, "round_ledger_root", return_value=Path(root).resolve()), \
             patch.object(module, "change_identity", return_value="a" * 64):
         if args.fresh_cycle_from:
             for number in range(1, module.MAX_ROUNDS + 1):
