@@ -2759,7 +2759,21 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
             # you" into FAILED_EVIDENCE after ten minutes would discard a live
             # agent and its context because nobody was at the keyboard.
             us.pop("incomplete_since", None)
-        if rc == INCOMPLETE:
+        accounting_unavailable = (u.get("kind") == "slurm"
+                                  and rc == INCOMPLETE
+                                  and not protocol_problem
+                                  and U.SACCT_UNAVAILABLE)
+        if accounting_unavailable:
+            # An outage is not accounting lag. Discard even a pre-outage
+            # settle clock so recovery grants a full window, also on disk.
+            since = us.setdefault("accounting_unavailable_since", time.time())
+            us.pop("incomplete_since", None)
+            observed = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(since))
+            report.append(f"{uid}: accounting unavailable since {observed}; "
+                          f"kept nonterminal pending accounting recovery")
+        else:
+            us.pop("accounting_unavailable_since", None)
+        if rc == INCOMPLETE and not accounting_unavailable:
             # Recover the clock once for an unacknowledged send.
             for entry in us.get("continuations", []):
                 if (isinstance(entry, dict)

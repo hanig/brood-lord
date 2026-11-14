@@ -536,8 +536,9 @@ def run_sacct(argv):
     """Bound accounting once per process; a failed query is absent evidence."""
     global SACCT_UNAVAILABLE
     if SACCT_UNAVAILABLE or not shutil.which("sacct"):
-        return 127, "", "accounting unavailable for this pass"
-    result = run(argv, timeout=SACCT_TIMEOUT_S)
+        result = (127, "", "accounting unavailable for this pass")
+    else:
+        result = run(argv, timeout=SACCT_TIMEOUT_S)
     if result[0] != 0:
         SACCT_UNAVAILABLE = True
         if SACCT_STATUS_FD is not None:
@@ -622,8 +623,6 @@ def sacct_state(job_id, declared_at=None, bound_at=None,
     """
     if owned_out is not None:
         owned_out[:] = [False]
-    if not shutil.which("sacct"):
-        return None, None, None, None
     rc, out, _ = run_sacct(["sacct", "-n", "-X", "-P", "-j", str(job_id),
                            "-o", "State,ExitCode,Submit,End"])
     if rc != 0 or not out:
