@@ -74,49 +74,43 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(len(calls), position, case.stdout + case.stderr)
         self.assertIn('Linear rate limit; reset 1970-01-01T00:01:00+00:00;', case.stderr)
         self.assertIn('%d requests' % position, case.stderr)
-        self.assertIn('requests: %d' % position, case.stdout + case.stderr)
+        self.assertIn('requests: %d' % position, case.stdout + case.stderr_raw)
         self.assertIn('INCOMPLETE', case.stderr)
         if remaining is not None:
             self.assertIn('%d items unreached' % remaining, case.stderr)
         self.assertNotIn('CONFIRMED', case.stdout)
         return calls
 
-    def test_drain_every_request_position(self):
-        # Enumerate every request position in a successful two-issue drain.
-        base = self.fixture('drain')
-        base.fake.add('2')
-        base.intent(key='a')
-        base.intent(key='b', tracker='ARC-2')
-        self.assertEqual(base.drain(), 0, base.stdout + base.stderr)
-        bound = len(base.fake.calls)
-        self.assertGreater(bound, 5)
-        base.doCleanups()
-        for position in range(1, bound + 1):
-            with self.subTest(position=position):
-                case = self.fixture('drain')
+    def test_every_request_position(self):
+        # Exhaustively enumerate 1..N, where N is the successful request count
+        # for each finite fixture: two drain subjects or three filing issues.
+        def prepare(kind):
+            case = self.fixture(kind)
+            if kind == 'drain':
                 case.fake.add('2')
                 case.intent(key='a')
                 case.intent(key='b', tracker='ARC-2')
-                calls = self.exercise(case, case.drain, position)
-                if not any('IntentCommentCreate' in q for q in calls[:-1]):
-                    self.assertEqual(case.receipts(), [])
-                if sum('IntentCommentCreate' in q for q in calls) <= 1:
-                    self.assertFalse(any(r.get('key') == 'b' for r in case.receipts()))
-                case.doCleanups()
-
-    def test_file_every_request_position_and_open_operation(self):
-        # Enumerate all requests of a three-issue filing, including final audit.
-        base = self.fixture('file')
-        self.assertEqual(base.file(), 0, base.stdout + base.stderr)
-        bound = len(base.fake.calls)
-        base.doCleanups()
-        for position in range(1, bound + 1):
-            with self.subTest(position=position):
-                case = self.fixture('file')
-                self.exercise(case, case.file, position)
-                for path in case.records():
-                    self.assertFalse(I.LI.confirmed(path))
-                case.doCleanups()
+            return case, case.drain if kind == 'drain' else case.file
+        for kind in ('drain', 'file'):
+            base, call = prepare(kind)
+            self.assertEqual(call(), 0, base.stdout + base.stderr)
+            bound = len(base.fake.calls)
+            self.assertGreater(bound, 5)
+            base.doCleanups()
+            for position in range(1, bound + 1):
+                with self.subTest(kind=kind, position=position):
+                    case, call = prepare(kind)
+                    calls = self.exercise(case, call, position)
+                    if kind == 'drain':
+                        creates = sum('IntentCommentCreate' in q for q in calls)
+                        if not any('IntentCommentCreate' in q for q in calls[:-1]):
+                            self.assertEqual(case.receipts(), [])
+                        if creates <= 1:
+                            self.assertFalse(any(r.get('key') == 'b' for r in case.receipts()))
+                    else:
+                        for path in case.records():
+                            self.assertFalse(I.LI.confirmed(path))
+                    case.doCleanups()
 
     def test_remaining_and_non_rate_error_continues(self):
         case = self.fixture('drain')

@@ -311,7 +311,11 @@ runpy.run_path(str(script), run_name='__main__')
                                 universal_newlines=True, timeout=30)
         self.stdout, self.stderr = result.stdout, result.stderr
         self.assertNotIn(KEY, self.stdout + self.stderr)
-        return result.returncode, json.loads(fixture.read_text())
+        observed = json.loads(fixture.read_text())
+        self.take_request_summary()
+        if self.request_summary:
+            self.assertEqual(self.request_summary, 'requests: %d\n' % len(observed['calls']))
+        return result.returncode, observed
 
     def operation(self):
         return self.records()[-1].stem

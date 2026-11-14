@@ -18,7 +18,6 @@ as the Authorization header, and every error message passes through
 
 import datetime as dt
 from email.utils import parsedate_to_datetime
-import math
 import time
 import hashlib
 import json
@@ -64,8 +63,7 @@ def reset_time(headers):
                     stamp = time.time() + int(value)
                 except ValueError:
                     stamp = parsedate_to_datetime(value).timestamp()
-            if math.isfinite(stamp):
-                return dt.datetime.fromtimestamp(stamp, dt.timezone.utc).isoformat()
+            return dt.datetime.fromtimestamp(stamp, dt.timezone.utc).isoformat()
         except (ValueError, TypeError, OverflowError, OSError):
             pass
     return None
@@ -196,3 +194,24 @@ class Client:
             raise LinearError("Linear refused the request: %s"
                               % "; ".join(errors or ["no data"]))
         return data
+
+
+class RateLimitStop(BaseException):
+    """Command abort, like SystemExit: ordinary per-item catches cannot resume it.
+
+    Only CommandClient converts the public API error to this control signal.
+    The CLI boundary must catch it to report the original refusal and cost.
+    """
+
+    def __init__(self, error):
+        self.error = error
+
+
+class CommandClient(Client):
+    """Stop an operator command through existing per-item recovery handlers."""
+
+    def query(self, query, variables=None):
+        try:
+            return super().query(query, variables)
+        except LinearRateLimited as error:
+            raise RateLimitStop(error) from None

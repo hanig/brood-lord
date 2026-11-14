@@ -467,8 +467,6 @@ class Filing:
                 self.client.query('mutation FilingProjectCreate($input: ProjectCreateInput!) { '
                                   'projectCreate(input: $input) { success } }',
                                   {'input': dict(desired, id=s['project'], teamIds=[s['team']])})
-            except API.LinearRateLimited:
-                raise
             except API.LinearError as exc:
                 create_error = exc
         elif project_identity(remote) != project_identity(desired):
@@ -477,8 +475,6 @@ class Filing:
                               {'id': s['project'], 'input': desired})
         try:
             remote = project_at(self.client, self.sync, s['project'])
-        except API.LinearRateLimited:
-            raise
         except (API.LinearError, OSError, ValueError, KeyError, TypeError):
             if create_error is not None:
                 raise create_error from None
@@ -589,8 +585,6 @@ def run(args, client, sync):
             if not LI.confirmed(path):
                 handler.project_apply(remote)
             LI.apply(spec, path, client, sync, initial=(live, identities, endpoints), handler=handler)
-        except API.LinearRateLimited:
-            raise
         except (API.LinearError, OSError, ValueError, KeyError, TypeError) as exc:
             print(API.redact('INCOMPLETE: %s; replay %s' % (exc, op), client._key))
             return 3
