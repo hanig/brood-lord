@@ -4,6 +4,7 @@ from tests.watchdog_guard import guarded_main
 import concurrent.futures
 import importlib.util
 import io
+import itertools
 import json
 import os
 import stat
@@ -239,7 +240,7 @@ class TestRoundReservations(unittest.TestCase):
     def test_interrupted_rewrites_preserve_markers(self):
         dump = review.json.dump
         for index, (retry, buffer) in enumerate(
-                ((False, False), (False, True), (True, False), (True, True))):
+                itertools.product((False, True), repeat=2)):
             with self.subTest(retry=retry, buffer=buffer):
                 key = format(index, "064x")
                 rec = self.reserve(1, identity=key)
