@@ -151,7 +151,7 @@ class TestRoundReservations(unittest.TestCase):
         self.assertEqual(self.invoke()[0], 0)
 
     def test_sixth_unavailable_keeps_round_and_reports_cap(self):
-        # Exhaustive attempts 1..6.
+        # Exhaustive 1..6.
         for _ in range(5):
             self.assertEqual(self.invoke(mode="unavailable")[0], 2)
         sixth = self.invoke(mode="unavailable")

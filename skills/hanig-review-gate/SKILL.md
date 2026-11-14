@@ -385,7 +385,7 @@ cycle permits another round 1, except settled zero-completion
 zero completions. Five releases are allowed; the sixth keeps the round and warns. A later reserved
 round also keeps the older reservation with a warning. Atomic replacement after
 audit append settles release; earlier interruptions, watchdog exits and other
-verdicts keep reservations. Orphan staging files have no authority. Unreadable or
+verdicts keep reservations. Orphan stages have no authority. Unreadable or
 partial state refuses review; retain and inspect it rather than deleting it
 to restart the bound. Plan reviews and offline size/list/adjudication commands
 do not reserve implementation rounds. The separate audit journal remains
