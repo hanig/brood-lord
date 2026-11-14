@@ -860,8 +860,6 @@ def collect_intents(directories, contract, report):
                 raise ValueError('receipt journal incomplete: %s' % problems)
             path = Path(directory) / contract.OUTBOX
             lines = path.read_text().splitlines() if path.exists() else []
-        except API.LinearRateLimited:
-            raise
         except Exception as exc:
             report('%s: %s' % (directory, exc))
             continue
@@ -912,8 +910,6 @@ def collect_intents(directories, contract, report):
                 directory_entries.append({'intent': intent, 'directory': directory, 'line': number,
                                 'label': label, 'order': order,
                                 'receipted': grade != contract.contract.UNACKNOWLEDGED})
-            except API.LinearRateLimited:
-                raise
             except Exception as exc:
                 directory_problems.append('%s: %s' % (label, exc))
         if duplicate is not None:
@@ -1074,8 +1070,6 @@ def drain_locked(args, reader, config, workspace, project, team, contract):
             if not ref:
                 raise ValueError('no tracker issue')
             entry['ref'] = ref
-        except API.LinearRateLimited:
-            raise
         except Exception as exc:
             entry['error'] = str(exc)
             fail(entry['label'] + ': ' + str(exc))
@@ -1155,8 +1149,6 @@ def drain_locked(args, reader, config, workspace, project, team, contract):
                 record_drain_receipt(entry, after or issue, contract)
                 acknowledged.append(entry['label'])
                 say('acknowledged ' + entry['label'])
-            except API.LinearRateLimited:
-                raise
             except Exception as exc:
                 fail(entry['label'] + ': ' + str(exc))
     say('%d acknowledged, %d superseded, %d failures, %d issues skipped' %
