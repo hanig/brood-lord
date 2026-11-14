@@ -216,6 +216,29 @@ class TestRoundReservations(unittest.TestCase):
         marker.write_text(json.dumps(saved)[:-5])
         self.assertEqual(self.invoke()[0], 4)
 
+    def test_later_round_keeps_earlier_unavailable_without_error(self):
+        first = self.reserve(1)
+        self.reserve(2)
+        before = {p: p.read_bytes() for p in self.markers()}
+        review.finish_round_reservation(self.owned_args(first), [], "REVIEW_UNAVAILABLE")
+        self.assertEqual(before, {p: p.read_bytes() for p in self.markers()})
+
+    def test_release_directory_open_failure_is_actionable(self):
+        record = self.reserve(1)
+        before = self.markers()[0].read_bytes()
+        with patch.object(review, "_open_directory_chain", side_effect=OSError("ENFILE")):
+            with self.assertRaises(SystemExit) as stopped:
+                review.finish_round_reservation(self.owned_args(record), [], "REVIEW_UNAVAILABLE")
+        self.assertEqual(stopped.exception.code, 4)
+        self.assertEqual(self.markers()[0].read_bytes(), before)
+
+    def test_journal_interruption_keeps_unavailable_reservation(self):
+        with patch.object(review, "record_review_round", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.invoke(mode="unavailable")
+        self.assertNotIn("released_at", json.loads(self.markers()[0].read_text())["attempts"][-1])
+        self.assertEqual(self.invoke()[0], 4)
+
     @contextmanager
     def held_lock(self):
         self.reserve(1)

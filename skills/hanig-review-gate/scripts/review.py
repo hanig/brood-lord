@@ -423,15 +423,19 @@ def finish_round_reservation(args, completed, verdict):
     if verdict != "REVIEW_UNAVAILABLE" or completed:
         return
     ledger, owned = args.round_reservation
-    directory = _open_directory_chain(ledger)
+    directory = None
     try:
+        directory = _open_directory_chain(ledger)
         lock = os.open("lock", os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
                        dir_fd=directory)
         try:
             acquire_round_lock(lock)
             entries = validate_round_history(directory, owned["identity"])
-            if not entries or entries[-1] != owned:
+            if owned not in entries:
                 raise ValueError("reservation no longer belongs to this run")
+            if entries[-1] != owned:
+                print("Round reservation kept: a later round is already reserved.", file=sys.stderr)
+                return
             attempts = owned["attempts"]
             if len(attempts) > MAX_ROUND_RELEASES:
                 print("Round reservation kept: consecutive release cap of 5 reached.", file=sys.stderr)
@@ -451,7 +455,8 @@ def finish_round_reservation(args, completed, verdict):
         config_error("round release refused; reservation retained or ledger requires inspection: {}. "
                      "Pass the ledger at {} to the operator for inspection before retrying.".format(exc, ledger))
     finally:
-        os.close(directory)
+        if directory is not None:
+            os.close(directory)
 
 HONEST_RUN_CLAIM = "This change cannot make an honest run fail."
 DISPOSITIONS = {"reproduced", "not-reproduced", "deferred"}
@@ -3532,8 +3537,8 @@ def _main():
 
     if not runnable:
         disarm_watchdog()
-        finish_round_reservation(args, [], "REVIEW_UNAVAILABLE")
         journal = record_review_round(args, [], "REVIEW_UNAVAILABLE")
+        finish_round_reservation(args, [], "REVIEW_UNAVAILABLE")
         report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
                   "profile": profile, "profile_reason": profile_reason,
                   "reviewed": label, "unavailable": unavailable, "results": [],
@@ -3569,8 +3574,8 @@ def _main():
             reviewers, prompt, args, truncated, label, len(body))
         if not completed and not failed:
             disarm_watchdog()
-            finish_round_reservation(args, [], "REVIEW_UNAVAILABLE")
             journal = record_review_round(args, [], "REVIEW_UNAVAILABLE")
+            finish_round_reservation(args, [], "REVIEW_UNAVAILABLE")
             report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
                       "profile": profile, "profile_reason": profile_reason,
                       "reviewed": label, "unavailable": unavailable, "results": [],
@@ -3619,8 +3624,8 @@ def _main():
                          n_out_of_scope_critical=len(oos_critical),
                          n_incomplete=len(incomplete))
     disarm_watchdog()
-    finish_round_reservation(args, completed, state)
     journal = record_review_round(args, completed, state)
+    finish_round_reservation(args, completed, state)
 
     report = {
         "state": state, "checked_at": now(), "reviewed": label,

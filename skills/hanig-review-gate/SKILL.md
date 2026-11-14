@@ -385,8 +385,10 @@ completed reviewers releases its own reservation for the same round to retry.
 The marker retains each reservation token, reservation time, unavailable verdict,
 zero completion count and release time. At most five consecutive releases of
 one round are allowed; the sixth unavailable run keeps its reservation and
-reports the cap. Other verdicts, interrupted reviews and watchdog exits retain
-reservations. Unreadable or
+reports the cap. If a later round already exists, the older reservation is
+kept with a warning. Release settles the unavailable verdict after audit append
+returns; interruptions before that point and watchdog exits retain reservations.
+Other verdicts retain reservations. Unreadable or
 partial state refuses review; retain and inspect it rather than deleting it
 to restart the bound. Plan reviews and offline size/list/adjudication commands
 do not reserve implementation rounds. The separate audit journal remains
