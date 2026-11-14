@@ -301,7 +301,7 @@ def reserve_round(identity, round_no, profile, fresh_from=None):
     Reservations survive all verdicts and interruptions except settled unavailable
     runs with zero completed reviewers, which may explicitly release five times.
     A partial marker fails closed. The audit journal is neither read nor written.
-    flock orders different round numbers; O_EXCL makes each marker single-use.
+    flock orders reservations and reuse; O_EXCL protects initial marker creation.
     State is local, trusted-writer data, not protection against its owner editing
     or deleting it or choosing a different state home.
     """
