@@ -1280,7 +1280,8 @@ def main(argv=None):
         return 3 if replay else 2
     finally:
         if client is not None:
-            print('requests: %d' % client.requests, file=sys.stderr)
+            print('requests: %d' % client.requests,
+                  file=sys.stderr if args.command == 'audit' else sys.stdout)
 
 
 if __name__ == '__main__':

@@ -539,7 +539,11 @@ class TestAudit(AuditCase):
         self.assertEqual(self.audit(), 3)
         self.fake.fail = None
         self.fake.rate_limit = True
-        self.assertEqual(self.audit(), 3)
+        before = self.out.read_bytes()
+        self.assertEqual(self.cli('audit', '--binding', str(self.binding), '--out', str(self.out)), 4)
+        self.assertIn('Linear rate limit', self.stderr)
+        self.assertIn('INCOMPLETE', self.stderr)
+        self.assertEqual(self.out.read_bytes(), before)
         self.fake.rate_limit = False
         self.fake.moved.add('1')
         self.assertEqual(self.audit(), 3)
@@ -1133,7 +1137,11 @@ class TestAudit(AuditCase):
         self.assertIn('[REDACTED]', self.stderr)
         self.fake.fail = None
         self.fake.rate_limit = True
-        self.assertEqual(self.audit(), 3)
+        before = self.out.read_bytes()
+        self.assertEqual(self.cli('audit', '--binding', str(self.binding), '--out', str(self.out)), 4)
+        self.assertIn('Linear rate limit', self.stderr)
+        self.assertIn('INCOMPLETE', self.stderr)
+        self.assertEqual(self.out.read_bytes(), before)
         self.assertIn('[REDACTED]', self.out.read_text())
         key = 'lin"odd\\key'
         self.assertNotIn(json.dumps(key)[1:-1], API.redact(json.dumps({'message': key}), key))
