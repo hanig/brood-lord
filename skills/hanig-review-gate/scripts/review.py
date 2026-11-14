@@ -296,14 +296,11 @@ def acquire_round_lock(lock):
 
 
 def reserve_round(identity, round_no, profile, fresh_from=None):
-    """Reserve before dispatch, serializing ordering and exclusive creation.
+    """Reserve before dispatch under flock; O_EXCL protects initial creation.
 
-    Reservations survive all verdicts and interruptions except settled unavailable
-    runs with zero completed reviewers, which may explicitly release five times.
-    A partial marker fails closed. The audit journal is neither read nor written.
-    flock orders reservations and reuse; O_EXCL protects initial marker creation.
-    State is local, trusted-writer data, not protection against its owner editing
-    or deleting it or choosing a different state home.
+    Only settled zero-completion unavailable runs may release, at most five times.
+    Partial markers fail closed; this operation never accesses the audit journal.
+    Local trusted-writer data cannot protect against owner edits or another home.
     """
     if (not re.fullmatch(r"[0-9a-f]{64}", identity)
             or type(round_no) is not int or not 1 <= round_no <= MAX_ROUNDS
