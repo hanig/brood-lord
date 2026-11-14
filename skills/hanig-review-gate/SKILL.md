@@ -380,8 +380,13 @@ ordering lock and exclusive-create round markers. Lock acquisition waits up to
 claiming a lower one or skipping the preceding round returns exit 4 before
 providers run. Exhaustion requires every round 1 through `MAX_ROUNDS` for the
 same cycle and profile; missing rounds are named. Only an explicit successor
-cycle permits another round 1. Interrupted reviews,
-unavailable providers and failed verdicts retain reservations. Unreadable or
+cycle permits another round 1, except a settled `REVIEW_UNAVAILABLE` with zero
+completed reviewers releases its own reservation for the same round to retry.
+The marker retains each reservation token, reservation time, unavailable verdict,
+zero completion count and release time. At most five consecutive releases of
+one round are allowed; the sixth unavailable run keeps its reservation and
+reports the cap. Other verdicts, interrupted reviews and watchdog exits retain
+reservations. Unreadable or
 partial state refuses review; retain and inspect it rather than deleting it
 to restart the bound. Plan reviews and offline size/list/adjudication commands
 do not reserve implementation rounds. The separate audit journal remains
