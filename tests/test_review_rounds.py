@@ -133,7 +133,7 @@ class TestRoundReservations(unittest.TestCase):
             with self.subTest(mode=mode):
                 result = self.invoke(mode=mode)
                 self.assertEqual(result[0], 2, result[2])
-                self.assertIn("reservation released", result[2])
+                self.assertEqual(result[2], "")
                 record = json.loads(self.markers()[0].read_text())
                 attempt = record["attempts"][-1]
                 self.assertEqual(attempt["verdict"], "REVIEW_UNAVAILABLE")
