@@ -196,12 +196,16 @@ class Reader:
                 if {i['id'] for i in last} != set(first_stamps):
                     self.problems.append('snapshot moved: ' + label)
                 self.compare_stamps(last, first_stamps)
+            except API.LinearRateLimited:
+                raise
             except (API.LinearError, ValueError, TypeError, KeyError) as exc:
                 self.problems.append(str(exc))
         remaining = set(self.seen) - covered
         try:
             last = [i for nodes in self.batches(remaining, 'id updatedAt', 'StabilityBatch') for i in nodes]
             self.compare_stamps(last, {iid: self.seen[iid]['updatedAt'] for iid in remaining})
+        except API.LinearRateLimited:
+            raise
         except (API.LinearError, ValueError, TypeError, KeyError) as exc:
             self.problems.append(str(exc))
 
@@ -360,6 +364,8 @@ def audit(args, client, filing=None):
             scope.update(workspace=workspace, team=team)
         if org['id'] != workspace or not remote or remote['id'] != project or team not in [t['id'] for t in teams]:
             finding('binding', 'DRIFT', 'workspace, team or project ids disagree')
+    except API.LinearRateLimited:
+        raise
     except (API.LinearError, ValueError, KeyError, TypeError) as exc:
         finding('binding', 'UNKNOWN', str(exc))
         reader.problems.append(str(exc))
@@ -369,6 +375,8 @@ def audit(args, client, filing=None):
     if checks['binding']['verdict'] == 'CLEAN':
         try:
             issues = reader.project_issues(project)
+        except API.LinearRateLimited:
+            raise
         except (API.LinearError, ValueError, KeyError, TypeError) as exc:
             reader.problems.append(str(exc))
         refs = [(i.get('unit'), i['linear_id'] if filing else i['identifier'])
@@ -383,6 +391,8 @@ def audit(args, client, filing=None):
                 finding('misplaced', 'UNKNOWN', str(exc))
         try:
             resolved = reader.resolve([ref for _, ref in refs])
+        except API.LinearRateLimited:
+            raise
         except (API.LinearError, ValueError, KeyError, TypeError) as exc:
             resolved = {}
             reader.problems.append(str(exc))
@@ -423,6 +433,8 @@ def audit(args, client, filing=None):
                                 finding('plan_edges', 'UNKNOWN', {'unit': unit['id'], 'error': 'multiple issue mappings'})
                             else:
                                 mapped[unit['id']] = issue
+            except API.LinearRateLimited:
+                raise
             except (API.LinearError, ValueError, KeyError, TypeError) as exc:
                 reader.problems.append(str(exc))
                 finding('misplaced', 'UNKNOWN', str(exc))
@@ -440,6 +452,8 @@ def audit(args, client, filing=None):
                 absent = sorted(ref for ref, issue in resolved.items() if issue is None)
                 if absent:
                     raise ValueError('unreadable blockers: ' + ', '.join(absent))
+            except API.LinearRateLimited:
+                raise
             except (API.LinearError, ValueError, KeyError, TypeError) as exc:
                 reader.problems.append(str(exc))
                 if any(i['state']['type'] == 'started' and any(b == i['id'] and a in blockers for a, b in edges)
@@ -525,6 +539,8 @@ def audit(args, client, filing=None):
                     finding('intent_order', 'DRIFT', {'issue': issue['identifier'],
                             'latest': latest['key'], 'expected': STATE_TYPE[latest['op']],
                             'actual': issue['state']['type']})
+        except API.LinearRateLimited:
+            raise
         except (API.LinearError, ValueError, TypeError, KeyError) as exc:
             finding('intent_order', 'UNKNOWN', str(exc))
             reader.problems.append(str(exc))
@@ -763,12 +779,16 @@ def confirm_comment(client, intent, workspace, project, issue, create):
             client.query('mutation IntentCommentCreate($input: CommentCreateInput!) { '
                          'commentCreate(input: $input) { success } }',
                          {'input': {'id': cid, 'issueId': issue, 'body': comment_body(intent)}})
+        except API.LinearRateLimited:
+            raise
         except API.LinearError as exc:
             # A rejection or ambiguous response counts only if the exact
             # comment is subsequently read back on the intended issue.
             create_error = exc
         try:
             comment = read_comment(client, cid)
+        except API.LinearRateLimited:
+            raise
         except (API.LinearError, OSError, ValueError, KeyError, TypeError):
             if create_error is not None:
                 raise create_error from None
@@ -840,6 +860,8 @@ def collect_intents(directories, contract, report):
                 raise ValueError('receipt journal incomplete: %s' % problems)
             path = Path(directory) / contract.OUTBOX
             lines = path.read_text().splitlines() if path.exists() else []
+        except API.LinearRateLimited:
+            raise
         except Exception as exc:
             report('%s: %s' % (directory, exc))
             continue
@@ -890,6 +912,8 @@ def collect_intents(directories, contract, report):
                 directory_entries.append({'intent': intent, 'directory': directory, 'line': number,
                                 'label': label, 'order': order,
                                 'receipted': grade != contract.contract.UNACKNOWLEDGED})
+            except API.LinearRateLimited:
+                raise
             except Exception as exc:
                 directory_problems.append('%s: %s' % (label, exc))
         if duplicate is not None:
@@ -1003,6 +1027,11 @@ def reconcile_issue(reader, workspace, project, team, issue, entries, dry_run, p
 def drain(args, client):
     import drain_contract as contract
 
+    # Count queued subjects for an identity-read stop, without emitting or
+    # trusting this preliminary local snapshot. Recollect under the lock below.
+    pending = collect_intents(args.state_dir, contract, lambda message: None)
+    client.unreached = len({e['intent'].get('tracker') or e['intent']['unit']
+                            for e in pending if args.full or not e['receipted']})
     reader = Reader(client)
     path, raw, config, workspace, project, team = drain_identity(args, reader)
     with project_lock(workspace, project):
@@ -1045,6 +1074,8 @@ def drain_locked(args, reader, config, workspace, project, team, contract):
             if not ref:
                 raise ValueError('no tracker issue')
             entry['ref'] = ref
+        except API.LinearRateLimited:
+            raise
         except Exception as exc:
             entry['error'] = str(exc)
             fail(entry['label'] + ': ' + str(exc))
@@ -1064,18 +1095,24 @@ def drain_locked(args, reader, config, workspace, project, team, contract):
                                if args.full or (not e['receipted'] and not e['settled']))
     skipped = len({e['ref'] for e in valid} - references.keys())
     groups = {}
+    reader.client.unreached = len(references)
     for ref in references:
+        reader.client.unreached -= 1
         try:
             issue = reader.resolve([ref], fields=DRAIN_ISSUE_FIELDS)[ref]
             if issue is None:
                 raise ValueError('unreadable issue: ' + ref)
             check_membership(issue, project, team)
             groups[issue['id']] = issue
+        except API.LinearRateLimited:
+            raise
         except Exception as exc:
             for entry in entries:
                 if entry.get('ref') == ref:
                     fail('%s: %s' % (entry['label'], exc))
+    reader.client.unreached = len(groups)
     for issue in groups.values():
+        reader.client.unreached -= 1
         # Include receipted history under either spelling of the resolved issue.
         group = [e for e in entries if 'error' not in e
                  and e['ref'] in (issue['id'], issue['identifier'])]
@@ -1091,6 +1128,8 @@ def drain_locked(args, reader, config, workspace, project, team, contract):
                                             args.dry_run, prepared)
             say('%s: %s%s' % (issue['identifier'], 'would reconcile to ' if args.dry_run else 'reconciled to ',
                              STATE_TYPE[latest['op']] if latest else 'existing state (no state intent)'))
+        except API.LinearRateLimited:
+            raise
         except Exception as exc:
             # Failure is structural, including exceptions with an empty message.
             # No receipt on this issue until preparation and every effect succeed.
@@ -1116,6 +1155,8 @@ def drain_locked(args, reader, config, workspace, project, team, contract):
                 record_drain_receipt(entry, after or issue, contract)
                 acknowledged.append(entry['label'])
                 say('acknowledged ' + entry['label'])
+            except API.LinearRateLimited:
+                raise
             except Exception as exc:
                 fail(entry['label'] + ': ' + str(exc))
     say('%d acknowledged, %d superseded, %d failures, %d issues skipped' %
@@ -1192,6 +1233,7 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
+    client = None
     key = None  # Validation can refuse before credentials are loaded.
     try:
         if args.command == 'section':
@@ -1233,6 +1275,10 @@ def main(argv=None):
             Path(args.out).write_text(payload)
         print(payload, end='')
         return {'CLEAN': 0, 'DRIFT': 1, 'UNKNOWN': 3}[record['verdict']]
+    except API.LinearRateLimited as exc:
+        print('Linear rate limit; reset %s; %d items unreached; INCOMPLETE; %d requests' %
+              (exc.reset_at or 'unknown', client.unreached, client.requests), file=sys.stderr)
+        return API.RATE_LIMIT_EXIT
     except (API.LinearError, OSError, ValueError, TypeError, KeyError, AttributeError, ImportError) as exc:
         message = API.redact('error: ' + str(exc), key)
         if args.command == 'issue':
@@ -1240,6 +1286,9 @@ def main(argv=None):
         print(message, file=sys.stderr)
         replay = args.command == 'replay' or (args.command == 'issue' and args.issue_command == 'replay')
         return 3 if replay else 2
+    finally:
+        if client is not None:
+            print('requests: %d' % client.requests, file=sys.stderr)
 
 
 if __name__ == '__main__':
