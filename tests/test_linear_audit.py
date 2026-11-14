@@ -271,12 +271,22 @@ class AuditCase(unittest.TestCase):
         self.state = self.root / 'state'
         self.state.mkdir()
 
+    def take_request_summary(self):
+        self.stderr_raw = self.stderr
+        lines = self.stderr.splitlines(keepends=True)
+        self.request_summary = ''
+        if lines and lines[-1].startswith('requests: '):
+            self.request_summary = lines.pop()
+            self.assertRegex(self.request_summary, r'^requests: [0-9]+\n$')
+            self.stderr = ''.join(lines)
+
     def cli(self, *args):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             rc = LS.main(list(args))
         self.stdout, self.stderr = out.getvalue(), err.getvalue()
         self.assertNotIn(KEY, self.stdout + self.stderr)
+        self.take_request_summary()
         return rc
 
     def audit(self, plan=False, state=False):

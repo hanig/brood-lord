@@ -344,8 +344,6 @@ def scope(sync, client, project, refs):
     def read(method, *args):
         try:
             return method(*args)
-        except API.LinearRateLimited:
-            raise
         except (API.LinearError, OSError, ValueError, KeyError, TypeError) as exc:
             raise IncompleteGraph('incomplete graph read: ' + str(exc)) from exc
     read(reader.project_issues, project)
@@ -364,8 +362,6 @@ def expand_scope(sync, reader):
     def read(method, *args):
         try:
             return method(*args)
-        except API.LinearRateLimited:
-            raise
         except (API.LinearError, OSError, ValueError, KeyError, TypeError) as exc:
             raise IncompleteGraph('incomplete graph read: ' + str(exc)) from exc
     while True:
@@ -605,8 +601,6 @@ def relation_by_id(sync, client, rid, a, b, endpoint, reader=None, managed=False
                      r['relatedIssue']['id'] == b), None)
     except DeletedIssue:
         raise
-    except API.LinearRateLimited:
-        raise
     except (API.LinearError, OSError, ValueError, KeyError, TypeError) as exc:
         raise IncompleteGraph('incomplete relation read: ' + str(exc)) from exc
 
@@ -627,8 +621,6 @@ def source_endpoints(spec, client, sync, absent=()):
             raise ValueError('; '.join(reader.problems))
         return endpoints
     except DeletedIssue:
-        raise
-    except API.LinearRateLimited:
         raise
     except (API.LinearError, OSError, ValueError, KeyError, TypeError) as exc:
         raise IncompleteGraph('incomplete relation read: ' + str(exc)) from exc
@@ -663,8 +655,6 @@ def apply(spec, path, client, sync, initial=None, handler=None):
             try:
                 client.query('mutation OperationCreate($input: IssueCreateInput!) { issueCreate(input: $input) { success } }',
                              {'input': dict(desired, id=iid, projectId=spec['project'], teamId=spec['team'])})
-            except API.LinearRateLimited:
-                raise
             except API.LinearError as exc:
                 create_error = exc
             wrote_issue = True
@@ -676,8 +666,6 @@ def apply(spec, path, client, sync, initial=None, handler=None):
                     handler.validate_created(row, current)
                 elif not current or not mark or mark['op'] != spec['operation']:
                     raise ValueError('rejected create: issue missing or lacks this operation marker')
-            except API.LinearRateLimited:
-                raise
             except (API.LinearError, OSError, ValueError, KeyError, TypeError):
                 if create_error is not None:
                     raise create_error from None
@@ -710,13 +698,9 @@ def apply(spec, path, client, sync, initial=None, handler=None):
                     client.query('mutation OperationRelationCreate($input: IssueRelationCreateInput!) { '
                                  'issueRelationCreate(input: $input) { success } }',
                                  {'input': {'id': rid, 'type': 'blocks', 'issueId': a, 'relatedIssueId': b}})
-                except API.LinearRateLimited:
-                    raise
                 except API.LinearError as exc:
                     try:
                         recovered = relation_by_id(sync, client, rid, a, b, endpoint=b, managed=b in managed)
-                    except API.LinearRateLimited:
-                        raise
                     except (API.LinearError, OSError, ValueError, KeyError, TypeError):
                         raise exc from None
                     if not recovered:
@@ -736,8 +720,6 @@ def apply(spec, path, client, sync, initial=None, handler=None):
             try:
                 reader.resolve({iid for _, a, b in added_relations for iid in (a, b)})
                 reader.stable()
-            except API.LinearRateLimited:
-                raise
             except (API.LinearError, OSError, ValueError, KeyError, TypeError) as exc:
                 raise IncompleteGraph('incomplete relation read: ' + str(exc)) from exc
             for rid, a, b in added_relations:
@@ -748,8 +730,6 @@ def apply(spec, path, client, sync, initial=None, handler=None):
     else:
         try:
             reader = scope(sync, client, spec['project'], [row['id'] for row in spec['issues']])
-        except API.LinearRateLimited:
-            raise
         except (API.LinearError, OSError, ValueError, KeyError, TypeError) as exc:
             label = 'incomplete relation read' if added_relations else 'incomplete graph read'
             raise IncompleteGraph(label + ': ' + str(exc)) from exc
@@ -762,8 +742,6 @@ def verify(spec, client, sync, reader=None):
     try:
         if reader is None:
             reader = scope(sync, client, spec['project'], [row['id'] for row in spec['issues']])
-    except API.LinearRateLimited:
-        raise
     except (API.LinearError, OSError, ValueError, KeyError, TypeError) as exc:
         raise IncompleteGraph('incomplete graph read: ' + str(exc)) from exc
     identities = dict(spec['identities'])
@@ -828,8 +806,6 @@ def run(args, client, sync):
         print('operation ' + op)
         try:
             identifier = apply(spec, path, client, sync, initial=initial)
-        except API.LinearRateLimited:
-            raise
         except (API.LinearError, OSError, ValueError, KeyError, TypeError) as exc:
             status = 'UNKNOWN/INCOMPLETE' if isinstance(exc, IncompleteGraph) else 'DRIFT/INCOMPLETE'
             print(API.redact('%s: %s; replay %s' % (status, exc, op), client._key))
