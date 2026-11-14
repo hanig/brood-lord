@@ -71,7 +71,8 @@
     "report.contents",
     "findings.contract",
     "findings.bound",
-    "adoption.remaining-work"
+    "adoption.remaining-work",
+    "tracker.rate-limit"
   ],
   "retired_declarations": [],
   "replacement_declarations": [],
@@ -431,7 +432,7 @@
     },
     {
       "id": "drain.block-intent",
-      "normative_text": "A `block` intent means an upstream unit will not complete; the applying session must name that upstream unit. On HTTP 429 or GraphQL RATELIMITED, bind, audit, drain, file, replay and issue new/edit/replay stop immediately without retry, sleep or another request. Exit 4 is reserved solely for this rate-limit stop. Report the reset time from Retry-After or X-RateLimit-Requests-Reset when valid, otherwise unknown, and the number of items not yet reached. Unreached counts queued issue subjects in the current drain phase, project plus draft issues during filing preparation and later issue rows during apply; a single binding, audit snapshot or ad-hoc target is already reached when its read starts. Unknown remote pages are not counted. A stopped audit is INCOMPLETE, never CLEAN; no new audit snapshot is published. Keep unconfirmed operations open for replay and withhold receipts until read-back. Every network command prints Client.requests in its summary, including the refused request."
+      "normative_text": "A `block` intent means an upstream unit will not complete; the applying session must name that upstream unit."
     },
     {
       "id": "outbox.receipt",
@@ -484,6 +485,13 @@
       "normative_text": "On adoption, draft remaining units with outputs, check existing outputs before filing, and never turn a completed item or an artifact-free TODO into a unit.",
       "references": [
         "references/survey-interview.md"
+      ]
+    },
+    {
+      "id": "tracker.rate-limit",
+      "normative_text": "On HTTP 429 or GraphQL RATELIMITED, bind, audit, drain, file, replay and issue new/edit/replay stop immediately without retry, sleep or another request. Exit 4 is reserved solely for this rate-limit stop. Report the reset time from Retry-After or X-RateLimit-Requests-Reset when valid, otherwise unknown, and the number of items not yet reached. Unreached counts queued issue subjects in the current drain phase, project plus draft issues during filing preparation and later issue rows during apply; a single binding, audit snapshot or ad-hoc target is already reached when its read starts. Unknown remote pages are not counted. A stopped audit is INCOMPLETE, never CLEAN; no new audit snapshot is published. Keep unconfirmed operations open for replay and withhold receipts until read-back. Every network command prints Client.requests in its summary, including the refused request.",
+      "references": [
+        "references/tracker-sync.md"
       ]
     }
   ]
