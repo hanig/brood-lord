@@ -104,6 +104,25 @@ class TestRoundReservations(unittest.TestCase):
                 guarded_main(review.main)
         return stopped.exception.code, out.getvalue(), err.getvalue(), calls, records
 
+    def test_fixture_ledger_lives_until_args_collection_without_cleanup_warning(self):
+        import gc
+        import warnings
+        from tests.review_round_fixture import isolated_reservation
+        args = review.argparse.Namespace(fresh_cycle_from=None, round=1,
+                                         selected_profile="standard")
+        def reserve(args):
+            return review.reserve_review_round(args)
+        args.target = args.plan_name = args.unit = None
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            isolated_reservation(review, reserve, args)
+            ledger = args.round_reservation[0]
+            self.assertTrue(ledger.is_dir())
+            del args
+            gc.collect()
+        self.assertFalse(ledger.exists())
+        self.assertEqual([w for w in caught if issubclass(w.category, ResourceWarning)], [])
+
     def owned_args(self, record):
         return SimpleNamespace(round_reservation=(
             review.round_ledger_root() / record["identity"], record))
