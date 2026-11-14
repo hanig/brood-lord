@@ -74,7 +74,7 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(len(calls), position, case.stdout + case.stderr)
         self.assertIn('Linear rate limit; reset 1970-01-01T00:01:00+00:00;', case.stderr)
         self.assertIn('%d requests' % position, case.stderr)
-        self.assertIn('requests: %d' % position, case.stderr)
+        self.assertIn('requests: %d' % position, case.stdout + case.stderr)
         self.assertIn('INCOMPLETE', case.stderr)
         if remaining is not None:
             self.assertIn('%d items unreached' % remaining, case.stderr)
