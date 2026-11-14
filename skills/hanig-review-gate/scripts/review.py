@@ -445,7 +445,6 @@ def finish_round_reservation(args, completed, verdict):
                 json.dump(record, stream, sort_keys=True)
                 stream.flush()
                 os.fsync(stream.fileno())
-            print("Round reservation released: no reviewer completed.", file=sys.stderr)
         finally:
             os.close(lock)
     except (OSError, ValueError, TypeError, KeyError) as exc:
