@@ -448,7 +448,8 @@ def finish_round_reservation(args, completed, verdict):
         finally:
             os.close(lock)
     except (OSError, ValueError, TypeError, KeyError) as exc:
-        config_error("round release refused; reservation retained or ledger requires inspection: {}".format(exc))
+        config_error("round release refused; reservation retained or ledger requires inspection: {}. "
+                     "Pass the ledger at {} to the operator for inspection before retrying.".format(exc, ledger))
     finally:
         os.close(directory)
 
