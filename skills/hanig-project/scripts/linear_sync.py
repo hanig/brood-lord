@@ -1259,8 +1259,8 @@ def main(argv=None):
         replay = args.command == 'replay' or (args.command == 'issue' and args.issue_command == 'replay')
         return 3 if replay else 2
     finally:
-        if client is not None:
-            print('requests: %d' % client.requests,
+        if args.command != 'section':
+            print('requests: %d' % (client.requests if client is not None else 0),
                   file=sys.stderr)
 
 
