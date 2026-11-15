@@ -1,5 +1,15 @@
 # Operating loop detail
 
+## Coordinator event wakeup
+
+```bash
+python3 "$HANIG_ORCHESTRATE_DIR/scripts/wait_event.py" --state-dir "$STATE"
+```
+
+Repeat `--state-dir DIR` for several runs; `--snapshot FILE` defaults to `wait-event-snapshot.json` in the first directory's parent. Snapshots live outside watched directories. The one-shot waiter emits TRANSITION and operator-needed STATE arrivals once, with local observation times. It observes coordinator state only: it does not detect a stalled or permission-blocked agent, take a coordinator lock, or make network, agent or scheduler calls. <!-- declaration: watch.proof -->
+
+`--once` exits 0 with events, 3 without, or 2 when all sources are unreadable. Otherwise poll with `--interval SECONDS` (default 60); `--timeout SECONDS` exits 3 without events. UNREADABLE diagnostics go to stderr once per source. `--json` emits JSON lines, including an END summary. The atomic snapshot has mode 0600. Concurrent waiters sharing a snapshot are outside the envelope. <!-- declaration: watch.proof -->
+
 ## Scheduled facts and one-shot wake
 
 On wake read, show and summarize; act on ATTENTION (including ready work) under
@@ -221,16 +231,3 @@ The sweep examines every in-progress issue regardless of age and repeats after e
 Forge routing supports standard HTTP(S) and SSH remotes without explicit ports and keeps the observed HTTP(S) PR URL; ports are refused rather than silently discarded. Reconciliation requires a single-parent squash result; merge observations and the squash method remain attested. The actual merge parent's SHA supplies `--target-commit`, including when the target moved after the original observation. Head matching does not atomically freeze CI reruns or concurrent PR retargeting, and a one-parent result alone does not distinguish squash from a one-commit rebase by another operator. The same credential can bypass `merge_unit.py`. This detects bypass after the fact; it does not prevent it. Coverage is limited to supplied directories and the merged-PR window, so a direct push without a merged PR is outside the comparison. A pending request accounts for a lost response; cancelled or abandoned requests do not account for later merges. Historical reconciliation attests recording, not who executed the merge. A matching pending record cannot distinguish a lost response from a later direct merge of the same PR and head; this check establishes record presence, never execution attribution. The observation is not an atomic forge snapshot; a changed or unreadable page calls for a retry. <!-- declaration: limit.merge-command -->
 
 The hook resolves a supported `gh` locator through a bounded `gh repo view` read, then reports counts after exact anchor matching for a single literal `git [-C DIR] push origin ...` without push options, or explicit `gh ... --repo OWNER/REPO` (`-R` also works). Other routing, compound commands, malformed inputs, missing anchors and differing hostname spellings produce repository-specific uncertainty. Hostname spelling is preserved in the comparison, and action detection is unchanged.
-
-## Coordinator event wakeup
-
-`wait_event.py` waits once for coordinator events:
-
-```bash
-python3 "$HANIG_ORCHESTRATE_DIR/scripts/wait_event.py" \
-  --state-dir "$STATE" --snapshot "$PROJECT/wait-event-snapshot.json"
-```
-
-Repeat `--state-dir DIR` for several runs. The snapshot defaults to `wait-event-snapshot.json` in the first directory's parent and must be outside watched directories. The waiter reads only `swarm-state.json`: no coordinator lock, network, agent or scheduler calls. It observes coordinator state only; it does not detect a stalled or permission-blocked agent. <!-- declaration: watch.proof -->
-
-Without a snapshot, the first pass records states and emits only STATE for operator-needed states: READY_FOR_PR and every state except UNALLOCATED, SUBMITTED, RUNNING, DONE, ABANDONED and SUPERSEDED. Later changes emit TRANSITION; an arrival in an operator-needed state also emits STATE. Snapshots suppress repeats across runs; returning permits a new arrival. Unreadable sources retain prior observations. Exit 0 follows the first pass with events, printing every event with its local observation time and directory name, then `(end of pass TIME, N line(s))`. `--json` emits JSON lines, including an END object. `--interval SECONDS` defaults to 60; `--timeout SECONDS` exits 3 without stdout when no event arrives. `--once` exits 3 after one eventless pass, or 2 when all sources are unreadable. UNREADABLE appears once per directory per invocation on stderr. Snapshots are atomically replaced with mode 0600. Concurrent waiters sharing a snapshot are outside the supported envelope. <!-- declaration: watch.proof -->

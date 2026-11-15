@@ -23,17 +23,17 @@ class WaitEvent(unittest.TestCase):
     self.tmp = tempfile.TemporaryDirectory()
     self.addCleanup(self.tmp.cleanup)
     self.root = Path(self.tmp.name).resolve()
-    self.state = self.root / "first"
-    self.state.mkdir()
-    self.snapshot = self.root / "wait-event-snapshot.json"
-    self.put(self.state, "RUNNING")
+    self.d = self.root / "first"
+    self.d.mkdir()
+    self.snap = self.root / "wait-event-snapshot.json"
+    self.put(self.d, "RUNNING")
 
   def put(self, directory, state):
     (directory / "swarm-state.json").write_text(json.dumps({"units": {"unit": {"state": state}}}))
 
   def cli(self, *extra):
     return subprocess.run([sys.executable, str(SCRIPTS / "wait_event.py"),
-                           "--state-dir", str(self.state)] + list(extra),
+                           "--state-dir", str(self.d)] + list(extra),
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                           universal_newlines=True, timeout=10,
                           env=dict(os.environ, PATH="", PYTHONDONTWRITEBYTECODE="1"))
@@ -41,16 +41,16 @@ class WaitEvent(unittest.TestCase):
   def invoke(self, *extra):
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-      code = wait_event.main(["--state-dir", str(self.state)] + list(extra))
+      code = wait_event.main(["--state-dir", str(self.d)] + list(extra))
     return code, out.getvalue(), err.getvalue()
 
-  def test_first_run_and_no_event_once(self):
+  def test_first_once(self):
     result = self.cli("--once")
     self.assertEqual((result.returncode, result.stdout, result.stderr), (3, "", ""))
-    self.assertEqual(json.loads(self.snapshot.read_text())[str(self.state)], {"unit": "RUNNING"})
-    self.assertEqual(stat.S_IMODE(self.snapshot.stat().st_mode), 0o600)
-    self.put(self.state, "READY_FOR_PR")
-    self.snapshot.unlink()
+    self.assertEqual(json.loads(self.snap.read_text())[str(self.d)], {"unit": "RUNNING"})
+    self.assertEqual(stat.S_IMODE(self.snap.stat().st_mode), 0o600)
+    self.put(self.d, "READY_FOR_PR")
+    self.snap.unlink()
     result = self.cli("--once")
     self.assertEqual(result.returncode, 0, result.stderr)
     self.assertIn("STATE ", result.stdout)
@@ -58,23 +58,22 @@ class WaitEvent(unittest.TestCase):
     self.assertRegex(result.stdout, r"STATE \d{4}-\d\d-\d\d .* first unit:")
     self.assertRegex(result.stdout, r"\(end of pass .*, 1 line\(s\)\)\n$")
 
-  def test_transition_and_report_once_across_processes(self):
+  def test_report_once(self):
     self.assertEqual(self.cli("--once").returncode, 3)
-    self.put(self.state, "NEEDS_HUMAN")
+    self.put(self.d, "NEEDS_HUMAN")
     result = self.cli("--once")
     self.assertEqual(result.returncode, 0, result.stderr)
     self.assertIn("RUNNING -> NEEDS_HUMAN", result.stdout)
     self.assertEqual(len(result.stdout.splitlines()), 3)
     result = self.cli("--once")
     self.assertEqual((result.returncode, result.stdout), (3, ""))
-    self.put(self.state, "RUNNING")
+    self.put(self.d, "RUNNING")
     self.assertEqual(self.cli("--once").returncode, 0)
-    self.put(self.state, "NEEDS_HUMAN")
+    self.put(self.d, "NEEDS_HUMAN")
     self.assertIn("STATE ", self.cli("--once").stdout)
 
-  def test_all_states_and_arrivals_exhaustively(self):
-    # Exhaustive finite bound: all length-three sequences over these 9 states
-    # (729 sequences), including an unknown future operator-needed state.
+  def test_sequences(self):
+    # Exhaustive bound: 9**3 = 729 state sequences, including a future state.
     values = ("UNALLOCATED", "SUBMITTED", "RUNNING", "DONE", "ABANDONED",
               "SUPERSEDED", "READY_FOR_PR", "FAILED", "FUTURE_STATE")
     quiet = set(values[:6])
@@ -82,8 +81,8 @@ class WaitEvent(unittest.TestCase):
       snapshot = {}
       previous = None
       for state in sequence:
-        self.put(self.state, state)
-        events, readable = wait_event.observe([self.state], snapshot, set())
+        self.put(self.d, state)
+        events, readable = wait_event.observe([self.d], snapshot, set())
         expected = (["TRANSITION"] if previous is not None and previous != state else [])
         if state not in quiet and previous != state:
           expected.append("STATE")
@@ -91,10 +90,10 @@ class WaitEvent(unittest.TestCase):
         self.assertEqual(readable, 1)
         previous = state
 
-  def test_two_directories_all_events_and_json(self):
+  def test_two_json(self):
     other = self.root / "second"
     other.mkdir()
-    self.put(self.state, "READY_FOR_PR")
+    self.put(self.d, "READY_FOR_PR")
     self.put(other, "FAILED")
     result = self.cli("--once", "--state-dir", str(other), "--json")
     self.assertEqual(result.returncode, 0, result.stderr)
@@ -104,9 +103,9 @@ class WaitEvent(unittest.TestCase):
     self.assertEqual(rows[-1]["event"], "END")
     self.assertEqual(rows[-1]["lines"], 2)
 
-  def test_unreadable_among_readable_and_all_unreadable(self):
+  def test_unreadable(self):
     missing = self.root / "missing"
-    self.put(self.state, "FAILED")
+    self.put(self.d, "FAILED")
     result = self.cli("--once", "--state-dir", str(missing))
     self.assertEqual(result.returncode, 0)
     self.assertIn("STATE", result.stdout)
@@ -114,12 +113,12 @@ class WaitEvent(unittest.TestCase):
     bad_values = (b"{", b"\xff", b"[]", b'{}', b'{"units": []}',
                   b'{"units": {"x": []}}', b'{"units": {"x": {"state": 1}}}')
     for data in bad_values:
-      (self.state / "swarm-state.json").write_bytes(data)
+      (self.d / "swarm-state.json").write_bytes(data)
       result = self.cli("--once")
       self.assertEqual((result.returncode, result.stdout), (2, ""), data)
       self.assertEqual(result.stderr.count("UNREADABLE"), 1, data)
 
-  def test_timeout_and_warning_once_and_first_event_ends_polling(self):
+  def test_timeout_poll(self):
     missing = self.root / "missing"
     with mock.patch.object(wait_event.time, "monotonic", side_effect=[0, 0, 1, 1, 2]), \
          mock.patch.object(wait_event.time, "sleep") as sleep:
@@ -127,7 +126,7 @@ class WaitEvent(unittest.TestCase):
     self.assertEqual((code, out), (3, ""))
     self.assertEqual(err.count("UNREADABLE"), 1)
     self.assertEqual(sleep.call_count, 2)
-    with mock.patch.object(wait_event.time, "sleep", side_effect=lambda _: self.put(self.state, "DONE")) as sleep:
+    with mock.patch.object(wait_event.time, "sleep", side_effect=lambda _: self.put(self.d, "DONE")) as sleep:
       code, out, err = self.invoke()
     self.assertEqual(code, 0, err)
     self.assertIn("TRANSITION", out)
@@ -135,35 +134,35 @@ class WaitEvent(unittest.TestCase):
     result = self.cli("--timeout", "0.02", "--interval", "0.01")
     self.assertEqual((result.returncode, result.stdout), (3, ""))
 
-  def test_event_after_deadline_is_not_reported(self):
+  def test_deadline(self):
     with mock.patch.object(wait_event.time, "monotonic", side_effect=[0, 0, 2]), \
-         mock.patch.object(wait_event.time, "sleep", side_effect=lambda _: self.put(self.state, "FAILED")):
+         mock.patch.object(wait_event.time, "sleep", side_effect=lambda _: self.put(self.d, "FAILED")):
       code, out, err = self.invoke("--timeout", "1")
     self.assertEqual((code, out, err), (3, "", ""))
 
-  def test_unreadable_does_not_erase_previous_observation(self):
+  def test_unreadable_retains(self):
     self.cli("--once")
-    (self.state / "swarm-state.json").write_text("{")
+    (self.d / "swarm-state.json").write_text("{")
     self.assertEqual(self.cli("--once").returncode, 2)
-    self.put(self.state, "DONE")
+    self.put(self.d, "DONE")
     self.assertIn("RUNNING -> DONE", self.cli("--once").stdout)
 
-  def test_state_directories_byte_identical_no_new_files(self):
+  def test_read_only(self):
     other = self.root / "second"
     other.mkdir()
     self.put(other, "FAILED")
-    (self.state / "nested").mkdir()
-    (self.state / "nested" / "receipt").write_bytes(b"preserved\x00\xff")
+    (self.d / "nested").mkdir()
+    (self.d / "nested" / "receipt").write_bytes(b"preserved\x00\xff")
     def fingerprint():
       return {str(p): p.read_bytes() if p.is_file() else None
-              for directory in (self.state, other) for p in directory.rglob("*")}
+              for directory in (self.d, other) for p in directory.rglob("*")}
     before = fingerprint()
     result = self.cli("--once", "--state-dir", str(other))
     self.assertEqual(result.returncode, 0, result.stderr)
     self.assertEqual(fingerprint(), before)
-    self.assertTrue(self.snapshot.exists())
+    self.assertTrue(self.snap.exists())
 
-  def test_snapshot_is_atomic_private_and_custom_location(self):
+  def test_atomic_private(self):
     path = self.root / "custom.json"
     path.write_text("{}")
     path.chmod(0o644)
@@ -177,19 +176,71 @@ class WaitEvent(unittest.TestCase):
     self.assertEqual(code, 3, err)
     operation.assert_called_once()
     self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
-    self.assertFalse(self.snapshot.exists())
+    self.assertFalse(self.snap.exists())
     self.assertFalse(list(self.root.glob(".wait-event-*")))
 
-  def test_refuse_snapshot_inside_state_and_invalid_arguments(self):
-    original = (self.state / "swarm-state.json").read_bytes()
+  def test_arguments(self):
+    original = (self.d / "swarm-state.json").read_bytes()
     alias = self.root / "alias"
-    alias.symlink_to(self.state, target_is_directory=True)
-    for path in (self.state / "snapshot", alias / "snapshot", self.state / "swarm-state.json"):
+    alias.symlink_to(self.d, target_is_directory=True)
+    for path in (self.d / "snapshot", alias / "snapshot", self.d / "swarm-state.json"):
       result = self.cli("--once", "--snapshot", str(path))
       self.assertEqual(result.returncode, 2)
-    self.assertEqual((self.state / "swarm-state.json").read_bytes(), original)
+    self.assertEqual((self.d / "swarm-state.json").read_bytes(), original)
     for flag, value in (("--interval", "0"), ("--interval", "nan"), ("--timeout", "inf"), ("--timeout", "-1")):
       self.assertEqual(self.cli(flag, value).returncode, 2)
+
+  def test_snapshot_alias(self):
+    target = self.root / "coordinator.json"
+    target.write_text('{"units":{}}')
+    source = self.d / "swarm-state.json"
+    source.unlink()
+    source.symlink_to(target)
+    result = self.cli("--once", "--snapshot", str(target))
+    self.assertEqual(target.read_text(), '{"units":{}}')
+    self.assertEqual(result.returncode, 2)
+
+  def test_loop_source(self):
+    loop = self.root / "loop"
+    loop.symlink_to(loop)
+    self.put(self.d, "READY_FOR_PR")
+    result = self.cli("--once", "--state-dir", str(loop))
+    self.assertEqual(result.returncode, 0, result.stderr)
+    self.assertIn("STATE ", result.stdout)
+    self.assertEqual(result.stderr.count("UNREADABLE"), 1)
+
+  def test_new_unit(self):
+    for state in ("UNALLOCATED", "RUNNING", "READY_FOR_PR"):
+      with self.subTest(state=state):
+        if self.snap.exists():
+          self.snap.unlink()
+        (self.d / "swarm-state.json").write_text('{"units":{}}')
+        self.assertEqual(self.cli("--once").returncode, 3)
+        self.put(self.d, state)
+        result = self.cli("--once")
+        self.assertEqual(result.returncode, 0 if state == "READY_FOR_PR" else 3)
+        self.assertNotIn("TRANSITION", result.stdout)
+
+  def test_omitted_unit(self):
+    self.put(self.d, "FAILED")
+    self.assertEqual(self.cli("--once").returncode, 0)
+    (self.d / "swarm-state.json").write_text('{"units":{}}')
+    self.assertEqual(self.cli("--once").returncode, 3)
+    self.put(self.d, "FAILED")
+    result = self.cli("--once")
+    self.assertEqual((result.returncode, result.stdout), (3, ""))
+    self.put(self.d, "DONE")
+    self.assertIn("FAILED -> DONE", self.cli("--once").stdout)
+
+  def test_output_failure(self):
+    self.put(self.d, "READY_FOR_PR")
+    failed = mock.Mock()
+    failed.write.side_effect = OSError("synthetic output failure")
+    with contextlib.redirect_stdout(failed), contextlib.redirect_stderr(io.StringIO()):
+      code = wait_event.main(["--state-dir", str(self.d), "--once"])
+    self.assertEqual(code, 2)
+    self.assertFalse(self.snap.exists())
+    self.assertIn("STATE ", self.cli("--once").stdout)
 
 
 if __name__ == "__main__":

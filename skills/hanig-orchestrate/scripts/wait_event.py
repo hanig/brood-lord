@@ -34,6 +34,13 @@ def states(value):
           for uid, unit in value.items()}
 
 
+def source_path(path):
+  try:
+    return path.resolve()
+  except (OSError, RuntimeError):
+    return path.absolute()
+
+
 def read_snapshot(path):
   try:
     record = json.loads(path.read_bytes())
@@ -74,7 +81,7 @@ def observe(directories, snapshot, warned):
     key = str(directory)
     previous = snapshot.get(key)
     for uid, state in sorted(current.items()):
-      changed = previous is not None and previous.get(uid) != state
+      changed = previous is not None and uid in previous and previous[uid] != state
       kinds = (["TRANSITION"] if changed else [])
       if state not in QUIET and (previous is None or previous.get(uid) != state):
         kinds.append("STATE")
@@ -82,7 +89,7 @@ def observe(directories, snapshot, warned):
         events.append(dict(event=kind, observed=observed, directory=directory.name,
                            state_dir=key, unit=uid, state=state,
                            previous=None if previous is None else previous.get(uid)))
-    snapshot[key] = current
+    snapshot.setdefault(key, {}).update(current)
   return events, readable
 
 
@@ -97,9 +104,13 @@ def main(argv=None):
   args = parser.parse_args(argv)
   if args.interval == 0:
     parser.error("--interval must be positive")
-  directories = list(dict.fromkeys(path.resolve() for path in args.state_dir))
-  path = (args.snapshot or (directories[0].parent / "wait-event-snapshot.json")).resolve()
-  if any(path == directory or directory in path.parents for directory in directories):
+  directories = list(dict.fromkeys(source_path(path) for path in args.state_dir))
+  try:
+    path = (args.snapshot or (directories[0].parent / "wait-event-snapshot.json")).resolve()
+  except (OSError, RuntimeError) as exc:
+    parser.error(str(exc))
+  if any(path == directory or directory in path.parents or
+         path == source_path(directory / "swarm-state.json") for directory in directories):
     parser.error("snapshot must be outside every state directory")
   deadline = None if args.timeout is None else time.monotonic() + args.timeout
   warned = set()
@@ -107,14 +118,13 @@ def main(argv=None):
     snapshot = read_snapshot(path)
     while True:
       events, readable = observe(directories, snapshot, warned)
-      if readable:
+      if readable and not events:
         write_snapshot(path, snapshot)
       if events:
         for event in events:
           if args.json:
             print(json.dumps(event), flush=True)
           else:
-            # Only rendering is flattened; comparisons retain the raw strings.
             print("{} {} {} {}: {} -> {}".format(
               event["event"], event["observed"],
               *[" ".join(str(event[k]).splitlines()) for k in
@@ -124,6 +134,7 @@ def main(argv=None):
           print(json.dumps(dict(event="END", observed=end, lines=len(events))), flush=True)
         else:
           print("(end of pass {}, {} line(s))".format(end, len(events)), flush=True)
+        write_snapshot(path, snapshot)
         return 0
       if args.once:
         return 3 if readable else 2
