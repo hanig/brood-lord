@@ -2452,6 +2452,7 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
 
     # 1. Re-check anything with a live attempt. The coordinator does not judge;
     #    unit.py does, and its exit code is the whole input.
+    accounting_job_id = None
     for uid, u in units.items():
         # Each `_check` can take its own timeout, and a synchronous pipeline
         # engine takes far longer. Renewing between units keeps mutual
@@ -2502,6 +2503,13 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
         ran_check = not (u.get("kind") == "code" and pinned_before)
         protocol_problem = None
         if ran_check:
+            if u.get("kind") == "slurm":
+                # A query error can be specific to one job. Retain the
+                # breaker for repeated checks of that job, not other jobs.
+                job_id = us.get("job_id")
+                if job_id != accounting_job_id:
+                    U.SACCT_UNAVAILABLE = False
+                    accounting_job_id = job_id
             isolation_facts = SE.trusted_isolation_facts(state, u, attempt)
             check_args = (
                 attempt, launch_facts,
@@ -2759,70 +2767,85 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
             # you" into FAILED_EVIDENCE after ten minutes would discard a live
             # agent and its context because nobody was at the keyboard.
             us.pop("incomplete_since", None)
+        accounting_unavailable = (u.get("kind") == "slurm"
+                                  and rc == INCOMPLETE
+                                  and not protocol_problem
+                                  and U.SACCT_UNAVAILABLE)
+        if accounting_unavailable:
+            # An outage is not accounting lag. Discard even a pre-outage
+            # settle clock so recovery grants a full window, also on disk.
+            since = us.setdefault("accounting_unavailable_since", time.time())
+            us.pop("incomplete_since", None)
+            observed = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(since))
+            report.append(f"{uid}: accounting unavailable since {observed}; "
+                          f"kept nonterminal pending accounting recovery")
+        else:
+            us.pop("accounting_unavailable_since", None)
         if rc == INCOMPLETE:
-            # Recover the clock once for an unacknowledged send.
-            for entry in us.get("continuations", []):
-                if (isinstance(entry, dict)
-                        and entry.get("agent_id") == str(us.get("job_id"))
-                        and entry.get("status") == "pending"
-                        and entry.get("sent") is None
-                        and not entry.get("settle_recovered")):
+            if not accounting_unavailable:
+                # Recover the clock once for an unacknowledged send.
+                for entry in us.get("continuations", []):
+                    if (isinstance(entry, dict)
+                            and entry.get("agent_id") == str(us.get("job_id"))
+                            and entry.get("status") == "pending"
+                            and entry.get("sent") is None
+                            and not entry.get("settle_recovered")):
+                        us["incomplete_since"] = time.time()
+                        entry["settle_recovered"] = True
+                first = us.get("incomplete_since")
+                if first is None:
                     us["incomplete_since"] = time.time()
-                    entry["settle_recovered"] = True
-            first = us.get("incomplete_since")
-            if first is None:
-                us["incomplete_since"] = time.time()
-            elif time.time() - float(first) > SETTLE_S:
-                waited = int(time.time() - float(first))
-                # TWO DIFFERENT FAILURES, and they need opposite actions.
-                # Calling both "the evidence never arrived" sent an operator
-                # to `sacct` for a job whose sacct row says COMPLETED 0:0 --
-                # the one place that hides the problem, and precisely the
-                # confusion this whole tool exists to prevent.
-                reason = SE._receipt_reason(state, uid, us["attempt_dir"])
-                if (reason == U.REASON_NO_OUTPUTS
-                        and maybe_continue(state_dir, uid, u, us, report,
-                                           state)):
-                    SS.save_state(state_dir, state)
-                    continue
-                if reason == U.REASON_NO_OUTPUTS:
-                    used = len(us.get("continuations") or [])
-                    if used:
+                elif time.time() - float(first) > SETTLE_S:
+                    waited = int(time.time() - float(first))
+                    # TWO DIFFERENT FAILURES, and they need opposite actions.
+                    # Calling both "the evidence never arrived" sent an operator
+                    # to `sacct` for a job whose sacct row says COMPLETED 0:0 --
+                    # the one place that hides the problem, and precisely the
+                    # confusion this whole tool exists to prevent.
+                    reason = SE._receipt_reason(state, uid, us["attempt_dir"])
+                    if (reason == U.REASON_NO_OUTPUTS
+                            and maybe_continue(state_dir, uid, u, us, report,
+                                               state)):
+                        SS.save_state(state_dir, state)
+                        continue
+                    if reason == U.REASON_NO_OUTPUTS:
+                        used = len(us.get("continuations") or [])
+                        if used:
+                            report.append(
+                                f"{uid}: {used} continuation(s) sent and it still "
+                                f"produced nothing. The bound is the point: this "
+                                f"fails for missing production evidence rather "
+                                f"than being prodded again.")
+                        SS._set_unit_state(us, "FAILED")
                         report.append(
-                            f"{uid}: {used} continuation(s) sent and it still "
-                            f"produced nothing. The bound is the point: this "
-                            f"fails for missing production evidence rather "
-                            f"than being prodded again.")
-                    SS._set_unit_state(us, "FAILED")
-                    report.append(
-                        f"{uid}: the job finished cleanly and its declared "
-                        f"outputs never appeared, {waited}s on. This is a "
-                        f"FAILED unit, not missing evidence: the scheduler "
-                        f"will tell you it succeeded. Read the job's own log "
-                        f"in {us['attempt_dir']}.")
-                elif reason == U.REASON_NO_PRODUCED_CHANGE:
-                    # A refused repository transition is not a planning-only
-                    # turn: do not turn continuation into a correction loop.
-                    SS._set_unit_state(us, "FAILED")
-                    receipt, why = SE.attested_receipt(
-                        state, uid, us["attempt_dir"])
-                    details = " ".join(
-                        W.render_for_record(note, 2048)
-                        for note in ((receipt or {}).get("notes") or [])
-                        if not str(note).startswith("REASON="))
-                    report.append(
-                        f"{uid}: declared outputs are present, but no produced "
-                        f"repository change was established, {waited}s on. "
-                        f"This is a FAILED unit. "
-                        f"{details or why or 'See the check receipt.'}")
-                else:
-                    SS._set_unit_state(us, "FAILED_EVIDENCE")
-                    report.append(
-                        f"{uid}: no verdict {waited}s after the first "
-                        f"INCOMPLETE, past the {SETTLE_S}s accounting settle "
-                        f"window. Treating as terminal: the evidence never "
-                        f"arrived. Check `sacct -j {us.get('job_id')}` by "
-                        f"hand.")
+                            f"{uid}: the job finished cleanly and its declared "
+                            f"outputs never appeared, {waited}s on. This is a "
+                            f"FAILED unit, not missing evidence: the scheduler "
+                            f"will tell you it succeeded. Read the job's own log "
+                            f"in {us['attempt_dir']}.")
+                    elif reason == U.REASON_NO_PRODUCED_CHANGE:
+                        # A refused repository transition is not a planning-only
+                        # turn: do not turn continuation into a correction loop.
+                        SS._set_unit_state(us, "FAILED")
+                        receipt, why = SE.attested_receipt(
+                            state, uid, us["attempt_dir"])
+                        details = " ".join(
+                            W.render_for_record(note, 2048)
+                            for note in ((receipt or {}).get("notes") or [])
+                            if not str(note).startswith("REASON="))
+                        report.append(
+                            f"{uid}: declared outputs are present, but no produced "
+                            f"repository change was established, {waited}s on. "
+                            f"This is a FAILED unit. "
+                            f"{details or why or 'See the check receipt.'}")
+                    else:
+                        SS._set_unit_state(us, "FAILED_EVIDENCE")
+                        report.append(
+                            f"{uid}: no verdict {waited}s after the first "
+                            f"INCOMPLETE, past the {SETTLE_S}s accounting settle "
+                            f"window. Treating as terminal: the evidence never "
+                            f"arrived. Check `sacct -j {us.get('job_id')}` by "
+                            f"hand.")
         else:
             us.pop("incomplete_since", None)
         if rc in RETRYABLE:
