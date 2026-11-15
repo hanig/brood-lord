@@ -145,7 +145,11 @@ def main(argv=None):
           print(json.dumps(dict(event="END", observed=end, lines=len(events))), flush=True)
         else:
           print("(end of pass {}, {} line(s))".format(end, len(events)), flush=True)
-        write_snapshot(path, snapshot)
+        try:
+          write_snapshot(path, snapshot)
+        except (OSError, ValueError, RecursionError) as exc:
+          print("wait_event: snapshot persistence failed; event may repeat: {}".format(exc), file=sys.stderr)
+          return 2
         return 0
       if args.once:
         return 3 if readable else 2
