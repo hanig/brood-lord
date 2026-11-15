@@ -271,12 +271,22 @@ class AuditCase(unittest.TestCase):
         self.state = self.root / 'state'
         self.state.mkdir()
 
+    def take_request_summary(self):
+        self.stderr_raw = self.stderr
+        lines = self.stderr.splitlines(keepends=True)
+        self.request_summary = ''
+        if lines and lines[-1].startswith('requests: '):
+            self.request_summary = lines.pop()
+            self.assertRegex(self.request_summary, r'^requests: [0-9]+\n$')
+            self.stderr = ''.join(lines)
+
     def cli(self, *args):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             rc = LS.main(list(args))
         self.stdout, self.stderr = out.getvalue(), err.getvalue()
         self.assertNotIn(KEY, self.stdout + self.stderr)
+        self.take_request_summary()
         return rc
 
     def audit(self, plan=False, state=False):
@@ -539,7 +549,11 @@ class TestAudit(AuditCase):
         self.assertEqual(self.audit(), 3)
         self.fake.fail = None
         self.fake.rate_limit = True
-        self.assertEqual(self.audit(), 3)
+        before = self.out.read_bytes()
+        self.assertEqual(self.cli('audit', '--binding', str(self.binding), '--out', str(self.out)), 4)
+        self.assertIn('Linear rate limit', self.stderr)
+        self.assertIn('INCOMPLETE', self.stderr)
+        self.assertEqual(self.out.read_bytes(), before)
         self.fake.rate_limit = False
         self.fake.moved.add('1')
         self.assertEqual(self.audit(), 3)
@@ -1025,7 +1039,7 @@ class TestAudit(AuditCase):
                 with mock.patch.dict(os.environ, env, clear=True):
                     self.assertEqual(self.cli(*args), result.returncode)
                 self.assertEqual(self.stdout, result.stdout)
-                self.assertEqual(self.stderr, result.stderr)
+                self.assertEqual(self.stderr_raw, result.stderr)
         self.assertFalse((self.root / '.hanig/linear-binding.json').exists())
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(API, 'load_key') as load:
             self.assertEqual(self.cli(*commands[-1]), 0)
@@ -1133,7 +1147,11 @@ class TestAudit(AuditCase):
         self.assertIn('[REDACTED]', self.stderr)
         self.fake.fail = None
         self.fake.rate_limit = True
-        self.assertEqual(self.audit(), 3)
+        before = self.out.read_bytes()
+        self.assertEqual(self.cli('audit', '--binding', str(self.binding), '--out', str(self.out)), 4)
+        self.assertIn('Linear rate limit', self.stderr)
+        self.assertIn('INCOMPLETE', self.stderr)
+        self.assertEqual(self.out.read_bytes(), before)
         self.assertIn('[REDACTED]', self.out.read_text())
         key = 'lin"odd\\key'
         self.assertNotIn(json.dumps(key)[1:-1], API.redact(json.dumps({'message': key}), key))

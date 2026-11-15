@@ -1004,7 +1004,15 @@ def drain(args, client):
     import drain_contract as contract
 
     reader = Reader(client)
-    path, raw, config, workspace, project, team = drain_identity(args, reader)
+    try:
+        path, raw, config, workspace, project, team = drain_identity(args, reader)
+    except API.RateLimitStop:
+        # The identity read reached no queued issue. Count local subjects only
+        # after the stop; normal collection stays under its original lock.
+        pending = collect_intents(args.state_dir, contract, lambda message: None)
+        client.unreached = len({e['intent'].get('tracker') or e['intent']['unit']
+                                for e in pending if args.full or not e['receipted']})
+        raise
     with project_lock(workspace, project):
         # Identity must be read to locate the lock. All actual input collection
         # follows acquisition, with the routing bytes checked again here.
@@ -1064,7 +1072,9 @@ def drain_locked(args, reader, config, workspace, project, team, contract):
                                if args.full or (not e['receipted'] and not e['settled']))
     skipped = len({e['ref'] for e in valid} - references.keys())
     groups = {}
+    reader.client.unreached = len(references)
     for ref in references:
+        reader.client.unreached -= 1
         try:
             issue = reader.resolve([ref], fields=DRAIN_ISSUE_FIELDS)[ref]
             if issue is None:
@@ -1075,7 +1085,9 @@ def drain_locked(args, reader, config, workspace, project, team, contract):
             for entry in entries:
                 if entry.get('ref') == ref:
                     fail('%s: %s' % (entry['label'], exc))
+    reader.client.unreached = len(groups)
     for issue in groups.values():
+        reader.client.unreached -= 1
         # Include receipted history under either spelling of the resolved issue.
         group = [e for e in entries if 'error' not in e
                  and e['ref'] in (issue['id'], issue['identifier'])]
@@ -1192,6 +1204,7 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
+    client = None
     key = None  # Validation can refuse before credentials are loaded.
     try:
         if args.command == 'section':
@@ -1200,7 +1213,7 @@ def main(argv=None):
         if args.command == 'issue':
             LI.validate_request(args)
         key = API.load_key()
-        client = API.Client(key)
+        client = API.CommandClient(key)
         if args.command in ('file', 'replay'):
             return LF.run(args, client, sys.modules[__name__])
         if args.command == 'issue':
@@ -1233,6 +1246,11 @@ def main(argv=None):
             Path(args.out).write_text(payload)
         print(payload, end='')
         return {'CLEAN': 0, 'DRIFT': 1, 'UNKNOWN': 3}[record['verdict']]
+    except API.RateLimitStop as stop:
+        exc = stop.error
+        print('Linear rate limit; reset %s; %d items unreached; INCOMPLETE; %d requests' %
+              (exc.reset_at or 'unknown', client.unreached, client.requests), file=sys.stderr)
+        return API.RATE_LIMIT_EXIT
     except (API.LinearError, OSError, ValueError, TypeError, KeyError, AttributeError, ImportError) as exc:
         message = API.redact('error: ' + str(exc), key)
         if args.command == 'issue':
@@ -1240,6 +1258,10 @@ def main(argv=None):
         print(message, file=sys.stderr)
         replay = args.command == 'replay' or (args.command == 'issue' and args.issue_command == 'replay')
         return 3 if replay else 2
+    finally:
+        if args.command != 'section':
+            print('requests: %d' % (client.requests if client is not None else 0),
+                  file=sys.stderr)
 
 
 if __name__ == '__main__':

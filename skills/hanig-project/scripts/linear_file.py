@@ -459,6 +459,7 @@ class Filing:
 
     def project_apply(self, remote):
         s = self.spec
+        self.client.unreached = len(self.draft['issues'])
         desired = s['project_desired']
         create_error = None
         if remote is None:
@@ -533,6 +534,7 @@ def run(args, client, sync):
     raw = Path(args.draft).read_bytes()
     draft = json.loads(raw)
     digest = validate(draft, client._key)
+    client.unreached = 1 + len(draft['issues'])
     replay = args.command == 'replay'
     if replay:
         path, spec = replay_record(args.operation_id)

@@ -16,6 +16,9 @@ as the Authorization header, and every error message passes through
 `redact()` before anyone sees it.
 """
 
+import datetime as dt
+from email.utils import parsedate_to_datetime
+import time
 import hashlib
 import json
 import os
@@ -32,6 +35,44 @@ TIMEOUT = 60
 
 class LinearError(RuntimeError):
     """A request failed. The message is already redacted."""
+
+
+RATE_LIMIT_EXIT = 4  # Reserved exclusively for a Linear rate-limit stop.
+
+
+class LinearRateLimited(LinearError):
+    """Linear refused further requests; reset_at is UTC ISO text or None."""
+
+    def __init__(self, reset_at=None):
+        super().__init__('Linear rate limit')
+        self.reset_at = reset_at
+
+
+def reset_time(headers):
+    """Read only the two supported headers; malformed values stay unknown."""
+    headers = {k.lower(): v for k, v in (headers or {}).items()}
+    for name in ('retry-after', 'x-ratelimit-requests-reset'):
+        value = headers.get(name)
+        if value is None:
+            continue
+        try:
+            if name == 'x-ratelimit-requests-reset':
+                stamp = float(value) / 1000
+            else:
+                try:
+                    delay = int(value)
+                    if delay < 0:
+                        raise ValueError('negative Retry-After')
+                    stamp = time.time() + delay
+                except ValueError:
+                    date = parsedate_to_datetime(value)
+                    if date.tzinfo is None:
+                        date = date.replace(tzinfo=dt.timezone.utc)
+                    stamp = date.timestamp()
+            return dt.datetime.fromtimestamp(stamp, dt.timezone.utc).isoformat()
+        except (ValueError, TypeError, OverflowError, OSError, IndexError):
+            pass
+    return None
 
 
 def redact(text, key):
@@ -94,14 +135,15 @@ def derived_id(name):
 
 
 def transport(body, headers, timeout=TIMEOUT):
-    """The one network call. Returns (http_status, response_bytes)."""
+    """The one network call. Returns (http_status, response_bytes, response_headers)."""
     request = urllib.request.Request(ENDPOINT, data=body, headers=headers,
                                      method="POST")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, response.read()
+            return (response.status, b'' if response.status == 429 else response.read(),
+                    response.headers)
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read()
+        return exc.code, b'' if exc.code == 429 else exc.read(), exc.headers
 
 
 class Client:
@@ -112,6 +154,7 @@ class Client:
                 % (KEY_ENV, KEY_FILE))
         self._key = key
         self.requests = 0
+        self.unreached = 0
 
     def __repr__(self):
         return "Client(key=[REDACTED])"
@@ -124,10 +167,15 @@ class Client:
                    "Content-Type": "application/json"}
         self.requests += 1
         try:
-            status, raw = transport(body, headers)
+            result = transport(body, headers)
+            # Keep the existing two-field offline transport seam compatible.
+            status, raw = result[:2]
+            response_headers = result[2] if len(result) == 3 else {}
         except Exception as exc:  # noqa: BLE001  any transport failure
             raise LinearError("Linear request failed: %s"
                               % redact(exc, self._key))
+        if status == 429:
+            raise LinearRateLimited(reset_time(response_headers))
         try:
             payload = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError, AttributeError):
@@ -137,6 +185,9 @@ class Client:
             raise LinearError("Linear returned HTTP %s with a non-object "
                               "body" % status)
         errors = payload.get("errors") or []
+        if any(isinstance(e, dict) and isinstance(e.get('extensions'), dict) and
+               e['extensions'].get('code') == 'RATELIMITED' for e in errors):
+            raise LinearRateLimited(reset_time(response_headers))
         messages = [redact((e or {}).get("message", e), self._key)
                     for e in errors if e is not None]
         if status != 200 and not messages:
@@ -150,3 +201,24 @@ class Client:
             raise LinearError("Linear refused the request: %s"
                               % "; ".join(errors or ["no data"]))
         return data
+
+
+class RateLimitStop(BaseException):
+    """Command abort, like SystemExit: ordinary per-item catches cannot resume it.
+
+    Only CommandClient converts the public API error to this control signal.
+    The CLI boundary must catch it to report the original refusal and cost.
+    """
+
+    def __init__(self, error):
+        self.error = error
+
+
+class CommandClient(Client):
+    """Stop an operator command through existing per-item recovery handlers."""
+
+    def query(self, query, variables=None):
+        try:
+            return super().query(query, variables)
+        except LinearRateLimited as error:
+            raise RateLimitStop(error) from None
