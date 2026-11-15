@@ -1010,8 +1010,16 @@ def drain(args, client):
         # The identity read reached no queued issue. Count local subjects only
         # after the stop; normal collection stays under its original lock.
         pending = collect_intents(args.state_dir, contract, lambda message: None)
-        client.unreached = len({e['intent'].get('tracker') or e['intent']['unit']
-                                for e in pending if args.full or not e['receipted']})
+        def subject(entry):
+            return entry['intent'].get('tracker') or entry['intent']['unit']
+        history = {}
+        for entry in pending:
+            if entry['receipted'] and entry['intent']['verb'] in STATE_TYPE:
+                history.setdefault((entry['directory'], subject(entry)), []).append(entry)
+        client.unreached = len({subject(e) for e in pending if args.full or (
+            not e['receipted'] and not any(
+                later['line'] > e['line'] and later['order'] > e['order']
+                for later in history.get((e['directory'], subject(e)), [])))})
         raise
     with project_lock(workspace, project):
         # Identity must be read to locate the lock. All actual input collection
@@ -1203,7 +1211,14 @@ def parse_args(argv=None):
 
 
 def main(argv=None):
-    args = parse_args(argv)
+    try:
+        args = parse_args(argv)
+    except SystemExit as exc:
+        tokens = sys.argv[1:] if argv is None else argv
+        if exc.code and tokens[:1] in ([name] for name in (
+                'drain', 'file', 'replay', 'issue', 'bind', 'audit')):
+            print('requests: 0', file=sys.stderr)
+        raise
     client = None
     key = None  # Validation can refuse before credentials are loaded.
     try:

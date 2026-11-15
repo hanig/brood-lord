@@ -1,5 +1,6 @@
 """Offline rate-limit contract; exhaustive request positions, no live tracker."""
 import itertools
+import io
 import json
 import os
 import unittest
@@ -188,6 +189,27 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(case.request_summary, 'requests: 0\n')
         self.assertEqual(case.issue('new', '--independent', 'reason', '--approver', ' '), 2)
         self.assertEqual(case.request_summary, 'requests: 0\n')
+
+    def test_settled_subjects_excluded_from_early_stop(self):
+        # Exhaust both modes for one settled pair: incremental 0, full 1.
+        for full, remaining in ((False, 0), (True, 1)):
+            with self.subTest(full=full):
+                case = self.fixture('drain')
+                D.TestSettledDrain.settled_pair(case)
+                self.exercise(case, lambda: case.drain(full=full), 1, remaining)
+
+    def test_parser_refusal_cost(self):
+        # Exhaust network/non-network parse refusals without loading a key.
+        for command, flag, reports in (('audit', '--binding', True),
+                                       ('section', '--audit', False)):
+            with self.subTest(command=command), \
+                    mock.patch('sys.stderr', new_callable=io.StringIO) as err, \
+                    mock.patch.object(API, 'load_key') as key:
+                with self.assertRaises(SystemExit) as raised:
+                    LS.main([command, flag])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertEqual('requests: 0' in err.getvalue(), reports)
+                key.assert_not_called()
 
     def test_other_command_stops(self):
         # Bind and audit are each one snapshot. Issue edit/new each one target.
