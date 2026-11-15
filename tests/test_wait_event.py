@@ -278,6 +278,62 @@ class WaitEvent(unittest.TestCase):
     self.assertEqual(result.returncode, 0, result.stderr)
     self.assertIn(str(self.d), result.stdout)
 
+  def test_source_mount_alias(self):
+    real = self.root / "real"
+    real.mkdir()
+    target = real / "coord.json"
+    target.write_text('{"units":{}}')
+    source = self.d / "swarm-state.json"
+    source.unlink()
+    source.symlink_to(target)
+    alias = self.root / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    resolve = Path.resolve
+    def mount(path, *args, **kwargs):
+      return path if alias == path or alias in path.parents else resolve(path, *args, **kwargs)
+    with mock.patch.object(Path, "resolve", mount), self.assertRaises(SystemExit) as stopped:
+      self.invoke("--once", "--snapshot", str(alias / "coord.json"))
+    self.assertEqual(stopped.exception.code, 2)
+    self.assertEqual(target.read_text(), '{"units":{}}')
+
+  def test_alias_history(self):
+    alias = self.root / "alias"
+    alias.symlink_to(self.d, target_is_directory=True)
+    resolve = Path.resolve
+    def mount(path, *args, **kwargs):
+      return path if alias == path or alias in path.parents else resolve(path, *args, **kwargs)
+    def run(directory):
+      return wait_event.main(["--state-dir", str(directory), "--once", "--snapshot", str(self.snap)])
+    with mock.patch.object(Path, "resolve", mount), contextlib.redirect_stdout(io.StringIO()):
+      self.assertEqual(run(self.d), 3)
+      self.assertEqual(run(alias), 3)
+      self.put(self.d, "DONE")
+      self.assertEqual(run(self.d), 0)
+      self.put(self.d, "RUNNING")
+      self.assertEqual(run(alias), 0)
+      self.put(self.d, "FAILED")
+      self.assertEqual(run(self.d), 0)
+      self.assertEqual(run(alias), 3)
+      self.assertEqual(len(json.loads(self.snap.read_text())), 1)
+      # Conflicting histories persisted by the old implementation cannot be
+      # ordered without evidence: refuse intact and request a fresh snapshot.
+      self.snap.write_text(json.dumps({str(self.d): {"unit": "DONE"},
+                                      str(alias): {"unit": "RUNNING"}}))
+      before = self.snap.read_bytes()
+      with contextlib.redirect_stderr(io.StringIO()) as err:
+        self.assertEqual(run(self.d), 2)
+      self.assertIn("fresh --snapshot", err.getvalue())
+      self.assertEqual(self.snap.read_bytes(), before)
+
+  def test_large_interval(self):
+    def wake(delay):
+      self.assertLessEqual(delay, 86400)
+      self.put(self.d, "DONE")
+    with mock.patch.object(wait_event.time, "sleep", side_effect=wake):
+      code, out, err = self.invoke("--interval", "1e20", "--timeout", "1e20")
+    self.assertEqual(code, 0, err)
+    self.assertIn("TRANSITION", out)
+
   def test_snapshot_failure_after_output(self):
     self.assertEqual(self.cli("--once").returncode, 3)
     before = self.snap.read_bytes()
