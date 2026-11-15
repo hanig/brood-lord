@@ -279,11 +279,25 @@ class WaitEvent(unittest.TestCase):
     self.assertIn(str(self.d), result.stdout)
 
   def test_snapshot_failure_after_output(self):
+    self.assertEqual(self.cli("--once").returncode, 3)
+    before = self.snap.read_bytes()
     self.put(self.d, "READY_FOR_PR")
-    with mock.patch.object(wait_event, "write_snapshot", side_effect=OSError("synthetic snapshot failure")):
-      code, out, _ = self.invoke("--once")
+    # Fail the atomic replace after the temporary snapshot has been written.
+    with mock.patch.object(wait_event.os, "replace", side_effect=OSError("synthetic snapshot failure")):
+      code, out, err = self.invoke("--once")
     self.assertEqual(code, 2)
-    self.assertEqual(out, "", "Failed persistence must not deliver an event that will repeat")
+    self.assertIn("TRANSITION ", out)
+    self.assertIn("STATE ", out)
+    self.assertIn("event may repeat", err)
+    self.assertEqual(self.snap.read_bytes(), before)
+    self.assertFalse(list(self.root.glob(".wait-event-*")))
+    result = self.cli("--once")
+    self.assertEqual(result.returncode, 0, result.stderr)
+    self.assertIn("RUNNING -> READY_FOR_PR", result.stdout)
+    self.assertIn("STATE ", result.stdout)
+    self.assertEqual(json.loads(self.snap.read_text())[str(self.d)], {"unit": "READY_FOR_PR"})
+    result = self.cli("--once")
+    self.assertEqual((result.returncode, result.stdout), (3, ""))
 
 
 if __name__ == "__main__":
