@@ -159,6 +159,20 @@ class TestAccountingOutage(unittest.TestCase):
             self.assertEqual(self.state['units']['v']['state'], expected, report)
             self.assertNotIn('v: accounting unavailable', report)
 
+    def test_unqueried_invalid_output_with_same_job_does_not_inherit_outage(self):
+        self.plan['units'].append(dict(self.plan['units'][0], id='v', write_scopes=['v/']))
+        us = self.add_attempt('v', '42')
+        output = Path(us['attempt_dir']) / 'out'
+        outside = self.tmp / 'synthetic-output'
+        outside.write_text('fixture bytes')
+        output.unlink()
+        output.symlink_to(outside)
+        self.accounting('failed')
+        for now, expected in ((10000, 'INCOMPLETE'), (10601, 'FAILED_EVIDENCE')):
+            report = self.advance(now)
+            self.assertEqual(self.state['units']['v']['state'], expected, report)
+            self.assertNotIn('v: accounting unavailable', report)
+
     def test_outage_reports_each_affected_unit(self):
         self.plan['units'].append(dict(self.plan['units'][0], id='v', write_scopes=['v/']))
         self.add_attempt('v', '43')

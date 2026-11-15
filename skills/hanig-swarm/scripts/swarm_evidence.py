@@ -896,6 +896,10 @@ def _check(unit_dir, launch_facts=None, artifact_basis=None,
         scheduler_fd = scheduler_sink.fileno()
         argv += ["--result-fd", str(result_fd)]
         argv += ["--sacct-status-fd", str(scheduler_fd)]
+        # A skipped query reports an outage only if this checker reaches
+        # accounting. An early validation return must not inherit the last
+        # check's flag, even when both attempts name the same scheduler job.
+        U.SACCT_UNAVAILABLE = False
         rc, out, err = U.run(
             argv, timeout=300, pass_fds=(result_fd, scheduler_fd))
         result_sink.seek(0)
