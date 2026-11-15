@@ -80,7 +80,16 @@ def observe(directories, snapshot, warned):
       continue
     readable += 1
     key = str(directory)
-    previous = snapshot.get(key)
+    previous = None
+    for known in list(snapshot):
+      if known == key or samefile(Path(known), directory):
+        if previous is not None and previous != snapshot[known]:
+          raise ValueError("conflicting directory alias histories; use a fresh --snapshot")
+        previous = snapshot[known]
+        if known != key:
+          del snapshot[known]
+    if previous is not None:
+      snapshot[key] = previous
     for uid, state in sorted(current.items()):
       changed = previous is not None and uid in previous and previous[uid] != state
       kinds = (["TRANSITION"] if changed else [])
@@ -94,13 +103,17 @@ def observe(directories, snapshot, warned):
   return events, readable
 
 
+def samefile(first, second):
+  try:
+    return first.samefile(second)
+  except OSError:
+    return False
+
+
 def inside(path, directory):
   for parent in (path,) + tuple(path.parents):
-    try:
-      if parent.samefile(directory):
-        return True
-    except OSError:
-      pass
+    if samefile(parent, directory):
+      return True
   return False
 
 
@@ -121,7 +134,8 @@ def main(argv=None):
   except (OSError, RuntimeError) as exc:
     parser.error(str(exc))
   if any(path == directory or directory in path.parents or inside(path, directory) or
-         path == source_path(directory / "swarm-state.json") for directory in directories):
+         path == source_path(directory / "swarm-state.json") or
+         samefile(path, directory / "swarm-state.json") for directory in directories):
     parser.error("snapshot must be outside every state directory")
   deadline = None if args.timeout is None else time.monotonic() + args.timeout
   warned = set()
@@ -156,7 +170,7 @@ def main(argv=None):
       remaining = None if deadline is None else deadline - time.monotonic()
       if remaining is not None and remaining <= 0:
         return 3
-      time.sleep(args.interval if remaining is None else min(args.interval, remaining))
+      time.sleep(min(args.interval, 86400 if remaining is None else min(86400, remaining)))
       if deadline is not None and time.monotonic() >= deadline:
         return 3
   except (OSError, ValueError, RecursionError) as exc:
