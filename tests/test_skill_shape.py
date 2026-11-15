@@ -406,7 +406,7 @@ REFERENCE_ELABORATION_INVENTORIES = {
         ("references/operating-loop.md", "tracker.drain", 3),
         ("references/operating-loop.md", "tracker.reconcile", 1),
         ("references/operating-loop.md", "watch.facts", 1),
-        ("references/operating-loop.md", "watch.proof", 1),
+        ("references/operating-loop.md", "watch.proof", 3),
         ("references/operating-loop.md", "watch.source", 1),
     ),
 }
