@@ -50,7 +50,7 @@ class LinearRateLimited(LinearError):
 
 def reset_time(headers):
     """Read only the two supported headers; malformed values stay unknown."""
-    headers = {k.lower(): v for k, v in headers.items()}
+    headers = {k.lower(): v for k, v in (headers or {}).items()}
     for name in ('retry-after', 'x-ratelimit-requests-reset'):
         value = headers.get(name)
         if value is None:
@@ -134,9 +134,10 @@ def transport(body, headers, timeout=TIMEOUT):
                                      method="POST")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, response.read(), response.headers
+            return (response.status, b'' if response.status == 429 else response.read(),
+                    response.headers)
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read(), exc.headers
+        return exc.code, b'' if exc.code == 429 else exc.read(), exc.headers
 
 
 class Client:

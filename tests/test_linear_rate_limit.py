@@ -46,11 +46,31 @@ class TestTransport(unittest.TestCase):
         response.read.return_value = b'refused'
         response.__enter__.return_value = response
         with mock.patch.object(API.urllib.request, 'urlopen', return_value=response):
-            self.assertEqual(API.transport(b'{}', {}), (429, b'refused', response.headers))
+            self.assertEqual(API.transport(b'{}', {}), (429, b'', response.headers))
+        response.read.assert_not_called()
         error = API.urllib.error.HTTPError('https://example.invalid', 429, 'limited',
                                          response.headers, None)
         with mock.patch.object(API.urllib.request, 'urlopen', side_effect=error):
             self.assertEqual(API.transport(b'{}', {})[2], response.headers)
+
+    def test_429_does_not_need_a_readable_body(self):
+        # Exhaust both urllib response paths with a body that cannot be read.
+        for http_error in (False, True):
+            with self.subTest(http_error=http_error):
+                response = mock.MagicMock(status=429)
+                response.headers = None
+                response.__enter__.return_value = response
+                response.read.side_effect = OSError('synthetic truncated body')
+                if http_error:
+                    response = API.urllib.error.HTTPError('https://example.invalid', 429,
+                                                         'limited', None, None)
+                    response.read = mock.Mock(side_effect=OSError('synthetic truncated body'))
+                options = {'side_effect': response} if http_error else {'return_value': response}
+                with mock.patch.object(API.urllib.request, 'urlopen', **options):
+                    with self.assertRaises(API.LinearRateLimited) as raised:
+                        API.Client('synthetic-key').query('query {}')
+                self.assertIsNone(raised.exception.reset_at)
+                response.read.assert_not_called()
 
 
 class TestCommands(unittest.TestCase):
