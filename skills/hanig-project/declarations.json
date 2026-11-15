@@ -416,7 +416,7 @@
     },
     {
       "id": "drain.authority",
-      "normative_text": "Let issue state follow coordinator unit state and never the reverse; tracker outages must not alter swarm state.",
+      "normative_text": "Let issue state follow coordinator unit state and never the reverse; tracker outages must not alter swarm state. The linear_sync.py commands drain, file, replay, issue new, issue edit, issue replay, bind and audit stop at the first HTTP 429 or GraphQL RATELIMITED error, make no further request, and never retry or sleep. Exit 4 is reserved exclusively for that stop; its one-line INCOMPLETE diagnostic names the rate limit, the UTC reset time or unknown, unreached items and Client.requests. Retry-After (nonnegative seconds or HTTP date) and X-RateLimit-Requests-Reset (epoch milliseconds) supply the reset; unsupported or malformed headers mean unknown. Unreached counts known subjects not yet entered in the current phase, excludes the interrupted subject and is not a count of unconfirmed effects; undiscovered subjects are not counted. Every network command reports Client.requests, including failed requests and zero-request refusals. A stopped audit is incomplete, never clean; no unconfirmed effect receives a receipt or closes an operation, and recovery uses the existing replay command.",
       "references": [
         "references/tracker-sync.md"
       ]

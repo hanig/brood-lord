@@ -50,6 +50,14 @@ the coordinator receives the linear_sync.py operator's report rather than making
 network read itself. Synchronization must not be claimed without its read time <!-- declaration: tracker.attestation -->
 and source. <!-- declaration: tracker.attestation -->
 
+## Rate-limit stop <!-- declaration: drain.authority -->
+
+All network commands (drain, file, replay, issue new, issue edit, issue replay, bind and audit) stop on the first HTTP 429 or GraphQL RATELIMITED response, including GraphQL errors on HTTP 400 or 200. They make no further request, never retry and never sleep. Exit 4 is reserved only for this stop. The one-line diagnostic names the rate limit, reset time (UTC or unknown), unreached count, INCOMPLETE and request count. <!-- declaration: drain.authority -->
+
+Retry-After supplies nonnegative delay seconds or an HTTP date; X-RateLimit-Requests-Reset supplies epoch milliseconds. A malformed or absent Retry-After falls back to the reset header; with neither usable the reset is unknown. Every network command reports Client.requests, counting failed transport calls too; a refusal before any request reports zero. <!-- declaration: drain.authority -->
+
+Unreached means known subjects not yet entered in the current phase, excluding the interrupted subject. Counts may change between resolution and application phases; they do not count all unconfirmed effects or subjects not yet discovered by a paginated read. A stopped audit is incomplete, never clean. Read-back remains required for receipts and operation confirmation; an interrupted operation stays open and its printed operation ID can be replayed later. <!-- declaration: drain.authority -->
+
 ## Outbox acknowledgments
 
 Unit state remains authoritative when tracker access fails. A tracker outage
