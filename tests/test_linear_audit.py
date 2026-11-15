@@ -1039,7 +1039,7 @@ class TestAudit(AuditCase):
                 with mock.patch.dict(os.environ, env, clear=True):
                     self.assertEqual(self.cli(*args), result.returncode)
                 self.assertEqual(self.stdout, result.stdout)
-                self.assertEqual(self.stderr, result.stderr)
+                self.assertEqual(self.stderr_raw, result.stderr)
         self.assertFalse((self.root / '.hanig/linear-binding.json').exists())
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(API, 'load_key') as load:
             self.assertEqual(self.cli(*commands[-1]), 0)
