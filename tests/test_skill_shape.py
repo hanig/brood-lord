@@ -394,6 +394,7 @@ REFERENCE_ELABORATION_INVENTORIES = {
         ("references/operating-loop.md", "dispatch.mechanics", 1),
         ("references/operating-loop.md", "loop.advance", 1),
         ("references/operating-loop.md", "loop.quiescence", 1),
+        ("references/operating-loop.md", "loop.yield", 1),
         ("references/operating-loop.md", "merge.requirements", 2),
         ("references/operating-loop.md", "code.merge-command", 2),
         ("references/operating-loop.md", "limit.merge-command", 2),
@@ -406,7 +407,7 @@ REFERENCE_ELABORATION_INVENTORIES = {
         ("references/operating-loop.md", "tracker.drain", 3),
         ("references/operating-loop.md", "tracker.reconcile", 1),
         ("references/operating-loop.md", "watch.facts", 1),
-        ("references/operating-loop.md", "watch.proof", 1),
+        ("references/operating-loop.md", "watch.proof", 2),
         ("references/operating-loop.md", "watch.source", 1),
     ),
 }
