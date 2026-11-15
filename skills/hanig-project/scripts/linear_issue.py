@@ -627,6 +627,7 @@ def source_endpoints(spec, client, sync, absent=()):
 
 
 def apply(spec, path, client, sync, initial=None, handler=None):
+    client.unreached = len(spec['issues'])
     is_confirmed = confirmed(path)
     def step(value, current=None):
         log_step(path, value)
@@ -642,7 +643,6 @@ def apply(spec, path, client, sync, initial=None, handler=None):
     if initial is None:
         endpoints = source_endpoints(spec, client, sync, [iid for iid, issue in live.items() if issue is None])
     wrote_issue = False
-    client.unreached = len(spec['issues'])
     for row in spec['issues']:
         client.unreached -= 1
         iid = row['id']
@@ -781,6 +781,7 @@ def run(args, client, sync):
     path = record_path(workspace, project, op)
     if replay:
         spec = load_record(path)
+        client.unreached = len(spec['issues'])
         if (spec['operation'] != op or spec['workspace'] != workspace or spec['project'] != project or
                 spec['team'] != team or spec['repository'] != config.get('repository')):
             raise ValueError('operation binding mismatch')
@@ -797,6 +798,7 @@ def run(args, client, sync):
             # Prepare once under the shared lock and reuse the covered graph.
             # Fresh refusals still leave no operation record or progress.
             spec, warnings, reader = prepare(args, client, sync, identity, op)
+            client.unreached = len(spec['issues'])
             for warning in warnings:
                 print(API.redact('warning: ' + json.dumps(warning), client._key))
             live, identities = read_managed(spec, sync, client, False, None, reader)

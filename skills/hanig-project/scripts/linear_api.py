@@ -60,11 +60,17 @@ def reset_time(headers):
                 stamp = float(value) / 1000
             else:
                 try:
-                    stamp = time.time() + int(value)
+                    delay = int(value)
+                    if delay < 0:
+                        raise ValueError('negative Retry-After')
+                    stamp = time.time() + delay
                 except ValueError:
-                    stamp = parsedate_to_datetime(value).timestamp()
+                    date = parsedate_to_datetime(value)
+                    if date.tzinfo is None:
+                        date = date.replace(tzinfo=dt.timezone.utc)
+                    stamp = date.timestamp()
             return dt.datetime.fromtimestamp(stamp, dt.timezone.utc).isoformat()
-        except (ValueError, TypeError, OverflowError, OSError):
+        except (ValueError, TypeError, OverflowError, OSError, IndexError):
             pass
     return None
 
