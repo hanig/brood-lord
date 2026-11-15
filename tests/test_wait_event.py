@@ -242,6 +242,49 @@ class WaitEvent(unittest.TestCase):
     self.assertFalse(self.snap.exists())
     self.assertIn("STATE ", self.cli("--once").stdout)
 
+  def test_filesystem_alias(self):
+    alias = self.root / "alias"
+    alias.symlink_to(self.d, target_is_directory=True)
+    (self.d / "swarm-state.json").write_text('{"units":{}}')
+    resolve = Path.resolve
+    def mount_path(path, *args, **kwargs):
+      # Safe bind-mount equivalent: alias paths keep their lexical spelling,
+      # while actual reads, writes and samefile use the shared directory.
+      return path if alias == path or alias in path.parents else resolve(path, *args, **kwargs)
+    with mock.patch.object(Path, "resolve", mount_path), self.assertRaises(SystemExit) as stopped:
+      self.invoke("--once", "--snapshot", str(alias / "swarm-state.json"))
+    self.assertEqual((self.d / "swarm-state.json").read_text(), '{"units":{}}')
+    self.assertEqual(stopped.exception.code, 2)
+
+  def test_umask(self):
+    mask = os.umask(0o777)
+    try:
+      result = self.cli("--once")
+    finally:
+      os.umask(mask)
+    self.assertEqual(result.returncode, 3, result.stderr)
+    self.assertEqual(stat.S_IMODE(self.snap.stat().st_mode), 0o600)
+    self.put(self.d, "DONE")
+    self.assertEqual(self.cli("--once").returncode, 0)
+
+  def test_duplicate_names(self):
+    other = self.root / "other" / self.d.name
+    other.mkdir(parents=True)
+    self.put(other, "DONE")
+    args = ("--once", "--state-dir", str(other))
+    self.assertEqual(self.cli(*args).returncode, 3)
+    self.put(self.d, "DONE")
+    result = self.cli(*args)
+    self.assertEqual(result.returncode, 0, result.stderr)
+    self.assertIn(str(self.d), result.stdout)
+
+  def test_snapshot_failure_after_output(self):
+    self.put(self.d, "READY_FOR_PR")
+    with mock.patch.object(wait_event, "write_snapshot", side_effect=OSError("synthetic snapshot failure")):
+      code, out, _ = self.invoke("--once")
+    self.assertEqual(code, 2)
+    self.assertEqual(out, "", "Failed persistence must not deliver an event that will repeat")
+
 
 if __name__ == "__main__":
   unittest.main()

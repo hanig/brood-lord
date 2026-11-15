@@ -57,6 +57,7 @@ def write_snapshot(path, record):
   fd, name = tempfile.mkstemp(prefix=".wait-event-", dir=str(path.parent))
   try:
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
+      os.fchmod(handle.fileno(), 0o600)
       json.dump(record, handle, sort_keys=True)
       handle.write("\n")
     os.replace(name, str(path))
@@ -93,6 +94,16 @@ def observe(directories, snapshot, warned):
   return events, readable
 
 
+def inside(path, directory):
+  for parent in (path,) + tuple(path.parents):
+    try:
+      if parent.samefile(directory):
+        return True
+    except OSError:
+      pass
+  return False
+
+
 def main(argv=None):
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--state-dir", required=True, action="append", type=Path)
@@ -109,7 +120,7 @@ def main(argv=None):
     path = (args.snapshot or (directories[0].parent / "wait-event-snapshot.json")).resolve()
   except (OSError, RuntimeError) as exc:
     parser.error(str(exc))
-  if any(path == directory or directory in path.parents or
+  if any(path == directory or directory in path.parents or inside(path, directory) or
          path == source_path(directory / "swarm-state.json") for directory in directories):
     parser.error("snapshot must be outside every state directory")
   deadline = None if args.timeout is None else time.monotonic() + args.timeout
@@ -125,10 +136,10 @@ def main(argv=None):
           if args.json:
             print(json.dumps(event), flush=True)
           else:
-            print("{} {} {} {}: {} -> {}".format(
+            print("{} {} {} {}: {} -> {} [{}]".format(
               event["event"], event["observed"],
               *[" ".join(str(event[k]).splitlines()) for k in
-                ("directory", "unit", "previous", "state")]), flush=True)
+                ("directory", "unit", "previous", "state", "state_dir")]), flush=True)
         end = local_time()
         if args.json:
           print(json.dumps(dict(event="END", observed=end, lines=len(events))), flush=True)
