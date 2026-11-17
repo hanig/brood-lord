@@ -148,6 +148,12 @@ class ReviewerOutputBudgets(unittest.TestCase):
                     "PRE-EMPTIVE: %r" % (reviewer["name"], note[:60]),
                 )
 
+    def test_unmoved_unknown_price_records_remain_explicit(self):
+        for name in ("terra", "haiku-5.5"):
+            with self.subTest(reviewer=name):
+                seat = next(r for r in self.reviewers if r["name"] == name)
+                self.assertIsNone(seat["_cost"])
+
     def test_the_rule_is_stated_in_the_file_it_governs(self):
         rule = self.config.get("_output_budget_rule")
         self.assertIsInstance(
