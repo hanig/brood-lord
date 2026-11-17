@@ -177,7 +177,7 @@ class TestTheRoutingDecisionItEncodes(unittest.TestCase):
         self.providers = json.loads(TEMPLATE.read_text())["providers"]
 
     def test_six_series_routing_retains_the_separate_driver(self):
-        self.assertEqual(self.providers["impl"], "codex/gpt-6-astra")
+        self.assertEqual(self.providers["impl"], "codex/gpt-6.2-sol")
         for role in ("research", "audit"):
             self.assertEqual(self.providers[role], "codex/gpt-6-luna")
         models = {m["id"]: m for m in json.loads(MODELS.read_text())["models"]}
@@ -188,6 +188,16 @@ class TestTheRoutingDecisionItEncodes(unittest.TestCase):
             self.assertIsNone(model["coding_index"])
             self.assertEqual(model["_previous_release_measurements"]["date"],
                              "2026-08")
+
+    def test_62_registry_and_effort_intent_are_declared(self):
+        cfg = json.loads(TEMPLATE.read_text())
+        note = next(p for p in cfg["preferences"] if p.startswith("2026-11-17:"))
+        models = {m["id"]: m for m in json.loads(MODELS.read_text())["models"]}
+        for name in ("codex/gpt-6.2-sol", "codex/gpt-6.2-astra"):
+            self.assertIn(name + " at high", note)
+            self.assertIn("2026-11-17", models[name]["notes"])
+            self.assertIsNone(models[name]["intelligence_index"])
+            self.assertIsNone(models[name]["coding_index"])
 
     def test_the_author_does_not_review_itself(self):
         """Verbatim from the decision: sol coordinates and integrates, and
