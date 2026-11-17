@@ -224,6 +224,16 @@ class TestCommitteeTiebreak(unittest.TestCase):
     }
 
     def setUp(self):
+        # Fixed model fixtures keep generic exclusion tests independent of pins.
+        roster = committee.R.load_reviewers()
+        for seat in roster:
+            if seat["name"] in ("astra", "astra-tiebreak"):
+                seat["model"] = "gpt-6-astra"
+            elif seat["name"] in ("sol", "sol-tiebreak"):
+                seat["model"] = "gpt-6.1-sol"
+        routing = mock.patch.object(committee.R, "load_reviewers", return_value=roster)
+        routing.start()
+        self.addCleanup(routing.stop)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
@@ -703,6 +713,16 @@ class TestCommitteeTiebreak(unittest.TestCase):
 
 class TestCommitteeAuthorMembers(unittest.TestCase):
     def setUp(self):
+        # Fixed model fixtures keep generic exclusion tests independent of pins.
+        roster = committee.R.load_reviewers()
+        for seat in roster:
+            if seat["name"] in ("astra", "astra-tiebreak"):
+                seat["model"] = "gpt-6-astra"
+            elif seat["name"] in ("sol", "sol-tiebreak"):
+                seat["model"] = "gpt-6.1-sol"
+        routing = mock.patch.object(committee.R, "load_reviewers", return_value=roster)
+        routing.start()
+        self.addCleanup(routing.stop)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)

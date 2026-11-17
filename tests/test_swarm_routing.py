@@ -29,10 +29,10 @@ TYPES = (
 
 
 class TestRoutingExtraction(unittest.TestCase):
-    def test_default_code_author_is_sol61_high(self):
-        self.assertEqual(SR.PINNED_AGENT_PROVIDER, "codex/gpt-6.1-sol")
+    def test_default_code_author_is_sol62_high(self):
+        self.assertEqual(SR.PINNED_AGENT_PROVIDER, "codex/gpt-6.2-sol")
         self.assertEqual(SR.default_thinking_for({}), "high")
-        self.assertEqual(SR.PINNED_THINKING_BY_MODEL["codex/gpt-6.1-sol"], "high")
+        self.assertEqual(SR.PINNED_THINKING_BY_MODEL["codex/gpt-6.2-sol"], "high")
 
     def test_every_moved_definition_is_reexported_identically(self):
         for module, names in ((SR, ROUTING_FUNCTIONS + ROUTING_DATA), (ST, TYPES)):
