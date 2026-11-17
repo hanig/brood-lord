@@ -878,19 +878,19 @@ class TestReaders(StateHome):
     def test_one_thinking_rule_for_resolver_reader_and_swarm(self):
         import swarm as S
         default = {"provider": "codex/gpt-6.1-sol", "thinking": "medium"}
-        table = {"codex/gpt-6.1-sol": "high", "codex/gpt-6.2-sol": "xhigh"}
-        self.assertEqual(MF.agent_thinking(default, table, "codex/gpt-6.2-sol"), "xhigh")
+        table = {"codex/gpt-6.1-sol": "high", "codex/gpt-6.3-sol": "xhigh"}
+        self.assertEqual(MF.agent_thinking(default, table, "codex/gpt-6.3-sol"), "xhigh")
         self.assertEqual(MF.agent_thinking(default, table, "codex/gpt-6.2-astra"), "high")
         self.assertEqual(MF.agent_thinking(default, {}, "codex/gpt-6.2-astra"), "medium")
         family = shipped()[1]["default"]["family"]
         default = dict(default, family=family)
-        entry = lambda thinking: {"provider": "codex/gpt-6.2-sol", "probe": {
-            "Provider": "codex", "Model": "gpt-6.2-sol", "Thinking": thinking}}
+        entry = lambda thinking: {"provider": "codex/gpt-6.3-sol", "probe": {
+            "Provider": "codex", "Model": "gpt-6.3-sol", "Thinking": thinking}}
         self.assertIsNone(MF.agent_default_override(default, table, entry("high")))
         self.assertEqual(MF.agent_default_override(default, table, entry("xhigh")),
-                         "codex/gpt-6.2-sol")
+                         "codex/gpt-6.3-sol")
         agents = json.loads(json.dumps(shipped()[1]))
-        agents["thinking_by_model"]["codex/gpt-6.2-sol"] = "xhigh"
+        agents["thinking_by_model"]["codex/gpt-6.3-sol"] = "xhigh"
         fake = Path(self.tmp.name) / "agents.json"
         fake.write_text(json.dumps(agents))
         digests = MF.config_digests(R.CONFIG, fake)
@@ -903,7 +903,7 @@ class TestReaders(StateHome):
                 mock.patch.object(SR, "THINKING_BY_MODEL", dict(table_before)), \
                 redirect_stderr(io.StringIO()):
             self.assertEqual(S.apply_agent_resolution(self.project / "plan.json"),
-                             "codex/gpt-6.2-sol")
+                             "codex/gpt-6.3-sol")
             self.assertEqual(S.default_thinking_for({}), "xhigh")
 
     def test_swarm_resolution_never_outlives_its_plan(self):
@@ -1110,7 +1110,7 @@ class TestResolveEndToEnd(StateHome):
     def test_shipped_astra_seats_resolve_independently_and_committee_keeps_pin(self):
         # Exhaustive three-seat enumeration: both Astra seats and the Sol author.
         roster = shipped()[0]
-        listings = dict(self.LISTINGS, openai=["gpt-6.1-astra", "gpt-6.2-sol"])
+        listings = dict(self.LISTINGS, openai=["gpt-6.3-astra", "gpt-6.3-sol"])
         def record(seat, candidate, timeout):
             return ({"model": candidate, "provider": seat["provider"],
                      "effort": seat["effort"], "max_output_tokens": 128000,
@@ -1129,15 +1129,15 @@ class TestResolveEndToEnd(StateHome):
         snapshot = json.loads(Path(json.loads(out.getvalue())["snapshot"]).read_text())
         self.assertEqual(set(snapshot["reviewers"]), {"astra", "astra-tiebreak", "sol"})
         effective, _ = MF.apply_to_reviewers(roster, self.digests, start=self.project)
-        for name, model in (("astra", "gpt-6.1-astra"),
-                            ("astra-tiebreak", "gpt-6.1-astra"),
-                            ("sol", "gpt-6.2-sol")):
+        for name, model in (("astra", "gpt-6.3-astra"),
+                            ("astra-tiebreak", "gpt-6.3-astra"),
+                            ("sol", "gpt-6.3-sol")):
             self.assertEqual(next(r for r in effective if r["name"] == name)["model"], model)
         import committee
         with mock.patch.object(committee.R, "load_reviewers", return_value=roster):
             seat, error = committee.tiebreaker()
         self.assertIsNone(error)
-        self.assertEqual((seat["name"], seat["model"]), ("astra-tiebreak", "gpt-6-astra"))
+        self.assertEqual((seat["name"], seat["model"]), ("astra-tiebreak", "gpt-6.2-astra"))
 
     def test_native_catalog_resolution_is_admitted_by_the_review_reader(self):
         listings = dict(self.LISTINGS, anthropic=[
@@ -1310,12 +1310,12 @@ class TestResolveEndToEnd(StateHome):
         self.assertFalse(inside.exists())
 
     def test_the_agent_default_is_probed_at_its_effective_thinking(self):
-        listings = dict(self.LISTINGS, **{"paseo:codex": ["gpt-6-astra", "gpt-6.2-sol"]})
+        listings = dict(self.LISTINGS, **{"paseo:codex": ["gpt-6-astra", "gpt-6.3-sol"]})
         agents = shipped()[1]
-        want = agents["thinking_by_model"]["codex/gpt-6.1-sol"]
+        want = agents["thinking_by_model"][agents["default"]["provider"]]
         argv = ["resolve_models.py", "--project", str(self.project), "--json",
                 "--only", "agent-default"]
-        probe = mock.Mock(return_value=({"Provider": "codex", "Model": "gpt-6.2-sol",
+        probe = mock.Mock(return_value=({"Provider": "codex", "Model": "gpt-6.3-sol",
                                          "Thinking": want}, None))
         with mock.patch.object(sys, "argv", argv), \
                 mock.patch.object(RM, "list_ids", side_effect=lambda l, t: listings[l]), \
@@ -1323,9 +1323,9 @@ class TestResolveEndToEnd(StateHome):
                 redirect_stdout(io.StringIO()) as out:
             with self.assertRaises(SystemExit):
                 RM.main()
-        self.assertEqual(probe.call_args.args[:3], ("codex", "gpt-6.2-sol", want))
+        self.assertEqual(probe.call_args.args[:3], ("codex", "gpt-6.3-sol", want))
         snapshot = json.loads(Path(json.loads(out.getvalue())["snapshot"]).read_text())
-        self.assertEqual(snapshot["agent_default"]["provider"], "codex/gpt-6.2-sol")
+        self.assertEqual(snapshot["agent_default"]["provider"], "codex/gpt-6.3-sol")
 
     def test_a_failed_write_keeps_this_projects_previous_snapshot(self):
         self.run_resolver()

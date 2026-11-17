@@ -125,8 +125,8 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
         roster = {r["name"]: r for r in R.load_reviewers()}
         for name, model, effort in (("luna", "gpt-6-luna", "max"),
                                     ("terra", "gpt-6.1-terra", "xhigh"),
-                                    ("astra", "gpt-6-astra", "xhigh"),
-                                    ("sol", "gpt-6.1-sol", "xhigh")):
+                                    ("astra", "gpt-6.2-astra", "xhigh"),
+                                    ("sol", "gpt-6.2-sol", "xhigh")):
             with self.subTest(reviewer=name), \
                     patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}), \
                     patch.object(R, "_post", return_value=({
@@ -169,16 +169,16 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
             "luna": ("openai", "gpt-6-luna", "max"),
             "terra": ("openai", "gpt-6.1-terra", "xhigh"),
             "haiku-5.5": ("anthropic", "claude-haiku-5-5", "high"),
-            "astra": ("openai", "gpt-6-astra", "xhigh"),
+            "astra": ("openai", "gpt-6.2-astra", "xhigh"),
             "kimi-k3": ("openrouter", "moonshotai/kimi-k3", "xhigh"),
             "gemini-argon": ("openrouter", "google/gemini-4-argon", "xhigh"),
             "muse-wonder": ("openrouter", "meta/muse-wonder", "high"),
             "kimi-k2.7-code": ("openrouter", "moonshotai/kimi-k2.7-code", None),
             "sonnet-5.5": ("anthropic", "claude-sonnet-5-5", "high"),
             "deepseek-v4-pro": ("openrouter", "deepseek/deepseek-v4-pro", None),
-            "sol": ("openai", "gpt-6.1-sol", "xhigh"),
-            "astra-tiebreak": ("openai", "gpt-6-astra", "xhigh"),
-            "sol-tiebreak": ("openai", "gpt-6.1-sol", "xhigh"),
+            "sol": ("openai", "gpt-6.2-sol", "xhigh"),
+            "astra-tiebreak": ("openai", "gpt-6.2-astra", "xhigh"),
+            "sol-tiebreak": ("openai", "gpt-6.2-sol", "xhigh"),
         }
         self.assertEqual({r["name"]: (r["provider"], r["model"], r["effort"])
                           for r in R.load_reviewers()}, expected)
@@ -270,7 +270,7 @@ class TestChangedPathProfiles(unittest.TestCase):
 
     def invoke(self, *flags, failing=False, unavailable=False):
         argv = [str(REVIEW), "--kind", "implementation", "--round", "1",
-                "--claim", R.HONEST_RUN_CLAIM, "--author", "codex/gpt-6-astra",
+                "--claim", R.HONEST_RUN_CLAIM, "--author", "codex/gpt-6.2-astra",
                 *flags]
         called = []
 
@@ -525,6 +525,13 @@ class TestAuthorExclusion(unittest.TestCase):
                     "findings": [], "claims": [], "elapsed_s": 0}
 
         roster = R.load_reviewers() if roster is None else roster
+        # Generic exclusion fixtures retain their original model IDs.
+        roster = [dict(r) for r in roster]
+        for seat in roster:
+            if seat["name"] in ("sol", "sol-tiebreak"):
+                seat["model"] = "gpt-6.1-sol"
+            elif seat["name"] in ("astra", "astra-tiebreak"):
+                seat["model"] = "gpt-6-astra"
         stdout, stderr = io.StringIO(), io.StringIO()
         with patch.object(sys, "argv", argv), \
                 patch.object(R, "load_reviewers", return_value=roster), \
