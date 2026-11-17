@@ -263,7 +263,7 @@
    "_profiles_note": "2026-11-06: gains deep and leaves planning. Sol now writes the code; an author does not review or tiebreak its own work. Astra leaves planning so its tiebreak seat cannot rule among its own committee members.",
    "enabled": true,
    "max_output_tokens": 128000,
-   "_max_output_tokens": "MEASURED 2026-11-17 through review.PROVIDERS at xhigh and 128000 cap; tiebreak repeats the same-model preflight. Prior acceptance is history.",
+   "_max_output_tokens": "MEASURED 2026-11-17 via review.PROVIDERS, xhigh/128000. Tiebreak repeats the same-model probe.",
    "_max_output_tokens_history": [
    {
     "date": "2026-10-13",
@@ -289,8 +289,8 @@
     }
    ],
    "_note": "2026-11-06: gains deep and leaves planning. Sol now writes the code; an author does not review or tiebreak its own work. Astra leaves planning so its tiebreak seat cannot rule among its own committee members.",
-   "_max_output_tokens_accepted": {"date": "2026-11-17", "max_output_tokens": 128000, "provider": "openai", "model": "gpt-6.2-astra", "effort": "xhigh", "outcome": "completed", "input_tokens": 1072, "output_tokens": 317, "reasoning_tokens": 200, "response_id": "resp_013e1bbb233ffbe3006afcad60160c87d0bf39d232f2431829", "observed_in": "review.PROVIDERS preflight; served model gpt-6.2-astra; observed 2026-11-17T19:39:11.431342+00:00"},
-   "_release_note": "2026-11-17: frozen reviewer corpus v2 e0536b0e4a8b99d1; three trials per seat passed the pre-registered rule. Bench: 57 of 57 reviews per new seat completed at xhigh and 128000 cap. 6.2 list prices are not published."
+   "_max_output_tokens_accepted": {"date": "2026-11-17", "max_output_tokens": 128000, "provider": "openai", "model": "gpt-6.2-astra", "effort": "xhigh", "outcome": "completed", "input_tokens": 1072, "output_tokens": 317, "reasoning_tokens": 200, "response_id": "resp_013e1bbb233ffbe3006afcad60160c87d0bf39d232f2431829", "observed_in": "review.PROVIDERS; observed 2026-11-17T19:39:11.431342+00:00"},
+   "_release_note": "2026-11-17: corpus v2 e0536b0e4a8b99d1 passed pre-registered rule. Bench: 57/57 completed at xhigh/128000. 6.2 list prices are not published."
   },
   {
    "name": "sol",
@@ -310,7 +310,7 @@
    ],
    "enabled": true,
    "max_output_tokens": 128000,
-   "_max_output_tokens": "MEASURED 2026-11-17 through review.PROVIDERS at xhigh and 128000 cap; tiebreak repeats the same-model preflight. Prior acceptance is history.",
+   "_max_output_tokens": "MEASURED 2026-11-17 via review.PROVIDERS, xhigh/128000. Tiebreak repeats the same-model probe.",
    "_max_output_tokens_history": [
    {
     "date": "2026-09-30",
@@ -349,8 +349,8 @@
     }
    ],
    "_note": "2026-11-06: Sol now writes the code at codex/gpt-6.1-sol high. Keeps deep at xhigh; author exclusion removes it from every unit it wrote. An author does not review or tiebreak its own work; astra gains deep and astra-tiebreak replaces sol-tiebreak.",
-   "_max_output_tokens_accepted": {"date": "2026-11-17", "max_output_tokens": 128000, "provider": "openai", "model": "gpt-6.2-sol", "effort": "xhigh", "outcome": "completed", "input_tokens": 1072, "output_tokens": 541, "reasoning_tokens": 498, "response_id": "resp_00804164c03538e1006afcad666ad087d0af5544855ecff968", "observed_in": "review.PROVIDERS preflight; served model gpt-6.2-sol; observed 2026-11-17T19:39:17.802380+00:00"},
-   "_release_note": "2026-11-17: frozen reviewer corpus v2 e0536b0e4a8b99d1; three trials per seat passed the pre-registered rule. Bench: 57 of 57 reviews per new seat completed at xhigh and 128000 cap. 6.2 list prices are not published."
+   "_max_output_tokens_accepted": {"date": "2026-11-17", "max_output_tokens": 128000, "provider": "openai", "model": "gpt-6.2-sol", "effort": "xhigh", "outcome": "completed", "input_tokens": 1072, "output_tokens": 541, "reasoning_tokens": 498, "response_id": "resp_00804164c03538e1006afcad666ad087d0af5544855ecff968", "observed_in": "review.PROVIDERS; observed 2026-11-17T19:39:17.802380+00:00"},
+   "_release_note": "2026-11-17: corpus v2 e0536b0e4a8b99d1 passed pre-registered rule. Bench: 57/57 completed at xhigh/128000. 6.2 list prices are not published."
   },
   {
    "name": "astra-tiebreak",
@@ -370,7 +370,7 @@
    ],
    "enabled": true,
    "max_output_tokens": 128000,
-   "_max_output_tokens": "MEASURED 2026-11-17 through review.PROVIDERS at xhigh and 128000 cap; tiebreak repeats the same-model preflight. Prior acceptance is history.",
+   "_max_output_tokens": "MEASURED 2026-11-17 via review.PROVIDERS, xhigh/128000. Tiebreak repeats the same-model probe.",
    "_max_output_tokens_history": [
    {
     "date": "2026-10-13",
@@ -387,8 +387,8 @@
    }
    ],
    "_note": "2026-11-06: replaces sol-tiebreak because Sol now writes the code, and an author does not review or tiebreak its own work. Separate from planning and committee.",
-   "_max_output_tokens_accepted": {"date": "2026-11-17", "max_output_tokens": 128000, "provider": "openai", "model": "gpt-6.2-astra", "effort": "xhigh", "outcome": "completed", "input_tokens": 1072, "output_tokens": 317, "reasoning_tokens": 200, "response_id": "resp_013e1bbb233ffbe3006afcad60160c87d0bf39d232f2431829", "observed_in": "review.PROVIDERS preflight; served model gpt-6.2-astra; observed 2026-11-17T19:39:11.431342+00:00"},
-   "_release_note": "2026-11-17: frozen reviewer corpus v2 e0536b0e4a8b99d1; three trials per seat passed the pre-registered rule. Bench: 57 of 57 reviews per new seat completed at xhigh and 128000 cap. 6.2 list prices are not published."
+   "_max_output_tokens_accepted": {"date": "2026-11-17", "max_output_tokens": 128000, "provider": "openai", "model": "gpt-6.2-astra", "effort": "xhigh", "outcome": "completed", "input_tokens": 1072, "output_tokens": 317, "reasoning_tokens": 200, "response_id": "resp_013e1bbb233ffbe3006afcad60160c87d0bf39d232f2431829", "observed_in": "review.PROVIDERS; observed 2026-11-17T19:39:11.431342+00:00"},
+   "_release_note": "2026-11-17: corpus v2 e0536b0e4a8b99d1 passed pre-registered rule. Bench: 57/57 completed at xhigh/128000. 6.2 list prices are not published."
   },
   {
    "name": "sol-tiebreak",
@@ -409,7 +409,7 @@
    "enabled": false,
    "_note": "Disabled 2026-11-06: Sol now writes the code, and an author does not review or tiebreak its own work. Replaced by astra-tiebreak.",
    "max_output_tokens": 128000,
-   "_max_output_tokens": "MEASURED 2026-11-17 through review.PROVIDERS at xhigh and 128000 cap; tiebreak repeats the same-model preflight. Prior acceptance is history.",
+   "_max_output_tokens": "MEASURED 2026-11-17 via review.PROVIDERS, xhigh/128000. Tiebreak repeats the same-model probe.",
    "_max_output_tokens_history": [
    {
     "date": "2026-09-30",
@@ -425,8 +425,8 @@
     "observed_in": "2026-09-30 owner switch to gpt-6.1-sol; review._post to the Responses API with review.SYSTEM and input: Reply with exactly OK.; completed with response model gpt-6.1-sol. Timestamp is UTC; measures budget acceptance, not capacity for every review."
    }
    ],
-   "_max_output_tokens_accepted": {"date": "2026-11-17", "max_output_tokens": 128000, "provider": "openai", "model": "gpt-6.2-sol", "effort": "xhigh", "outcome": "completed", "input_tokens": 1072, "output_tokens": 541, "reasoning_tokens": 498, "response_id": "resp_00804164c03538e1006afcad666ad087d0af5544855ecff968", "observed_in": "review.PROVIDERS preflight; served model gpt-6.2-sol; observed 2026-11-17T19:39:17.802380+00:00"},
-   "_release_note": "2026-11-17: frozen reviewer corpus v2 e0536b0e4a8b99d1; three trials per seat passed the pre-registered rule. Bench: 57 of 57 reviews per new seat completed at xhigh and 128000 cap. 6.2 list prices are not published."
+   "_max_output_tokens_accepted": {"date": "2026-11-17", "max_output_tokens": 128000, "provider": "openai", "model": "gpt-6.2-sol", "effort": "xhigh", "outcome": "completed", "input_tokens": 1072, "output_tokens": 541, "reasoning_tokens": 498, "response_id": "resp_00804164c03538e1006afcad666ad087d0af5544855ecff968", "observed_in": "review.PROVIDERS; observed 2026-11-17T19:39:17.802380+00:00"},
+   "_release_note": "2026-11-17: corpus v2 e0536b0e4a8b99d1 passed pre-registered rule. Bench: 57/57 completed at xhigh/128000. 6.2 list prices are not published."
   },
   {
    "name": "gemini-argon",
