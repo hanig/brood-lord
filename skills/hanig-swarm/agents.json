@@ -11,7 +11,7 @@
    "suffix": "-sol",
    "major": 6
   },
-  "_evidence": "Code-author canary 2026-11-17: `paseo run --provider codex --model gpt-6.2-sol --thinking high` with an API-key Codex home inspected as Provider codex, Model gpt-6.2-sol, Thinking high, and answered `SOL62-OK`. A ChatGPT-account Codex home refuses gpt-6.2-sol (\"not supported when using Codex with a ChatGPT account\"); per-agent Codex homes already use the API key. Code authoring quality is not benchmarked; the canary establishes dispatch only. Default moves with the review seat to keep exact-id author exclusion effective."
+  "_evidence": "2026-11-17 canary: `paseo run --provider codex --model gpt-6.2-sol --thinking high` with an API-key Codex home inspected as Provider codex, Model gpt-6.2-sol, Thinking high, and answered `SOL62-OK`. ChatGPT-account homes refuse (\"not supported when using Codex with a ChatGPT account\"); per-agent homes already use the API key. Dispatch only; authoring quality unbenchmarked."
  },
  "thinking_by_model": {
   "codex/gpt-6-astra": "high",
