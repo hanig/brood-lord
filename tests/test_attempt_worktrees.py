@@ -187,7 +187,7 @@ class TestPerAttemptWorktrees(unittest.TestCase):
         seen = []
         # Load a fresh owner module through its real initialization. The JSON
         # loader is the only changed input; no derived default is patched.
-        for index, provider in enumerate(("codex/gpt-6.1-sol", "codex/fixture-987", "claude/fixture-988")):
+        for index, provider in enumerate(("codex/gpt-6.2-sol", "codex/fixture-987", "claude/fixture-988")):
             data = (real_loads(original) if index == 0 else
                     {"default": {"provider": provider, "thinking": "high"},
                      "thinking_by_model": {provider: "high"}})
