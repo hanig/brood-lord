@@ -126,7 +126,6 @@
     "planning"
    ],
    "enabled": true,
-   "_cost": null,
    "_cost_note": "Unknown at 2026-10-28; no recorded Terra price.",
    "max_output_tokens": 128000,
    "_max_output_tokens": "MEASURED in bench, not preflight; counts below describe one reply.",
@@ -291,7 +290,6 @@
    ],
    "_note": "2026-11-06: gains deep and leaves planning. Sol now writes the code; an author does not review or tiebreak its own work. Astra leaves planning so its tiebreak seat cannot rule among its own committee members.",
    "_max_output_tokens_accepted": {"date": "2026-11-17", "max_output_tokens": 128000, "provider": "openai", "model": "gpt-6.2-astra", "effort": "xhigh", "outcome": "completed", "input_tokens": 1072, "output_tokens": 317, "reasoning_tokens": 200, "response_id": "resp_013e1bbb233ffbe3006afcad60160c87d0bf39d232f2431829", "observed_in": "review.PROVIDERS preflight; served model gpt-6.2-astra; observed 2026-11-17T19:39:11.431342+00:00"},
-   "_cost": null,
    "_release_note": "2026-11-17: frozen reviewer corpus v2 e0536b0e4a8b99d1; three trials per seat passed the pre-registered rule. Bench: 57 of 57 reviews per new seat completed at xhigh and 128000 cap. 6.2 list prices are not published."
   },
   {
@@ -350,7 +348,6 @@
      "observed_in": "gate run, routing/astra-drives measurement pass, --only sol --quorum 1, 61.0s, 5844 in"
     }
    ],
-   "_cost": null,
    "_note": "2026-11-06: Sol now writes the code at codex/gpt-6.1-sol high. Keeps deep at xhigh; author exclusion removes it from every unit it wrote. An author does not review or tiebreak its own work; astra gains deep and astra-tiebreak replaces sol-tiebreak.",
    "_max_output_tokens_accepted": {"date": "2026-11-17", "max_output_tokens": 128000, "provider": "openai", "model": "gpt-6.2-sol", "effort": "xhigh", "outcome": "completed", "input_tokens": 1072, "output_tokens": 541, "reasoning_tokens": 498, "response_id": "resp_00804164c03538e1006afcad666ad087d0af5544855ecff968", "observed_in": "review.PROVIDERS preflight; served model gpt-6.2-sol; observed 2026-11-17T19:39:17.802380+00:00"},
    "_release_note": "2026-11-17: frozen reviewer corpus v2 e0536b0e4a8b99d1; three trials per seat passed the pre-registered rule. Bench: 57 of 57 reviews per new seat completed at xhigh and 128000 cap. 6.2 list prices are not published."
@@ -391,7 +388,6 @@
    ],
    "_note": "2026-11-06: replaces sol-tiebreak because Sol now writes the code, and an author does not review or tiebreak its own work. Separate from planning and committee.",
    "_max_output_tokens_accepted": {"date": "2026-11-17", "max_output_tokens": 128000, "provider": "openai", "model": "gpt-6.2-astra", "effort": "xhigh", "outcome": "completed", "input_tokens": 1072, "output_tokens": 317, "reasoning_tokens": 200, "response_id": "resp_013e1bbb233ffbe3006afcad60160c87d0bf39d232f2431829", "observed_in": "review.PROVIDERS preflight; served model gpt-6.2-astra; observed 2026-11-17T19:39:11.431342+00:00"},
-   "_cost": null,
    "_release_note": "2026-11-17: frozen reviewer corpus v2 e0536b0e4a8b99d1; three trials per seat passed the pre-registered rule. Bench: 57 of 57 reviews per new seat completed at xhigh and 128000 cap. 6.2 list prices are not published."
   },
   {
@@ -430,7 +426,6 @@
    }
    ],
    "_max_output_tokens_accepted": {"date": "2026-11-17", "max_output_tokens": 128000, "provider": "openai", "model": "gpt-6.2-sol", "effort": "xhigh", "outcome": "completed", "input_tokens": 1072, "output_tokens": 541, "reasoning_tokens": 498, "response_id": "resp_00804164c03538e1006afcad666ad087d0af5544855ecff968", "observed_in": "review.PROVIDERS preflight; served model gpt-6.2-sol; observed 2026-11-17T19:39:17.802380+00:00"},
-   "_cost": null,
    "_release_note": "2026-11-17: frozen reviewer corpus v2 e0536b0e4a8b99d1; three trials per seat passed the pre-registered rule. Bench: 57 of 57 reviews per new seat completed at xhigh and 128000 cap. 6.2 list prices are not published."
   },
   {
@@ -491,7 +486,6 @@
     "suffix": "",
     "major": 5
    },
-   "_cost": null,
    "_cost_note": "Unmeasured: models.json contains no Anthropic Haiku price list.",
    "_note": "Owner decision 2026-10-12: replaces sonnet-5.5 in fast through native Anthropic. Orchestrator change 2026-11-03 under the owner's standing delegation: high replaces that decision's max effort. In two of two small-diff reviews (unit e-m-inline-markers, rounds 1 and 2), the model used all 128000 output tokens on reasoning and emitted no review, giving REVIEW_INCOMPLETE.",
    "_max_output_tokens": "MEASURED through review.PROVIDERS with review.SYSTEM and input ping at the configured effort and 128000 cap. Establishes budget acceptance and usable output, not capacity for every review.",
