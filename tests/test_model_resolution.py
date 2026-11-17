@@ -878,17 +878,19 @@ class TestReaders(StateHome):
     def test_one_thinking_rule_for_resolver_reader_and_swarm(self):
         import swarm as S
         default = {"provider": "codex/gpt-6.1-sol", "thinking": "medium"}
-        table = {"codex/gpt-6.1-sol": "high", "codex/gpt-6.3-sol": "xhigh"}
-        self.assertEqual(MF.agent_thinking(default, table, "codex/gpt-6.3-sol"), "xhigh")
+        table = {"codex/gpt-6.1-sol": "high", "codex/gpt-6.2-sol": "xhigh"}
+        self.assertEqual(MF.agent_thinking(default, table, "codex/gpt-6.2-sol"), "xhigh")
         self.assertEqual(MF.agent_thinking(default, table, "codex/gpt-6.2-astra"), "high")
         self.assertEqual(MF.agent_thinking(default, {}, "codex/gpt-6.2-astra"), "medium")
         family = shipped()[1]["default"]["family"]
         default = dict(default, family=family)
-        entry = lambda thinking: {"provider": "codex/gpt-6.3-sol", "probe": {
-            "Provider": "codex", "Model": "gpt-6.3-sol", "Thinking": thinking}}
+        entry = lambda thinking: {"provider": "codex/gpt-6.2-sol", "probe": {
+            "Provider": "codex", "Model": "gpt-6.2-sol", "Thinking": thinking}}
         self.assertIsNone(MF.agent_default_override(default, table, entry("high")))
         self.assertEqual(MF.agent_default_override(default, table, entry("xhigh")),
-                         "codex/gpt-6.3-sol")
+                         "codex/gpt-6.2-sol")
+        entry = lambda thinking: {"provider": "codex/gpt-6.3-sol", "probe": {
+            "Provider": "codex", "Model": "gpt-6.3-sol", "Thinking": thinking}}
         agents = json.loads(json.dumps(shipped()[1]))
         agents["thinking_by_model"]["codex/gpt-6.3-sol"] = "xhigh"
         fake = Path(self.tmp.name) / "agents.json"
