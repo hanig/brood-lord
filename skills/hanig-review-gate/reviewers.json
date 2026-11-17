@@ -126,6 +126,7 @@
     "planning"
    ],
    "enabled": true,
+   "_cost": null,
    "_cost_note": "Unknown at 2026-10-28; no recorded Terra price.",
    "max_output_tokens": 128000,
    "_max_output_tokens": "MEASURED in bench, not preflight; counts below describe one reply.",
@@ -486,6 +487,7 @@
     "suffix": "",
     "major": 5
    },
+   "_cost": null,
    "_cost_note": "Unmeasured: models.json contains no Anthropic Haiku price list.",
    "_note": "Owner decision 2026-10-12: replaces sonnet-5.5 in fast through native Anthropic. Orchestrator change 2026-11-03 under the owner's standing delegation: high replaces that decision's max effort. In two of two small-diff reviews (unit e-m-inline-markers, rounds 1 and 2), the model used all 128000 output tokens on reasoning and emitted no review, giving REVIEW_INCOMPLETE.",
    "_max_output_tokens": "MEASURED through review.PROVIDERS with review.SYSTEM and input ping at the configured effort and 128000 cap. Establishes budget acceptance and usable output, not capacity for every review.",
