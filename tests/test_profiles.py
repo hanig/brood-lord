@@ -524,14 +524,13 @@ class TestAuthorExclusion(unittest.TestCase):
             return {"name": reviewer["name"], "ok": True, "verdict": "upheld",
                     "findings": [], "claims": [], "elapsed_s": 0}
 
-        roster = R.load_reviewers() if roster is None else roster
-        # Generic exclusion fixtures retain their original model IDs.
-        roster = [dict(r) for r in roster]
-        for seat in roster:
-            if seat["name"] in ("sol", "sol-tiebreak"):
-                seat["model"] = "gpt-6.1-sol"
-            elif seat["name"] in ("astra", "astra-tiebreak"):
-                seat["model"] = "gpt-6-astra"
+        if roster is None:
+            roster = R.load_reviewers()
+            for seat in roster:
+                if seat["name"] in ("sol", "sol-tiebreak"):
+                    seat["model"] = "gpt-6.1-sol"
+                elif seat["name"] in ("astra", "astra-tiebreak"):
+                    seat["model"] = "gpt-6-astra"
         stdout, stderr = io.StringIO(), io.StringIO()
         with patch.object(sys, "argv", argv), \
                 patch.object(R, "load_reviewers", return_value=roster), \
@@ -667,6 +666,18 @@ class TestAuthorExclusion(unittest.TestCase):
                 self.assertEqual(code, R.STATES["REVIEW_ERROR"])
                 self.assertIn("PROVIDER/MODEL", err)
                 self.assertEqual(called, [])
+
+    def test_roster(self):
+        _, out, _, called = self.invoke(
+            "--profile", "deep", "--author", "codex/gpt-6.2-sol",
+            "--json", roster=R.load_reviewers())
+        self.assertNotIn("sol", called)
+        self.assertIn("sol", [r["name"] for r in json.loads(out)["excluded"]])
+
+    def test_shipped_author(self):
+        author = json.loads((ROOT / "skills/hanig-swarm/agents.json").read_text())["default"]["provider"]
+        _, excluded = R.exclude_authors(R.load_reviewers(), R.author_model_ids([author]))
+        self.assertTrue({"sol", "sol-tiebreak"} <= {r["name"] for r in excluded})
 
 
 if __name__ == "__main__":
