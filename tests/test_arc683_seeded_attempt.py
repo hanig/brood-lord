@@ -453,7 +453,7 @@ class SeedDispatchTests(unittest.TestCase):
 class UnseededCompatibilityTests(unittest.TestCase):
     def test_base_intent_prompt_and_plan_golden_digests(self):
         # Nondeterministic observations fixed; schema-6 intent recaptured for
-        # author_history, then the 2026-11-06 default-author routing change.
+        # author_history, then the 2026-11-17 6.2 default-author routing change.
         # Only intent.provider changes; the plan retains its prior exact golden.
         unit = {"id": "code", "kind": "code", "repo": "/seed-compat/repo",
                 "target_branch": "main", "prompt": "Repair the implementation.",
@@ -479,16 +479,16 @@ class UnseededCompatibilityTests(unittest.TestCase):
         self.assertNotIn("seed", intent)
         encoded = json.dumps(intent, sort_keys=True, separators=(",", ":")).encode()
         self.assertEqual(hashlib.sha256(encoded).hexdigest(),
-                         "6d33128fca751532b66dbdcf9f2ad7c23bb5c524946b35fc1e7f32d43e9aa9fa")
+                         "3dc2e6354ccd8632f29cd0f0f0dda15df7f2dc6cf13433cc18a48cf1b557681d")
         legacy = dict(intent, schema_version=5)
         self.assertEqual(legacy.pop("author_history"), [])
         self.assertEqual(hashlib.sha256(json.dumps(
             legacy, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
-                         "36f790e93fa13224fcdb21ef26f0df39ffba0fc1f69bfbae4d950d5d28e52215")
+                         "978eec05d93163a32e80c5447b0a4277fbb12c25363ce1e3644076e597075769")
         # Prompt golden re-captured from this test for the bounded repair-loop
         # protocol, including its task-contradiction exception.
         self.assertEqual(hashlib.sha256(S._dispatch_prompt(unit, intent).encode()).hexdigest(),
-                         "2d5b232effc7948adb15a4a83f18dff8dbe658418705c8825004f962f59c2957")
+                         "eea045f3c4e2ec1cb157cb940754bb7b51b2c671dcd7107254a7de56f74f89f2")
         self.assertEqual(S.plan_digest({"name": "seed-compat", "units": [unit]}),
                          "55ce911fb07620734d54da3b6ef9cde709df04d099bc7d7ffd66aaf2d24db93a")
 
