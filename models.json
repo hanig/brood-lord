@@ -84,6 +84,8 @@
       "cost_tier": "unmeasured",
       "quota": "OpenAI API review; Codex/Paseo dispatch unmeasured",
       "notes": "Owner decision 2026-10-28: standard/deep review; reviewers.json is the effort authority and currently sets xhigh. Bench and family in reviewers.json. Price and dispatch unmeasured."
-    }
+    },
+    {"id": "codex/gpt-6.2-sol", "label": "GPT-6.2 Sol", "intelligence_index": null, "intelligence_index_source": "6.2 indexes not measured here", "coding_index": null, "modalities": ["text", "image"], "cost_tier": "unmeasured", "quota": "API-key Codex home required", "notes": "2026-11-17: corpus v2 e0536b0e4a8b99d1, three trials per seat, passed pre-registered rule. Recall 19/51 versus 14/51; controls 0/9; unavailable 0/57. API-key canary inspected Provider codex, Model gpt-6.2-sol, Thinking high, answered SOL62-OK. Dispatch only; authoring quality unbenchmarked. 6.2 list prices are not published."},
+    {"id": "codex/gpt-6.2-astra", "label": "GPT-6.2 Astra", "intelligence_index": null, "intelligence_index_source": "6.2 indexes not measured here", "coding_index": null, "modalities": ["text"], "cost_tier": "unmeasured", "quota": "Codex dispatch unmeasured", "notes": "2026-11-17: corpus v2 e0536b0e4a8b99d1, three trials per seat, passed pre-registered rule. Recall 28/51 versus 12/51 (discordant 16:0, p = 3.1e-05); controls 0/9; unavailable 0/57. Sol 6.2 code-author canary is recorded in agents.json; Astra 6.2 code dispatch unmeasured. 6.2 list prices are not published."}
   ]
 }

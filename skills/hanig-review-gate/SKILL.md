@@ -56,11 +56,11 @@ plan review would have rejected.
 ## The author does not judge their own work
 
 Declare every author with repeatable `--author PROVIDER/MODEL`, for example
-`--author codex/gpt-6.1-sol`. The gate removes matching models from fixed,
+`--author codex/gpt-6.2-sol`. The gate removes matching models from fixed,
 explicit `--only`, and escalated panels and names each removal, such as
 `sol excluded: authored this change`. It compares the complete model ID after
 the first slash exactly, independent of transport provider: Codex's
-`codex/gpt-6.1-sol` matches the `openai` reviewer model `gpt-6.1-sol`, and
+`codex/gpt-6.2-sol` matches the `openai` reviewer model `gpt-6.2-sol`, and
 `openrouter/moonshotai/kimi-k2.7-code` retains the nested model ID. Model
 substrings, case variants, and seat names are not model matches. If exclusion
 leaves too few eligible reviewers for quorum (including a fresh-cycle floor),
@@ -171,7 +171,7 @@ with `--stop-and-ask REASON`, which refuses without calling a provider and is
 retained in the session. Semantic classification otherwise rests on the model
 and an honest caller; a ruling supplies analysis, never additional authority.
 An unavailable, empty, truncated or malformed answer routes to OWNER (exit 1)
-with a persisted reason. Any Astra coauthor (`--author codex/gpt-6-astra`, also
+with a persisted reason. Any Astra coauthor (`--author codex/gpt-6.2-astra`, also
 recognized by its legacy bare model and configured aliases) refuses the
 tie-break using the same model exclusion rule as membership. Missing or conflicting author
 declarations also route to the owner; existing sessions can declare their author
@@ -200,7 +200,7 @@ It grants no merge authority and never changes a recorded verdict: `REVIEW_FAIL`
 python3 "$HANIG_REVIEW_GATE_DIR/scripts/review.py" --open-findings --head SHA
 python3 "$HANIG_REVIEW_GATE_DIR/scripts/review.py" --adjudicate FINDING_DIGEST \
   --head SHA --accepted-by OWNER_OR_ORCHESTRATOR --reason "Evidence and rationale" \
-  --decision overruled --author codex/gpt-6.1-sol
+  --decision overruled --author codex/gpt-6.2-sol
 ```
 
 Both commands are offline and emit JSON. Review input flags, including `--file`,
@@ -304,7 +304,7 @@ newly eligible reviewers. Use `--list --profile NAME` to inspect a fixed panel.
 
 A failing change costs its starting tier when that tier reaches quorum.
 Pass
-`--author codex/gpt-6.1-sol` for a change Sol authored: the gate excludes Sol
+`--author codex/gpt-6.2-sol` for a change Sol authored: the gate excludes Sol
 even at `deep`, provided the remaining independent panel can reach quorum. This matters more than it
 sounds: across six review rounds on this repo, **every single one failed**, and
 running the full panel each time paid the slowest, dearest reviewer to re-find
