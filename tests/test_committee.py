@@ -748,7 +748,7 @@ class TestCommitteeAuthorMembers(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertEqual(calls, 3)
         members = committee.load_session("authors")["members"]
-        self.assertEqual(set(members), {"terra", "gemini-argon", "muse-wonder"})
+        self.assertEqual(set(members), {"terra", "gemini-neon", "muse-wonder"})
         code, output, calls = self.invoke("ask", "--prompt", "Clarify the design")
         self.assertEqual(code, 0, output)
         self.assertEqual(calls, 3)
@@ -760,7 +760,7 @@ class TestCommitteeAuthorMembers(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertEqual(calls, 3)
         self.assertEqual(set(committee.load_session("authors")["members"]),
-                         {"deepseek-v4-pro", "gemini-argon", "sonnet-5.5"})
+                         {"deepseek-v4-pro", "gemini-neon", "sonnet-5.5"})
 
     def test_explicit_members_override_planning_profile(self):
         code, output, calls = self.invoke(
@@ -803,9 +803,9 @@ class TestCommitteeAuthorMembers(unittest.TestCase):
 
     def test_planning_profile_cannot_seat_its_author(self):
         code, _output, calls = self.invoke(
-            "open", "--profile", "planning", "--author", "openrouter/google/gemini-4-argon",
+            "open", "--profile", "planning", "--author", "openrouter/google/gemini-4-neon",
             "--problem", "Which design?")
-        self.assertIn("gemini-argon refused: authored this change", str(code))
+        self.assertIn("gemini-neon refused: authored this change", str(code))
         self.assertEqual(calls, 0)
         self.assertFalse(committee.session_path("authors").exists())
 
@@ -820,8 +820,8 @@ class TestCommitteeAuthorMembers(unittest.TestCase):
 
     def test_default_committee_cannot_seat_its_author(self):
         code, _output, calls = self.invoke(
-            "open", "--author", "openrouter/google/gemini-4-argon", "--problem", "Order?")
-        self.assertIn("gemini-argon refused: authored this change", str(code))
+            "open", "--author", "openrouter/google/gemini-4-neon", "--problem", "Order?")
+        self.assertIn("gemini-neon refused: authored this change", str(code))
         self.assertEqual(calls, 0)
 
     def test_repeated_author_exclusion_is_not_last_flag_wins(self):

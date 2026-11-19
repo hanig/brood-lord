@@ -149,8 +149,8 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
             "standard": {"terra", "kimi-k2.7-code", "sonnet-5.5"},
             "deep": {"terra", "kimi-k2.7-code", "sonnet-5.5", "sol", "astra"},
             "plan": {"luna", "kimi-k3"},
-            "planning": {"terra", "gemini-argon", "muse-wonder"},
-            "committee": {"deepseek-v4-pro", "gemini-argon", "sonnet-5.5"},
+            "planning": {"terra", "gemini-neon", "muse-wonder"},
+            "committee": {"deepseek-v4-pro", "gemini-neon", "sonnet-5.5"},
             "tiebreak": {"astra-tiebreak"},
         }
         for profile, names in expected.items():
@@ -158,6 +158,9 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
                 self.assertEqual({r["name"] for r in roster
                                   if r.get("enabled", True)
                                   and R.in_profile(r, profile)}, names)
+        argon = next(r for r in roster if r["name"] == "gemini-argon")
+        self.assertIs(argon["enabled"], False)
+        self.assertEqual(argon["profiles"], [])
         seen = set()
         for tier in R.LADDER:
             cumulative = seen | expected[tier]
@@ -172,6 +175,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
             "astra": ("openai", "gpt-6.2-astra", "xhigh"),
             "kimi-k3": ("openrouter", "moonshotai/kimi-k3", "xhigh"),
             "gemini-argon": ("openrouter", "google/gemini-4-argon", "xhigh"),
+            "gemini-neon": ("openrouter", "google/gemini-4-neon", "high"),
             "muse-wonder": ("openrouter", "meta/muse-wonder", "high"),
             "kimi-k2.7-code": ("openrouter", "moonshotai/kimi-k2.7-code", None),
             "sonnet-5.5": ("anthropic", "claude-sonnet-5-5", "high"),
@@ -185,7 +189,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
 
     def test_new_seats_reach_the_real_provider_payload_builders(self):
         roster = {r["name"]: r for r in R.load_reviewers()}
-        for name in ("gemini-argon", "haiku-5.5", "kimi-k3", "muse-wonder"):
+        for name in ("gemini-argon", "gemini-neon", "haiku-5.5", "kimi-k3", "muse-wonder"):
             seat = roster[name]
             with self.subTest(seat=name), patch.dict(os.environ, {
                     "OPENROUTER_API_KEY": "test-key",
@@ -205,7 +209,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
         import committee
         members = committee.pick_members([], profile="planning")
         self.assertEqual({m["name"] for m in members},
-                         {"terra", "gemini-argon", "muse-wonder"})
+                         {"terra", "gemini-neon", "muse-wonder"})
         self.assertEqual(len(members), 3)
         self.assertEqual({m["provider"] for m in members},
                          {"openai", "openrouter"})
@@ -234,7 +238,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
         import committee
         members = committee.pick_members([], authors=["codex/gpt-6-astra"])
         self.assertEqual({m["name"] for m in members},
-                         {"deepseek-v4-pro", "gemini-argon", "sonnet-5.5"})
+                         {"deepseek-v4-pro", "gemini-neon", "sonnet-5.5"})
         self.assertEqual(len(members), 3)
         self.assertEqual({m["provider"] for m in members},
                          {"openrouter", "anthropic"})
