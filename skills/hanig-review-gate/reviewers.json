@@ -6,9 +6,9 @@
   "fast": "luna and haiku-5.5; cheapest implementation panel, the first tier of --escalate (owner decision 2026-10-12).",
   "standard": "terra, kimi-k2.7-code and sonnet-5.5; the usual fixed implementation panel. Escalating from fast retains its verdicts and adds these three seats.",
   "deep": "2026-11-06: standard + sol + astra. Final --escalate tier or fixed --profile deep. Sol now writes the code; an author does not review or tiebreak its own work, so author exclusion removes sol on Sol-authored units.",
-  "committee": "committee.py members, separate from gate profiles. Owner decision 2026-10-13: deepseek-v4-pro, gemini-argon and sonnet-5.5, three model makers. DeepSeek sits in no gate profile.",
+  "committee": "committee.py members, separate from gate profiles. Owner decision 2026-10-13: deepseek-v4-pro, gemini-argon and sonnet-5.5, three model makers. DeepSeek sits in no gate profile.\n2026-11-18: deepseek-v4-pro, gemini-neon and sonnet-5.5.",
   "tiebreak": "2026-11-06: astra-tiebreak, the ONE enabled reviewer whose profiles are exactly [\"tiebreak\"]. Selected by profile, never name or model. Sol now writes the code; an author does not review or tiebreak its own work. sol-tiebreak is disabled.",
-  "planning": "2026-11-06: gemini-argon, muse-wonder and terra (orchestrator amendment: OpenRouter and OpenAI providers). Astra leaves planning and gains deep and tiebreak seats because Sol now writes the code; an author does not review or tiebreak its own work. The tiebreak seat must not rule among its own committee members."
+  "planning": "2026-11-06: gemini-argon, muse-wonder and terra (orchestrator amendment: OpenRouter and OpenAI providers). Astra leaves planning and gains deep and tiebreak seats because Sol now writes the code; an author does not review or tiebreak its own work. The tiebreak seat must not rule among its own committee members.\n2026-11-18: gemini-neon, muse-wonder and terra."
  },
  "reviewers": [
   {
@@ -435,11 +435,8 @@
    "model": "google/gemini-4-argon",
    "effort": "xhigh",
    "max_output_tokens": 128000,
-   "enabled": true,
-   "profiles": [
-    "committee",
-    "planning"
-   ],
+   "enabled": false,
+   "profiles": [],
    "family": {
     "listing": "openrouter",
     "vendor": "google",
@@ -453,7 +450,7 @@
     "in": 2.0,
     "out": 10.0
    },
-   "_note": "Owner decision 2026-10-13: replaces Muse Wonder at xhigh because the coordinator benchmark through review.build_prompt and review.run_one on three historical diffs matched its major a1c redaction catch, missed all three r3 ledger defects and raised no false positive on clean s2, with faster answers at $0.07-0.14 versus $0.28-0.44 per review, while high upheld every claim including both defective diffs; this named version stays on its exact pin with no automatic point-release adoption.",
+   "_note": "Owner decision 2026-10-13: replaces Muse Wonder at xhigh because the coordinator benchmark through review.build_prompt and review.run_one on three historical diffs matched its major a1c redaction catch, missed all three r3 ledger defects and raised no false positive on clean s2, with faster answers at $0.07-0.14 versus $0.28-0.44 per review, while high upheld every claim including both defective diffs; this named version stays on its exact pin with no automatic point-release adoption.\n2026-11-18: replaced by gemini-neon in committee and planning after Neon at high passed the pre-registered bench rule.",
    "_max_output_tokens": "MEASURED through review.PROVIDERS with review.SYSTEM and input ping at the configured effort and 128000 cap. Establishes budget acceptance and usable output, not capacity for every review.",
    "_max_output_tokens_accepted": {
     "date": "2026-10-13",
@@ -467,6 +464,46 @@
     "reasoning_tokens": 176,
     "response_id": "gen-1791912024-m0Yq0pRcYFcPPHy62ILo",
     "observed_in": "g2-committee-argon live preflight via zsh -ic and review.PROVIDERS; observed 2026-10-13T17:20:28.134896+00:00"
+   }
+  },
+  {
+   "name": "gemini-neon",
+   "provider": "openrouter",
+   "model": "google/gemini-4-neon",
+   "effort": "high",
+   "max_output_tokens": 128000,
+   "enabled": true,
+   "profiles": [
+    "committee",
+    "planning"
+   ],
+   "family": {
+    "listing": "openrouter",
+    "vendor": "google",
+    "prefix": "gemini-4-",
+    "separator": ".",
+    "suffix": "",
+    "major": 0,
+    "named_version": "neon"
+   },
+   "_cost": {
+    "in": 3.0,
+    "out": 15.0
+   },
+   "_note": "2026-11-18: corpus v2 e0536b0e4a8b99d1 passed the pre-registered rule at effort high, with 57 of 57 reviews completed at the 128000 cap. At effort xhigh, 36 of 57 failed with no content under the upstream 65,536-token output cap, so this seat uses high.",
+   "_max_output_tokens": "MEASURED through review.PROVIDERS with review.SYSTEM and input ping at effort high and the 128000 cap. The request completed with usable output.",
+   "_max_output_tokens_accepted": {
+    "date": "2026-11-19",
+    "max_output_tokens": 128000,
+    "provider": "openrouter",
+    "model": "google/gemini-4-neon",
+    "effort": "high",
+    "outcome": "completed",
+    "input_tokens": 1134,
+    "output_tokens": 320,
+    "reasoning_tokens": 284,
+    "response_id": "gen-1795059824-jZ3cfc9UoB0suXz8rek0",
+    "observed_in": "review.PROVIDERS with review.SYSTEM and input \"ping\"; served model google/gemini-4-neon; observed 2026-11-19T03:43:44.166397+00:00"
    }
   },
   {
