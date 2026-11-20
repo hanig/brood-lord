@@ -89,6 +89,8 @@ class TestDocumentedReviewCommands(unittest.TestCase):
         return subprocess.check_output(['git', *args], stderr=subprocess.STDOUT).decode().strip()
 
     def invoke(self, argv):
+        argv = [v.replace('PROVIDER/MEMBER_', 'openai/MEMBER_', 1)
+                if v.startswith('PROVIDER/MEMBER_') else v for v in argv]
         self.sequence += 1
         state = self.root / ('state-' + str(self.sequence))
         calls = []

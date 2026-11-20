@@ -645,14 +645,14 @@ def substantive(value):
     return isinstance(value, str) and bool(value.strip())
 
 
-def tiebreaker(roster=None):
+def tiebreaker():
     """The single enabled reviewer whose ONLY profile is `tiebreak`.
 
     Chosen from reviewers.json, never by name or model: which model breaks
     ties is routing data. Anything but exactly one such seat is a
     misconfiguration, and the split goes to the owner.
     """
-    seats = [r for r in (R.load_reviewers() if roster is None else roster)
+    seats = [r for r in R.load_reviewers()
              if r.get("enabled", True) and r.get("profiles") == ["tiebreak"]]
     if len(seats) != 1:
         return None, ("tie-breaker unavailable or misconfigured: reviewers.json "
@@ -663,10 +663,10 @@ def tiebreaker(roster=None):
 
 def tiebreak(args, session, inputs):
     record = {"kind": "tiebreak", "inputs": inputs}
-    roster = R.load_reviewers()
-    primary, error = tiebreaker(roster)
+    primary, error = tiebreaker()
     if error:
         return finish_decision(args, session, record, "OWNER", error)
+    roster = R.load_reviewers()
     authors = author_models(inputs["author"], roster)
     voters = {R._panels.seat_identity(voter) for rec in session["members"].values()
               for voter in rec.get("voters", [rec])}

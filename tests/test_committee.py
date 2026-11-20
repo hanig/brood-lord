@@ -330,7 +330,8 @@ class TestCommitteeTiebreak(unittest.TestCase):
         self.assertEqual(len(self.calls), 2)
 
     def test_real_tiebreak_reserve_excludes_primary_author_and_prior_voter(self):
-        primary = committee.tiebreaker(self.shipped)[0]
+        primary = next(r for r in self.shipped if r["profiles"] == ["tiebreak"]
+                       and r["enabled"])
 
         def ask_reserve(*_, **_kwargs):
             selection = committee.load_session("split").get("tiebreak_selection", {})
