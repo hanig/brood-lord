@@ -119,6 +119,12 @@ so a symlink alias is one destination rather than two writes.
 | Grok Build | `$HOME/.grok/skills` is preferred. Config evidence: `$HOME/.grok`. | `grok --version` | [xAI skills docs](https://docs.x.ai/build/features/skills-plugins-marketplaces); native invocation and probe timing unverified |
 | Antigravity | `$HOME/.gemini/config/skills` is the global install root. Workspace `.agents/skills` is declared in `adapters()`; user-level discovery resolves only the global root. | `agy --version` | [Google Antigravity skill locations](https://antigravity.google/docs/skills); adapter uncertified |
 
+An Antigravity command may run in a sandbox that denies process inspection.
+A denied D5 anchor check returns Unknown (narrow mode). Death requires
+positive evidence. Codex and Antigravity can hold D5 custody only when
+launched through `bin/brood-host` and after the owner's mandate amendment
+merges. See the [D5 integration guide](d5-integration.md).
+
 `CODEX_HOME` is intentionally not used to relocate `$HOME/.agents/skills`.
 The latter is a user-home shared root; the former is Codex's legacy config
 root. `OPENCODE_CONFIG_DIR` is intentionally additive: OpenCode's current

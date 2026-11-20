@@ -853,7 +853,7 @@ plus `--json`, without provider configuration or network calls. Size results are
 not review verdicts. Plan code units to keep the complete PR below the budget.
 
 Panel snapshot measured 2026-10-30 at `c2556ad4`. Current routing comes from
-the `enabled`, `profiles` and `effort` fields in
+the `enabled`, `profiles`, `effort` and `reserves` fields in
 [`reviewers.json`](skills/hanig-review-gate/reviewers.json), not this table:
 
 | profile | measured membership and effort | use |
@@ -867,9 +867,14 @@ Owner decision 2026-10-19 put Luna in plan with Kimi K3. The 2026-10-28
 changes seated Terra in standard and deep and then set its effort to `xhigh`,
 leaving Luna in fast and plan. Kimi K2.7 Code's `null` effort is deliberate;
 the measurement behind it, output caps, dated acceptance probes, committee
-profiles and tie-break routing live in `reviewers.json`. An escalation retains
-earlier results and adds only newly eligible reviewers at each tier. Pass every
-author's provider/model ID with `--author`.
+profiles, ordered reserves and tiebreak routing live in `reviewers.json`.
+Pass every author's provider/model ID with repeatable `--author`. The review
+gate excludes the same canonical model maker and exact model leaf across
+transports, including a transport resolved through a roster model or pin.
+A profile-selected review draws on eligible reserves if author exclusion
+breaks quorum or plan maker contrast. An escalation retains earlier results
+and adds newly eligible reviewers at each tier. Both `--escalate` and
+`--only` skip reserve substitution.
 
 #### Model families
 
@@ -926,15 +931,22 @@ only (endpoint, model id, effort, profile membership) and deliberately no
 quality scores, because a stale ranking is worse than none. Availability is
 probed live by `--list`; a key being set is not availability.
 
-`committee.py` is the other half of this skill: a persistent two- or three-member
-committee that plans, then reviews its own plan's implementation
-(`open`, `ask`, `review`, `show`). It is modelled on Shreshth's
-`paseo-committee`. `committee.py open --profile NAME` selects enabled members;
-the default is `committee` for step-backs. `planning` serves the forthcoming
-hanig-project design step separately because authors cannot join their own
-committee. Explicit `--member` overrides the profile. Every profile requires
-two or three members, at least two providers and no authors. Unknown or empty
-profile selections refuse. Later commands retain the session's members.
+`committee.py` keeps a persistent two- or three-member committee that plans,
+then reviews its own plan's implementation (`open`, `ask`, `review`, `show`).
+`open --profile NAME` selects enabled members. The default `committee` profile
+is for step-backs, and `planning` is a separate profile. Committees use the same
+canonical author exclusion as the review gate. When exclusion removes a
+profile member, `open` searches ordered reserve combinations for a panel of
+the original size with distinct model identities, at least two makers, and
+at least two providers. If it cannot restore the panel, it refuses. An
+explicit `--member` selection overrides the profile and skips substitution.
+Later commands retain the session's members.
+
+On a split, `synthesize` invokes the same tiebreak as `tiebreak SESSION`.
+It excludes authors and prior voters by canonical identity. If the primary
+is excluded, the first eligible ordered reserve of a different maker from
+the primary can rule. If no eligible tiebreaker remains, the split goes to
+`OWNER`. See [profiles and reserves](skills/hanig-review-gate/reviewers.json).
 
 `PROTOCOL.md` states the full model. The enforceable parts are enforced by
 `review.py` rather than left to memory, because these rules were written down
@@ -1234,6 +1246,13 @@ root, `.agents/skills`, is separate from the global install plan. Cursor,
 Grok Build, and Antigravity remain uncertified. Cursor and Grok's
 same-name collision and symlink semantics are unverified, as is Grok
 consumption of Claude/shared roots. See [discovery details](docs/agent-discovery.md).
+
+An Antigravity command may run in a sandbox that denies process inspection.
+A denied D5 anchor check returns Unknown (narrow mode). Death requires
+positive evidence. Codex and Antigravity can hold D5 custody only when
+launched through `bin/brood-host` and after the owner's mandate amendment
+merges. See the [D5 integration guide](docs/d5-integration.md).
+
 Exact-version certification is reported separately;
 unexercised or stale releases remain `unverified`, with warnings on stderr even
 with `--json`. Selection alone is not a compatibility or invocation pass.

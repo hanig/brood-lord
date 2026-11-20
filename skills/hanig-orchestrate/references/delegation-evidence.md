@@ -39,7 +39,7 @@ Owner decision 2026-10-28 replaces Luna with Terra in standard/deep; its price i
 
 `committee`: deepseek-v4-pro, gemini-neon, sonnet-5.5.
 
-`committee.py` picks the tie-breaker from reviewers.json by profile: the one enabled reviewer whose profile list is exactly `["tiebreak"]`. That is astra-tiebreak since 2026-11-06. Sol now writes code; Astra takes the independent review and tiebreak seats, and sol-tiebreak is disabled. Planning is gemini-neon, muse-wonder and terra, with a tiebreak seat independent of its members.
+`committee.py` starts with the one enabled reviewer whose profile list is exactly `["tiebreak"]`. It excludes declared authors and prior voters by canonical model maker and leaf. If the primary is excluded, it checks the ordered tiebreak reserves for an eligible model from a different maker than the primary. If none qualifies, the split goes to `OWNER`. See `reviewers.json` for current profiles and reserves.
 
 Enabled price hints recorded per million tokens are luna input $0.2 and output $1.2; kimi-k2.7-code input $0.67 and output $3.4; sonnet-5.5 input $2.0 and output $10.0; deepseek-v4-pro input $0.87 and output $1.74; sol input $2.0 and output $10.0; and gemini-neon input $3.0 and output $15.0. Astra has no `_cost` record. Haiku pricing is unmeasured because models.json has no Anthropic price list; Kimi K3 also has no measured price hint. <!-- declaration: review.cost -->
 
