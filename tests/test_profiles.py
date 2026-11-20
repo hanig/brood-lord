@@ -649,7 +649,9 @@ class TestAuthorExclusion(unittest.TestCase):
     def test_plan_cannot_drop_its_author_and_pass_with_one(self):
         with patch.object(R, "cmd_plan_review", return_value=0) as plan_review:
             code, output, _err, called = self.invoke(
-                "--author", "codex/gpt-6-luna", kind="plan")
+                "--author", "codex/gpt-6-luna", "--author", "openai/gpt-6.1-terra",
+                "--author", "openrouter/deepseek/deepseek-v4-pro", kind="plan",
+                roster=[r for r in R.load_reviewers() if r["name"] != "sonnet-5.5"])
         self.assertEqual(code, R.STATES["REVIEW_UNAVAILABLE"], output)
         self.assertIn("luna excluded: authored this change", output)
         self.assertIn("author exclusion leaves 1 eligible reviewers", output)
@@ -682,6 +684,28 @@ class TestAuthorExclusion(unittest.TestCase):
         author = json.loads((ROOT / "skills/hanig-swarm/agents.json").read_text())["default"]["provider"]
         _, excluded = R.exclude_authors(R.load_reviewers(), R.author_model_ids([author]))
         self.assertTrue({"sol", "sol-tiebreak"} <= {r["name"] for r in excluded})
+
+
+    def test_real_plan_reserves_restore_both_single_author_panels(self):
+        for author, kept in (("codex/gpt-6-luna", "kimi-k3"),
+                             ("openrouter/moonshotai/kimi-k3", "luna")):
+            with self.subTest(author=author), patch.object(R, "cmd_plan_review",
+                                                           return_value=0) as dispatch:
+                code, output, _, _ = self.invoke("--author", author, kind="plan")
+                self.assertEqual(code, 0, output)
+                self.assertIn("Panel substitution", output)
+                args, panel, *_ = dispatch.call_args.args
+                self.assertEqual([r["name"] for r in panel], [kept, "sonnet-5.5"])
+                self.assertEqual(args.panel_selection["substituted"], ["sonnet-5.5"])
+
+    def test_wrapped_author_excludes_both_seats(self):
+        code, out, _, called = self.invoke(
+            "--only", "astra,astra-tiebreak,luna,kimi-k2.7-code",
+            "--author", "openrouter/openai/gpt-6-astra", "--json")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(set(called), {"luna", "kimi-k2.7-code"})
+        self.assertEqual({r["name"] for r in json.loads(out)["excluded"]},
+                         {"astra", "astra-tiebreak"})
 
 
 if __name__ == "__main__":
