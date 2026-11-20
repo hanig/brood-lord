@@ -140,7 +140,7 @@ show before copying a second copy of the same skill:
 | Pi native root | Pi | Pi's documented source ordering makes later sources win; its current changelog records canonical-path symlink deduplication. |
 | Cursor native root | Cursor | Same-name collision and symlink semantics are `unverified`. |
 | Grok native root | Grok | Same-name collision and symlink semantics are `unverified`. Possible Claude/shared-root consumption is unverified evidence, not a consumer edge. |
-| Antigravity global root | Antigravity | Same-name collision and symlink semantics are `unverified`. The documented workspace-relative `.agents/skills` does not establish consumption of the shared user root `$HOME/.agents/skills`; a global copy there cannot cover Antigravity. |
+| Antigravity global root | Antigravity | Same-name collision and symlink semantics are `unverified`. The documented workspace-relative `.agents/skills` does not establish consumption of the shared user root `$HOME/.agents/skills`. A distinct shared user root does not cover Antigravity in a global install plan. |
 
 OpenCode's fixed-home Claude and `.agents` compatibility stores, and Pi's
 `.agents` store, are represented as actual roots even though they are not every
