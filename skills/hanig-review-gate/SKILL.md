@@ -55,26 +55,28 @@ plan review would have rejected.
 
 ## The author does not judge their own work
 
-Declare every author with repeatable `--author PROVIDER/MODEL`, for example
-`--author codex/gpt-6.2-sol`. The gate removes matching models from fixed,
-explicit `--only`, and escalated panels and names each removal, such as
-`sol excluded: authored this change`. It compares the complete model ID after
-the first slash exactly, independent of transport provider: Codex's
-`codex/gpt-6.2-sol` matches the `openai` reviewer model `gpt-6.2-sol`, and
-`openrouter/moonshotai/kimi-k2.7-code` retains the nested model ID. Model
-substrings, case variants, and seat names are not model matches. If exclusion
-leaves too few eligible reviewers for quorum (including a fresh-cycle floor),
-the gate returns `REVIEW_UNAVAILABLE` before calling any reviewer; it never
-reduces quorum. Author declarations are caller-supplied, not inferred from Git
-or dispatch, so an omitted author is not automatically excluded.
+Both tools take repeatable `--author PROVIDER/MODEL` and exclude by canonical
+identity: model maker and exact model leaf. A vendor-qualified model supplies
+its maker (as in `openrouter/moonshotai/kimi-k3`). For unqualified models,
+Codex, Claude, and Antigravity map to OpenAI, Anthropic, and Google. Other
+transports can resolve through an exact roster model or pin. The gate reports
+exclusions and disables a resolved seat's pin fallback if the pin matches an
+author. Omitted authors remain the caller's responsibility.
 
-Committee `open` accepts the same repeatable flag and refuses a matching
-explicit or default member before calling providers. The author set persists;
-`ask`, `review`, `synthesize`, and `tiebreak` check it on reuse, and accept the
-flag to declare authors on older sessions. A conflicting replacement set is
-refused. Existing bare model IDs and configured seat aliases remain accepted
-by committee for compatibility. A refused legacy session replaces its current
-resolution with `OWNER` while retaining previous decisions as history.
+A profile-selected review uses ordered `reserves` in
+[reviewers.json](reviewers.json) if author exclusion breaks quorum (including
+a fresh-cycle floor) or plan maker contrast. Exhausted reserves can yield
+`REVIEW_UNAVAILABLE` before provider calls. `--only` and `--escalate` skip
+substitution.
+
+A profile-selected committee searches ordered reserve combinations to restore
+the original size with distinct model identities, at least two makers, and
+at least two providers. `open` refuses if no combination qualifies or if an
+explicit `--member` conflicts with an author. The author set persists across
+`ask`, `review`, `synthesize`, and `tiebreak`. Older sessions can declare
+authors on reuse, including legacy bare model IDs and configured seat aliases.
+The committee refuses conflicting author sets. A refused legacy resolution
+records `OWNER` and retains prior decisions in history.
 
 A design's author is the worst judge of whether
 its residual is complete. Asked to fix a recurring problem, one reviewer wrote a
@@ -158,11 +160,17 @@ design is wrong, which is the point of asking.
 
 After challenging the members, run
 `python3 "$HANIG_REVIEW_GATE_DIR/scripts/committee.py" synthesize SESSION --author PROVIDER/MODEL`.
-Convergence produces a unified plan; divergence automatically calls the
-one enabled reviewer whose profiles are exactly `["tiebreak"]` (astra-tiebreak since 2026-11-06; Sol now writes the code).
-For an already identified split, use `tiebreak SESSION --author PROVIDER/MODEL` directly.
-It receives the question and every member's final position verbatim and saves
-a RULING adopting a named position with the deciding evidence, not a fresh plan.
+Convergence produces a unified plan. Divergence invokes the tiebreak path,
+which starts with the single enabled seat whose only profile is `tiebreak`.
+It excludes declared authors and prior voters by canonical model identity.
+If the primary is excluded, it selects the first eligible ordered reserve
+whose maker differs from the primary's. A missing or misconfigured primary
+or an exhausted selection routes to `OWNER`. See [reviewers.json](reviewers.json)
+for the profile and reserve lists.
+
+Use `tiebreak SESSION --author PROVIDER/MODEL` directly for an identified split.
+The selected reviewer gets the question and verbatim final positions and can
+return a `RULING` adopting one position with the deciding evidence.
 
 Both commands read the current `docs/orchestrator-mandate.md` from the project;
 use `--mandate-file PATH` when it lives elsewhere. The mandate's stop-and-ask
@@ -171,12 +179,10 @@ with `--stop-and-ask REASON`, which refuses without calling a provider and is
 retained in the session. Semantic classification otherwise rests on the model
 and an honest caller; a ruling supplies analysis, never additional authority.
 An unavailable, empty, truncated or malformed answer routes to OWNER (exit 1)
-with a persisted reason. Any Astra coauthor (`--author codex/gpt-6.2-astra`, also
-recognized by its legacy bare model and configured aliases) refuses the
-tie-break using the same model exclusion rule as membership. Missing or conflicting author
-declarations also route to the owner; existing sessions can declare their author
-on first use. `show SESSION` displays the current resolution, and a later member
-turn invalidates it while retaining the earlier decision's audit record.
+with a persisted reason. Missing or conflicting author declarations also
+route to the owner. Existing sessions can declare their authors on first use.
+`show SESSION` displays the current resolution, and a later member turn
+invalidates it while retaining the earlier decision's audit record.
 
 ## Argue with findings; do not silently filter them
 
@@ -349,7 +355,7 @@ Parent components in `--file` paths and files outside the review root are
 conservatively undetermined. The chosen tier and reason appear in text and
 JSON output. This is path classification, not an inspection of document contents.
 
-An explicit `--profile plan|fast|standard|deep` always wins: it picks a fixed
+An explicit `--profile plan|fast|standard|deep` always wins: it picks a profile
 panel, or the starting tier with `--escalate`. Plan reviews retain their
 two-model panel, and `--list` without a profile retains the configured default.
 Author exclusion and panel floors apply after tier selection.
@@ -361,7 +367,7 @@ an implementation get different panels and different rules, and leaving it
 implicit is how a design proposal got reviewed by the implementation panel.
 `--plan` is an alias for `--kind plan`. A plan review is validated on the panel
 that will ACTUALLY run, after `--only` and `--profile`: exactly two reviewers,
-on two different providers, quorum 2, never escalated.
+from two different model makers, quorum 2, never escalated.
 
 `--round N` is required with `--kind implementation`. Before a review runs,
 the gate reserves that round for a hashed identity for `--staged`, `--range`,
