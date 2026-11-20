@@ -193,6 +193,26 @@ ADAPTERS: dict[str, dict[str, Any]] = {
         "duplicates": {"same_name": "unverified", "symlink_identity": "unverified",
                        "consumed_by": ["grok"]},
     },
+    "antigravity": {
+        "identity": "Antigravity",
+        "executable": "agy",
+        "certifications": [],
+        "sources": ["https://antigravity.google/docs/skills",
+                    "https://antigravity.google/docs/changelog?tab=cli"],
+        "source_verification": {"release": "unverified", "root_policy": "documented",
+                                "native_discovery": "unverified", "invocation": "unverified"},
+        # The workspace path does not establish unconditional home-root
+        # consumption or let a global install for another agent cover agy.
+        "unverified_consumption": ["~/.agents/skills"],
+        "roots": [
+            {"id": "antigravity-user", "kind": "native", "base": "antigravity", "suffix": "skills",
+             "override": None, "preferred": True},
+            {"id": "antigravity-workspace", "kind": "workspace", "base": "workspace",
+             "suffix": ".agents/skills", "override": None, "preferred": False},
+        ],
+        "duplicates": {"same_name": "unverified", "symlink_identity": "unverified",
+                       "consumed_by": ["antigravity"]},
+    },
 }
 
 # Compatibility summaries for callers; decisions below use the exact version's
@@ -217,6 +237,7 @@ CONSUMER_EDGES = {
     "pi-user": ("pi",),
     "cursor-user": ("cursor",),
     "grok-user": ("grok",),
+    "antigravity-user": ("antigravity",),
 }
 
 DISCOVERY_SCHEMA: dict[str, Any] = {
@@ -345,6 +366,8 @@ def _base(agent: str, env: Mapping[str, str]) -> str:
         return _absolute(env.get("PI_CODING_AGENT_DIR", os.path.join(home, ".pi", "agent")), env)
     if agent in ("cursor", "grok"):
         return _absolute(os.path.join(home, "." + agent), env)
+    if agent == "antigravity":
+        return _absolute(os.path.join(home, ".gemini", "config"), env)
     if agent == "agents":
         return _absolute(os.path.join(home, ".agents"), env)
     raise KeyError(agent)
@@ -368,12 +391,16 @@ def resolve_roots(agent: str, env: Optional[Mapping[str, str]] = None) -> list[d
     """Resolve a supported agent's user roots without creating them.
 
     Each result preserves a logical path and also has ``physical_path`` for
-    destination de-duplication.  Unknown agent IDs raise ``KeyError``.
+    destination de-duplication. Workspace roots are static policy in
+    ``adapters()`` and have no user-level destination. Unknown agent IDs raise
+    ``KeyError``.
     """
     context = _environment(env)
     spec = ADAPTERS[agent]
     result = []
     for root in spec["roots"]:
+        if root["kind"] == "workspace":
+            continue
         logical = _root_path(root, context)
         exists = os.path.isdir(logical)
         result.append({

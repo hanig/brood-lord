@@ -1228,7 +1228,10 @@ succeeds or is slow. Cursor (`cursor-agent`) and Grok Build (`grok`) also qualif
 from `~/.cursor` or `~/.grok` alone, allowing an IDE/config-only host to install.
 Explicit `--agent cursor` and `--agent grok` plan `~/.cursor/skills` and
 `~/.grok/skills`; Cursor can also be covered by an already selected shared
-`~/.agents/skills` destination. Both new adapters remain uncertified; their
+`~/.agents/skills` destination. Antigravity (`agy`) uses
+`--agent antigravity` and plans `~/.gemini/config/skills`. Its workspace
+root, `.agents/skills`, is separate from the global install plan. Cursor,
+Grok Build, and Antigravity remain uncertified. Cursor and Grok's
 same-name collision and symlink semantics are unverified, as is Grok
 consumption of Claude/shared roots. See [discovery details](docs/agent-discovery.md).
 Exact-version certification is reported separately;

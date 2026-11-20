@@ -29,7 +29,7 @@ if str(_CHECKOUT_ROOT) not in sys.path:
     sys.path.insert(0, str(_CHECKOUT_ROOT))
 
 
-SUPPORTED_AGENTS = ("claude", "codex", "opencode", "pi", "cursor", "grok")
+SUPPORTED_AGENTS = ("claude", "codex", "opencode", "pi", "cursor", "grok", "antigravity")
 WORKFLOW_DEPENDENCIES = {
     "hanig-project": ("hanig-swarm",),
     "hanig-orchestrate": (

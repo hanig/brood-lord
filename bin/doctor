@@ -68,6 +68,9 @@ REPO=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 PROBE_SECONDS=2
 RUN_SECONDS=3
 PROBE_RUN_SECONDS=6
+# Agent diagnostics probe executables sequentially. Allow for agy's one-second
+# probe and bounded reap windows without extending the Paseo health deadline.
+AGENT_DIAGNOSTICS_SECONDS=9
 REAP_SECONDS=2
 
 PERL=
@@ -494,9 +497,9 @@ if [ "$DOCTOR_JSON" -eq 1 ]; then
     printf '%s\n' '{"schema_version":1,"state":"unknown","reason":"python3 is unavailable"}'
   else
     if [ "$PREFIX_EXPLICIT" -eq 1 ]; then
-      bounded "$PROBE_RUN_SECONDS" --json-result python3 "$DIAGNOSTICS" --json --claude-prefix "$PREFIX"
+      bounded "$AGENT_DIAGNOSTICS_SECONDS" --json-result python3 "$DIAGNOSTICS" --json --claude-prefix "$PREFIX"
     else
-      bounded "$PROBE_RUN_SECONDS" --json-result python3 "$DIAGNOSTICS" --json
+      bounded "$AGENT_DIAGNOSTICS_SECONDS" --json-result python3 "$DIAGNOSTICS" --json
     fi
     if [ "$PROBE_STATE" = summary-required ]; then
       # Older/minimal Perl may lack JSON::PP; temporary storage can also be
@@ -526,9 +529,9 @@ printf "%s" "$summary" | python3 -c "$validator"
       # Both stages and their inner pipe waits share one deadline and cleanup
       # group. Preserve the former producer-plus-validator run allowance.
       if [ "$PREFIX_EXPLICIT" -eq 1 ]; then
-        bounded "$((PROBE_RUN_SECONDS + RUN_SECONDS))" /bin/sh -c "$SUMMARY_PIPE" doctor-summary "$SUMMARY_VALIDATOR" python3 "$DIAGNOSTICS" --doctor-summary --claude-prefix "$PREFIX"
+        bounded "$((AGENT_DIAGNOSTICS_SECONDS + RUN_SECONDS))" /bin/sh -c "$SUMMARY_PIPE" doctor-summary "$SUMMARY_VALIDATOR" python3 "$DIAGNOSTICS" --doctor-summary --claude-prefix "$PREFIX"
       else
-        bounded "$((PROBE_RUN_SECONDS + RUN_SECONDS))" /bin/sh -c "$SUMMARY_PIPE" doctor-summary "$SUMMARY_VALIDATOR" python3 "$DIAGNOSTICS" --doctor-summary
+        bounded "$((AGENT_DIAGNOSTICS_SECONDS + RUN_SECONDS))" /bin/sh -c "$SUMMARY_PIPE" doctor-summary "$SUMMARY_VALIDATOR" python3 "$DIAGNOSTICS" --doctor-summary
       fi
     fi
     if [ "$PROBE_STATE:$PROBE_RC" = answered:0 ]; then
@@ -938,9 +941,9 @@ elif ! command -v python3 >/dev/null 2>&1; then
   printf '  COULD NOT DETERMINE — python3 is unavailable; run `bin/doctor --json` after installing Python\n'
 else
   if [ "$PREFIX_EXPLICIT" -eq 1 ]; then
-    bounded "$PROBE_RUN_SECONDS" python3 "$DIAGNOSTICS" --claude-prefix "$PREFIX"
+    bounded "$AGENT_DIAGNOSTICS_SECONDS" python3 "$DIAGNOSTICS" --claude-prefix "$PREFIX"
   else
-    bounded "$PROBE_RUN_SECONDS" python3 "$DIAGNOSTICS"
+    bounded "$AGENT_DIAGNOSTICS_SECONDS" python3 "$DIAGNOSTICS"
   fi
   if [ "$PROBE_STATE:$PROBE_RC" = answered:0 ]; then
     printf '  %s\n' "$PROBE_OUT"

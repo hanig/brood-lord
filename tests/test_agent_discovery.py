@@ -105,6 +105,38 @@ def real_discovery(env):
 
 
 class TestAgentDiscovery(unittest.TestCase):
+    def test_antigravity_workspace_root_is_policy_and_never_a_user_destination(self):
+        spec = discovery.adapters()["antigravity"]
+        self.assertIn({
+            "id": "antigravity-workspace", "kind": "workspace", "base": "workspace",
+            "suffix": ".agents/skills", "override": None, "preferred": False,
+        }, spec["roots"])
+        self.assertEqual(spec["certifications"], [])
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            (home / ".agents/skills").mkdir(parents=True)
+            (home / ".gemini/config/skills").mkdir(parents=True)
+            config_only = discovery.discover(fixture_env(home), finder({}))
+            self.assertEqual(config_only["agents"]["antigravity"]["state"], "configured")
+            self.assertFalse(config_only["agents"]["antigravity"]["eligible_for_automatic_target"])
+
+            cli = fake_cli(home, "agy", "import sys\n"
+                           "assert sys.argv[1:] == ['--version']\nprint('1.5.13')")
+            report = discovery.discover(fixture_env(home, PATH=str(home)))
+            agent = report["agents"]["antigravity"]
+            self.assertEqual(agent["version"], "1.5.13")
+            self.assertEqual(agent["state"], "executable_found")
+            self.assertEqual(agent["evidence"]["executable"]["path"], str(cli))
+            self.assertEqual(agent["verification"], "unverified")
+            self.assertEqual(agent["evidence"]["unverified_consumption"], ["~/.agents/skills"])
+            self.assertEqual([(root["id"], root["logical_path"]) for root in agent["roots"]],
+                             [("antigravity-user", str(home / ".gemini/config/skills"))])
+            shared = next(item for item in report["destinations"] if "agents-user" in item["root_ids"])
+            self.assertEqual(shared["consumers"], ["codex", "opencode", "pi", "cursor"])
+            selected = discovery.select_target(report)
+            self.assertEqual(selected["agent"], "antigravity")
+            self.assertIn("not adapter-certified", selected["certification_warnings"][0])
+
     def test_existing_agents_configured_still_not_selected(self):
         with tempfile.TemporaryDirectory() as raw:
             home = Path(raw)
@@ -130,10 +162,10 @@ class TestAgentDiscovery(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             paths = {agent: "/fixtures/" + agent for agent in VERSIONS}
             report = discovery.discover(fixture_env(raw), finder(paths), probe_for(VERSIONS))
-        self.assertEqual(set(report["agents"]), {"claude", "codex", "opencode", "pi", "cursor", "grok"})
+        self.assertEqual(set(report["agents"]), {"claude", "codex", "opencode", "pi", "cursor", "grok", "antigravity"})
         plan = discovery.select_targets(report)
         self.assertEqual({item["agent"] for item in plan["selected"]}, set(VERSIONS))
-        self.assertEqual([item["agent"] for item in plan["skipped"]], ["cursor", "grok"])
+        self.assertEqual([item["agent"] for item in plan["skipped"]], ["cursor", "grok", "antigravity"])
         self.assertEqual({item["agent"] for item in plan["selected"] if item["covered_by"]}, {"opencode", "pi"})
         self.assertTrue(plan["competing_visibility"])
         destinations = {item["destination"]["id"]: item for item in plan["destinations"]}
@@ -331,6 +363,7 @@ class TestAgentDiscovery(unittest.TestCase):
             {"agent": "pi", "reason": "probe_failed", "certification": "unverified"},
             {"agent": "cursor", "reason": "absent", "certification": "unverified"},
             {"agent": "grok", "reason": "absent", "certification": "unverified"},
+            {"agent": "antigravity", "reason": "absent", "certification": "unverified"},
         ])
 
     def test_default_deadlines_are_derived_from_each_adapter_measurement(self):
