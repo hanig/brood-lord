@@ -6,6 +6,10 @@ def event(n, **overrides):
 class TestRawUsage(unittest.TestCase):
 
  def setUp(self):
+  # Give archive I/O headroom on a loaded filesystem. Timing tests set their own bounds.
+  archive_deadline = mock.patch.object(U, 'READ_SECONDS', 60.0)
+  archive_deadline.start()
+  self.addCleanup(archive_deadline.stop)
   temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup); self.root = Path(temporary.name); self.state = self.root / 'state'; self.state.mkdir(); self.home = self.root / 'home'; (self.home / 'sessions' / 'nested').mkdir(parents=True); self.rollout = self.home / 'sessions' / 'nested' / 'rollout-a.jsonl'; self.rollout.write_bytes(event(3))
 
  def capture(self, final=True, attempt='a'):
@@ -45,7 +49,17 @@ class TestRawUsage(unittest.TestCase):
   row = U._rows(target / 'manifest.jsonl')[0]; data = (target / row['blob']).read_bytes(); self.assertEqual(row['bytes'], len(data)); self.assertEqual(row['sha256'], hashlib.sha256(data).hexdigest())
 
  def test_fifo_symlink_and_symlink_directory_fault_without_read(self):
-  sessions = self.home / 'sessions'; os.mkfifo(str(sessions / 'rollout-pipe.jsonl')); (sessions / 'rollout-link.jsonl').symlink_to(self.rollout); (sessions / 'alias').symlink_to(sessions / 'nested', target_is_directory=True); started = time.monotonic(); target = self.capture(); self.assertLess(time.monotonic() - started, 2); self.assertEqual(sum(('fault' in r for r in U._rows(target / 'manifest.jsonl'))), 3); self.unknown('capture_fault')
+  sessions = self.home / 'sessions'
+  os.mkfifo(str(sessions / 'rollout-pipe.jsonl'))
+  (sessions / 'rollout-link.jsonl').symlink_to(self.rollout)
+  (sessions / 'alias').symlink_to(sessions / 'nested', target_is_directory=True)
+  # Bound a broken capture too, while giving the two-second assertion room to fail.
+  with mock.patch.object(U, 'READ_SECONDS', 5.0):
+   started = time.monotonic()
+   target = self.capture()
+   self.assertLess(time.monotonic() - started, 2)
+  self.assertEqual(sum(('fault' in row for row in U._rows(target / 'manifest.jsonl'))), 3)
+  self.unknown('capture_fault')
 
  def test_missing_home_and_bounded_stalled_read_and_cap(self):
   U.finish(self.state, 'gone', self.root / 'absent'); self.assertEqual(U._rows(self.state / 'usage-raw/gone/manifest.jsonl')[0]['fault'], 'no_home'); parent = os.getpid(); read = os.read
