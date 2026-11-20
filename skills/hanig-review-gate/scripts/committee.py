@@ -181,7 +181,6 @@ def pick_members(explicit, authors=(), profile="committee", *, audit=None):
             die(conflict_text(excluded) + f" (authors: {', '.join(author_list(authors))})."
                 " Name independent members with --member.")
         kept, added = result
-        kept += added
         if audit is not None:
             audit.update(R._panels.panel_selection(profile, excluded + rejected, added, kept))
     chosen = kept
@@ -436,6 +435,7 @@ def cmd_open(args):
     bind_authors(session, args.author)
     if selection:
         session["panel_selection"] = selection
+        save_session(args.name, session)
     names = ", ".join(f"{m['name']} ({m['provider']})" for m in members)
     print(f"committee {args.name!r}: {names}\nphase 1 (plan), waiting for "
           f"all members...\n")
@@ -570,8 +570,6 @@ def finish_decision(args, session, record, status, reason=None):
     record.update(status=status, at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     if reason:
         record["reason"] = reason
-    if "panel_selection" in session:
-        record["panel_selection"] = session["panel_selection"]
     session["resolution"] = record
     session.setdefault("decisions", []).append(record)
     save_session(args.name, session)
@@ -685,6 +683,8 @@ def tiebreak(args, session, inputs):
             if excluded:
                 record["tiebreak_selection"] = R._panels.panel_selection(
                     "tiebreak", excluded, kept, kept)
+                session["tiebreak_selection"] = record["tiebreak_selection"]
+                save_session(args.name, session)
             break
     else:
         record["tiebreak_selection"] = R._panels.panel_selection("tiebreak", excluded, [], [])
@@ -725,7 +725,7 @@ def cmd_tiebreak(args):
 
 
 def cmd_synthesize(args):
-    """Synthesis is explicit after challenge; a split goes to tiebreak."""
+    """Synthesis is explicit after challenge; a split automatically goes to Astra."""
     session = load_session(args.name)
     inputs, error = decision_inputs(args, session)
     record = {"kind": "synthesis", "inputs": inputs}

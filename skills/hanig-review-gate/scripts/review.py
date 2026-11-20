@@ -2059,10 +2059,11 @@ def read_review_journal(path):
 
 def adjudicator_is_author(accepted_by, authors):
     """A bare acceptor can be a human name or a legacy model leaf."""
-    models = author_model_ids(authors)
     if "/" in accepted_by:
-        return bool(author_model_ids([accepted_by]) & models)
-    return accepted_by in {identity[1] for identity in models if identity}
+        roster = [dict(zip(("provider", "model"), value.split("/", 1)))
+                  for value in [accepted_by, *authors] if "/" in value]
+        return bool(author_model_ids([accepted_by], roster) & author_model_ids(authors, roster))
+    return any(i and i[1] == accepted_by for i in author_model_ids(authors))
 
 
 def journal_identity_problems(record, allow_unbound=False):
@@ -3401,11 +3402,9 @@ def _main():
                          f"Pass one of those, or drop --only to use the "
                          f"profile.")
     args.panel_selection = None
-    excluded = []
-    if args.author or args.kind == "plan":
-        authors = author_model_ids(args.author, roster)
-        if args.author:
-            reviewers, excluded = exclude_authors(reviewers, authors)
+    authors = author_model_ids(args.author, roster)
+    reviewers, excluded = exclude_authors(reviewers, authors)
+    if excluded:
         # Check capacity before contacting anyone, including the entire ladder
         # and any fresh-cycle floor. Author removal cannot relax either floor.
         required = max(args.quorum, 2 if args.kind == "plan" else 1)
@@ -3428,8 +3427,9 @@ def _main():
         if not args.json:
             for removal in excluded:
                 print(f"{removal['name']} excluded: {removal['reason']}")
-            if args.panel_selection:
-                print("Panel substitution " + redact(json.dumps(args.panel_selection)))
+        if args.panel_selection:
+            print("Panel substitution " + redact(json.dumps(args.panel_selection)),
+                  file=sys.stderr if args.json else sys.stdout, flush=True)
         remaining = len(eligible)
         if not args.list and not args.panel_selection and (
                 attempted or (excluded and remaining < required)):
@@ -3526,7 +3526,7 @@ def _main():
         report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
                   "profile": profile, "profile_reason": profile_reason,
                   "reviewed": label, "unavailable": unavailable, "results": [],
-                  "excluded": excluded, "panel_selection": args.panel_selection,
+                  "excluded": excluded,
                   "panel_policy": args.panel_policy,
                   "input_redactions": args.input_redactions,
                   "journal": journal}

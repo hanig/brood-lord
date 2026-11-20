@@ -699,13 +699,56 @@ class TestAuthorExclusion(unittest.TestCase):
                 self.assertEqual(args.panel_selection["substituted"], ["sonnet-5.5"])
 
     def test_wrapped_author_excludes_both_seats(self):
-        for prefix in ("openrouter/openai", "opencode", "copilot"):
+        for prefix in ("openrouter/openai", "opencode", "copilot",
+                       "opencode/openrouter/openai"):
             code, out, _, called = self.invoke(
                 "--only", "astra,astra-tiebreak,luna,kimi-k2.7-code",
                 "--author", prefix + "/gpt-6-astra", "--json")
             self.assertEqual(code, 0, out)
             self.assertEqual(set(called), {"luna", "kimi-k2.7-code"})
             self.assertEqual(len(json.loads(out)["excluded"]), 2)
+
+    def test_distinct_model_paths_can_make_quorum(self):
+        roster = [
+            dict(name="code", provider="openrouter", model="acme/code/shared"),
+            dict(name="other", provider="openai", model="other"),
+        ]
+        code, out, _, called = self.invoke(
+            "--only", "code,other", "--author", "openrouter/acme/chat/shared",
+            "--json", roster=roster)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(set(called), {"code", "other"})
+
+    def test_seat_with_unknown_maker_is_excluded_without_authors(self):
+        seat = dict(name="unknown", provider="openrouter", model="@fixture/model")
+        code, out, _, called = self.invoke("--only", "unknown", "--json", roster=[seat])
+        self.assertEqual(called, [])
+        self.assertEqual(code, R.STATES["REVIEW_UNAVAILABLE"], out)
+
+    def test_same_maker_primaries_without_exclusion_still_refuse(self):
+        roster = R.load_reviewers()
+        for seat in roster:
+            if seat["name"] == "kimi-k3":
+                seat.update(provider="openai", model="other")
+        with patch.object(R, "cmd_plan_review", return_value=0):
+            code, _, err, called = self.invoke(kind="plan", roster=roster)
+        self.assertEqual(called, [])
+        self.assertEqual(code, R.STATES["REVIEW_ERROR"])
+        self.assertIn("share a model maker", err)
+
+    def test_json_plan_reports_substitution_before_contact(self):
+        def dispatch(*_):
+            self.assertIn("Panel substitution", sys.stderr.getvalue())
+            return 0
+
+        with patch.object(R, "cmd_plan_review", side_effect=dispatch):
+            self.assertEqual(self.invoke(
+                "--author", "codex/gpt-6-luna", "--json", kind="plan")[0], 0)
+
+    def test_unfamiliar_transport_cannot_adjudicate_its_author(self):
+        native, wrapped = "openai/gpt-6-astra", "opencode/gpt-6-astra"
+        self.assertTrue(R.adjudicator_is_author(native, [wrapped]))
+        self.assertTrue(R.adjudicator_is_author(wrapped, [native]))
 
 
 if __name__ == "__main__":

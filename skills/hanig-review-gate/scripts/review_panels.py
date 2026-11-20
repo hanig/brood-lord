@@ -17,9 +17,9 @@ def valid_identity(value):
 def model_identity(provider, model):
     """Use the plan contrast rule: vendor segment, otherwise seat provider."""
     if valid_identity(model):
-        maker = model.split("/", 1)[0] if "/" in model else provider
+        maker, leaf = model.split("/", 1) if "/" in model else (provider, model)
         if valid_identity(maker) and "/" not in maker:
-            return MAKER_ALIASES.get(maker, maker), model.rsplit("/", 1)[-1]
+            return MAKER_ALIASES.get(maker, maker), leaf
     return None
 
 
@@ -36,6 +36,8 @@ def author_model_ids(authors, roster=(), legacy=False):
             models.update(seat_identity(r) for r in matches)
         else:
             provider, _, model = author.partition("/")
+            while model.startswith("openrouter/") and model.count("/") > 1:
+                _, model = model.split("/", 1)
             maker = model_identity(provider, model)
             if maker and "/" not in model and maker[0] not in MAKER_ALIASES.values():
                 matches = {model_identity(r["provider"], model) for r in roster
@@ -80,14 +82,14 @@ def panel_makers(panel):
 
 
 def reserve_panel(primaries, reserves, size, valid):
-    """Try ordered reserve subsets, then primary subsets for their open slots."""
-    count = max(1, size - len(primaries))
+    count = size - len(primaries)
+    if count <= 0:
+        return None
     for added in combinations(reserves, count):
-        for kept in combinations(primaries, size - count):
-            panel = kept + added
-            identities = {seat_identity(r) for r in panel}
-            if None not in identities and len(identities) == size and valid(panel):
-                return list(kept), list(added)
+        panel = [*primaries, *added]
+        identities = {seat_identity(r) for r in panel}
+        if None not in identities and len(identities) == size and valid(panel):
+            return panel, list(added)
     return None
 
 
@@ -124,15 +126,9 @@ def configure_reserves(revs, reserves, in_profile, config_error):
 def fill_profile(roster, profile, eligible, authors, required, excluded, plan_check):
     contrast = plan_check is not None and len(eligible) == 2 and len(panel_makers(eligible)) < 2
     reserves = reserve_seats(roster, profile)
-    if not reserves or not (contrast or (excluded and len(eligible) < required)):
+    if not reserves or not excluded or not (contrast or len(eligible) < required):
         return None, False
     candidates, rejected = exclude_authors(reserves, authors)
-    result = reserve_panel(eligible, candidates, required, lambda panel:
-                           plan_check is None or not plan_check(panel))
     excluded.extend(rejected)
-    if result is None:
-        return None, True
-    kept, added = result
-    excluded.extend(seat_exclusion(r, "plan needs contrasting makers")
-                    for r in eligible if r not in kept)
-    return (kept + added, added), True
+    return reserve_panel(eligible, candidates, required, lambda panel:
+                         plan_check is None or not plan_check(panel)), True

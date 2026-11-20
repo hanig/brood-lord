@@ -331,6 +331,12 @@ class TestCommitteeTiebreak(unittest.TestCase):
 
     def test_real_tiebreak_reserve_excludes_primary_author_and_prior_voter(self):
         primary = committee.tiebreaker(self.shipped)[0]
+
+        def ask_reserve(*_, **_kwargs):
+            selection = committee.load_session("split").get("tiebreak_selection", {})
+            self.assertEqual(selection["substituted"], ["kimi-k3"])
+            return json.dumps(self.ruling), None, {}
+
         for author, voters in (("openrouter/openai/" + primary["model"], []),
                                ("codex/gpt-6.1-sol", [primary])):
             with self.subTest(author=author):
@@ -338,10 +344,9 @@ class TestCommitteeTiebreak(unittest.TestCase):
                     n: dict(rec, voters=voters) for n, rec in self.session["members"].items()})
                 committee.save_session("split", session)
                 with mock.patch.object(committee.R, "load_reviewers", return_value=self.shipped), \
-                        mock.patch.object(committee, "ask_member", return_value=(
-                            json.dumps(self.ruling), None, {})) as ask:
-                    code, _, saved = self.invoke("tiebreak", author=author)
-                self.assertEqual(code, 0)
+                        mock.patch.object(committee, "ask_member", side_effect=ask_reserve) as ask:
+                    code, output, saved = self.invoke("tiebreak", author=author)
+                self.assertEqual(code, 0, output)
                 self.assertEqual([c.args[0]["name"] for c in ask.call_args_list], ["kimi-k3"])
                 self.assertEqual(saved["resolution"]["tiebreak_selection"]["substituted"],
                                  ["kimi-k3"])

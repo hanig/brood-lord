@@ -1,4 +1,10 @@
 {
+ "reserves": {
+  "plan": ["sonnet-5.5", "terra", "deepseek-v4-pro"],
+  "committee": ["terra", "muse-wonder", "kimi-k3"],
+  "planning": ["sonnet-5.5", "deepseek-v4-pro", "kimi-k3"],
+  "tiebreak": ["kimi-k3"]
+ },
  "_comment": "Routing config only \u2014 endpoint, model id, reasoning effort, profile membership. Carries NO quality scores: a stale ranking is worse than none. Availability is MEASURED by `review.py --list`, which probes each provider live; a key being set is not availability. All reviewers use DEFAULT_MAX_OUTPUT_TOKENS (64000) unless they set max_output_tokens: reasoning tokens come out of the answer's budget, and at 16000 a large review returned no content at all. Prices in _cost are per-million-token budgeting hints, not routing inputs; later owner decisions and unmeasured prices are noted on the seats.",
  "default_profile": "standard",
  "_profiles": {
@@ -9,12 +15,6 @@
   "committee": "committee.py members, separate from gate profiles. Owner decision 2026-10-13: deepseek-v4-pro, gemini-argon and sonnet-5.5, three model makers. DeepSeek sits in no gate profile.\n2026-11-18: deepseek-v4-pro, gemini-neon and sonnet-5.5.",
   "tiebreak": "2026-11-06: astra-tiebreak, the ONE enabled reviewer whose profiles are exactly [\"tiebreak\"]. Selected by profile, never name or model. Sol now writes the code; an author does not review or tiebreak its own work. sol-tiebreak is disabled.",
   "planning": "2026-11-06: gemini-argon, muse-wonder and terra (orchestrator amendment: OpenRouter and OpenAI providers). Astra leaves planning and gains deep and tiebreak seats because Sol now writes the code; an author does not review or tiebreak its own work. The tiebreak seat must not rule among its own committee members.\n2026-11-18: gemini-neon, muse-wonder and terra."
- },
- "reserves": {
-  "plan": ["sonnet-5.5", "terra", "deepseek-v4-pro"],
-  "committee": ["terra", "muse-wonder", "kimi-k3"],
-  "planning": ["sonnet-5.5", "deepseek-v4-pro", "kimi-k3"],
-  "tiebreak": ["kimi-k3"]
  },
  "reviewers": [
   {
@@ -219,7 +219,7 @@
     "in": 2.0,
     "out": 10.0
    },
-   "_note": "Added 2026-09-28 by owner decision, taking kimi-k2.7-code's fast and committee seats, so no tier lacks a second model maker. Released the same day: no third-party code-review data yet, and AA-Omniscience rates it more likely than Opus 5.5 to state a wrong answer confidently. Every finding is reproduced before it is acted on, which bounds that cost. Available as a plan and planning reserve. Owner decision 2026-10-12: haiku-5.5 takes fast; standard, deep and committee stay, with high effort unchanged.",
+   "_note": "Added 2026-09-28 by owner decision, taking kimi-k2.7-code's fast and committee seats, so no tier lacks a second model maker. Released the same day: no third-party code-review data yet, and AA-Omniscience rates it more likely than Opus 5.5 to state a wrong answer confidently. Every finding is reproduced before it is acted on, which bounds that cost. Kept off plan review because the orchestrator that writes plans is a Claude model. Owner decision 2026-10-12: haiku-5.5 takes fast; standard, deep and committee stay, with high effort unchanged.",
    "max_output_tokens": 128000,
    "_max_output_tokens": "MEASURED through the native Anthropic Messages API at the unchanged high effort and 128000 cap. Prior OpenRouter acceptance is retained in _max_output_tokens_history. The minimal probe establishes budget acceptance, not capacity for every review.",
    "_max_output_tokens_accepted": {
