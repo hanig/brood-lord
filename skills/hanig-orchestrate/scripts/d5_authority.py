@@ -48,22 +48,8 @@ def _claimant(session_id, anchor_pid, anchor_start_us):
              "must satisfy 0 < pid < 2**31")
     _timestamp(anchor_start_us, "custody.anchor_start_us")
 
-def _validate_host(host):
-    _require(type(host) is str and host in ("claude", "codex", "antigravity"),
-             "custody.host", "expected a supported host")
-
-
-def custody_host(custody):
-    """The absent field denotes a pre-multihost Claude custody record."""
-    host = custody.get("host", "claude")
-    _validate_host(host)
-    return host
-
-
 def _custody(value):
-    fields = _CUSTODY_FIELDS | {"host"} if type(value) is dict and "host" in value else _CUSTODY_FIELDS
-    _keys(value, fields, "custody")
-    custody_host(value)
+    _keys(value, _CUSTODY_FIELDS, "custody")
     _claimant(value["session_id"], value["anchor_pid"], value["anchor_start_us"])
     _timestamp(value["generation"], "custody.generation")
     _timestamp(value["claimed_at"], "custody.claimed_at")
@@ -72,8 +58,8 @@ def _custody(value):
         _require(value["relinquished_at"] >= value["claimed_at"],
                  "custody.relinquished_at", "must not precede claimed_at")
 
-def _same_holder(custody, session_id, anchor_pid, anchor_start_us, host):
-    return (custody_host(custody) == host and custody["session_id"] == session_id and
+def _same_holder(custody, session_id, anchor_pid, anchor_start_us):
+    return (custody["session_id"] == session_id and
             custody["anchor_pid"] == anchor_pid and
             custody["anchor_start_us"] == anchor_start_us)
 
@@ -176,29 +162,28 @@ def revoked(record, now, reason):
     return result
 
 
-def claimed(record, session_id, anchor_pid, anchor_start_us, now, holder, *, host="claude"):
+def claimed(record, session_id, anchor_pid, anchor_start_us, now, holder):
     """Return independent custody; only observed death permits a successor.
 
     Liveness is supplied by the caller, which must check the mandate separately.
-    A matching host, session and anchor continue the existing generation.
+    A matching session AND anchor is compaction, never a new generation.
     """
     validate(record)
     _timestamp(now, "now")
     _claimant(session_id, anchor_pid, anchor_start_us)
-    _validate_host(host)
     _require(type(holder) is str and holder in ("alive", "dead", "unknown"),
              "holder", "expected alive, dead or unknown")
     _require(record["invalidation"] is None, "invalidation", "invalidated")
     _require(now < record["expires_at"], "expires_at", "expired")
     custody = record["custody"]
     if custody is not None:
-        if _same_holder(custody, session_id, anchor_pid, anchor_start_us, host):
+        if _same_holder(custody, session_id, anchor_pid, anchor_start_us):
             _require(custody["relinquished_at"] is None, "custody", "custody relinquished")
             return copy.deepcopy(record)
         _require(holder == "dead", "custody", "successor requires dead holder")
     result = copy.deepcopy(record)
     result["custody"] = {
-        "host": host, "session_id": session_id, "anchor_pid": anchor_pid,
+        "session_id": session_id, "anchor_pid": anchor_pid,
         "anchor_start_us": anchor_start_us,
         "generation": 1 if custody is None else custody["generation"] + 1,
         "claimed_at": now, "relinquished_at": None,
@@ -207,14 +192,14 @@ def claimed(record, session_id, anchor_pid, anchor_start_us, now, holder, *, hos
     return result
 
 
-def relinquished(record, session_id, anchor_pid, anchor_start_us, now, *, host="claude"):
+def relinquished(record, session_id, anchor_pid, anchor_start_us, now):
     """Return an independent record retaining the holder's first relinquishment."""
     validate(record)
     _timestamp(now, "now")
     _claimant(session_id, anchor_pid, anchor_start_us)
     custody = record["custody"]
     _require(custody is not None and
-             _same_holder(custody, session_id, anchor_pid, anchor_start_us, host),
+             _same_holder(custody, session_id, anchor_pid, anchor_start_us),
              "custody", "only the exact holder may relinquish")
     _require(now >= custody["claimed_at"], "now", "must not precede claimed_at")
     result = copy.deepcopy(record)

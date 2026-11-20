@@ -20,7 +20,7 @@ def _active(state_dir):
         raise authority.AuthorityError("D5 is not active")
 
 
-def claim(checkout, plan_id, state_dir, *, now, mandate_bytes, host=None):
+def claim(checkout, plan_id, state_dir, *, now, mandate_bytes):
     """Delegate to R3 using the freshly resolved registration's mandate source.
 
     now and mandate_bytes remain for signature compatibility; the active branch
@@ -33,7 +33,7 @@ def claim(checkout, plan_id, state_dir, *, now, mandate_bytes, host=None):
     entry = readiness.bound(ready, d5_registry.lookup(checkout, plan_id, state_dir))
     if entry is None:
         raise authority.AuthorityError("not registered")
-    return d5_install.claim_custody(entry["record_dir"], host_kind=host, mandate_path=(
+    return d5_install.claim_custody(entry["record_dir"], mandate_path=(
         Path(entry["checkout"]) / "docs/orchestrator-mandate.md"))
 
 
@@ -54,7 +54,7 @@ def status(checkout, plan_id, state_dir, *, now):
     if custody is not None:
         identity = d5_host.ProcessIdentity(custody["anchor_pid"], custody["anchor_start_us"])
         holder = store.observe_liveness(identity, d5_host.liveness)
-        is_holder = d5_host.verify_anchor(custody["session_id"], identity, host=authority.custody_host(custody))
+        is_holder = d5_host.session_anchor("claude") == (custody["session_id"], identity)
     return {"state": "active" if d5_registry.d5_active(readiness.activation_directory(state_dir)) else "inactive",
             "registration": entry, "custody": custody, "liveness": holder,
             "is_holder": is_holder}

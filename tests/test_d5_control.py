@@ -114,9 +114,9 @@ class TestD5Control(unittest.TestCase):
             writes = []
             write = store._write
 
-            def checked(*args, **kwargs):
+            def checked(*args):
                 self.assertEqual(self.probe(), "blocked")
-                return original(*args, **kwargs)
+                return original(*args)
 
             def writing(path, raw):
                 self.assertEqual(self.probe(), "blocked")
@@ -145,10 +145,10 @@ class TestD5Control(unittest.TestCase):
             trace = []
             original = getattr(store, name)
 
-            def entered(*args, **kwargs):
+            def entered(*args):
                 trace.append("store")
                 attempted.set()
-                return original(*args, **kwargs)
+                return original(*args)
 
             with protocol.pin(self.directory) as pinned:
                 guard = pinned._record.entry.guards[1]

@@ -48,7 +48,7 @@ class TestD5Routing(unittest.TestCase):
         return authority.decode(self.path.read_bytes())
 
     def claim(self, **changes):
-        args = dict(now=101, mandate_bytes=fixtures.MANDATE, host="claude")
+        args = dict(now=101, mandate_bytes=fixtures.MANDATE)
         args.update(changes)
         return custody.claim(*self.args, **args)
 
@@ -176,14 +176,13 @@ class TestD5Routing(unittest.TestCase):
                 mock.patch.object(registry, "lookup", wraps=registry.lookup) as lookup, \
                 mock.patch.object(install, "claim_custody", wraps=install.claim_custody) as route, \
                 self.store_boundary("claim", [(0, False), (1, False)]):
-            result = self.claim(now=999999, mandate_bytes=b"stale caller bytes", host="codex")
+            result = self.claim(now=999999, mandate_bytes=b"stale caller bytes")
         lookup.assert_called_once_with(*self.args)
-        route.assert_called_once_with(self.entry["record_dir"], mandate_path=self.mandate, host_kind="codex")
-        self.assertEqual(result["custody"]["host"], "codex")
+        route.assert_called_once_with(self.entry["record_dir"], mandate_path=self.mandate)
         self.assertEqual(self.read(), result)
         self.assertEqual(result["custody"]["claimed_at"], 101)
         self.assertEqual(result["custody"]["session_id"], "native")
-        self.fixture.anchor.assert_called_once_with("codex")
+        self.fixture.anchor.assert_called_once_with("claude")
         # A second call re-resolves registration and reads the new source bytes.
         self.mandate.write_bytes(b"current registered bytes")
         with nullcontext(), \
@@ -207,8 +206,8 @@ class TestD5Routing(unittest.TestCase):
         (linked / "docs/orchestrator-mandate.md").write_bytes(b"unregistered source")
         with nullcontext(), \
                 mock.patch.object(install, "claim_custody", wraps=install.claim_custody) as route:
-            result = custody.claim(linked, "p", self.fixture.state, now=999999, mandate_bytes=b"cached", host="claude")
-        route.assert_called_once_with(self.entry["record_dir"], mandate_path=self.mandate, host_kind="claude")
+            result = custody.claim(linked, "p", self.fixture.state, now=999999, mandate_bytes=b"cached")
+        route.assert_called_once_with(self.entry["record_dir"], mandate_path=self.mandate)
         self.assertEqual(self.read(), result)
         self.assertEqual(result["custody"]["session_id"], "native")
 

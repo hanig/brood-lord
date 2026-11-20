@@ -38,8 +38,8 @@ def _active(directory):
         raise store.AuthorityError("D5 is inactive")
 
 
-def _anchor(host_kind):
-    anchor = host.session_anchor(host_kind)
+def _anchor():
+    anchor = host.session_anchor("claude")
     if isinstance(anchor, host.Unknown):
         raise store.AuthorityError("D5 anchor is not verifiable")
     return anchor
@@ -52,7 +52,7 @@ def _bound(path, cwd):
 
 
 @contextmanager
-def _installation(directory, host_kind, mandate_path=None):
+def _installation(directory, mandate_path=None):
     paths = [os.fspath(directory)]
     if mandate_path is not None:
         paths.append(os.fspath(mandate_path))
@@ -65,16 +65,16 @@ def _installation(directory, host_kind, mandate_path=None):
     with protocol.pin(directory) as record:
         with record.drain(shared=False), record.start():
             _active(directory)
-            yield directory, _anchor(host_kind), mandate_path
+            yield directory, _anchor(), mandate_path
 
 
-def install_initial(directory, record, *, host_kind="claude"):
+def install_initial(directory, record):
     """Install in provisioned D; existing-record refusal belongs to create."""
-    with _installation(directory, host_kind) as (directory, _, _):
+    with _installation(directory) as (directory, _, _):
         return store.create(directory, record)
 
 
-def replace_authority(directory, record, *, host_kind="claude"):
+def replace_authority(directory, record):
     """Apply the store's replacement rules to the freshly read predecessor."""
     directory = os.fsdecode(directory)
     if ".." in directory.split(os.sep):
@@ -92,7 +92,7 @@ def replace_authority(directory, record, *, host_kind="claude"):
         for path, key in ((state_dir, "state_key"), (Path(directory), "record_key")):
             readiness._require(list(registry._key(path.stat())) == installed[key],
                                "replacement installation object mismatch")
-        with _installation(directory, host_kind) as (directory, _, _):
+        with _installation(directory) as (directory, _, _):
             readiness.successor_gate(installed)
             # A consent/schema refusal must preserve the existing readiness.
             # Reuse the store's policy under DRAIN/START; replace rechecks it
@@ -109,13 +109,12 @@ def replace_authority(directory, record, *, host_kind="claude"):
             return result
 
 
-def claim_custody(directory, *, mandate_path, host_kind=None):
+def claim_custody(directory, *, mandate_path):
     """Claim with fresh native identity, mandate bytes, time and holder liveness."""
-    with _installation(directory, host_kind, mandate_path) as installed:
-        directory, (session_id, anchor), mandate_path = installed
+    with _installation(directory, mandate_path) as (directory, (session_id, anchor), mandate_path):
         mandate = store.read_bytes(mandate_path)
         now = int(time.time())
-        return store.claim(directory, now, mandate, session_id, anchor, host.liveness, host=host_kind)
+        return store.claim(directory, now, mandate, session_id, anchor, host.liveness)
 
 
 def stage(checkout, plan_id, state_dir):
