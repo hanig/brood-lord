@@ -298,9 +298,9 @@ class TestAdmission(unittest.TestCase):
         self.clock.return_value = 150
         verify = host.verify_anchor
 
-        def delayed(*args):
+        def delayed(*args, **kwargs):
             self.clock.return_value = 200
-            return verify(*args)
+            return verify(*args, **kwargs)
 
         with mock.patch.object(host, "verify_anchor", side_effect=delayed):
             self.refuse("^D5 authority expired$")

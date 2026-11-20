@@ -1,8 +1,7 @@
-"""Inactive Darwin 25.5.0 arm64 adapter; identity=(pid, kernel start_us).
+"""Inactive measured Darwin arm64 adapter; identity=(pid, kernel start_us).
 
-Records contain only pid, ppid and kernel start time. session_id alone reads
-CLAUDE_CODE_SESSION_ID, the other D5-OD4 custody half. No custody is established.
-CLAUDE_PID declares the native session-lifetime anchor; no names/argv are read.
+Ancestry records contain only pid, ppid and kernel start time. The declared
+host selects the native session ID and session-lifetime anchor variables.
 Non-claims: trusted same-UID processes can forge the environment; ancestry is
 not atomic; zombies with the same identity count as alive. PID reuse between
 an identity read and a kill probe is caught only through start_us.
@@ -23,9 +22,25 @@ class ProcessRecord(NamedTuple):
  ppid: int
  start_us: int
 
-def session_id():
- """CLAUDE_CODE_SESSION_ID or None; sole environment reader."""
- return os.environ.get("CLAUDE_CODE_SESSION_ID") or None
+# The first ID is authoritative. Further IDs are evidence of this host
+# when rejecting another host's environment, never fallback IDs.
+_HOSTS = {
+ "claude": (("CLAUDE_CODE_SESSION_ID",), "CLAUDE_PID"),
+ "codex": (("CODEX_SESSION_ID", "CODEX_THREAD_ID"), "BROOD_HOST_PID"),
+ "antigravity": (("ANTIGRAVITY_CONVERSATION_ID", "ANTIGRAVITY_TRAJECTORY_ID"),
+                 "BROOD_HOST_PID"),
+}
+HOST_ENV_NAMES = tuple(dict.fromkeys(
+ name for ids, anchor_var in _HOSTS.values() for name in (*ids, anchor_var)))
+
+
+def known_host(host):
+ return type(host) is str and host in _HOSTS
+
+
+def session_id(host="claude"):
+ """Primary native session ID or None for the declared host."""
+ return (os.environ.get(_HOSTS[host][0][0]) or None) if known_host(host) else None
 
 def _sysctl(mib, capacity=None):
  libc=C.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
@@ -48,7 +63,10 @@ def _sysctl(mib, capacity=None):
  return data.raw[:size.value]
 
 def _measured_platform():
- return sys.platform=="darwin" and (os.uname().release, os.uname().machine)==("25.5.0", "arm64")
+ if sys.platform != "darwin":
+  return False
+ platform = os.uname()
+ return (platform.release, platform.machine) in (("25.5.0", "arm64"), ("27.2.0", "arm64"))
 
 def _kernel_record(pid):
  if type(pid) is not int or not 0<pid<2 ** 31:
@@ -114,16 +132,23 @@ def ancestry(pid):
   return Unknown("missing or changed ancestry")
  return tuple(chain)
 
-def session_anchor():
+def session_anchor(host=None):
  """Native session ID and declared same-UID strict ancestor, or Unknown."""
  if not _measured_platform():
   return Unknown("unmeasured platform")
- native=session_id()
+ if not known_host(host):
+  return Unknown("missing or unrecognised host")
+ foreign = [name for other, (ids, _) in _HOSTS.items() if other != host
+            for name in ids if os.environ.get(name)]
+ if foreign:
+  return Unknown("ambiguous host environment: " + ", ".join(foreign))
+ native=session_id(host)
  if not native:
   return Unknown("missing native session ID")
- declared=os.environ.get("CLAUDE_PID", "")
+ anchor_var = _HOSTS[host][1]
+ declared=os.environ.get(anchor_var, "")
  if not re.fullmatch(r"[1-9][0-9]{0,9}", declared) or int(declared)>=2 ** 31:
-  return Unknown("invalid CLAUDE_PID")
+  return Unknown("invalid " + anchor_var)
  pid=int(declared)
  caller=os.getpid()
  if pid==caller:
@@ -138,9 +163,9 @@ def session_anchor():
    return native, ProcessIdentity(rec.pid, rec.start_us)
  return Unknown("anchor is not a strict ancestor")
 
-def verify_anchor(session_id, identity):
+def verify_anchor(session_id, identity, *, host="claude"):
  """Reinspect the current session and ancestry on every call; never cache."""
- return session_anchor()==(session_id, identity)
+ return session_anchor(host)==(session_id, identity)
 
 def liveness(identity):
  """Alive/dead/unknown for an incarnation; only reuse or ESRCH proves death."""

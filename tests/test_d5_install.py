@@ -195,7 +195,7 @@ class TestInstall(unittest.TestCase):
                 self.assertEqual(results, [])
                 self.assertEqual(len(errors), 1)
                 self.assertEqual(str(errors[0]), "D5 anchor is not verifiable")
-                self.anchor.assert_called_once_with()
+                self.anchor.assert_called_once_with("claude")
                 path = directory / store.RECORD_NAME
                 self.assertEqual(store.read(directory), grant()) if path.exists() else self.assertEqual(kind, "initial")
 

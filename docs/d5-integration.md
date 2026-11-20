@@ -37,10 +37,38 @@ internals block dependents.
 | Ancestry | Pid/ppid/start only; leaf first to topmost reachable; three-record and captured fixtures | Not atomic |
 | Hops | parent.start_time <= child.start_time; equality allowed; inversion suggests PID reuse | Nothing beyond a break is trusted |
 | Identity | (pid, kernel microsecond start time); reuse differs | EPERM/failure unknown, never dead |
-| Native ID | session_id alone reads CLAUDE_CODE_SESSION_ID; required, no fallback; every verify_anchor rechecks ID and identity | No custody established |
-| Anchor | CLAUDE_PID: strict ASCII PID, strict ancestor, same real UID; identity from ancestry. Liveness: same start alive, changed start or ESRCH dead, otherwise unknown | Trusted same-UID environment can be forged; zombies count as alive; ancestry is not atomic |
 | Inactivity | Scope/merge refusal | No import scanner |
 | Mandate | U8 baseline below | No Markdown parser |
+
+### Native session anchors
+
+| Declared host | Primary session ID | Additional ID checked for ambiguity | Anchor |
+|---|---|---|---|
+| `claude` | `CLAUDE_CODE_SESSION_ID` | | `CLAUDE_PID` |
+| `codex` | `CODEX_SESSION_ID` | `CODEX_THREAD_ID` | `BROOD_HOST_PID` |
+| `antigravity` | `ANTIGRAVITY_CONVERSATION_ID` | `ANTIGRAVITY_TRAJECTORY_ID` | `BROOD_HOST_PID` |
+
+The adapter requires an explicit host. Existing custody callers select
+`claude`. Operator selection and host persistence in custody are pending.
+Launch Codex and Antigravity with `bin/brood-host HOST [ARGS...]`. It exports its PID as `BROOD_HOST_PID`
+and execs the command in place. A missing primary ID, missing anchor, or
+non-empty ID from a different host yields Unknown. Ambiguity names variables
+only. Additional IDs from the declared host and non-ID variables like
+`CODEX_HOME` are allowed.
+
+Darwin `25.5.0`/arm64 and `27.2.0`/arm64 are the measured platform pairs.
+The strict ASCII PID must be a same-real-UID strict ancestor. Every verification
+re-reads the native ID and kernel identity (PID and start time in microseconds).
+
+Same-UID environment forgery and a nested host that inherits an outer host's ID
+and anchor while exporting no ID of its own are undetectable. Sandbox-denied
+inspection yields Unknown (narrow mode). Only a changed start time or an ESRCH
+probe establishes death. A zombie with the same identity counts as alive.
+Session ID behavior across resume is unmeasured. A resumed process has a new
+kernel identity and must follow death-only succession.
+
+Codex and Antigravity custody require the owner's mandate amendment to merge.
+D5 stays inactive until the owner's `d5_install` publish.
 
 Cut applied by the orchestrator on 2026-10-20 (DG7): host recognition and
 `select_session_ancestor` move to their first consumer, U2. Inputs are the

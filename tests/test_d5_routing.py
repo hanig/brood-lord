@@ -182,7 +182,7 @@ class TestD5Routing(unittest.TestCase):
         self.assertEqual(self.read(), result)
         self.assertEqual(result["custody"]["claimed_at"], 101)
         self.assertEqual(result["custody"]["session_id"], "native")
-        self.fixture.anchor.assert_called_once_with()
+        self.fixture.anchor.assert_called_once_with("claude")
         # A second call re-resolves registration and reads the new source bytes.
         self.mandate.write_bytes(b"current registered bytes")
         with nullcontext(), \
@@ -237,7 +237,7 @@ class TestD5Routing(unittest.TestCase):
         route.assert_called_once_with(*self.args, now=120)
         self.assertEqual(self.read(), result)
         self.assertEqual(result["custody"]["relinquished_at"], 120)
-        self.fixture.anchor.assert_called_once_with()
+        self.fixture.anchor.assert_called_once_with("claude")
 
     def test_inactive_delegates_are_not_called(self):
         # R9-BYPASS-INACTIVE: unrelated environment/CLI input cannot activate.

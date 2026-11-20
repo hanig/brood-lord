@@ -39,7 +39,7 @@ def _active(directory):
 
 
 def _anchor():
-    anchor = host.session_anchor()
+    anchor = host.session_anchor("claude")
     if isinstance(anchor, host.Unknown):
         raise store.AuthorityError("D5 anchor is not verifiable")
     return anchor

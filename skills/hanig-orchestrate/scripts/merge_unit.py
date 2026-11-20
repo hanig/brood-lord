@@ -705,7 +705,7 @@ def reconcile(args, plan):
         if boundary.target() != target:
             raise Refusal("target moved during preflight")
         boundary.intent = intent
-        native = host_api.session_anchor()
+        native = host_api.session_anchor("claude")
         if isinstance(native, host_api.Unknown):
             raise Refusal("D5 anchor is not verifiable")
         session_id, anchor = native
@@ -979,15 +979,17 @@ FORGE_AUTH_ENV = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENT
 def _merge_child_env():
     """The existing child filter, with only gh's named credentials restored.
 
-    No D5 environment protocol exists. Drop the D5 namespaces and the two
-    host-anchor declarations as defense in depth; never transfer authority.
+    No D5 environment protocol exists. Drop the D5 namespaces and all
+    host session and anchor declarations as defense in depth; never transfer authority.
     This retains child_environment's published finite-filter limits.
     """
+    from d5_host import HOST_ENV_NAMES
+
     env = CE.child_env()
     env.update((name, os.environ[name]) for name in FORGE_AUTH_ENV if name in os.environ)
     return {name: value for name, value in env.items()
             if not name.startswith(("D5_", "HANIG_D5_"))
-            and name not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")}
+            and name not in HOST_ENV_NAMES}
 
 
 class _MergeBoundary:

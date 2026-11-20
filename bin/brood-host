@@ -1,0 +1,7 @@
+#!/bin/sh
+if [ "$#" -eq 0 ]; then
+    printf 'Usage: %s HOST [ARGS...]\n' "${0##*/}" >&2
+    exit 2
+fi
+export BROOD_HOST_PID=$$
+exec "$@"

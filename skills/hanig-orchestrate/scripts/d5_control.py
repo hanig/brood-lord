@@ -71,7 +71,7 @@ def record_mandate_invalidation(checkout, plan_id, state_dir, *, now):
 def relinquish(checkout, plan_id, state_dir, *, now):
     """Inspect the native session anchor and relinquish under START."""
     with _started(checkout, plan_id, state_dir) as entry:
-        anchor = host.session_anchor()
+        anchor = host.session_anchor("claude")
         if isinstance(anchor, host.Unknown):
             raise authority.AuthorityError(anchor.reason)
         session_id, identity = anchor

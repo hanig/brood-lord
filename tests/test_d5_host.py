@@ -1,5 +1,6 @@
 """Captured ancestry and synthetic kernel identity fixtures."""
 import ctypes, errno, json, os, struct, subprocess, sys, unittest
+from functools import partial
 from pathlib import Path
 from unittest import mock
 
@@ -10,6 +11,7 @@ identity=H.process_identity
 Identity=H.ProcessIdentity
 Record=H.ProcessRecord
 patch=mock.patch.object
+claude_anchor=partial(H.session_anchor, 'claude')
 
 F=json.loads((ROOT/'tests/fixtures/d5/host-chains.json').read_text())
 
@@ -118,13 +120,13 @@ class TestSessionAnchor(unittest.TestCase):
   self.addCleanup(context.stop)
 
  def test_declared_ancestor_not_tool_parent(self):  # U2-M1
-  self.assertEqual(H.session_anchor(), ('native', Identity(70, 10)))
+  self.assertEqual(claude_anchor(), ('native', Identity(70, 10)))
   self.chain.assert_called_once_with(90)
   H.process_uid.assert_called_once_with(70)
   H.os.getppid.assert_not_called()
   with patch(H, 'session_id', return_value='sole-reader') as reader:
-   self.assertEqual(H.session_anchor(), ('sole-reader', Identity(70, 10)))
-   reader.assert_called_once_with()
+   self.assertEqual(claude_anchor(), ('sole-reader', Identity(70, 10)))
+   reader.assert_called_once_with('claude')
 
  def test_missing_session_has_no_fallback(self):  # U2-M2
   for value in (None, ''):
@@ -133,7 +135,7 @@ class TestSessionAnchor(unittest.TestCase):
      os.environ.pop('CLAUDE_CODE_SESSION_ID', None)
     else:
      os.environ['CLAUDE_CODE_SESSION_ID']=value
-    self.assertIsInstance(H.session_anchor(), H.Unknown)
+    self.assertIsInstance(claude_anchor(), H.Unknown)
   self.chain.assert_not_called()
 
  def test_strict_pid_parse(self):  # LOOSE-PID-PARSE
@@ -141,29 +143,29 @@ class TestSessionAnchor(unittest.TestCase):
                 '1.0', '2147483648', '9999999999', '10000000000', ''):
    with self.subTest(value=value):
     os.environ['CLAUDE_PID']=value
-    self.assertIsInstance(H.session_anchor(), H.Unknown)
+    self.assertIsInstance(claude_anchor(), H.Unknown)
   os.environ.pop('CLAUDE_PID')
-  self.assertIsInstance(H.session_anchor(), H.Unknown)
+  self.assertIsInstance(claude_anchor(), H.Unknown)
   self.chain.assert_not_called()
   os.environ['CLAUDE_PID']='2147483647'
   self.chain.return_value=(self.rows[0], Record(2147483647, 0, 1))
-  self.assertEqual(H.session_anchor(), ('native', Identity(2147483647, 1)))
+  self.assertEqual(claude_anchor(), ('native', Identity(2147483647, 1)))
 
  def test_strict_ancestor_only(self):  # ANCHOR-NOT-IN-CHAIN / SELF-AS-ANCHOR
   for pid in (60, 90):
    with self.subTest(pid=pid), patch(H, 'process_identity', return_value=Identity(pid, 10)):
     os.environ['CLAUDE_PID']=str(pid)
-    self.assertIsInstance(H.session_anchor(), H.Unknown)
+    self.assertIsInstance(claude_anchor(), H.Unknown)
   H.process_uid.assert_not_called()
 
  def test_uid_required(self):  # SKIP-UID-CHECK
   for uid in (0, 502, H.Unknown('unreadable')):
    with self.subTest(uid=uid), patch(H, 'process_uid', return_value=uid):
-    self.assertIsInstance(H.session_anchor(), H.Unknown)
+    self.assertIsInstance(claude_anchor(), H.Unknown)
 
  def test_unknown_ancestry(self):
   self.chain.return_value=H.Unknown('changed ancestry')
-  self.assertIsInstance(H.session_anchor(), H.Unknown)
+  self.assertIsInstance(claude_anchor(), H.Unknown)
   H.process_uid.assert_not_called()
 
  def test_contract_keyword_arguments(self):
@@ -186,6 +188,55 @@ class TestSessionAnchor(unittest.TestCase):
    self.assertFalse(H.verify_anchor('native', wanted))
   self.chain.return_value=H.Unknown('lost inspection')
   self.assertFalse(H.verify_anchor('native', wanted))
+
+
+ def test_each_host_and_foreign_id(self):
+  # Exhaustive over 3 declared hosts x 5 ID variables, excluding own IDs.
+  contracts={
+   'claude': ('CLAUDE_CODE_SESSION_ID', None, 'CLAUDE_PID'),
+   'codex': ('CODEX_SESSION_ID', 'CODEX_THREAD_ID', 'BROOD_HOST_PID'),
+   'antigravity': ('ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_TRAJECTORY_ID', 'BROOD_HOST_PID'),
+  }
+  all_ids={name for primary, extra, _ in contracts.values() for name in (primary, extra) if name}
+  for kind, (primary, extra, pid_var) in contracts.items():
+   env={primary: 'native', pid_var: '70', 'CODEX_HOME': 'inherited'}
+   if extra:
+    env[extra]='secondary'
+   with self.subTest(host=kind), mock.patch.dict(os.environ, env, clear=True):
+    self.assertEqual(H.session_anchor(kind), ('native', Identity(70, 10)))
+    self.assertTrue(H.verify_anchor('native', Identity(70, 10), host=kind))
+    self.assertIsInstance(H.session_anchor(), H.Unknown)
+    self.assertIsInstance(H.session_anchor('unrecognised'), H.Unknown)
+    for foreign in sorted(all_ids-{primary, extra}):
+     with self.subTest(foreign=foreign), mock.patch.dict(os.environ, {foreign: 'sensitive fixture'}):
+      self.assertEqual(H.session_anchor(kind), H.Unknown('ambiguous host environment: '+foreign))
+    for missing in (primary, pid_var):
+     with mock.patch.dict(os.environ, {k: v for k, v in env.items() if k != missing}, clear=True):
+      self.assertIsInstance(H.session_anchor(kind), H.Unknown)
+    for pid in ('７０', '60', '90'):
+     with mock.patch.dict(os.environ, {pid_var: pid}):
+      self.assertIsInstance(H.session_anchor(kind), H.Unknown)
+    with patch(H, 'process_uid', return_value=502):
+     self.assertIsInstance(H.session_anchor(kind), H.Unknown)
+    with patch(H, '_measured_platform', return_value=False):
+     self.assertEqual(H.session_anchor(kind), H.Unknown('unmeasured platform'))
+
+
+class TestLauncher(unittest.TestCase):
+ def test_exec_pid_and_arguments(self):
+  launcher=ROOT/'bin/brood-host'
+  env={'CODEX_THREAD_ID': 'inherited', 'BROOD_HOST_PID': 'old'}
+  code="import json, os, sys; print(json.dumps([os.getpid(), os.environ['BROOD_HOST_PID'], os.environ['CODEX_THREAD_ID'], sys.argv[1:]]))"
+  with subprocess.Popen([str(launcher), sys.executable, '-c', code, 'with spaces', ''],
+                        env=env, stdout=subprocess.PIPE, text=True) as child:
+   output, _=child.communicate(timeout=10)
+   self.assertEqual(child.returncode, 0)
+   self.assertEqual(json.loads(output), [child.pid, str(child.pid), 'inherited', ['with spaces', '']])
+
+ def test_no_command(self):
+  result=subprocess.run([str(ROOT/'bin/brood-host')], capture_output=True, text=True, timeout=10)
+  self.assertEqual(result.returncode, 2)
+  self.assertIn('Usage: brood-host HOST', result.stderr)
 
 
 class TestLiveness(unittest.TestCase):
@@ -218,9 +269,16 @@ class TestLiveness(unittest.TestCase):
     self.assertEqual(H.liveness(value), 'unknown')
    kill.assert_not_called()
 
+ def test_both_measured_platforms(self):
+  for release in ('25.5.0', '27.2.0'):
+   host=os.uname_result(('Darwin', 'fixture', release, '', 'arm64'))
+   with self.subTest(release=release), patch(H.sys, 'platform', 'darwin'), patch(H.os, 'uname', return_value=host):
+    self.assertTrue(H._measured_platform())
+
  def test_unmeasured_platform_never_permits_or_probes(self):
   hosts=[('linux', '25.5.0', 'arm64'), ('darwin', '24.0.0', 'arm64'),
-         ('darwin', '25.5.0', 'x86_64')]
+         ('darwin', '25.5.0', 'x86_64'), ('darwin', '27.2.0', 'x86_64'),
+         ('darwin', '25.5.0-extra', 'arm64'), ('darwin', '27.2.0-extra', 'arm64')]
   for platform, release, machine in hosts:
    with self.subTest(platform=platform, release=release, machine=machine):
     host=os.uname_result(('Synthetic', 'fixture', release, '', machine))
@@ -228,7 +286,7 @@ class TestLiveness(unittest.TestCase):
       patch(H.os, 'kill', side_effect=ProcessLookupError) as kill, patch(H, '_sysctl') as kernel:
      self.assertIsInstance(H.process_uid(7), H.Unknown)
      self.assertIsInstance(H.process_identity(7), H.Unknown)
-     self.assertIsInstance(H.session_anchor(), H.Unknown)
+     self.assertIsInstance(claude_anchor(), H.Unknown)
      self.assertFalse(H.verify_anchor('native', Identity(7, 123)))
      self.assertEqual(H.liveness(Identity(7, 123)), 'unknown')
      kill.assert_not_called()
@@ -245,11 +303,12 @@ class TestRealProcesses(unittest.TestCase):
  def test_nested_shell_retains_declared_ancestor(self):
   expected=H.process_identity(os.getpid())
   self.assertIsInstance(expected, Identity)
-  env=dict(os.environ, CLAUDE_PID=str(os.getpid()), CLAUDE_CODE_SESSION_ID='real-test-session')
+  env={name: value for name, value in os.environ.items() if name not in H.HOST_ENV_NAMES}
+  env.update(CLAUDE_PID=str(os.getpid()), CLAUDE_CODE_SESSION_ID='real-test-session')
   code="""import json, os, sys
 sys.path.insert(0, sys.argv[1])
 import d5_host as H
-anchor=H.session_anchor()
+anchor=H.session_anchor('claude')
 print(json.dumps({'anchor': anchor, 'ppid': os.getppid(),
                   'verified': not isinstance(anchor, H.Unknown) and H.verify_anchor(*anchor)}))
 """
@@ -268,8 +327,8 @@ print(json.dumps({'anchor': anchor, 'ppid': os.getppid(),
    original=H.process_identity(child.pid)
    self.assertIsInstance(original, Identity)
    self.assertEqual(H.liveness(original), 'alive')
-   with mock.patch.dict(os.environ, CLAUDE_PID=str(child.pid), CLAUDE_CODE_SESSION_ID='sibling'):
-    self.assertIsInstance(H.session_anchor(), H.Unknown)
+   with mock.patch.dict(os.environ, {'CLAUDE_PID': str(child.pid), 'CLAUDE_CODE_SESSION_ID': 'sibling'}, clear=True):
+    self.assertIsInstance(claude_anchor(), H.Unknown)
   finally:
    child.kill()
    child.wait(timeout=10)
