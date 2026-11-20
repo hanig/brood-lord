@@ -39,6 +39,19 @@ when its local prerequisites are available. A handoff records paths,
 identities, decisions, blockers, and verifier receipts; it never transfers
 credentials or silently turns an absent service into a result.
 
+## Antigravity
+
+Use `./install.sh --agent antigravity` for the global root
+`~/.gemini/config/skills`. The workspace root is `.agents/skills`.
+The [Antigravity changelog](https://antigravity.google/docs/changelog?tab=cli)
+says skills listed in a workspace's `.agents/skills.json` “load only from
+inside the workspace or its repository root.” This repository has not
+verified that loader behavior.
+
+The adapter is uncertified. It installs skill directories only and
+configures no Antigravity permission, sandbox, model, or account setting.
+This unit provides no D5 custody for Antigravity sessions.
+
 ## Capability contract
 
 Ask about a capability at the time it is needed. Presence of a skill, a binary

@@ -117,6 +117,7 @@ so a symlink alias is one destination rather than two writes.
 | Pi | `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/skills`; the override replaces Pi's user config root. Its automatic shared root is `$HOME/.agents/skills`. The native harness accepts the old `@mariozechner` and current `@earendil-works` package scopes. | `pi --version` (version probe only) | [validated 0.73.1 manifest](https://registry.npmjs.org/@mariozechner/pi-coding-agent/0.73.1), [current renamed package](https://registry.npmjs.org/@earendil-works/pi-coding-agent), [0.73.1 skills source](https://github.com/badlogic/pi-mono/blob/v0.73.1/packages/coding-agent/docs/skills.md) |
 | Cursor | `$HOME/.cursor/skills` is preferred; `$HOME/.agents/skills` is also consumed. Config evidence: `$HOME/.cursor`. | `cursor-agent --version` | [Cursor Agent Skills](https://www.cursor.com/docs/context/skills); native invocation and probe timing unverified |
 | Grok Build | `$HOME/.grok/skills` is preferred. Config evidence: `$HOME/.grok`. | `grok --version` | [xAI skills docs](https://docs.x.ai/build/features/skills-plugins-marketplaces); native invocation and probe timing unverified |
+| Antigravity | `$HOME/.gemini/config/skills` is the global install root. Workspace `.agents/skills` is declared in `adapters()`; user-level discovery resolves only the global root. | `agy --version` | [Google Antigravity skill locations](https://antigravity.google/docs/skills); adapter uncertified |
 
 `CODEX_HOME` is intentionally not used to relocate `$HOME/.agents/skills`.
 The latter is a user-home shared root; the former is Codex's legacy config
@@ -139,6 +140,7 @@ show before copying a second copy of the same skill:
 | Pi native root | Pi | Pi's documented source ordering makes later sources win; its current changelog records canonical-path symlink deduplication. |
 | Cursor native root | Cursor | Same-name collision and symlink semantics are `unverified`. |
 | Grok native root | Grok | Same-name collision and symlink semantics are `unverified`. Possible Claude/shared-root consumption is unverified evidence, not a consumer edge. |
+| Antigravity global root | Antigravity | Same-name collision and symlink semantics are `unverified`. The documented workspace-relative `.agents/skills` does not establish consumption of the shared user root `$HOME/.agents/skills`; a global copy there cannot cover Antigravity. |
 
 OpenCode's fixed-home Claude and `.agents` compatibility stores, and Pi's
 `.agents` store, are represented as actual roots even though they are not every

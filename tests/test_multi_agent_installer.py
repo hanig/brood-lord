@@ -207,7 +207,7 @@ class TestPublicCli(unittest.TestCase):
         bin_dir.mkdir()
         versions = {"claude": "2.1.261", "codex": "0.153.4",
                     "opencode": "1.18.29", "pi": "0.73.1",
-                    "cursor-agent": "0.0.1", "grok": "0.0.1"}
+                    "cursor-agent": "0.0.1", "grok": "0.0.1", "agy": "1.5.13"}
         for agent in agents:
             program = bin_dir / agent
             program.write_text("#!/bin/sh\necho %s\n" % versions[agent])
@@ -259,6 +259,67 @@ class TestPublicCli(unittest.TestCase):
                     self.assertEqual(target["verification"], "unverified")
                     self.assertIn("not adapter-certified", result.stderr)
                     self.assertFalse((home / ("." + agent) / "skills").exists())
+
+    def test_antigravity_public_dry_run_plans_authored_copies_without_a_cli(self):
+        result, home = self._run("--dry-run", "--json", "--agent", "antigravity")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = json.loads(result.stdout)
+        root = home / ".gemini/config/skills"
+        self.assertEqual(data["mode"], "copy")
+        self.assertEqual(len(data["targets"]), 1)
+        target = data["targets"][0]
+        self.assertEqual(target["agent"], "antigravity")
+        self.assertEqual(target["root"], str(root.resolve()))
+        self.assertEqual(target["verification"], "unverified")
+        self.assertIn("antigravity was selected explicitly", result.stderr)
+        self.assertIn("not adapter-certified", result.stderr)
+        expected = {path.parent.name for path in (ROOT / "skills").glob("hanig-*/SKILL.md")}
+        self.assertEqual({action["skill"] for action in data["actions"]
+                          if action["status"] == "install" and action["root"] == str(root.resolve())
+                          and action["skill"].startswith("hanig-")}, expected)
+        self.assertFalse(home.exists())
+
+    def test_antigravity_preserves_foreign_directory_and_symlink(self):
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            root = home / ".gemini/config/skills"
+            foreign = root / "paseo"
+            foreign.mkdir(parents=True)
+            marker = foreign / "SKILL.md"
+            marker.write_text("foreign\n")
+            alias = root / "foreign-alias"
+            alias.symlink_to(foreign)
+            env = {"HOME": str(home)}
+            flags = ("--agent", "antigravity", "--json")
+            for options in (("--dry-run",), ()):
+                with self.subTest(options=options):
+                    result, _ = self._run(*flags, *options, extra_env=env)
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    conflicts = json.loads(result.stdout)["conflicts"]
+                    self.assertTrue(any("paseo at" in item for item in conflicts), conflicts)
+                    self.assertEqual(set(root.iterdir()), {foreign, alias})
+            removed, _ = self._run(*flags, "--uninstall", extra_env=env)
+            self.assertEqual(removed.returncode, 0, removed.stderr)
+            self.assertEqual(marker.read_text(), "foreign\n")
+            self.assertTrue(alias.is_symlink())
+            self.assertEqual(alias.resolve(), foreign.resolve())
+
+    def test_antigravity_and_codex_plan_one_write_for_aliased_global_roots(self):
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            shared = home / ".agents/skills"
+            shared.mkdir(parents=True)
+            native = home / ".gemini/config/skills"
+            native.parent.mkdir(parents=True)
+            native.symlink_to(shared, target_is_directory=True)
+            result, _ = self._run("--dry-run", "--json", "--only", "hanig-swarm",
+                                  agents=("codex", "agy"), extra_env={"HOME": str(home)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            actions = json.loads(result.stdout)["actions"]
+            self.assertEqual(len(actions), 1)
+            self.assertEqual(actions[0]["root"], str(shared.resolve()))
+            self.assertEqual(actions[0]["agents"], ["codex", "antigravity"])
+            self.assertEqual(list(shared.iterdir()), [])
 
     def test_inherited_agent_roots_do_not_escape_disposable_home(self):
         overrides = {

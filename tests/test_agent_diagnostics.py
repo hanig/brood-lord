@@ -81,7 +81,7 @@ class TestAgentDiagnostics(unittest.TestCase):
     def test_no_claude_still_reports_every_agent_and_each_fact(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = D.diagnostics(env=self._env(Path(tmp)))
-        self.assertEqual(set(data["agents"]), {"claude", "codex", "opencode", "pi", "cursor", "grok"})
+        self.assertEqual(set(data["agents"]), {"claude", "codex", "opencode", "pi", "cursor", "grok", "antigravity"})
         for agent in data["agents"].values():
             self.assertIn(agent["agent_present"]["state"],
                           {"absent", "configured", "slow", "probe_failed",
@@ -419,7 +419,8 @@ class TestDoctorAndSurveyAgentOutput(unittest.TestCase):
         bindir.mkdir()
         for name, version in (("claude", "2.1.261"), ("codex", "0.153.4"),
                               ("opencode", "1.18.29"), ("pi", "0.73.1"),
-                              ("cursor-agent", "0.0.1"), ("grok", "0.0.1")):
+                              ("cursor-agent", "0.0.1"), ("grok", "0.0.1"),
+                              ("agy", "1.5.13")):
             path = bindir / name
             path.write_text(f"#!/bin/sh\nprintf '%s\\n' '{version}'\n")
             path.chmod(0o755)
@@ -581,8 +582,13 @@ class TestDoctorAndSurveyAgentOutput(unittest.TestCase):
                                     cwd=ROOT, env=env, text=True, capture_output=True, timeout=WATCHDOG_SECONDS)
         self.assertEqual(result.returncode, 0, result.stderr)
         value = json.loads(result.stdout)
-        self.assertEqual(set(value["agents"]), {"claude", "codex", "opencode", "pi", "cursor", "grok"})
+        self.assertEqual(set(value["agents"]), {"claude", "codex", "opencode", "pi", "cursor", "grok", "antigravity"})
         self.assertEqual(value["agents"]["claude"]["installation"]["roots"][0]["logical_path"], str(prefix))
+        antigravity = value["agents"]["antigravity"]
+        self.assertEqual(antigravity["agent_present"]["version"], "1.5.13")
+        self.assertEqual(antigravity["discovery"]["verification"], "unverified")
+        self.assertEqual([root["logical_path"] for root in antigravity["installation"]["roots"]],
+                         [str(home / ".gemini/config/skills")])
 
     def test_doctor_without_prefix_uses_effective_claude_override(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -632,7 +638,7 @@ class TestDoctorAndSurveyAgentOutput(unittest.TestCase):
             value = json.loads(result.stdout)
             self.assertNotEqual(value.get("state"), "unknown", value)
             self.assertNotIn("truncated", value)
-            self.assertEqual(set(value["agents"]), {"claude", "codex", "opencode", "pi", "cursor", "grok"})
+            self.assertEqual(set(value["agents"]), {"claude", "codex", "opencode", "pi", "cursor", "grok", "antigravity"})
             # scandir order and measured probe duration vary between runs.
             # Compare every other fact exactly.
             expected = json.loads(full.stdout)
@@ -718,7 +724,7 @@ class TestDoctorAndSurveyAgentOutput(unittest.TestCase):
             self.assertNotIn("truncated", summary)
             self.assertLessEqual(len(result.stdout.encode()), 48_001)
             expected = json.loads(full.stdout)
-            self.assertEqual(set(summary["agents"]), {"claude", "codex", "opencode", "pi", "cursor", "grok"})
+            self.assertEqual(set(summary["agents"]), {"claude", "codex", "opencode", "pi", "cursor", "grok", "antigravity"})
             self.assertEqual(summary["selection"], expected["selection"])
             for name, agent in summary["agents"].items():
                 original = expected["agents"][name]
@@ -786,7 +792,7 @@ class TestDoctorAndSurveyAgentOutput(unittest.TestCase):
                 self.assertNotEqual(value.get("state"), "unknown", (value, result.stderr))
                 self.assertNotIn("truncated", value)
                 self.assertEqual(value["detail"], "summary")
-                self.assertEqual(set(value["agents"]), {"claude", "codex", "opencode", "pi", "cursor", "grok"})
+                self.assertEqual(set(value["agents"]), {"claude", "codex", "opencode", "pi", "cursor", "grok", "antigravity"})
                 for agent in value["agents"].values():
                     self.assertEqual(agent["agent_present"]["state"], "executable_found")
                     self.assertEqual(agent["installation"]["state"], "present")
@@ -833,7 +839,7 @@ class TestDoctorAndSurveyAgentOutput(unittest.TestCase):
             self.assertNotEqual(value.get("state"), "unknown", (value, result.stderr))
             self.assertNotIn("truncated", value)
             self.assertEqual(value["detail"], "summary")
-            self.assertEqual(set(value["agents"]), {"claude", "codex", "opencode", "pi", "cursor", "grok"})
+            self.assertEqual(set(value["agents"]), {"claude", "codex", "opencode", "pi", "cursor", "grok", "antigravity"})
             for name, agent in value["agents"].items():
                 self.assertEqual(agent["installation"], expected["agents"][name]["installation"])
                 self.assertEqual(agent["agent_present"]["state"], "executable_found")

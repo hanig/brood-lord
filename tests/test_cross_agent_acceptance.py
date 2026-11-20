@@ -79,7 +79,7 @@ class HermeticRoots(unittest.TestCase):
             name = Path(path).name
             versions = {"claude": "2.1.261", "codex": "0.153.4",
                         "opencode": "1.18.29", "pi": "0.73.1",
-                        "cursor-agent": "0.0.1", "grok": "0.0.1"}
+                        "cursor-agent": "0.0.1", "grok": "0.0.1", "agy": "1.5.13"}
             return True, versions[name]
 
         report = discovery.discover(self.env(**env), which=which, probe=probe)
@@ -127,11 +127,14 @@ class HermeticRoots(unittest.TestCase):
         self.assertEqual(plan["selected"][3]["covered_by"], ["codex"])
         self.assertEqual(plan["selected"][4]["covered_by"], ["codex"])
         self.assertIsNone(plan["selected"][5]["covered_by"])
-        # The compatibility helper refuses to pick one of three physical writes
+        self.assertIsNone(plan["selected"][6]["covered_by"])
+        paths = [item["physical_path"] for item in plan["destinations"]]
+        self.assertEqual(len(paths), len(set(paths)))
+        # The compatibility helper refuses to pick one of four physical writes
         # by accident, but automatic multi-target installation uses the plan.
         selected = discovery.select_target(report)
         self.assertEqual(selected["status"], "requires_explicit_target")
-        self.assertEqual(selected["eligible_agents"], ["claude", "codex", "grok"])
+        self.assertEqual(selected["eligible_agents"], ["claude", "codex", "grok", "antigravity"])
 
     def test_no_agent_requires_an_explicit_target(self):
         report = self.report()
@@ -234,6 +237,7 @@ class LifecycleAcceptance(unittest.TestCase):
             "pi": self.home / ".pi" / "agent" / "skills",
             "cursor": self.home / ".cursor" / "skills",
             "grok": self.home / ".grok" / "skills",
+            "antigravity": self.home / ".gemini" / "config" / "skills",
         }
         targets = [self.target(source, agent, destination=roots[agent] / source.name,
                                consumers=(agent,)) for agent in AGENTS]
