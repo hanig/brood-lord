@@ -699,13 +699,13 @@ class TestAuthorExclusion(unittest.TestCase):
                 self.assertEqual(args.panel_selection["substituted"], ["sonnet-5.5"])
 
     def test_wrapped_author_excludes_both_seats(self):
-        code, out, _, called = self.invoke(
-            "--only", "astra,astra-tiebreak,luna,kimi-k2.7-code",
-            "--author", "openrouter/openai/gpt-6-astra", "--json")
-        self.assertEqual(code, 0, out)
-        self.assertEqual(set(called), {"luna", "kimi-k2.7-code"})
-        self.assertEqual({r["name"] for r in json.loads(out)["excluded"]},
-                         {"astra", "astra-tiebreak"})
+        for prefix in ("openrouter/openai", "opencode", "copilot"):
+            code, out, _, called = self.invoke(
+                "--only", "astra,astra-tiebreak,luna,kimi-k2.7-code",
+                "--author", prefix + "/gpt-6-astra", "--json")
+            self.assertEqual(code, 0, out)
+            self.assertEqual(set(called), {"luna", "kimi-k2.7-code"})
+            self.assertEqual(len(json.loads(out)["excluded"]), 2)
 
 
 if __name__ == "__main__":

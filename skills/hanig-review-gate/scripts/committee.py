@@ -678,7 +678,7 @@ def tiebreak(args, session, inputs):
         if rejected:
             excluded += rejected
         elif None in voters or R._panels.seat_identity(member) in voters:
-            excluded.append(R._panels.seat_exclusion(member, "model already voted or voter unknown"))
+            excluded.append(R._panels.seat_exclusion(member, "model voted or voter unknown"))
         elif member is not primary and (not maker or maker == R._panels.panel_makers([member])):
             excluded.append(R._panels.seat_exclusion(member, "reserve needs a different maker"))
         else:

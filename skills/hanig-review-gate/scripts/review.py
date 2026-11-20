@@ -3403,7 +3403,7 @@ def _main():
     args.panel_selection = None
     excluded = []
     if args.author or args.kind == "plan":
-        authors = author_model_ids(args.author)
+        authors = author_model_ids(args.author, roster)
         if args.author:
             reviewers, excluded = exclude_authors(reviewers, authors)
         # Check capacity before contacting anyone, including the entire ladder

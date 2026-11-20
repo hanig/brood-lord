@@ -219,7 +219,7 @@
     "in": 2.0,
     "out": 10.0
    },
-   "_note": "Added 2026-09-28 by owner decision, taking kimi-k2.7-code's fast and committee seats, so no tier lacks a second model maker. Released the same day: no third-party code-review data yet, and AA-Omniscience rates it more likely than Opus 5.5 to state a wrong answer confidently. Every finding is reproduced before it is acted on, which bounds that cost. Available as a plan reserve. Owner decision 2026-10-12: haiku-5.5 takes fast; standard, deep and committee stay, with high effort unchanged.",
+   "_note": "Added 2026-09-28 by owner decision, taking kimi-k2.7-code's fast and committee seats, so no tier lacks a second model maker. Released the same day: no third-party code-review data yet, and AA-Omniscience rates it more likely than Opus 5.5 to state a wrong answer confidently. Every finding is reproduced before it is acted on, which bounds that cost. Available as a plan and planning reserve. Owner decision 2026-10-12: haiku-5.5 takes fast; standard, deep and committee stay, with high effort unchanged.",
    "max_output_tokens": 128000,
    "_max_output_tokens": "MEASURED through the native Anthropic Messages API at the unchanged high effort and 128000 cap. Prior OpenRouter acceptance is retained in _max_output_tokens_history. The minimal probe establishes budget acceptance, not capacity for every review.",
    "_max_output_tokens_accepted": {
