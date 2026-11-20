@@ -36,7 +36,6 @@ import child_environment as CE
 import coordinator_paths as CP
 import swarm as S
 import d5_activation as D5
-from d5_host import HOST_ENV_NAMES
 import d5_installation as DI
 import verify as V
 import remote_verify as RV
@@ -984,6 +983,8 @@ def _merge_child_env():
     host session and anchor declarations as defense in depth; never transfer authority.
     This retains child_environment's published finite-filter limits.
     """
+    from d5_host import HOST_ENV_NAMES
+
     env = CE.child_env()
     env.update((name, os.environ[name]) for name in FORGE_AUTH_ENV if name in os.environ)
     return {name: value for name, value in env.items()
