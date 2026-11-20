@@ -3109,7 +3109,7 @@ The final verdict is computed by code, not by either seat.
 """
 
 
-def _plan_panel_error(members):
+def _check_canonical_plan(members):
     error = _load_plan_review()._plan_panel_error(members)
     if not error and len(_panels.panel_makers(members)) != 2:
         return "Pass plan reviewers from different model makers."
@@ -3119,7 +3119,7 @@ def _plan_panel_error(members):
 def cmd_plan_review(args, members, prompt, label, truncated, profile_reason, excluded):
     """Public plan-review entry."""
     plan = _load_plan_review()
-    panel_error = _plan_panel_error(members)
+    panel_error = _check_canonical_plan(members)
     if panel_error:
         disarm_watchdog()
         print(f"error: {panel_error}", file=sys.stderr)
@@ -3424,7 +3424,7 @@ def _main():
         eligible = [r for r in reviewers if r.get("enabled", True)
                     and (not args.escalate or any(in_profile(r, tier)
                                                   for tier in escalation_tiers(args)))]
-        plan_check = _plan_panel_error if args.kind == "plan" else None
+        plan_check = _check_canonical_plan if args.kind == "plan" else None
         attempted = False
         selection = None
         if not (args.list or args.only or args.escalate):
