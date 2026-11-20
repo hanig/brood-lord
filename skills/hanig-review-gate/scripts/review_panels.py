@@ -126,7 +126,7 @@ def configure_reserves(revs, reserves, in_profile, config_error):
 def fill_profile(roster, profile, eligible, authors, required, excluded, plan_check):
     contrast = plan_check is not None and len(eligible) == 2 and len(panel_makers(eligible)) < 2
     reserves = reserve_seats(roster, profile)
-    if not reserves or not excluded or not (contrast or len(eligible) < required):
+    if not reserves or not excluded or (len(eligible) >= required and not contrast):
         return None, False
     candidates, rejected = exclude_authors(reserves, authors)
     excluded.extend(rejected)

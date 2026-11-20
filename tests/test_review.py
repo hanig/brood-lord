@@ -1322,7 +1322,7 @@ class TestRangeDivergence(unittest.TestCase):
 
     def test_header_displays_divergence_offline(self):
         stdout, stderr = io.StringIO(), io.StringIO()
-        reviewer = {"name": "offline", "profiles": ["standard"]}
+        reviewer = dict(name="offline", provider="openai", model="fixture", profiles=["standard"])
         result = {"name": "offline", "ok": True, "verdict": "upheld",
                   "findings": [], "claims": [], "elapsed_s": 0}
         argv = [str(SCRIPT), "--range", "base..branch", "--kind",
@@ -2462,6 +2462,7 @@ class TestProtocolIsEnforcedNotRemembered(unittest.TestCase):
             {"name": "c", "profiles": ["standard", "deep"]},
             {"name": "d", "profiles": ["deep"]},
         ]
+        roster = [dict(r, provider="openai", model=r["name"]) for r in roster]
         called = []
 
         def answer(reviewer, *_args):

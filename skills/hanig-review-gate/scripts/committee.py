@@ -178,8 +178,7 @@ def pick_members(explicit, authors=(), profile="committee", *, audit=None):
                                      len(R._panels.panel_makers(panel)) >= 2
                                      and len({r["provider"] for r in panel}) >= 2)
         if result is None:
-            die(conflict_text(excluded) + f" (authors: {', '.join(author_list(authors))})."
-                " Name independent members with --member.")
+            die(conflict_text(excluded) + ". Name independent members with --member.")
         kept, added = result
         if audit is not None:
             audit.update(R._panels.panel_selection(profile, excluded + rejected, added, kept))

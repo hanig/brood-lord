@@ -69,7 +69,6 @@ import datetime
 import errno
 import fcntl
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -3065,6 +3064,8 @@ def decide_state(n_completed, n_failed, confirmed, refuted_claims,
 
 # --- plan review ---
 def _load_skill_module(stem, configure=None):
+    import importlib.util
+
     path = HERE / (stem + ".py")
     name = "_hanig_review_gate_" + stem
     if configure and name in sys.modules:
@@ -3404,6 +3405,8 @@ def _main():
     args.panel_selection = None
     authors = author_model_ids(args.author, roster)
     reviewers, excluded = exclude_authors(reviewers, authors)
+    if excluded and args.kind == "plan" and not (args.author or args.list):
+        config_error("Pass plan reviewers with a derivable model maker.")
     if excluded:
         # Check capacity before contacting anyone, including the entire ladder
         # and any fresh-cycle floor. Author removal cannot relax either floor.
@@ -3615,7 +3618,7 @@ def _main():
         "state": state, "checked_at": now(), "reviewed": label,
         "profile": profile, "escalated": bool(args.escalate),
         "profile_reason": profile_reason,
-        "excluded": excluded, "panel_selection": args.panel_selection,
+        "excluded": excluded,
         "tiers_run": tiers_run,
         "panel_policy": args.panel_policy,
         "input_redactions": args.input_redactions,
