@@ -55,21 +55,13 @@ plan review would have rejected.
 
 ## The author does not judge their own work
 
-Declare every author with repeatable `--author PROVIDER/MODEL`, for example
-`--author codex/gpt-6.2-sol`. The gate removes matching models from fixed,
-explicit `--only`, and escalated panels and names each removal, such as
-`sol excluded: authored this change`. It compares the complete model ID after
-the first slash exactly, independent of transport provider: Codex's
-`codex/gpt-6.2-sol` matches the `openai` reviewer model `gpt-6.2-sol`, and
-`openrouter/moonshotai/kimi-k2.7-code` retains the nested model ID. Model
-substrings, case variants, and seat names are not model matches. If exclusion
-leaves too few eligible reviewers for quorum (including a fresh-cycle floor),
-the gate returns `REVIEW_UNAVAILABLE` before calling any reviewer; it never
-reduces quorum. Author declarations are caller-supplied, not inferred from Git
-or dispatch, so an omitted author is not automatically excluded.
+Declare authors with repeatable `--author PROVIDER/MODEL`. Maker and
+exact model leaf match across routes. Ordered reserves can restore quorum,
+size or contrast before dispatch. Explicit `--only`, `--member` and
+`--escalate` use their selected seats. Exhausted review reserves yield
+`REVIEW_UNAVAILABLE`.
 
-Committee `open` accepts the same repeatable flag and refuses a matching
-explicit or default member before calling providers. The author set persists;
+Committee `open` accepts the same flag. The author set persists;
 `ask`, `review`, `synthesize`, and `tiebreak` check it on reuse, and accept the
 flag to declare authors on older sessions. A conflicting replacement set is
 refused. Existing bare model IDs and configured seat aliases remain accepted
@@ -158,8 +150,8 @@ design is wrong, which is the point of asking.
 
 After challenging the members, run
 `python3 "$HANIG_REVIEW_GATE_DIR/scripts/committee.py" synthesize SESSION --author PROVIDER/MODEL`.
-Convergence produces a unified plan; divergence automatically calls the
-one enabled reviewer whose profiles are exactly `["tiebreak"]` (astra-tiebreak since 2026-11-06; Sol now writes the code).
+Convergence produces a unified plan. On a split, the primary tie-breaker is
+the one enabled reviewer whose profiles are exactly `["tiebreak"]`.
 For an already identified split, use `tiebreak SESSION --author PROVIDER/MODEL` directly.
 It receives the question and every member's final position verbatim and saves
 a RULING adopting a named position with the deciding evidence, not a fresh plan.
@@ -171,9 +163,8 @@ with `--stop-and-ask REASON`, which refuses without calling a provider and is
 retained in the session. Semantic classification otherwise rests on the model
 and an honest caller; a ruling supplies analysis, never additional authority.
 An unavailable, empty, truncated or malformed answer routes to OWNER (exit 1)
-with a persisted reason. Any Astra coauthor (`--author codex/gpt-6.2-astra`, also
-recognized by its legacy bare model and configured aliases) refuses the
-tie-break using the same model exclusion rule as membership. Missing or conflicting author
+with a persisted reason. An author or prior committee voter is ineligible;
+the first independent reserve from another maker can rule. Missing or conflicting author
 declarations also route to the owner; existing sessions can declare their author
 on first use. `show SESSION` displays the current resolution, and a later member
 turn invalidates it while retaining the earlier decision's audit record.

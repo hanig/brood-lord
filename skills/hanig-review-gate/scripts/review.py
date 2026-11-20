@@ -80,6 +80,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from itertools import combinations
 from pathlib import Path
 
 # Exit 5 remains reserved. The adjudication ledger introduces no review verdict.
@@ -2065,15 +2066,11 @@ def read_review_journal(path):
 
 
 def adjudicator_is_author(accepted_by, authors):
-    """Use ARC-755's exact model identity, with no case/substring folding.
-
-    An acceptor may be a human name or a model ID with an optional transport
-    prefix. Identity and authority are declared, not authenticated here.
-    """
-    model = (next(iter(author_model_ids([accepted_by])))
-             if "/" in accepted_by else accepted_by)
+    """A bare acceptor can be a human name or a legacy model leaf."""
     models = author_model_ids(authors)
-    return accepted_by in models or model in models
+    if "/" in accepted_by:
+        return bool(author_model_ids([accepted_by]) & models)
+    return accepted_by in {identity[1] for identity in models if identity}
 
 
 def journal_identity_problems(record, allow_unbound=False):
@@ -2458,6 +2455,26 @@ def load_reviewers():
                 or not all(isinstance(x, str) for x in r["profiles"])):
             config_error(f"reviewer 'profiles' must be a list of strings, got "
                          f"{r['profiles']!r}")
+        r.pop("_reserve_order", None)
+    reserves = data.get("reserves", {})
+    if not isinstance(reserves, dict):
+        config_error("reserves must be an object")
+    by_name = {r["name"]: r for r in revs}
+    for profile, names in reserves.items():
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            config_error(f"reserves for {profile!r} must be a list of seat names")
+        for index, name in enumerate(names):
+            r = by_name.get(name)
+            if r is None or not r.get("enabled", True) or in_profile(r, profile):
+                reason = "unknown" if r is None else (
+                    "disabled" if not r.get("enabled", True) else "already a primary")
+                config_error(f"reserve {name!r} for {profile!r} is {reason}")
+            r.setdefault("_reserve_order", {}).setdefault(profile, index)
+    for r in revs:
+        if in_profile(r, "planning") or "planning" in r.get("_reserve_order", {}):
+            maker, model = seat_identity(r) or ("", "")
+            if maker == "anthropic" and "opus" in model.casefold():
+                config_error(f"Opus seat {r['name']!r} is forbidden in 'planning'")
     return revs
 
 
@@ -2801,43 +2818,85 @@ def round_argument(value):
         raise argparse.ArgumentTypeError("round must be an integer or plan")
 
 
-def author_model_ids(authors, roster=(), legacy=False):
-    """Match model IDs exactly, independently of the author's transport.
+def model_identity(provider, model):
+    """Use the plan contrast rule: vendor segment, otherwise seat provider."""
+    if valid_identity(model):
+        maker = model.split("/", 1)[0] if "/" in model else provider
+        aliases = {"codex": "openai", "claude": "anthropic", "antigravity": "google"}
+        if valid_identity(maker) and "/" not in maker:
+            return aliases.get(maker, maker), model.rsplit("/", 1)[-1]
+    return None
 
-    Codex authors and OpenAI API reviewers can use the same model. Split only
-    the outer provider prefix: openrouter/moonshotai/kimi-k2.7-code retains
-    moonshotai/kimi-k2.7-code. Only committee's older bare declarations accept
-    configured seat aliases (case-insensitive), never model substrings.
-    """
+
+def seat_identity(seat):
+    return model_identity(seat.get("provider"), seat.get("model"))
+
+
+def author_model_ids(authors, roster=(), legacy=False):
     models = set()
     for author in authors:
-        if legacy and author in {r["model"] for r in roster}:
-            models.add(author)
-        elif legacy and "/" not in author:
-            aliases = {r["model"] for r in roster
-                       if r["name"].casefold() == author.casefold()}
-            models.update(aliases or {author})
+        matches = [r for r in roster if legacy and (r["model"] == author
+                   or r["name"].casefold() == author.casefold())]
+        if matches:
+            models.update(seat_identity(r) for r in matches)
         else:
-            models.add(author.partition("/")[2])
+            provider, _, model = author.partition("/")
+            models.add(model_identity(provider, model))
     return models
 
 
 def exclude_authors(reviewers, models):
-    """One exact-model exclusion rule shared with committee membership."""
+    """Exclude conflicts and prevent a resolved seat from falling back to one."""
     kept, excluded = [], []
     for reviewer in reviewers:
-        if reviewer["model"] in models:
-            excluded.append({"name": reviewer["name"],
-                             "model": reviewer["model"],
-                             "reason": "authored this change"})
-        elif reviewer.get("_resolved_from") in models:
-            # The seat reviews on its resolved model, which did not author
-            # the change, but its pin did: keep the seat and forbid the
-            # fallback, so the author can never be the model that answers.
-            kept.append(dict(reviewer, _no_pin_fallback=True))
+        identity = seat_identity(reviewer)
+        reason = None
+        if identity is None or None in models:
+            reason = "model maker could not be determined for the seat or an author"
+        elif identity in models:
+            reason = "authored this change"
+        if reason:
+            excluded.append(seat_exclusion(reviewer, reason))
         else:
+            pin = reviewer.get("_resolved_from")
+            if pin and model_identity(reviewer.get("provider"), pin) in models | {None}:
+                reviewer = dict(reviewer, _no_pin_fallback=True)
             kept.append(reviewer)
     return kept, excluded
+
+
+def seat_exclusion(seat, reason):
+    return {"name": seat["name"], "model": seat["model"], "reason": reason}
+
+
+def reserve_seats(roster, profile):
+    return sorted(
+        (r for r in roster if r.get("enabled", True)
+         and profile in r.get("_reserve_order", {})),
+        key=lambda r: r["_reserve_order"][profile])
+
+
+def panel_makers(panel):
+    return {identity[0] for r in panel if (identity := seat_identity(r))}
+
+
+def reserve_panel(primaries, reserves, size, valid):
+    """Try ordered reserve subsets, then primary subsets for their open slots."""
+    count = max(1, size - len(primaries))
+    for added in combinations(reserves, count):
+        for kept in combinations(primaries, size - count):
+            panel = kept + added
+            identities = {seat_identity(r) for r in panel}
+            if None not in identities and len(identities) == size and valid(panel):
+                return list(kept), list(added)
+    return None
+
+
+def panel_selection(profile, excluded, added, panel):
+    return {"profile": profile, "excluded": excluded,
+            "substituted": [r["name"] for r in added],
+            "providers": sorted({r["provider"] for r in panel}),
+            "makers": sorted(panel_makers(panel))}
 
 
 def in_profile(rev, profile):
@@ -3127,7 +3186,7 @@ def _load_plan_review():
     spec.loader.exec_module(module)
     module._configure(**{k: globals()[k] for k in (
         "verdict_schema_error", "norm", "unassessed_claims", "PLAN_SYSTEM",
-        "config_error", "parse_verdict", "PROVIDERS")})
+        "config_error", "parse_verdict", "PROVIDERS", "panel_makers")})
     sys.modules[name] = module
     sys.path.insert(0, str(path.parent))
     return module
@@ -3177,7 +3236,8 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason, exc
               "quorum": 2, "truncated": truncated, "excluded": excluded,
               "unavailable": unavailable, "results": completed,
               "panel_policy": args.panel_policy, "input_redactions": args.input_redactions,
-              "plan_exchange": exchange, "journal": journal}
+              "plan_exchange": exchange, "journal": journal,
+              "panel_selection": getattr(args, "panel_selection", None)}
     if args.json:
         print(redact(json.dumps(report, indent=2)))
     else:
@@ -3436,13 +3496,12 @@ def _main():
             config_error(f"no reviewer matches {wanted}. Available: {have}. "
                          f"Pass one of those, or drop --only to use the "
                          f"profile.")
+    args.panel_selection = None
     excluded = []
-    if args.author:
-        reviewers, excluded = exclude_authors(
-            reviewers, author_model_ids(args.author))
-        if not args.json:
-            for removal in excluded:
-                print(f"{removal['name']} excluded: {removal['reason']}")
+    if args.author or args.kind == "plan":
+        authors = author_model_ids(args.author)
+        if args.author:
+            reviewers, excluded = exclude_authors(reviewers, authors)
         # Check capacity before contacting anyone, including the entire ladder
         # and any fresh-cycle floor. Author removal cannot relax either floor.
         required = max(args.quorum, 2 if args.kind == "plan" else 1)
@@ -3450,14 +3509,41 @@ def _main():
             required = max(required, 2, len({r["name"] for r in roster
                            if r.get("enabled", True)
                            and in_profile(r, args.fresh_cycle_from)}))
-        remaining = sum(1 for r in reviewers if r.get("enabled", True)
-                        and (not args.escalate or
-                             any(in_profile(r, tier)
-                                 for tier in escalation_tiers(args))))
-        if excluded and remaining < required and not args.list:
+        eligible = [r for r in reviewers if r.get("enabled", True)
+                    and (not args.escalate or any(in_profile(r, tier)
+                                                  for tier in escalation_tiers(args)))]
+        plan = args.kind == "plan"
+        contrast = plan and len(eligible) == 2 and len(panel_makers(eligible)) < 2
+        attempted = False
+        if not (args.list or args.only or args.escalate) and (
+                contrast or (excluded and len(eligible) < required)):
+            reserves = reserve_seats(roster, profile)
+            attempted = bool(reserves)
+            if attempted:
+                candidates, rejected = exclude_authors(reserves, authors)
+                valid = (lambda p: not _load_plan_review()._plan_panel_error(p)) if plan else (
+                    lambda p: True)
+                result = reserve_panel(eligible, candidates, required, valid)
+                excluded += rejected
+                if result:
+                    kept, added = result
+                    excluded += [seat_exclusion(r, "plan needs contrasting makers")
+                                 for r in eligible if r not in kept]
+                    eligible = reviewers = kept + added
+                    args.panel_selection = panel_selection(profile, excluded, added, reviewers)
+        if not args.json:
+            for removal in excluded:
+                print(f"{removal['name']} excluded: {removal['reason']}")
+            if args.panel_selection:
+                print("Panel substitution " + redact(json.dumps(args.panel_selection)))
+        remaining = len(eligible)
+        if not args.list and not args.panel_selection and (
+                attempted or (excluded and remaining < required)):
             reason = (f"author exclusion leaves {remaining} eligible reviewers; "
                       f"required quorum is {required}. Select more independent "
                       "reviewers; author exclusion cannot lower quorum.")
+            if attempted:
+                reason += " Profile reserves cannot restore quorum and contrast."
             disarm_watchdog()
             if args.json:
                 print(json.dumps({"state": "REVIEW_UNAVAILABLE",
@@ -3546,7 +3632,7 @@ def _main():
         report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
                   "profile": profile, "profile_reason": profile_reason,
                   "reviewed": label, "unavailable": unavailable, "results": [],
-                  "excluded": excluded,
+                  "excluded": excluded, "panel_selection": args.panel_selection,
                   "panel_policy": args.panel_policy,
                   "input_redactions": args.input_redactions,
                   "journal": journal}
@@ -3635,7 +3721,7 @@ def _main():
         "state": state, "checked_at": now(), "reviewed": label,
         "profile": profile, "escalated": bool(args.escalate),
         "profile_reason": profile_reason,
-        "excluded": excluded,
+        "excluded": excluded, "panel_selection": args.panel_selection,
         "tiers_run": tiers_run,
         "panel_policy": args.panel_policy,
         "input_redactions": args.input_redactions,

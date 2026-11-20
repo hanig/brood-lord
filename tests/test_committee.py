@@ -225,7 +225,8 @@ class TestCommitteeTiebreak(unittest.TestCase):
 
     def setUp(self):
         # Fixed model fixtures keep generic exclusion tests independent of pins.
-        roster = committee.R.load_reviewers()
+        self.shipped = committee.R.load_reviewers()
+        roster = [dict(r, _reserve_order={}) for r in self.shipped]
         for seat in roster:
             if seat["name"] in ("astra", "astra-tiebreak"):
                 seat["model"] = "gpt-6-astra"
@@ -328,6 +329,23 @@ class TestCommitteeTiebreak(unittest.TestCase):
         self.assertEqual(self.invoke("tiebreak", author=None)[0], 0)
         self.assertEqual(len(self.calls), 2)
 
+    def test_real_tiebreak_reserve_excludes_primary_author_and_prior_voter(self):
+        primary = committee.tiebreaker(self.shipped)[0]
+        for author, voters in (("openrouter/openai/" + primary["model"], []),
+                               ("codex/gpt-6.1-sol", [primary])):
+            with self.subTest(author=author):
+                session = dict(self.session, members={
+                    n: dict(rec, voters=voters) for n, rec in self.session["members"].items()})
+                committee.save_session("split", session)
+                with mock.patch.object(committee.R, "load_reviewers", return_value=self.shipped), \
+                        mock.patch.object(committee, "ask_member", return_value=(
+                            json.dumps(self.ruling), None, {})) as ask:
+                    code, _, saved = self.invoke("tiebreak", author=author)
+                self.assertEqual(code, 0)
+                self.assertEqual([c.args[0]["name"] for c in ask.call_args_list], ["kimi-k3"])
+                self.assertEqual(saved["resolution"]["tiebreak_selection"]["substituted"],
+                                 ["kimi-k3"])
+
     def test_tiebreaker_unavailable_routes_owner_with_reason(self):
         self.tie_error = "HTTP 503: provider unavailable"
         code, output, saved = self.invoke()
@@ -373,7 +391,7 @@ class TestCommitteeTiebreak(unittest.TestCase):
 
     def test_other_author_containing_astra_name_is_not_refused(self):
         code, output, _saved = self.invoke(
-            "tiebreak", author="my-gpt-6-astra-helper")
+            "tiebreak", author="codex/my-gpt-6-astra-helper")
         self.assertEqual(code, 0, output)
         self.assertEqual(len(self.calls), 1)
 
@@ -714,7 +732,7 @@ class TestCommitteeTiebreak(unittest.TestCase):
 class TestCommitteeAuthorMembers(unittest.TestCase):
     def setUp(self):
         # Fixed model fixtures keep generic exclusion tests independent of pins.
-        roster = committee.R.load_reviewers()
+        roster = [dict(r, _reserve_order={}) for r in committee.R.load_reviewers()]
         for seat in roster:
             if seat["name"] in ("astra", "astra-tiebreak"):
                 seat["model"] = "gpt-6-astra"
@@ -898,6 +916,32 @@ class TestCommitteeAuthorMembers(unittest.TestCase):
         self.assertEqual(code, 1, output)
         self.assertIn("sol refused", output)
         self.assertEqual(calls, 0)
+
+
+class TestReservePanels(unittest.TestCase):
+    def test_profiles_restore_author_slots_and_skip_greedy_assignment(self):
+        roster = committee.R.load_reviewers()
+        seats = {r["name"]: r for r in roster}
+
+        def author(name):
+            r = seats[name]
+            return f"{r['provider']}/{r['model']}"
+
+        for profile, reserve in (("committee", "terra"), ("planning", "sonnet-5.5")):
+            primaries = {n for n, r in seats.items() if profile in r["profiles"]}
+            for name in primaries:
+                panel = committee.pick_members([], [author(name)], profile)
+                self.assertEqual({r["name"] for r in panel}, primaries - {name} | {reserve})
+
+        for i, name in enumerate(("muse-wonder", "kimi-k3", "terra")):
+            seats[name]["_reserve_order"]["committee"] = i
+        authors = [author(n) for n in ("gemini-neon", "sonnet-5.5")]
+        with mock.patch.object(committee.R, "load_reviewers", return_value=roster):
+            panel = committee.pick_members([], authors)
+            self.assertEqual({r["name"] for r in panel},
+                             {"deepseek-v4-pro", "muse-wonder", "terra"})
+            with self.assertRaisesRegex(SystemExit, "gemini-neon refused.*--member"):
+                committee.pick_members(["deepseek-v4-pro,gemini-neon,sonnet-5.5"], authors)
 
 
 if __name__ == "__main__":
