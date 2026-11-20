@@ -3,6 +3,8 @@
 import re
 from itertools import combinations
 
+MAKER_ALIASES = {"codex": "openai", "claude": "anthropic", "antigravity": "google"}
+
 
 def valid_identity(value):
     """A bounded ASCII token, optionally slash-separated; never normalized."""
@@ -16,9 +18,8 @@ def model_identity(provider, model):
     """Use the plan contrast rule: vendor segment, otherwise seat provider."""
     if valid_identity(model):
         maker = model.split("/", 1)[0] if "/" in model else provider
-        aliases = {"codex": "openai", "claude": "anthropic", "antigravity": "google"}
         if valid_identity(maker) and "/" not in maker:
-            return aliases.get(maker, maker), model.rsplit("/", 1)[-1]
+            return MAKER_ALIASES.get(maker, maker), model.rsplit("/", 1)[-1]
     return None
 
 
@@ -35,7 +36,11 @@ def author_model_ids(authors, roster=(), legacy=False):
             models.update(seat_identity(r) for r in matches)
         else:
             provider, _, model = author.partition("/")
-            models.add(model_identity(provider, model))
+            maker = model_identity(provider, model)
+            if maker and "/" not in model and maker[0] not in MAKER_ALIASES.values():
+                matches = {model_identity(r["provider"], model) for r in roster
+                           if model in (r["model"], r.get("_resolved_from"))}
+            models.update(matches or [maker])
     return models
 
 
