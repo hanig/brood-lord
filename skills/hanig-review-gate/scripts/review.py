@@ -1089,14 +1089,6 @@ def valid_digest(value):
             and re.fullmatch(r"[0-9a-f]{64}", value) is not None)
 
 
-def valid_identity(value):
-    """A bounded ASCII token, optionally slash-separated; never normalized."""
-    return (isinstance(value, str) and 1 <= len(value) <= 256
-            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:@+-]*"
-                             r"(?:/[A-Za-z0-9][A-Za-z0-9_.:@+-]*)*", value)
-            is not None)
-
-
 def valid_author(value):
     return valid_identity(value) and "/" in value
 
@@ -2065,15 +2057,12 @@ def read_review_journal(path):
 
 
 def adjudicator_is_author(accepted_by, authors):
-    """Use ARC-755's exact model identity, with no case/substring folding.
-
-    An acceptor may be a human name or a model ID with an optional transport
-    prefix. Identity and authority are declared, not authenticated here.
-    """
-    model = (next(iter(author_model_ids([accepted_by])))
-             if "/" in accepted_by else accepted_by)
-    models = author_model_ids(authors)
-    return accepted_by in models or model in models
+    """A bare acceptor can be a human name or a legacy model leaf."""
+    if "/" in accepted_by:
+        roster = [dict(zip(("provider", "model"), value.split("/", 1)))
+                  for value in [accepted_by, *authors] if "/" in value]
+        return bool(author_model_ids([accepted_by], roster) & author_model_ids(authors, roster))
+    return any(author.partition("/")[2] == accepted_by for author in authors)
 
 
 def journal_identity_problems(record, allow_unbound=False):
@@ -2458,6 +2447,7 @@ def load_reviewers():
                 or not all(isinstance(x, str) for x in r["profiles"])):
             config_error(f"reviewer 'profiles' must be a list of strings, got "
                          f"{r['profiles']!r}")
+    _panels.configure_reserves(revs, data.get("reserves", {}), in_profile, config_error)
     return revs
 
 
@@ -2801,45 +2791,6 @@ def round_argument(value):
         raise argparse.ArgumentTypeError("round must be an integer or plan")
 
 
-def author_model_ids(authors, roster=(), legacy=False):
-    """Match model IDs exactly, independently of the author's transport.
-
-    Codex authors and OpenAI API reviewers can use the same model. Split only
-    the outer provider prefix: openrouter/moonshotai/kimi-k2.7-code retains
-    moonshotai/kimi-k2.7-code. Only committee's older bare declarations accept
-    configured seat aliases (case-insensitive), never model substrings.
-    """
-    models = set()
-    for author in authors:
-        if legacy and author in {r["model"] for r in roster}:
-            models.add(author)
-        elif legacy and "/" not in author:
-            aliases = {r["model"] for r in roster
-                       if r["name"].casefold() == author.casefold()}
-            models.update(aliases or {author})
-        else:
-            models.add(author.partition("/")[2])
-    return models
-
-
-def exclude_authors(reviewers, models):
-    """One exact-model exclusion rule shared with committee membership."""
-    kept, excluded = [], []
-    for reviewer in reviewers:
-        if reviewer["model"] in models:
-            excluded.append({"name": reviewer["name"],
-                             "model": reviewer["model"],
-                             "reason": "authored this change"})
-        elif reviewer.get("_resolved_from") in models:
-            # The seat reviews on its resolved model, which did not author
-            # the change, but its pin did: keep the seat and forbid the
-            # fallback, so the author can never be the model that answers.
-            kept.append(dict(reviewer, _no_pin_fallback=True))
-        else:
-            kept.append(reviewer)
-    return kept, excluded
-
-
 def in_profile(rev, profile):
     """THE eligibility rule. Both selection paths must call this one.
 
@@ -3112,6 +3063,21 @@ def decide_state(n_completed, n_failed, confirmed, refuted_claims,
 
 
 # --- plan review ---
+def _load_panels():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_hanig_review_gate_panels", HERE / "review_panels.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_panels = _load_panels()
+valid_identity = _panels.valid_identity
+author_model_ids = _panels.author_model_ids
+exclude_authors = _panels.exclude_authors
+
+
 def _load_plan_review():
     import importlib.util
 
@@ -3143,10 +3109,17 @@ The final verdict is computed by code, not by either seat.
 """
 
 
+def _check_canonical_plan(members):
+    error = _load_plan_review()._plan_panel_error(members)
+    if not error and len(_panels.panel_makers(members)) != 2:
+        return "Pass plan reviewers from different model makers."
+    return error
+
+
 def cmd_plan_review(args, members, prompt, label, truncated, profile_reason, excluded):
     """Public plan-review entry."""
     plan = _load_plan_review()
-    panel_error = plan._plan_panel_error(members)
+    panel_error = _check_canonical_plan(members)
     if panel_error:
         disarm_watchdog()
         print(f"error: {panel_error}", file=sys.stderr)
@@ -3436,13 +3409,11 @@ def _main():
             config_error(f"no reviewer matches {wanted}. Available: {have}. "
                          f"Pass one of those, or drop --only to use the "
                          f"profile.")
-    excluded = []
-    if args.author:
-        reviewers, excluded = exclude_authors(
-            reviewers, author_model_ids(args.author))
-        if not args.json:
-            for removal in excluded:
-                print(f"{removal['name']} excluded: {removal['reason']}")
+    authors = author_model_ids(args.author, roster)
+    reviewers, excluded = exclude_authors(reviewers, authors)
+    if excluded and args.kind == "plan" and not (args.author or args.list):
+        config_error("Pass plan reviewers with a derivable model maker.")
+    if excluded:
         # Check capacity before contacting anyone, including the entire ladder
         # and any fresh-cycle floor. Author removal cannot relax either floor.
         required = max(args.quorum, 2 if args.kind == "plan" else 1)
@@ -3450,14 +3421,33 @@ def _main():
             required = max(required, 2, len({r["name"] for r in roster
                            if r.get("enabled", True)
                            and in_profile(r, args.fresh_cycle_from)}))
-        remaining = sum(1 for r in reviewers if r.get("enabled", True)
-                        and (not args.escalate or
-                             any(in_profile(r, tier)
-                                 for tier in escalation_tiers(args))))
-        if excluded and remaining < required and not args.list:
+        eligible = [r for r in reviewers if r.get("enabled", True)
+                    and (not args.escalate or any(in_profile(r, tier)
+                                                  for tier in escalation_tiers(args)))]
+        plan_check = _check_canonical_plan if args.kind == "plan" else None
+        attempted = False
+        selection = None
+        if not (args.list or args.only or args.escalate):
+            panel, attempted = _panels.fill_profile(
+                roster, profile, eligible, authors, required, excluded, plan_check)
+            if panel is not None:
+                eligible, added = panel
+                reviewers = eligible
+                selection = _panels.panel_selection(profile, excluded, added, eligible)
+        if not args.json:
+            for removal in excluded:
+                print(f"{removal['name']} excluded: {removal['reason']}")
+        if selection:
+            print("Panel substitution " + redact(json.dumps(selection)),
+                  file=sys.stderr if args.json else sys.stdout, flush=True)
+        remaining = len(eligible)
+        if not args.list and not selection and (
+                attempted or (excluded and remaining < required)):
             reason = (f"author exclusion leaves {remaining} eligible reviewers; "
                       f"required quorum is {required}. Select more independent "
                       "reviewers; author exclusion cannot lower quorum.")
+            if attempted:
+                reason += " Profile reserves cannot restore quorum and contrast."
             disarm_watchdog()
             if args.json:
                 print(json.dumps({"state": "REVIEW_UNAVAILABLE",

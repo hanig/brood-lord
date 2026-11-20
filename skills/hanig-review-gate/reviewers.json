@@ -1,4 +1,10 @@
 {
+ "reserves": {
+  "plan": ["sonnet-5.5", "terra", "deepseek-v4-pro"],
+  "committee": ["terra", "muse-wonder", "kimi-k3"],
+  "planning": ["sonnet-5.5", "deepseek-v4-pro", "kimi-k3"],
+  "tiebreak": ["kimi-k3"]
+ },
  "_comment": "Routing config only \u2014 endpoint, model id, reasoning effort, profile membership. Carries NO quality scores: a stale ranking is worse than none. Availability is MEASURED by `review.py --list`, which probes each provider live; a key being set is not availability. All reviewers use DEFAULT_MAX_OUTPUT_TOKENS (64000) unless they set max_output_tokens: reasoning tokens come out of the answer's budget, and at 16000 a large review returned no content at all. Prices in _cost are per-million-token budgeting hints, not routing inputs; later owner decisions and unmeasured prices are noted on the seats.",
  "default_profile": "standard",
  "_profiles": {

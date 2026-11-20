@@ -114,8 +114,10 @@ def author_list(value):
             if item.strip()]
 
 
-def author_models(value):
-    return R.author_model_ids(author_list(value), R.load_reviewers(), legacy=True)
+def author_models(value, roster=None):
+    if roster is None:
+        roster = R.load_reviewers()
+    return R.author_model_ids(author_list(value), roster, legacy=True)
 
 
 def bind_authors(session, declared):
@@ -128,23 +130,23 @@ def bind_authors(session, declared):
     return None
 
 
-def member_author_conflict(members, authors):
-    _kept, excluded = R.exclude_authors(members, author_models(authors))
-    if excluded:
-        return "; ".join(f"{r['name']} refused: authored this change"
-                         for r in excluded)
-    return None
+def conflict_text(excluded):
+    return "; ".join(f"{r['name']} refused: {r['reason']}" for r in excluded)
 
 
 def session_author_conflict(session):
     # Check saved model identities as well as today's routes. A roster change
     # cannot erase a member's authorship from an already persisted session.
-    members = [dict(rec, name=name) for name, rec in session["members"].items()]
-    members += [r for r in R.load_reviewers() if r["name"] in session["members"]]
-    return member_author_conflict(members, session.get("author"))
+    members = [dict(voter, name=name) for name, rec in session["members"].items()
+               for voter in [rec] + rec.get("voters", [])]
+    roster = R.load_reviewers()
+    members += [r for r in roster if r["name"] in session["members"]]
+    authors = author_models(session.get("author"), roster + members)
+    _, excluded = R.exclude_authors(members, authors)
+    return conflict_text(excluded) or None
 
 
-def pick_members(explicit, authors=(), profile="committee"):
+def pick_members(explicit, authors=(), profile="committee", *, audit=None):
     """Two or three members from contrasting providers.
 
     Contrast is the point, so this refuses a panel that shares one provider
@@ -153,7 +155,8 @@ def pick_members(explicit, authors=(), profile="committee"):
     gateway are genuinely contrasting, and demanding a distinct provider per
     member would rule that out for no gain.
     """
-    revs = [r for r in R.load_reviewers() if r.get("enabled", True)]
+    roster = R.load_reviewers()
+    revs = [r for r in roster if r.get("enabled", True)]
     if explicit:
         want = [n.strip() for spec in explicit for n in spec.split(",")
                 if n.strip()]
@@ -167,9 +170,21 @@ def pick_members(explicit, authors=(), profile="committee"):
         if not chosen:
             die(f"no enabled members in profile {profile!r}; name members "
                 f"with --member, or fix the profile in reviewers.json.")
-    conflict = member_author_conflict(chosen, authors)
-    if conflict:
-        die(conflict + ". Name independent members with --member.")
+    author_ids = author_models(authors, roster)
+    kept, excluded = R.exclude_authors(chosen, author_ids)
+    if excluded:
+        result = None
+        if not explicit and MIN_MEMBERS <= len(chosen) <= MAX_MEMBERS:
+            reserves, rejected = R.exclude_authors(R._panels.reserve_seats(roster, profile), author_ids)
+            result = R._panels.reserve_panel(kept, reserves, len(chosen), lambda panel:
+                                     len(R._panels.panel_makers(panel)) >= 2
+                                     and len({r["provider"] for r in panel}) >= 2)
+        if result is None:
+            die(conflict_text(excluded) + ". Name independent members with --member.")
+        kept, added = result
+        if audit is not None:
+            audit.update(R._panels.panel_selection(profile, excluded + rejected, added, kept))
+    chosen = kept
     if not MIN_MEMBERS <= len(chosen) <= MAX_MEMBERS:
         die(f"a committee is {MIN_MEMBERS} or {MAX_MEMBERS} members; got "
             f"{len(chosen)} ({', '.join(r['name'] for r in chosen) or 'none'})"
@@ -369,6 +384,11 @@ def run_turn(members, session, prompt, timeout, label, *, system=None,
             rec.setdefault("errors", []).append({"phase": label, "error": err})
         else:
             rec["history"].append({"role": "assistant", "content": text})
+            voter = {key: m[key] for key in ("provider", "model")}
+            voters = rec.setdefault("voters", [
+                {key: rec.get(key) for key in voter}])
+            if voter not in voters:
+                voters.append(voter)
         usage = usage or {"in_tokens": None, "out_tokens": None}
         rec.setdefault("usage", []).append({
             "phase": label,
@@ -394,7 +414,8 @@ def show_results(results, quiet=False):
 
 
 def cmd_open(args):
-    members = pick_members(args.member, args.author, args.profile)
+    selection = {}
+    members = pick_members(args.member, args.author, args.profile, audit=selection)
     problem = Path(args.problem_file).read_text() if args.problem_file \
         else args.problem
     if not problem or not problem.strip():
@@ -413,6 +434,9 @@ def cmd_open(args):
                                        "history": []} for m in members},
                "turns": []}
     bind_authors(session, args.author)
+    if selection:
+        session["panel_selection"] = selection
+        save_session(args.name, session)
     names = ", ".join(f"{m['name']} ({m['provider']})" for m in members)
     print(f"committee {args.name!r}: {names}\nphase 1 (plan), waiting for "
           f"all members...\n")
@@ -639,22 +663,42 @@ def tiebreaker():
 
 def tiebreak(args, session, inputs):
     record = {"kind": "tiebreak", "inputs": inputs}
-    member, error = tiebreaker()
+    primary, error = tiebreaker()
     if error:
         return finish_decision(args, session, record, "OWNER", error)
-    _kept, excluded = R.exclude_authors([member], author_models(inputs["author"]))
-    if excluded:
-        return finish_decision(args, session, record, "OWNER",
-                               "tie-break refused: %s authored the disputed "
-                               "work and cannot judge itself" % member["model"])
-    members = [member]
+    roster = R.load_reviewers()
+    authors = author_models(inputs["author"], roster)
+    voters = {R._panels.seat_identity(voter) for rec in session["members"].values()
+              for voter in rec.get("voters", [rec])}
+    maker = R._panels.panel_makers([primary])
+    excluded = []
+    for member in [primary] + R._panels.reserve_seats(roster, "tiebreak"):
+        kept, rejected = R.exclude_authors([member], authors)
+        if rejected:
+            excluded += rejected
+        elif None in voters or R._panels.seat_identity(member) in voters:
+            excluded.append(R._panels.seat_exclusion(member, "model voted or voter unknown"))
+        elif member is not primary and (not maker or maker == R._panels.panel_makers([member])):
+            excluded.append(R._panels.seat_exclusion(member, "reserve needs a different maker"))
+        else:
+            if excluded:
+                record["tiebreak_selection"] = R._panels.panel_selection(
+                    "tiebreak", excluded, kept, kept)
+                session["tiebreak_selection"] = record["tiebreak_selection"]
+                save_session(args.name, session)
+            break
+    else:
+        details = "; ".join(
+            f"{r['model']} authored the disputed work and cannot judge itself"
+            if r["reason"] == "authored this change" else r["reason"] for r in excluded)
+        return finish_decision(args, session, record, "OWNER", "tie-break refused: " + details)
     prompt = (
         'Rule on this split. Return {"status":"RULING", "adopts":"member name", '
         '"ruling":"RULING: ...", "evidence":"the evidence that decided it"}. '
         'Adopt an existing position, not a fresh plan. If the mandate stop-and-ask '
         'list or bounds apply, return {"status":"OWNER", "reason":"why"}.\n'
         + json.dumps(inputs, ensure_ascii=False))
-    value, error = decision_reply(members[0], prompt, args.timeout, record)
+    value, error = decision_reply(kept[0], prompt, args.timeout, record)
     if error:
         return finish_decision(args, session, record, "OWNER", error)
     if value.get("status") == "OWNER" and substantive(value.get("reason")):
