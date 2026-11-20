@@ -46,7 +46,7 @@ spec.loader.exec_module(review)
 
 def copy_review_script(destination):
     """Copy the entry point and its eager shipped dependency as fixture data."""
-    for name in ("review.py", "plan_review.py"):
+    for name in ("review.py", "plan_review.py", "review_panels.py"):
         (destination.parent / name).write_bytes((SCRIPT.parent / name).read_bytes())
 
 
@@ -2633,7 +2633,7 @@ class TestProtocolIsEnforcedNotRemembered(unittest.TestCase):
             root = Path(tmp)
             script = root / "scripts" / "review.py"
             script.parent.mkdir()
-            for name in ("review.py", "plan_review.py", "committee.py"):
+            for name in ("review.py", "plan_review.py", "review_panels.py", "committee.py"):
                 shutil.copyfile(SCRIPT.parent / name, script.parent / name)
             for first, second, refused in (
                     (("openai", "fixture-a"), ("openai", "fixture-b"), True),
@@ -2672,12 +2672,13 @@ class TestProtocolIsEnforcedNotRemembered(unittest.TestCase):
 
     def test_every_config_error_names_an_action(self):
         import ast
-        tree = ast.parse(SCRIPT.read_text())
+        paths = (SCRIPT, SCRIPT.with_name("review_panels.py"))
+        nodes = (node for path in paths for node in ast.walk(ast.parse(path.read_text())))
         actionable = ("Drop ", "drop ", "Pass ", "pass ", "remove ", "Step",
                       "Override", "must be", "Available:", "Name one",
                       "name exactly")
         checked = 0
-        for node in ast.walk(tree):
+        for node in nodes:
             f = getattr(node, "func", None)
             if not (isinstance(node, ast.Call) and isinstance(f, ast.Name)
                     and f.id == "config_error"):
