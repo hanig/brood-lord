@@ -16,6 +16,7 @@ from unittest import mock
 
 from tests import test_d5_submission as t
 from tests import test_merge_unit as legacy
+from tests.test_d5_custody import native_environment
 from tests.test_d5_u4_1_active_surface import SurfaceFixture
 from tests.test_d5_u4_2_request_authority import tree_bytes
 import d5_activation as activation
@@ -627,9 +628,12 @@ class TestOperator(unittest.TestCase):
             scope = dict(plans=[c.plan['name']], repositories=[c.remote], actions=['merge'], trackers=[])
             t.lease.grant(c.repo, c.plan['name'], c.state_dir, issued_at=100, confirmed_at=100,
                 expires_at=200, mandate_bytes=t.MANDATE, scope=scope, owner_response='fixture', displayed_bounds='fixture')
-            t.store.claim(entry['record_dir'], 101, t.MANDATE, 'native', t.ANCHOR, lambda _: 'alive')
+            t.store.claim(entry['record_dir'], 101, t.MANDATE, 'native', t.ANCHOR, lambda _: 'alive', host='codex')
             argv = [str(c.plan_path), '--state-dir', str(c.state_dir), '--unit', 'u', '--pr', '7', '--approver', 'Operator']
-            self.assertEqual(M.main(argv), 0)
+            with native_environment("claude"):
+                self.assertEqual(M.main(argv), 1)
+            with native_environment("codex"):
+                self.assertEqual(M.main(argv), 0)
             before = tree_bytes(c.state_dir)
             self.assertEqual(M.main(argv), 0)
             self.assertEqual(tree_bytes(c.state_dir), before)

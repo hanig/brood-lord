@@ -174,6 +174,11 @@ class TestD5Authority(unittest.TestCase):
         self.assertIsNone(A.decode(A.encode(grant()))["custody"])
         self.assertEqual(A.decode(A.encode(held())), held())
 
+    def test_unknown_custody_host_is_rejected(self):
+        record = held()
+        record["custody"]["host"] = "other"
+        self.refuses("custody.host", A.validate, record)
+
     def test_custody_field_schema(self):
         base = held()
         for field in base["custody"]:

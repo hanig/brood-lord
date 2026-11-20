@@ -111,8 +111,8 @@ def replace_authority(directory, record, *, host_kind="claude"):
 
 def claim_custody(directory, *, mandate_path, host_kind=None):
     """Claim with fresh native identity, mandate bytes, time and holder liveness."""
-    with _installation(directory, host_kind, mandate_path) as installed:
-        directory, (session_id, anchor), mandate_path = installed
+    with _installation(directory, host_kind, mandate_path) as (directory, native, mandate_path):
+        session_id, anchor = native
         mandate = store.read_bytes(mandate_path)
         now = int(time.time())
         return store.claim(directory, now, mandate, session_id, anchor, host.liveness, host=host_kind)

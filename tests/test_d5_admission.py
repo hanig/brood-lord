@@ -26,6 +26,7 @@ import d5_lease as lease
 import d5_protocol_locks as protocol
 import d5_registry as registry
 from tests.fixtures.d5.ready import ready, ready_installation, missing_installation, classification_only
+from tests.test_d5_custody import native_environment
 from tests.test_d5_locks import isolate_pool
 
 MANDATE = b"fixture mandate\r\n\xff"
@@ -238,6 +239,13 @@ class TestAdmission(unittest.TestCase):
                          ("different", ANCHOR), ("native", host.ProcessIdentity(42, 9000002))):
             self.anchor.return_value = observed
             self.refuse("^D5 anchor is not verifiable$")
+
+    def test_recorded_codex_host_controls_admission(self):
+        self.write_record(dict(self.original, custody=dict(self.original["custody"], host="codex")))
+        with native_environment("claude"):
+            self.refuse("^D5 anchor is not verifiable$")
+        with native_environment("codex"):
+            self.consume()
 
     def test_custody_refresh(self):
         # R5-SKIP-CUSTODY, including generation, missing and relinquished state.

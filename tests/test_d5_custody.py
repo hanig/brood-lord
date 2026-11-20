@@ -1,7 +1,7 @@
 """Custody transitions through the locked store and inactive public API."""
 from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import copy
 import os
 import fcntl
@@ -30,6 +30,23 @@ from tests.test_d5_locks import isolate_pool
 REAL_SESSION_ANCHOR = host.session_anchor
 ANCHOR = host.ProcessIdentity(42, 9000001)
 OTHER = host.ProcessIdentity(43, 9000002)
+
+
+@contextmanager
+def native_environment(kind):
+    """Use the real host contract with one synthetic ancestor and native ID."""
+    session, pid = (("CODEX_SESSION_ID", "BROOD_HOST_PID") if kind == "codex"
+                    else ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID"))
+    env = dict.fromkeys(host.HOST_ENV_NAMES, "")
+    env.update({session: "native", pid: str(ANCHOR.pid)})
+    chain = (host.ProcessRecord(os.getpid(), ANCHOR.pid, ANCHOR.start_us + 1),
+             host.ProcessRecord(ANCHOR.pid, 1, ANCHOR.start_us))
+    with mock.patch.dict(os.environ, env), \
+            mock.patch.object(host, "session_anchor", REAL_SESSION_ANCHOR), \
+            mock.patch.object(host, "_measured_platform", return_value=True), \
+            mock.patch.object(host, "process_uid", return_value=os.getuid()), \
+            mock.patch.object(host, "ancestry", return_value=chain):
+        yield
 
 
 class TestCustodyStore(unittest.TestCase):
@@ -78,6 +95,10 @@ class TestCustodyStore(unittest.TestCase):
                 self.claim(host_kind="codex")
             self.live.assert_called_with(ANCHOR)
             self.assertEqual(self.read(), first)
+        self.live.return_value = "dead"
+        successor = self.claim(host_kind="codex")
+        self.assertEqual(successor["custody"]["generation"], 2)
+        self.assertEqual(successor["custody"]["host"], "codex")
 
     def test_relinquishment_keeps_holder_and_blocks_live_successor(self):
         first = self.claim()
@@ -106,9 +127,9 @@ class TestCustodyStore(unittest.TestCase):
     def test_dead_holder_succeeds_without_new_grant(self):
         first = self.claim()
         self.live.return_value = "dead"
-        second = self.claim("next", OTHER, now=102, host_kind="codex")
+        second = self.claim("next", OTHER, now=102)
         expected = dict(first, custody={
-            "host": "codex", "session_id": "next", "anchor_pid": 43, "anchor_start_us": 9000002,
+            "host": "claude", "session_id": "next", "anchor_pid": 43, "anchor_start_us": 9000002,
             "generation": 2, "claimed_at": 102, "relinquished_at": None})
         self.assertEqual(second, expected)
         self.assertEqual(self.read(), expected)
@@ -380,26 +401,33 @@ class TestCustodyAPI(unittest.TestCase):
 
     def test_recorded_host_is_used_for_status_and_relinquish(self):
         directory = self.register()["record_dir"]
-        for kind, session_var, pid_var in (
-                ("claude", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID"),
-                ("codex", "CODEX_SESSION_ID", "BROOD_HOST_PID")):
-            with self.subTest(host=kind):
-                record = store.read(directory)
-                record["custody"] = dict(session_id="native", anchor_pid=ANCHOR.pid,
-                                         anchor_start_us=ANCHOR.start_us, generation=1,
-                                         claimed_at=101, relinquished_at=None)
-                if kind != "claude":
-                    record["custody"]["host"] = kind
-                (Path(directory) / store.RECORD_NAME).write_bytes(authority.encode(record))
-                with mock.patch.dict(os.environ, {session_var: "native", pid_var: str(ANCHOR.pid)}, clear=True), \
-                        mock.patch.object(host, "session_anchor", side_effect=REAL_SESSION_ANCHOR), \
-                        mock.patch.object(host, "_measured_platform", return_value=True), \
-                        mock.patch.object(host, "process_uid", return_value=os.getuid()), \
-                        mock.patch.object(host, "ancestry", return_value=(
-                            host.ProcessRecord(os.getpid(), ANCHOR.pid, ANCHOR.start_us + 1),
-                            host.ProcessRecord(ANCHOR.pid, 1, ANCHOR.start_us))):
-                    self.assertTrue(self.status()["is_holder"])
-                    self.assertEqual(self.relinquish()["custody"]["relinquished_at"], 102)
+        with native_environment("codex"):
+            custody.claim(self.repo, "p", self.state, now=101, mandate_bytes=MANDATE, host="codex")
+        record = store.read(directory)
+        self.assertEqual(record["custody"]["host"], "codex")
+        with native_environment("claude"):
+            self.assertFalse(self.status()["is_holder"])
+            with self.assertRaisesRegex(authority.AuthorityError, "ambiguous host"):
+                self.relinquish()
+        with native_environment("codex"):
+            self.assertTrue(self.status()["is_holder"])
+            self.assertEqual(self.relinquish()["custody"]["relinquished_at"], 102)
+        del record["custody"]["host"]
+        (Path(directory) / store.RECORD_NAME).write_bytes(authority.encode(record))
+        with native_environment("claude"):
+            self.assertTrue(self.status()["is_holder"])
+            self.assertEqual(self.relinquish()["custody"]["relinquished_at"], 102)
+
+    def test_missing_or_unknown_host_refuses_without_writing(self):
+        directory = self.register()["record_dir"]
+        before = self.tree()
+        with native_environment("claude"):
+            for kwargs in ({}, {"host": "other"}):
+                with self.assertRaisesRegex(authority.AuthorityError, "^D5 anchor is not verifiable$"):
+                    custody.claim(self.repo, "p", self.state, now=101, mandate_bytes=MANDATE, **kwargs)
+            with self.assertRaisesRegex(authority.AuthorityError, "^D5 anchor is not verifiable$"):
+                install.claim_custody(directory, mandate_path=self.repo / "docs/orchestrator-mandate.md")
+        self.assertEqual(self.tree(), before)
 
     def test_status_absent_and_ungranted_create_nothing(self):
         for registered in (False, True):
