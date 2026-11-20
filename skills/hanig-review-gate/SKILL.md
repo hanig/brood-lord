@@ -55,32 +55,28 @@ plan review would have rejected.
 
 ## The author does not judge their own work
 
-Declare every author with repeatable `--author PROVIDER/MODEL`. Both
-`review.py` and `committee.py` exclude by canonical identity, the model maker
-and exact model leaf. A vendor-qualified model supplies its maker. For example,
-`openrouter/moonshotai/kimi-k3` uses `moonshotai` as its maker. The Codex,
-Claude, and Antigravity transport aliases map to OpenAI, Anthropic, and Google
-respectively for unqualified model names. Other transport spellings can resolve
-through an exact roster model or pin. The gate names each exclusion and
-suppresses a resolved reviewer's pin fallback if the pin would match an author.
-Omitted authors remain the caller's responsibility.
+Both tools take repeatable `--author PROVIDER/MODEL` and exclude by canonical
+identity: model maker and exact model leaf. A vendor-qualified model supplies
+its maker (as in `openrouter/moonshotai/kimi-k3`). For unqualified models,
+Codex, Claude, and Antigravity map to OpenAI, Anthropic, and Google. Other
+transports can resolve through an exact roster model or pin. The gate reports
+exclusions and disables a resolved seat's pin fallback if the pin matches an
+author. Omitted authors remain the caller's responsibility.
 
-When author exclusion breaks quorum (including a fresh-cycle floor) or plan
-maker contrast, a profile-selected review can draw from that profile's ordered
-`reserves` in [reviewers.json](reviewers.json). If the reserves cannot restore
-the required panel, the gate can return `REVIEW_UNAVAILABLE` before calling
-providers. `--only` and `--escalate` skip substitution.
+A profile-selected review uses ordered `reserves` in
+[reviewers.json](reviewers.json) if author exclusion breaks quorum (including
+a fresh-cycle floor) or plan maker contrast. Exhausted reserves can yield
+`REVIEW_UNAVAILABLE` before provider calls. `--only` and `--escalate` skip
+substitution.
 
-For profile-selected committees, `open` searches the ordered reserve
-combinations after exclusion to restore the original size with distinct
-model identities, at least two makers, and at least two providers. If no
-combination qualifies, `open` refuses. An explicit `--member` selection with an
-author conflict also refuses without substitution. The author set persists.
-`ask`, `review`, `synthesize`, and `tiebreak` check it on reuse and accept
-`--author` to declare authors on older sessions. A conflicting replacement set
-is refused. Committee also accepts legacy bare model IDs and configured seat
-aliases. A refused resolution of a legacy session records `OWNER` and preserves
-previous decisions in the history.
+A profile-selected committee searches ordered reserve combinations to restore
+the original size with distinct model identities, at least two makers, and
+at least two providers. `open` refuses if no combination qualifies or if an
+explicit `--member` conflicts with an author. The author set persists across
+`ask`, `review`, `synthesize`, and `tiebreak`. Older sessions can declare
+authors on reuse, including legacy bare model IDs and configured seat aliases.
+The committee refuses conflicting author sets. A refused legacy resolution
+records `OWNER` and retains prior decisions in history.
 
 A design's author is the worst judge of whether
 its residual is complete. Asked to fix a recurring problem, one reviewer wrote a
@@ -172,10 +168,9 @@ whose maker differs from the primary's. A missing or misconfigured primary
 or an exhausted selection routes to `OWNER`. See [reviewers.json](reviewers.json)
 for the profile and reserve lists.
 
-For an already identified split, use `tiebreak SESSION --author PROVIDER/MODEL`
-directly. The selected reviewer receives the question and every member's final
-position verbatim and can return a `RULING` adopting a named position with the
-deciding evidence.
+Use `tiebreak SESSION --author PROVIDER/MODEL` directly for an identified split.
+The selected reviewer gets the question and verbatim final positions and can
+return a `RULING` adopting one position with the deciding evidence.
 
 Both commands read the current `docs/orchestrator-mandate.md` from the project;
 use `--mandate-file PATH` when it lives elsewhere. The mandate's stop-and-ask

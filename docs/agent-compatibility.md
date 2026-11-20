@@ -51,8 +51,8 @@ verified that loader behavior.
 The adapter is uncertified. It installs skill directories only and
 configures no Antigravity permission, sandbox, model, or account setting.
 
-An Antigravity command may run in a sandbox that denies process inspection.
-A denied D5 anchor check returns Unknown (narrow mode). Death requires
+Antigravity sandbox policy can vary by command. When a sandbox denies process
+inspection, D5 anchor checks return Unknown (narrow mode). Death requires
 positive evidence. Codex and Antigravity can hold D5 custody only when
 launched through `bin/brood-host` and after the owner's mandate amendment
 merges. See the [D5 integration guide](d5-integration.md).

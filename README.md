@@ -1247,8 +1247,8 @@ Grok Build, and Antigravity remain uncertified. Cursor and Grok's
 same-name collision and symlink semantics are unverified, as is Grok
 consumption of Claude/shared roots. See [discovery details](docs/agent-discovery.md).
 
-An Antigravity command may run in a sandbox that denies process inspection.
-A denied D5 anchor check returns Unknown (narrow mode). Death requires
+Antigravity sandbox policy can vary by command. When a sandbox denies process
+inspection, D5 anchor checks return Unknown (narrow mode). Death requires
 positive evidence. Codex and Antigravity can hold D5 custody only when
 launched through `bin/brood-host` and after the owner's mandate amendment
 merges. See the [D5 integration guide](docs/d5-integration.md).
