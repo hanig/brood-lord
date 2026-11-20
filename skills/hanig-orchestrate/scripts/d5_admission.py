@@ -103,8 +103,9 @@ def _validate_locked(pinned, checkout, plan_id, state_dir, *, grant_id,
     current = store.read(entry["record_dir"])
     if current["grant_id"] != grant_id:
         raise authority.AuthorityError("D5 authority identity mismatch")
-    verified = host.verify_anchor(session_id, anchor, host="claude")
     custody = current["custody"]
+    verified = custody is not None and host.verify_anchor(
+        session_id, anchor, host=authority.custody_host(custody))
     held = (custody is not None and custody["relinquished_at"] is None and
             type(generation) is int and custody["generation"] == generation and
             (custody["session_id"], host.ProcessIdentity(custody["anchor_pid"],
@@ -121,7 +122,7 @@ def _validate_locked(pinned, checkout, plan_id, state_dir, *, grant_id,
             "mandate_changed": "D5 mandate changed",
             "expired": "D5 authority expired",
         }[state])
-    if not verified:
+    if custody is not None and not verified:
         raise authority.AuthorityError("D5 anchor is not verifiable")
     if not held:
         raise authority.AuthorityError("D5 custody is not current")

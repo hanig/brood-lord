@@ -55,7 +55,7 @@ def _grant_locked(directory):
 
 
 def grant(checkout, plan_id, state_dir, *, issued_at, confirmed_at, expires_at,
-          mandate_bytes, scope, owner_response, displayed_bounds):
+          mandate_bytes, scope, owner_response, displayed_bounds, host=None):
     """Create or replace a validated grant with exact owner confirmation."""
     _active(state_dir)
     ready = readiness.require(state_dir)
@@ -80,7 +80,7 @@ def grant(checkout, plan_id, state_dir, *, issued_at, confirmed_at, expires_at,
             previous = store.read(directory)
             if confirmed_at <= previous["confirmed_at"]:
                 raise authority.AuthorityError("grant: fresh confirmation time required")
-        return operation(directory, record)
+        return operation(directory, record, **({"host_kind": host} if host is not None else {}))
 
 
 def revoke(checkout, plan_id, state_dir, now, reason):
