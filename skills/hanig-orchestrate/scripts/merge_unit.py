@@ -640,6 +640,7 @@ def _d5_result_receipt(state_dir, binding, root, operation_id, outcome, repo):
 def reconcile(args, plan):
     _d5_merge_entry(args)
     if D5.d5_active(Path(args.state_dir).absolute()):
+        import d5_authority as A
         import d5_authority_store as store
         import d5_host as host_api
         import d5_merge_journal as J
@@ -705,14 +706,14 @@ def reconcile(args, plan):
         if boundary.target() != target:
             raise Refusal("target moved during preflight")
         boundary.intent = intent
-        native = host_api.session_anchor("claude")
-        if isinstance(native, host_api.Unknown):
-            raise Refusal("D5 anchor is not verifiable")
-        session_id, anchor = native
         grant = store.read(entry["record_dir"])
         custody = grant["custody"]
         if custody is None:
             raise Refusal("D5 custody is not current")
+        native = host_api.session_anchor(A.custody_host(custody))
+        if isinstance(native, host_api.Unknown):
+            raise Refusal("D5 anchor is not verifiable")
+        session_id, anchor = native
         scope = dict(plans=[plan["name"]], repositories=[binding["repo"]], actions=["merge"], trackers=[])
         operation = DS.Operation(operation_id, "merge", J.encoded(scope), J.encoded(intent))
         result = DS.submit(repo, plan["name"], state_dir, grant_id=grant["grant_id"], session_id=session_id,

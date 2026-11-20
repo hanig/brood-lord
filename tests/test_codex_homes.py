@@ -32,6 +32,10 @@ class TestCodexHomes(unittest.TestCase):
 
     def setUp(self):
         F.TestPerAttemptWorktrees.setUp(self)
+        # Home cleanup tests require successful archival before removal.
+        archive_deadline = mock.patch.object(CH.UR, "READ_SECONDS", 60.0)
+        archive_deadline.start()
+        self.addCleanup(archive_deadline.stop)
         self.source = CH.source_home()
         self.operator = CH.operator_home()
         self.auth = self.source / "auth.json"

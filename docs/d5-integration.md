@@ -48,9 +48,8 @@ internals block dependents.
 | `codex` | `CODEX_SESSION_ID` | `CODEX_THREAD_ID` | `BROOD_HOST_PID` |
 | `antigravity` | `ANTIGRAVITY_CONVERSATION_ID` | `ANTIGRAVITY_TRAJECTORY_ID` | `BROOD_HOST_PID` |
 
-The adapter requires an explicit host. Existing custody callers select
-`claude`. Operator selection and host persistence in custody are pending.
-Launch Codex and Antigravity with `bin/brood-host HOST [ARGS...]`. It exports its PID as `BROOD_HOST_PID`
+Explicitly declare the host when claiming custody. A record without a host
+field is read as `claude`. Launch Codex and Antigravity with `bin/brood-host HOST [ARGS...]`. It exports its PID as `BROOD_HOST_PID`
 and execs the command in place. A missing primary ID, missing anchor, or
 non-empty ID from a different host yields Unknown. Ambiguity names variables
 only. Additional IDs from the declared host and non-ID variables like
@@ -146,9 +145,10 @@ registration and a verified native session anchor; an Unknown anchor refuses
 with its reason and has no fallback. Under the permanent record lock, claim
 evaluates the grant and durably invalidates a changed mandate before refusing.
 Only a valid grant can be claimed. Initial custody has generation 1; the exact
-same session ID and process incarnation continue without a write. A different
-session or anchor requires the stored holder's death and increments generation
-without a new grant or owner confirmation. Liveness is three-valued: alive,
+same host, session ID and process incarnation continue without a write.
+Custody retains its host for the whole generation. A different host, session or
+anchor requires the stored holder's death and increments generation without
+a new grant or owner confirmation. Liveness is three-valued: alive,
 dead or unknown; exceptions and unexpected results count as unknown. A zombie
 anchor counts as alive, and persistent anchors may delay rollover.
 
