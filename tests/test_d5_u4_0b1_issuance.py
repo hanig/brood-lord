@@ -282,7 +282,7 @@ print(json.dumps(dict(outcome=outcome, writes=writes, launches=launches)))
                 mock.patch.object(state, "holds_lease", wraps=state.holds_lease) as held:
             self.assertEqual(registry.register(*self.args), entry)
             issued = lease.grant(*self.args, **self.kwargs)
-            claimed = custody.claim(*self.args, now=101, mandate_bytes=MANDATE)
+            claimed = custody.claim(*self.args, now=101, mandate_bytes=MANDATE, host="claude")
             self.assertEqual(claimed["grant_id"], issued["grant_id"])
             self.assertEqual(claimed["custody"]["session_id"], "native")
             self.assertTrue(held.call_args_list)

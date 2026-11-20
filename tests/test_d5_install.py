@@ -67,7 +67,7 @@ class TestInstall(unittest.TestCase):
             return install.install_initial(directory, record or grant())
         if kind == "replace":
             return install.replace_authority(directory, record or grant("b" * 32))
-        return install.claim_custody(directory, mandate_path=self.mandate)
+        return install.claim_custody(directory, host_kind="claude", mandate_path=self.mandate)
 
     @contextmanager
     def waiter(self, operation, directory, hold=True):
@@ -195,7 +195,7 @@ class TestInstall(unittest.TestCase):
                 self.assertEqual(results, [])
                 self.assertEqual(len(errors), 1)
                 self.assertEqual(str(errors[0]), "D5 anchor is not verifiable")
-                self.anchor.assert_called_once_with()
+                self.anchor.assert_called_once_with("claude")
                 path = directory / store.RECORD_NAME
                 self.assertEqual(store.read(directory), grant()) if path.exists() else self.assertEqual(kind, "initial")
 
@@ -422,7 +422,7 @@ class TestInstall(unittest.TestCase):
         prior = Path.cwd()
         try:
             os.chdir(first)
-            with self.waiter(lambda: install.claim_custody(directory, mandate_path=b"mandate.md"), directory) as (results, errors):
+            with self.waiter(lambda: install.claim_custody(directory, host_kind="claude", mandate_path=b"mandate.md"), directory) as (results, errors):
                 os.chdir(second)
         finally:
             os.chdir(prior)
@@ -479,7 +479,7 @@ class TestInstall(unittest.TestCase):
         try:
             os.chdir(self.root)
             with mock.patch.object(store, "read_bytes", side_effect=reading) as observed:
-                result = install.claim_custody(directory, mandate_path="link/../mandate.md")
+                result = install.claim_custody(directory, host_kind="claude", mandate_path="link/../mandate.md")
             self.assertEqual(observed.call_args_list[0][0][0],
                              str(Path.cwd()) + "/link/../mandate.md")
         finally:

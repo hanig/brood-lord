@@ -48,7 +48,7 @@ class TestD5Routing(unittest.TestCase):
         return authority.decode(self.path.read_bytes())
 
     def claim(self, **changes):
-        args = dict(now=101, mandate_bytes=fixtures.MANDATE)
+        args = dict(now=101, mandate_bytes=fixtures.MANDATE, host="claude")
         args.update(changes)
         return custody.claim(*self.args, **args)
 
@@ -176,13 +176,14 @@ class TestD5Routing(unittest.TestCase):
                 mock.patch.object(registry, "lookup", wraps=registry.lookup) as lookup, \
                 mock.patch.object(install, "claim_custody", wraps=install.claim_custody) as route, \
                 self.store_boundary("claim", [(0, False), (1, False)]):
-            result = self.claim(now=999999, mandate_bytes=b"stale caller bytes")
+            result = self.claim(now=999999, mandate_bytes=b"stale caller bytes", host="codex")
         lookup.assert_called_once_with(*self.args)
-        route.assert_called_once_with(self.entry["record_dir"], mandate_path=self.mandate)
+        route.assert_called_once_with(self.entry["record_dir"], mandate_path=self.mandate, host_kind="codex")
+        self.assertEqual(result["custody"]["host"], "codex")
         self.assertEqual(self.read(), result)
         self.assertEqual(result["custody"]["claimed_at"], 101)
         self.assertEqual(result["custody"]["session_id"], "native")
-        self.fixture.anchor.assert_called_once_with()
+        self.fixture.anchor.assert_called_once_with("codex")
         # A second call re-resolves registration and reads the new source bytes.
         self.mandate.write_bytes(b"current registered bytes")
         with nullcontext(), \
@@ -206,8 +207,8 @@ class TestD5Routing(unittest.TestCase):
         (linked / "docs/orchestrator-mandate.md").write_bytes(b"unregistered source")
         with nullcontext(), \
                 mock.patch.object(install, "claim_custody", wraps=install.claim_custody) as route:
-            result = custody.claim(linked, "p", self.fixture.state, now=999999, mandate_bytes=b"cached")
-        route.assert_called_once_with(self.entry["record_dir"], mandate_path=self.mandate)
+            result = custody.claim(linked, "p", self.fixture.state, now=999999, mandate_bytes=b"cached", host="claude")
+        route.assert_called_once_with(self.entry["record_dir"], mandate_path=self.mandate, host_kind="claude")
         self.assertEqual(self.read(), result)
         self.assertEqual(result["custody"]["session_id"], "native")
 
@@ -237,7 +238,7 @@ class TestD5Routing(unittest.TestCase):
         route.assert_called_once_with(*self.args, now=120)
         self.assertEqual(self.read(), result)
         self.assertEqual(result["custody"]["relinquished_at"], 120)
-        self.fixture.anchor.assert_called_once_with()
+        self.fixture.anchor.assert_called_once_with("claude")
 
     def test_inactive_delegates_are_not_called(self):
         # R9-BYPASS-INACTIVE: unrelated environment/CLI input cannot activate.

@@ -36,6 +36,7 @@ import child_environment as CE
 import coordinator_paths as CP
 import swarm as S
 import d5_activation as D5
+from d5_host import HOST_ENV_NAMES
 import d5_installation as DI
 import verify as V
 import remote_verify as RV
@@ -640,6 +641,7 @@ def _d5_result_receipt(state_dir, binding, root, operation_id, outcome, repo):
 def reconcile(args, plan):
     _d5_merge_entry(args)
     if D5.d5_active(Path(args.state_dir).absolute()):
+        import d5_authority as A
         import d5_authority_store as store
         import d5_host as host_api
         import d5_merge_journal as J
@@ -705,14 +707,14 @@ def reconcile(args, plan):
         if boundary.target() != target:
             raise Refusal("target moved during preflight")
         boundary.intent = intent
-        native = host_api.session_anchor()
-        if isinstance(native, host_api.Unknown):
-            raise Refusal("D5 anchor is not verifiable")
-        session_id, anchor = native
         grant = store.read(entry["record_dir"])
         custody = grant["custody"]
         if custody is None:
             raise Refusal("D5 custody is not current")
+        native = host_api.session_anchor(A.custody_host(custody))
+        if isinstance(native, host_api.Unknown):
+            raise Refusal("D5 anchor is not verifiable")
+        session_id, anchor = native
         scope = dict(plans=[plan["name"]], repositories=[binding["repo"]], actions=["merge"], trackers=[])
         operation = DS.Operation(operation_id, "merge", J.encoded(scope), J.encoded(intent))
         result = DS.submit(repo, plan["name"], state_dir, grant_id=grant["grant_id"], session_id=session_id,
@@ -979,15 +981,15 @@ FORGE_AUTH_ENV = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENT
 def _merge_child_env():
     """The existing child filter, with only gh's named credentials restored.
 
-    No D5 environment protocol exists. Drop the D5 namespaces and the two
-    host-anchor declarations as defense in depth; never transfer authority.
+    No D5 environment protocol exists. Drop the D5 namespaces and all
+    host session and anchor declarations as defense in depth; never transfer authority.
     This retains child_environment's published finite-filter limits.
     """
     env = CE.child_env()
     env.update((name, os.environ[name]) for name in FORGE_AUTH_ENV if name in os.environ)
     return {name: value for name, value in env.items()
             if not name.startswith(("D5_", "HANIG_D5_"))
-            and name not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")}
+            and name not in HOST_ENV_NAMES}
 
 
 class _MergeBoundary:

@@ -71,8 +71,12 @@ def record_mandate_invalidation(checkout, plan_id, state_dir, *, now):
 def relinquish(checkout, plan_id, state_dir, *, now):
     """Inspect the native session anchor and relinquish under START."""
     with _started(checkout, plan_id, state_dir) as entry:
-        anchor = host.session_anchor()
+        custody = store.read(entry["record_dir"])["custody"]
+        if custody is None:
+            raise authority.AuthorityError("custody: only the exact holder may relinquish")
+        host_kind = authority.custody_host(custody)
+        anchor = host.session_anchor(host_kind)
         if isinstance(anchor, host.Unknown):
             raise authority.AuthorityError(anchor.reason)
         session_id, identity = anchor
-        return store.relinquish(entry["record_dir"], now, session_id, identity)
+        return store.relinquish(entry["record_dir"], now, session_id, identity, host=host_kind)

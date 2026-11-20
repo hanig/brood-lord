@@ -120,7 +120,9 @@ class TestMergeChild(unittest.TestCase):
         import d5_process
         self.assertEqual(d5_process.DESIGNATED_BOOTSTRAPS, frozenset())
         names = {'D5_AUTHORITY_FD', 'HANIG_D5_COMPLETION', 'CLAUDE_CODE_SESSION_ID',
-                 'CLAUDE_PID', 'LINEAR_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY',
+                 'CLAUDE_PID', 'CODEX_SESSION_ID', 'CODEX_THREAD_ID', 'BROOD_HOST_PID',
+                 'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_TRAJECTORY_ID', 'ANTIGRAVITY_CSRF_TOKEN',
+                 'LINEAR_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY',
                  'ANTHROPIC_API_KEY', 'AWS_SECRET_ACCESS_KEY', 'SSH_AUTH_SOCK'}
         auth = {'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'}
         self.assertEqual(set(M.FORGE_AUTH_ENV), auth)
