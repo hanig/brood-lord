@@ -269,6 +269,12 @@ class TestLiveness(unittest.TestCase):
     self.assertEqual(H.liveness(value), 'unknown')
    kill.assert_not_called()
 
+ def test_both_measured_platforms(self):
+  for release in ('25.5.0', '27.2.0'):
+   host=os.uname_result(('Darwin', 'fixture', release, '', 'arm64'))
+   with self.subTest(release=release), patch(H.sys, 'platform', 'darwin'), patch(H.os, 'uname', return_value=host):
+    self.assertTrue(H._measured_platform())
+
  def test_unmeasured_platform_never_permits_or_probes(self):
   hosts=[('linux', '25.5.0', 'arm64'), ('darwin', '24.0.0', 'arm64'),
          ('darwin', '25.5.0', 'x86_64'), ('darwin', '27.2.0', 'x86_64'),

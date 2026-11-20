@@ -4,8 +4,6 @@ import hashlib
 import json
 import re
 
-from d5_host import known_host
-
 _FIELDS = {"schema_version", "grant_id", "issued_at", "confirmed_at",
            "expires_at", "session_cap", "mandate_sha256", "scope",
            "confirmation", "custody", "invalidation"}
@@ -50,10 +48,15 @@ def _claimant(session_id, anchor_pid, anchor_start_us):
              "must satisfy 0 < pid < 2**31")
     _timestamp(anchor_start_us, "custody.anchor_start_us")
 
+def _validate_host(host):
+    _require(type(host) is str and host in ("claude", "codex", "antigravity"),
+             "custody.host", "expected a supported host")
+
+
 def custody_host(custody):
     """The absent field denotes a pre-multihost Claude custody record."""
     host = custody.get("host", "claude")
-    _require(known_host(host), "custody.host", "expected a supported host")
+    _validate_host(host)
     return host
 
 
@@ -177,12 +180,12 @@ def claimed(record, session_id, anchor_pid, anchor_start_us, now, holder, *, hos
     """Return independent custody; only observed death permits a successor.
 
     Liveness is supplied by the caller, which must check the mandate separately.
-    A matching session AND anchor is compaction, never a new generation.
+    A matching host, session and anchor continue the existing generation.
     """
     validate(record)
     _timestamp(now, "now")
     _claimant(session_id, anchor_pid, anchor_start_us)
-    _require(known_host(host), "custody.host", "expected a supported host")
+    _validate_host(host)
     _require(type(holder) is str and holder in ("alive", "dead", "unknown"),
              "holder", "expected alive, dead or unknown")
     _require(record["invalidation"] is None, "invalidation", "invalidated")

@@ -331,17 +331,20 @@ class TestCustodyAPI(unittest.TestCase):
     def test_unknown_anchor_refuses_without_fallback(self):
         entry = self.register()
         directory = Path(entry["record_dir"])
+        store.claim(directory, 101, MANDATE, "native", ANCHOR, host.liveness)
         before = self.tree()
         self.anchor.return_value = host.Unknown("no verified native anchor")
-        with nullcontext(), ExitStack() as stack:
-            # R9-UNKNOWN-FALLBACK: no authority-store operation may be entered.
-            # Registry's strict byte reader remains available to resolve identity.
-            for name in ("claim", "relinquish", "create", "replace", "revoke", "check", "read"):
+        with ExitStack() as stack:
+            # Unknown must not reach any mutation or a fallback identity source.
+            for name in ("claim", "relinquish", "create", "replace", "revoke", "check"):
                 stack.enter_context(mock.patch.object(store, name, side_effect=AssertionError(name)))
-            for operation, reason in ((self.claim, "D5 anchor is not verifiable"),
-                                      (self.relinquish, "no verified native anchor")):
-                with self.assertRaisesRegex(authority.AuthorityError, "^" + reason + "$"):
-                    operation()
+            snapshot = stack.enter_context(mock.patch.object(store, "read", wraps=store.read))
+            with self.assertRaisesRegex(authority.AuthorityError, "^D5 anchor is not verifiable$"):
+                self.claim()
+            snapshot.assert_not_called()
+            with self.assertRaisesRegex(authority.AuthorityError, "^no verified native anchor$"):
+                self.relinquish()
+            snapshot.assert_called_once_with(entry["record_dir"])
         after = self.tree()
         allowed = {str((directory / name).relative_to(self.directory))
                    for name in ("authority.drain.lock", "authority.start.lock")}
