@@ -694,19 +694,26 @@ class TestAuthorExclusion(unittest.TestCase):
                 code, output, _, _ = self.invoke("--author", author, kind="plan")
                 self.assertEqual(code, 0, output)
                 self.assertIn("Panel substitution", output)
-                args, panel, *_ = dispatch.call_args.args
+                _, panel, *_ = dispatch.call_args.args
                 self.assertEqual([r["name"] for r in panel], [kept, "sonnet-5.5"])
-                self.assertEqual(args.panel_selection["substituted"], ["sonnet-5.5"])
+                self.assertIn('"substituted": ["sonnet-5.5"]', output)
 
     def test_wrapped_author_excludes_both_seats(self):
         for prefix in ("openrouter/openai", "opencode", "copilot",
-                       "opencode/openrouter/openai"):
+                       "opencode/openrouter/openai", "opencode/vertexai/openai"):
             code, out, _, called = self.invoke(
                 "--only", "astra,astra-tiebreak,luna,kimi-k2.7-code",
                 "--author", prefix + "/gpt-6-astra", "--json")
             self.assertEqual(code, 0, out)
             self.assertEqual(set(called), {"luna", "kimi-k2.7-code"})
             self.assertEqual(len(json.loads(out)["excluded"]), 2)
+
+    def test_roster_pin_uses_the_model_maker(self):
+        seat = dict(name="model", provider="openrouter", model="openai/fixture",
+                    _resolved_from="fixture")
+        other = dict(seat, name="other", model="openrouter/fixture", _resolved_from=None)
+        ids = R.author_model_ids(["opencode/fixture"], [seat, other])
+        self.assertEqual(R.exclude_authors([seat, other], ids)[0], [other])
 
     def test_distinct_model_paths_can_make_quorum(self):
         roster = [

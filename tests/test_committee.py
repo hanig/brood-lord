@@ -924,6 +924,13 @@ class TestCommitteeAuthorMembers(unittest.TestCase):
 
 
 class TestReservePanels(unittest.TestCase):
+    def test_exact_model_precedes_seat_alias(self):
+        roster = [dict(name=name, provider=provider, model=model) for name, provider, model in
+                  (("source", "openai", "shared"), ("shared", "anthropic", "other"),
+                   ("c", "openai", "third"))]
+        with mock.patch.object(committee.R, "load_reviewers", return_value=roster):
+            self.assertEqual(committee.pick_members(["shared,c"], ["shared"]), roster[1:])
+
     def test_profiles_restore_author_slots_and_skip_greedy_assignment(self):
         roster = committee.R.load_reviewers()
         seats = {r["name"]: r for r in roster}

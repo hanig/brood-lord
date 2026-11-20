@@ -27,21 +27,42 @@ def seat_identity(seat):
     return model_identity(seat.get("provider"), seat.get("model"))
 
 
+def pin_identity(seat):
+    identity = seat_identity(seat)
+    return model_identity(identity[0], seat.get("_resolved_from")) if identity else None
+
+
+def infer_model(model, roster):
+    exact, identities = set(), set()
+    for seat in roster:
+        for value, identity in ((seat["model"], seat_identity(seat)),
+                                (seat.get("_resolved_from"), pin_identity(seat))):
+            if identity:
+                identities.add(identity)
+                if model == value:
+                    exact.add(identity)
+    # Prefer an exact model, then the longest qualified suffix.
+    while not exact and "/" in model:
+        identity = model_identity(None, model)
+        if identity in identities:
+            return {identity}
+        model = model.partition("/")[2]
+    return exact
+
+
 def author_model_ids(authors, roster=(), legacy=False):
     models = set()
     for author in authors:
-        matches = [r for r in roster if legacy and (r["model"] == author
-                   or r["name"].casefold() == author.casefold())]
+        matches = [r for r in roster if legacy and r["model"] == author]
+        if legacy and not matches and "/" not in author:
+            matches = [r for r in roster if r["name"].casefold() == author.casefold()]
         if matches:
             models.update(seat_identity(r) for r in matches)
         else:
             provider, _, model = author.partition("/")
-            while model.startswith("openrouter/") and model.count("/") > 1:
-                _, model = model.split("/", 1)
             maker = model_identity(provider, model)
-            if maker and "/" not in model and maker[0] not in MAKER_ALIASES.values():
-                matches = {model_identity(r["provider"], model) for r in roster
-                           if model in (r["model"], r.get("_resolved_from"))}
+            if maker and maker[0] not in MAKER_ALIASES.values():
+                matches = infer_model(model, roster)
             models.update(matches or [maker])
     return models
 
@@ -60,7 +81,7 @@ def exclude_authors(reviewers, models):
             excluded.append(seat_exclusion(reviewer, reason))
         else:
             pin = reviewer.get("_resolved_from")
-            if pin and model_identity(reviewer.get("provider"), pin) in models | {None}:
+            if pin and pin_identity(reviewer) in models | {None}:
                 reviewer = dict(reviewer, _no_pin_fallback=True)
             kept.append(reviewer)
     return kept, excluded
@@ -124,9 +145,10 @@ def configure_reserves(revs, reserves, in_profile, config_error):
 
 
 def fill_profile(roster, profile, eligible, authors, required, excluded, plan_check):
-    contrast = plan_check is not None and len(eligible) == 2 and len(panel_makers(eligible)) < 2
     reserves = reserve_seats(roster, profile)
-    if not reserves or not excluded or (len(eligible) >= required and not contrast):
+    if not reserves or not excluded:
+        return None, False
+    if len(eligible) >= required and not (plan_check and plan_check(eligible)):
         return None, False
     candidates, rejected = exclude_authors(reserves, authors)
     excluded.extend(rejected)

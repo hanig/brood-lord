@@ -3092,10 +3092,11 @@ def _load_plan_review():
     helpers = {k: globals()[k] for k in (
         "verdict_schema_error", "norm", "unassessed_claims", "PLAN_SYSTEM",
         "config_error", "parse_verdict", "PROVIDERS")}
-    module = _load_skill_module("plan_review", dict(helpers, panel_makers=_panels.panel_makers))
+    module = _load_skill_module("plan_review", helpers)
     if str(HERE) not in sys.path:
         sys.path.insert(0, str(HERE))
     return module
+
 
 PLAN_SYSTEM = SYSTEM + """
 
@@ -3108,10 +3109,17 @@ The final verdict is computed by code, not by either seat.
 """
 
 
+def _plan_panel_error(members):
+    error = _load_plan_review()._plan_panel_error(members)
+    if not error and len(_panels.panel_makers(members)) != 2:
+        return "Pass plan reviewers from different model makers."
+    return error
+
+
 def cmd_plan_review(args, members, prompt, label, truncated, profile_reason, excluded):
     """Public plan-review entry."""
     plan = _load_plan_review()
-    panel_error = plan._plan_panel_error(members)
+    panel_error = _plan_panel_error(members)
     if panel_error:
         disarm_watchdog()
         print(f"error: {panel_error}", file=sys.stderr)
@@ -3142,8 +3150,7 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason, exc
               "quorum": 2, "truncated": truncated, "excluded": excluded,
               "unavailable": unavailable, "results": completed,
               "panel_policy": args.panel_policy, "input_redactions": args.input_redactions,
-              "plan_exchange": exchange, "journal": journal,
-              "panel_selection": getattr(args, "panel_selection", None)}
+              "plan_exchange": exchange, "journal": journal}
     if args.json:
         print(redact(json.dumps(report, indent=2)))
     else:
@@ -3402,7 +3409,6 @@ def _main():
             config_error(f"no reviewer matches {wanted}. Available: {have}. "
                          f"Pass one of those, or drop --only to use the "
                          f"profile.")
-    args.panel_selection = None
     authors = author_model_ids(args.author, roster)
     reviewers, excluded = exclude_authors(reviewers, authors)
     if excluded and args.kind == "plan" and not (args.author or args.list):
@@ -3418,23 +3424,24 @@ def _main():
         eligible = [r for r in reviewers if r.get("enabled", True)
                     and (not args.escalate or any(in_profile(r, tier)
                                                   for tier in escalation_tiers(args)))]
-        plan_check = _load_plan_review()._plan_panel_error if args.kind == "plan" else None
+        plan_check = _plan_panel_error if args.kind == "plan" else None
         attempted = False
+        selection = None
         if not (args.list or args.only or args.escalate):
             panel, attempted = _panels.fill_profile(
                 roster, profile, eligible, authors, required, excluded, plan_check)
             if panel is not None:
                 eligible, added = panel
                 reviewers = eligible
-                args.panel_selection = _panels.panel_selection(profile, excluded, added, eligible)
+                selection = _panels.panel_selection(profile, excluded, added, eligible)
         if not args.json:
             for removal in excluded:
                 print(f"{removal['name']} excluded: {removal['reason']}")
-        if args.panel_selection:
-            print("Panel substitution " + redact(json.dumps(args.panel_selection)),
+        if selection:
+            print("Panel substitution " + redact(json.dumps(selection)),
                   file=sys.stderr if args.json else sys.stdout, flush=True)
         remaining = len(eligible)
-        if not args.list and not args.panel_selection and (
+        if not args.list and not selection and (
                 attempted or (excluded and remaining < required)):
             reason = (f"author exclusion leaves {remaining} eligible reviewers; "
                       f"required quorum is {required}. Select more independent "

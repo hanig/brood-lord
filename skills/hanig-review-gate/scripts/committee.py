@@ -429,7 +429,7 @@ def cmd_open(args):
                "problem": problem,
                "members": {m["name"]: {"provider": m["provider"],
                                        "model": m["model"],
-                                       "history": [], "voters": []} for m in members},
+                                       "history": []} for m in members},
                "turns": []}
     bind_authors(session, args.author)
     if selection:
@@ -686,7 +686,6 @@ def tiebreak(args, session, inputs):
                 save_session(args.name, session)
             break
     else:
-        record["tiebreak_selection"] = R._panels.panel_selection("tiebreak", excluded, [], [])
         details = "; ".join(
             f"{r['model']} authored the disputed work and cannot judge itself"
             if r["reason"] == "authored this change" else r["reason"] for r in excluded)
