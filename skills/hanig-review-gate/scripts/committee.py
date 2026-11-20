@@ -173,9 +173,9 @@ def pick_members(explicit, authors=(), profile="committee", *, audit=None):
     if excluded:
         result = None
         if not explicit and MIN_MEMBERS <= len(chosen) <= MAX_MEMBERS:
-            reserves, rejected = R.exclude_authors(R.reserve_seats(roster, profile), author_ids)
-            result = R.reserve_panel(kept, reserves, len(chosen), lambda panel:
-                                     len(R.panel_makers(panel)) >= 2
+            reserves, rejected = R.exclude_authors(R._panels.reserve_seats(roster, profile), author_ids)
+            result = R._panels.reserve_panel(kept, reserves, len(chosen), lambda panel:
+                                     len(R._panels.panel_makers(panel)) >= 2
                                      and len({r["provider"] for r in panel}) >= 2)
         if result is None:
             die(conflict_text(excluded) + f" (authors: {', '.join(author_list(authors))})."
@@ -183,7 +183,7 @@ def pick_members(explicit, authors=(), profile="committee", *, audit=None):
         kept, added = result
         kept += added
         if audit is not None:
-            audit.update(R.panel_selection(profile, excluded + rejected, added, kept))
+            audit.update(R._panels.panel_selection(profile, excluded + rejected, added, kept))
     chosen = kept
     if not MIN_MEMBERS <= len(chosen) <= MAX_MEMBERS:
         die(f"a committee is {MIN_MEMBERS} or {MAX_MEMBERS} members; got "
@@ -669,25 +669,25 @@ def tiebreak(args, session, inputs):
     if error:
         return finish_decision(args, session, record, "OWNER", error)
     authors = author_models(inputs["author"], roster)
-    voters = {R.seat_identity(voter) for rec in session["members"].values()
+    voters = {R._panels.seat_identity(voter) for rec in session["members"].values()
               for voter in rec.get("voters", [rec])}
-    maker = R.panel_makers([primary])
+    maker = R._panels.panel_makers([primary])
     excluded = []
-    for member in [primary] + R.reserve_seats(roster, "tiebreak"):
+    for member in [primary] + R._panels.reserve_seats(roster, "tiebreak"):
         kept, rejected = R.exclude_authors([member], authors)
         if rejected:
             excluded += rejected
-        elif None in voters or R.seat_identity(member) in voters:
-            excluded.append(R.seat_exclusion(member, "model already voted or voter unknown"))
-        elif member is not primary and (not maker or maker == R.panel_makers([member])):
-            excluded.append(R.seat_exclusion(member, "reserve needs a different maker"))
+        elif None in voters or R._panels.seat_identity(member) in voters:
+            excluded.append(R._panels.seat_exclusion(member, "model already voted or voter unknown"))
+        elif member is not primary and (not maker or maker == R._panels.panel_makers([member])):
+            excluded.append(R._panels.seat_exclusion(member, "reserve needs a different maker"))
         else:
             if excluded:
-                record["tiebreak_selection"] = R.panel_selection(
+                record["tiebreak_selection"] = R._panels.panel_selection(
                     "tiebreak", excluded, kept, kept)
             break
     else:
-        record["tiebreak_selection"] = R.panel_selection("tiebreak", excluded, [], [])
+        record["tiebreak_selection"] = R._panels.panel_selection("tiebreak", excluded, [], [])
         details = "; ".join(
             f"{r['model']} authored the disputed work and cannot judge itself"
             if r["reason"] == "authored this change" else r["reason"] for r in excluded)

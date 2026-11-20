@@ -69,6 +69,7 @@ import datetime
 import errno
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -80,7 +81,6 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from itertools import combinations
 from pathlib import Path
 
 # Exit 5 remains reserved. The adjudication ledger introduces no review verdict.
@@ -1088,14 +1088,6 @@ def valid_digest(value):
     """Finding and claim identities use lowercase SHA-256 hex."""
     return (isinstance(value, str)
             and re.fullmatch(r"[0-9a-f]{64}", value) is not None)
-
-
-def valid_identity(value):
-    """A bounded ASCII token, optionally slash-separated; never normalized."""
-    return (isinstance(value, str) and 1 <= len(value) <= 256
-            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:@+-]*"
-                             r"(?:/[A-Za-z0-9][A-Za-z0-9_.:@+-]*)*", value)
-            is not None)
 
 
 def valid_author(value):
@@ -2455,26 +2447,7 @@ def load_reviewers():
                 or not all(isinstance(x, str) for x in r["profiles"])):
             config_error(f"reviewer 'profiles' must be a list of strings, got "
                          f"{r['profiles']!r}")
-        r.pop("_reserve_order", None)
-    reserves = data.get("reserves", {})
-    if not isinstance(reserves, dict):
-        config_error("reserves must be an object")
-    by_name = {r["name"]: r for r in revs}
-    for profile, names in reserves.items():
-        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
-            config_error(f"reserves for {profile!r} must be a list of seat names")
-        for index, name in enumerate(names):
-            r = by_name.get(name)
-            if r is None or not r.get("enabled", True) or in_profile(r, profile):
-                reason = "unknown" if r is None else (
-                    "disabled" if not r.get("enabled", True) else "already a primary")
-                config_error(f"reserve {name!r} for {profile!r} is {reason}")
-            r.setdefault("_reserve_order", {}).setdefault(profile, index)
-    for r in revs:
-        if in_profile(r, "planning") or "planning" in r.get("_reserve_order", {}):
-            maker, model = seat_identity(r) or ("", "")
-            if maker == "anthropic" and "opus" in model.casefold():
-                config_error(f"Opus seat {r['name']!r} is forbidden in 'planning'")
+    _panels.configure_reserves(revs, data.get("reserves", {}), in_profile, config_error)
     return revs
 
 
@@ -2818,87 +2791,6 @@ def round_argument(value):
         raise argparse.ArgumentTypeError("round must be an integer or plan")
 
 
-def model_identity(provider, model):
-    """Use the plan contrast rule: vendor segment, otherwise seat provider."""
-    if valid_identity(model):
-        maker = model.split("/", 1)[0] if "/" in model else provider
-        aliases = {"codex": "openai", "claude": "anthropic", "antigravity": "google"}
-        if valid_identity(maker) and "/" not in maker:
-            return aliases.get(maker, maker), model.rsplit("/", 1)[-1]
-    return None
-
-
-def seat_identity(seat):
-    return model_identity(seat.get("provider"), seat.get("model"))
-
-
-def author_model_ids(authors, roster=(), legacy=False):
-    models = set()
-    for author in authors:
-        matches = [r for r in roster if legacy and (r["model"] == author
-                   or r["name"].casefold() == author.casefold())]
-        if matches:
-            models.update(seat_identity(r) for r in matches)
-        else:
-            provider, _, model = author.partition("/")
-            models.add(model_identity(provider, model))
-    return models
-
-
-def exclude_authors(reviewers, models):
-    """Exclude conflicts and prevent a resolved seat from falling back to one."""
-    kept, excluded = [], []
-    for reviewer in reviewers:
-        identity = seat_identity(reviewer)
-        reason = None
-        if identity is None or None in models:
-            reason = "model maker could not be determined for the seat or an author"
-        elif identity in models:
-            reason = "authored this change"
-        if reason:
-            excluded.append(seat_exclusion(reviewer, reason))
-        else:
-            pin = reviewer.get("_resolved_from")
-            if pin and model_identity(reviewer.get("provider"), pin) in models | {None}:
-                reviewer = dict(reviewer, _no_pin_fallback=True)
-            kept.append(reviewer)
-    return kept, excluded
-
-
-def seat_exclusion(seat, reason):
-    return {"name": seat["name"], "model": seat["model"], "reason": reason}
-
-
-def reserve_seats(roster, profile):
-    return sorted(
-        (r for r in roster if r.get("enabled", True)
-         and profile in r.get("_reserve_order", {})),
-        key=lambda r: r["_reserve_order"][profile])
-
-
-def panel_makers(panel):
-    return {identity[0] for r in panel if (identity := seat_identity(r))}
-
-
-def reserve_panel(primaries, reserves, size, valid):
-    """Try ordered reserve subsets, then primary subsets for their open slots."""
-    count = max(1, size - len(primaries))
-    for added in combinations(reserves, count):
-        for kept in combinations(primaries, size - count):
-            panel = kept + added
-            identities = {seat_identity(r) for r in panel}
-            if None not in identities and len(identities) == size and valid(panel):
-                return list(kept), list(added)
-    return None
-
-
-def panel_selection(profile, excluded, added, panel):
-    return {"profile": profile, "excluded": excluded,
-            "substituted": [r["name"] for r in added],
-            "providers": sorted({r["provider"] for r in panel}),
-            "makers": sorted(panel_makers(panel))}
-
-
 def in_profile(rev, profile):
     """THE eligibility rule. Both selection paths must call this one.
 
@@ -3171,12 +3063,10 @@ def decide_state(n_completed, n_failed, confirmed, refuted_claims,
 
 
 # --- plan review ---
-def _load_plan_review():
-    import importlib.util
-
-    path = Path(__file__).resolve().parent / "plan_review.py"
-    name = "_hanig_review_gate_plan_review"
-    if name in sys.modules:
+def _load_skill_module(stem, configure=None):
+    path = HERE / (stem + ".py")
+    name = "_hanig_review_gate_" + stem
+    if configure and name in sys.modules:
         module = sys.modules[name]
         if getattr(module, "__file__", None) != str(path):
             raise ImportError(f"{name} is not loaded from {path}")
@@ -3184,11 +3074,25 @@ def _load_plan_review():
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    module._configure(**{k: globals()[k] for k in (
+    if configure:
+        module._configure(**configure)
+        sys.modules[name] = module
+    return module
+
+
+_panels = _load_skill_module("review_panels")
+valid_identity = _panels.valid_identity
+author_model_ids = _panels.author_model_ids
+exclude_authors = _panels.exclude_authors
+
+
+def _load_plan_review():
+    helpers = {k: globals()[k] for k in (
         "verdict_schema_error", "norm", "unassessed_claims", "PLAN_SYSTEM",
-        "config_error", "parse_verdict", "PROVIDERS", "panel_makers")})
-    sys.modules[name] = module
-    sys.path.insert(0, str(path.parent))
+        "config_error", "parse_verdict", "PROVIDERS")}
+    module = _load_skill_module("plan_review", dict(helpers, panel_makers=_panels.panel_makers))
+    if str(HERE) not in sys.path:
+        sys.path.insert(0, str(HERE))
     return module
 
 PLAN_SYSTEM = SYSTEM + """
@@ -3512,25 +3416,15 @@ def _main():
         eligible = [r for r in reviewers if r.get("enabled", True)
                     and (not args.escalate or any(in_profile(r, tier)
                                                   for tier in escalation_tiers(args)))]
-        plan = args.kind == "plan"
-        contrast = plan and len(eligible) == 2 and len(panel_makers(eligible)) < 2
+        plan_check = _load_plan_review()._plan_panel_error if args.kind == "plan" else None
         attempted = False
-        if not (args.list or args.only or args.escalate) and (
-                contrast or (excluded and len(eligible) < required)):
-            reserves = reserve_seats(roster, profile)
-            attempted = bool(reserves)
-            if attempted:
-                candidates, rejected = exclude_authors(reserves, authors)
-                valid = (lambda p: not _load_plan_review()._plan_panel_error(p)) if plan else (
-                    lambda p: True)
-                result = reserve_panel(eligible, candidates, required, valid)
-                excluded += rejected
-                if result:
-                    kept, added = result
-                    excluded += [seat_exclusion(r, "plan needs contrasting makers")
-                                 for r in eligible if r not in kept]
-                    eligible = reviewers = kept + added
-                    args.panel_selection = panel_selection(profile, excluded, added, reviewers)
+        if not (args.list or args.only or args.escalate):
+            panel, attempted = _panels.fill_profile(
+                roster, profile, eligible, authors, required, excluded, plan_check)
+            if panel is not None:
+                eligible, added = panel
+                reviewers = eligible
+                args.panel_selection = _panels.panel_selection(profile, excluded, added, eligible)
         if not args.json:
             for removal in excluded:
                 print(f"{removal['name']} excluded: {removal['reason']}")
