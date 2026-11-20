@@ -2062,7 +2062,7 @@ def adjudicator_is_author(accepted_by, authors):
         roster = [dict(zip(("provider", "model"), value.split("/", 1)))
                   for value in [accepted_by, *authors] if "/" in value]
         return bool(author_model_ids([accepted_by], roster) & author_model_ids(authors, roster))
-    return any(i and i[1] == accepted_by for i in author_model_ids(authors))
+    return any(author.partition("/")[2] == accepted_by for author in authors)
 
 
 def journal_identity_problems(record, allow_unbound=False):
@@ -3063,12 +3063,27 @@ def decide_state(n_completed, n_failed, confirmed, refuted_claims,
 
 
 # --- plan review ---
-def _load_skill_module(stem, configure=None):
+def _load_panels():
     import importlib.util
 
-    path = HERE / (stem + ".py")
-    name = "_hanig_review_gate_" + stem
-    if configure and name in sys.modules:
+    spec = importlib.util.spec_from_file_location("_hanig_review_gate_panels", HERE / "review_panels.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_panels = _load_panels()
+valid_identity = _panels.valid_identity
+author_model_ids = _panels.author_model_ids
+exclude_authors = _panels.exclude_authors
+
+
+def _load_plan_review():
+    import importlib.util
+
+    path = Path(__file__).resolve().parent / "plan_review.py"
+    name = "_hanig_review_gate_plan_review"
+    if name in sys.modules:
         module = sys.modules[name]
         if getattr(module, "__file__", None) != str(path):
             raise ImportError(f"{name} is not loaded from {path}")
@@ -3076,27 +3091,12 @@ def _load_skill_module(stem, configure=None):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    if configure:
-        module._configure(**configure)
-        sys.modules[name] = module
-    return module
-
-
-_panels = _load_skill_module("review_panels")
-valid_identity = _panels.valid_identity
-author_model_ids = _panels.author_model_ids
-exclude_authors = _panels.exclude_authors
-
-
-def _load_plan_review():
-    helpers = {k: globals()[k] for k in (
+    module._configure(**{k: globals()[k] for k in (
         "verdict_schema_error", "norm", "unassessed_claims", "PLAN_SYSTEM",
-        "config_error", "parse_verdict", "PROVIDERS")}
-    module = _load_skill_module("plan_review", helpers)
-    if str(HERE) not in sys.path:
-        sys.path.insert(0, str(HERE))
+        "config_error", "parse_verdict", "PROVIDERS")})
+    sys.modules[name] = module
+    sys.path.insert(0, str(path.parent))
     return module
-
 
 PLAN_SYSTEM = SYSTEM + """
 

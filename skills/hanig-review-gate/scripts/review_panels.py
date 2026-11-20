@@ -35,7 +35,7 @@ def pin_identity(seat):
 def infer_model(model, roster):
     exact, identities = set(), set()
     for seat in roster:
-        for value, identity in ((seat["model"], seat_identity(seat)),
+        for value, identity in ((seat.get("model"), seat_identity(seat)),
                                 (seat.get("_resolved_from"), pin_identity(seat))):
             if identity:
                 identities.add(identity)
@@ -53,7 +53,7 @@ def infer_model(model, roster):
 def author_model_ids(authors, roster=(), legacy=False):
     models = set()
     for author in authors:
-        matches = [r for r in roster if legacy and r["model"] == author]
+        matches = [r for r in roster if legacy and r.get("model") == author]
         if legacy and not matches and "/" not in author:
             matches = [r for r in roster if r["name"].casefold() == author.casefold()]
         if matches:
@@ -62,7 +62,10 @@ def author_model_ids(authors, roster=(), legacy=False):
             provider, _, model = author.partition("/")
             maker = model_identity(provider, model)
             if maker and maker[0] not in MAKER_ALIASES.values():
-                matches = infer_model(model, roster)
+                matches = {seat_identity(r) for r in roster if r.get("model") == author}
+                matches = matches or infer_model(model, roster)
+                if "/" not in model:
+                    maker = None
             models.update(matches or [maker])
     return models
 

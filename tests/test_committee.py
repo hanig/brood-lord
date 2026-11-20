@@ -930,6 +930,10 @@ class TestReservePanels(unittest.TestCase):
                    ("c", "openai", "third"))]
         with mock.patch.object(committee.R, "load_reviewers", return_value=roster):
             self.assertEqual(committee.pick_members(["shared,c"], ["shared"]), roster[1:])
+        session = dict(author="opencode/shared", members={"source": roster[0]})
+        with mock.patch.object(committee.R, "load_reviewers", return_value=roster[1:]):
+            self.assertEqual(committee.session_author_conflict(session),
+                             "source refused: authored this change")
 
     def test_profiles_restore_author_slots_and_skip_greedy_assignment(self):
         roster = committee.R.load_reviewers()

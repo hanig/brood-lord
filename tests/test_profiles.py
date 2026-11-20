@@ -709,11 +709,14 @@ class TestAuthorExclusion(unittest.TestCase):
             self.assertEqual(len(json.loads(out)["excluded"]), 2)
 
     def test_roster_pin_uses_the_model_maker(self):
-        seat = dict(name="model", provider="openrouter", model="openai/fixture",
+        seat = dict(name="model", provider="openrouter", model="acme/fixture",
                     _resolved_from="fixture")
         other = dict(seat, name="other", model="openrouter/fixture", _resolved_from=None)
         ids = R.author_model_ids(["opencode/fixture"], [seat, other])
         self.assertEqual(R.exclude_authors([seat, other], ids)[0], [other])
+        other["model"] = "fixture"
+        self.assertEqual(R.author_model_ids(["acme/fixture"], [seat, other]),
+                         {("acme", "fixture")})
 
     def test_distinct_model_paths_can_make_quorum(self):
         roster = [
@@ -727,10 +730,11 @@ class TestAuthorExclusion(unittest.TestCase):
         self.assertEqual(set(called), {"code", "other"})
 
     def test_seat_with_unknown_maker_is_excluded_without_authors(self):
-        seat = dict(name="unknown", provider="openrouter", model="@fixture/model")
-        code, out, _, called = self.invoke("--only", "unknown", "--json", roster=[seat])
-        self.assertEqual(called, [])
-        self.assertEqual(code, R.STATES["REVIEW_UNAVAILABLE"], out)
+        for model, flags in (("@fixture/model", ()), ("fixture", ("--author", "opencode/unlisted"))):
+            seat = dict(name="unknown", provider="openrouter", model=model)
+            code, out, _, called = self.invoke("--only", "unknown", "--json", *flags, roster=[seat])
+            self.assertEqual(called, [])
+            self.assertEqual(code, R.STATES["REVIEW_UNAVAILABLE"], out)
 
     def test_same_maker_primaries_without_exclusion_still_refuse(self):
         roster = R.load_reviewers()
@@ -756,6 +760,7 @@ class TestAuthorExclusion(unittest.TestCase):
         native, wrapped = "openai/gpt-6-astra", "opencode/gpt-6-astra"
         self.assertTrue(R.adjudicator_is_author(native, [wrapped]))
         self.assertTrue(R.adjudicator_is_author(wrapped, [native]))
+        self.assertFalse(R.adjudicator_is_author("alice", ["openrouter/openai/alice"]))
 
 
 if __name__ == "__main__":

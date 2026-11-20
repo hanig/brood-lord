@@ -139,8 +139,10 @@ def session_author_conflict(session):
     # cannot erase a member's authorship from an already persisted session.
     members = [dict(voter, name=name) for name, rec in session["members"].items()
                for voter in [rec] + rec.get("voters", [])]
-    members += [r for r in R.load_reviewers() if r["name"] in session["members"]]
-    _, excluded = R.exclude_authors(members, author_models(session.get("author")))
+    roster = R.load_reviewers()
+    members += [r for r in roster if r["name"] in session["members"]]
+    authors = author_models(session.get("author"), roster + members)
+    _, excluded = R.exclude_authors(members, authors)
     return conflict_text(excluded) or None
 
 
