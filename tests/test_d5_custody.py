@@ -1,8 +1,9 @@
 """Custody transitions through the locked store and inactive public API."""
 from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import copy
+import os
 import fcntl
 from pathlib import Path
 import stat
@@ -26,8 +27,26 @@ from tests.test_d5_authority import MANDATE, grant
 from tests.fixtures.d5.ready import ready, missing_installation, classification_only
 from tests.test_d5_locks import isolate_pool
 
+REAL_SESSION_ANCHOR = host.session_anchor
 ANCHOR = host.ProcessIdentity(42, 9000001)
 OTHER = host.ProcessIdentity(43, 9000002)
+
+
+@contextmanager
+def native_environment(kind):
+    """Use the real host contract with one synthetic ancestor and native ID."""
+    session, pid = (("CODEX_SESSION_ID", "BROOD_HOST_PID") if kind == "codex"
+                    else ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID"))
+    env = dict.fromkeys(host.HOST_ENV_NAMES, "")
+    env.update({session: "native", pid: str(ANCHOR.pid)})
+    chain = (host.ProcessRecord(os.getpid(), ANCHOR.pid, ANCHOR.start_us + 1),
+             host.ProcessRecord(ANCHOR.pid, 1, ANCHOR.start_us))
+    with mock.patch.dict(os.environ, env), \
+            mock.patch.object(host, "session_anchor", REAL_SESSION_ANCHOR), \
+            mock.patch.object(host, "_measured_platform", return_value=True), \
+            mock.patch.object(host, "process_uid", return_value=os.getuid()), \
+            mock.patch.object(host, "ancestry", return_value=chain):
+        yield
 
 
 class TestCustodyStore(unittest.TestCase):
@@ -45,8 +64,8 @@ class TestCustodyStore(unittest.TestCase):
         self.live = patch.start()
         self.addCleanup(patch.stop)
 
-    def claim(self, session="native", anchor=ANCHOR, now=101, mandate=MANDATE):
-        return store.claim(self.directory, now, mandate, session, anchor, host.liveness)
+    def claim(self, session="native", anchor=ANCHOR, now=101, mandate=MANDATE, host_kind="claude"):
+        return store.claim(self.directory, now, mandate, session, anchor, host.liveness, host=host_kind)
 
     def read(self):
         return authority.decode(self.path.read_bytes())
@@ -55,7 +74,7 @@ class TestCustodyStore(unittest.TestCase):
         first = self.claim()
         self.live.assert_not_called()
         self.assertEqual(first["custody"], {
-            "session_id": "native", "anchor_pid": 42, "anchor_start_us": 9000001,
+            "host": "claude", "session_id": "native", "anchor_pid": 42, "anchor_start_us": 9000001,
             "generation": 1, "claimed_at": 101, "relinquished_at": None})
         with mock.patch.object(store, "_write", side_effect=AssertionError("rewrote")):
             self.assertEqual(self.claim(now=102), first)
@@ -67,6 +86,19 @@ class TestCustodyStore(unittest.TestCase):
                     self.claim(session, anchor)
                 self.live.assert_called_with(ANCHOR)
                 self.assertEqual(self.read(), first)
+
+    def test_matching_session_and_anchor_from_different_host_cannot_compact(self):
+        first = self.claim()
+        for liveness in ("alive", "unknown"):
+            self.live.return_value = liveness
+            with self.assertRaisesRegex(authority.AuthorityError, "dead holder"):
+                self.claim(host_kind="codex")
+            self.live.assert_called_with(ANCHOR)
+            self.assertEqual(self.read(), first)
+        self.live.return_value = "dead"
+        successor = self.claim(host_kind="codex")
+        self.assertEqual(successor["custody"]["generation"], 2)
+        self.assertEqual(successor["custody"]["host"], "codex")
 
     def test_relinquishment_keeps_holder_and_blocks_live_successor(self):
         first = self.claim()
@@ -97,7 +129,7 @@ class TestCustodyStore(unittest.TestCase):
         self.live.return_value = "dead"
         second = self.claim("next", OTHER, now=102)
         expected = dict(first, custody={
-            "session_id": "next", "anchor_pid": 43, "anchor_start_us": 9000002,
+            "host": "claude", "session_id": "next", "anchor_pid": 43, "anchor_start_us": 9000002,
             "generation": 2, "claimed_at": 102, "relinquished_at": None})
         self.assertEqual(second, expected)
         self.assertEqual(self.read(), expected)
@@ -282,7 +314,7 @@ class TestCustodyAPI(unittest.TestCase):
         return entry
 
     def claim(self):
-        return custody.claim(self.repo, "p", self.state, now=101, mandate_bytes=MANDATE)
+        return custody.claim(self.repo, "p", self.state, now=101, mandate_bytes=MANDATE, host="claude")
 
     def relinquish(self):
         return custody.relinquish(self.repo, "p", self.state, now=102)
@@ -320,17 +352,20 @@ class TestCustodyAPI(unittest.TestCase):
     def test_unknown_anchor_refuses_without_fallback(self):
         entry = self.register()
         directory = Path(entry["record_dir"])
+        store.claim(directory, 101, MANDATE, "native", ANCHOR, host.liveness)
         before = self.tree()
         self.anchor.return_value = host.Unknown("no verified native anchor")
-        with nullcontext(), ExitStack() as stack:
-            # R9-UNKNOWN-FALLBACK: no authority-store operation may be entered.
-            # Registry's strict byte reader remains available to resolve identity.
-            for name in ("claim", "relinquish", "create", "replace", "revoke", "check", "read"):
+        with ExitStack() as stack:
+            # Unknown must not reach any mutation or a fallback identity source.
+            for name in ("claim", "relinquish", "create", "replace", "revoke", "check"):
                 stack.enter_context(mock.patch.object(store, name, side_effect=AssertionError(name)))
-            for operation, reason in ((self.claim, "D5 anchor is not verifiable"),
-                                      (self.relinquish, "no verified native anchor")):
-                with self.assertRaisesRegex(authority.AuthorityError, "^" + reason + "$"):
-                    operation()
+            snapshot = stack.enter_context(mock.patch.object(store, "read", wraps=store.read))
+            with self.assertRaisesRegex(authority.AuthorityError, "^D5 anchor is not verifiable$"):
+                self.claim()
+            snapshot.assert_not_called()
+            with self.assertRaisesRegex(authority.AuthorityError, "^no verified native anchor$"):
+                self.relinquish()
+            snapshot.assert_called_once_with(entry["record_dir"])
         after = self.tree()
         allowed = {str((directory / name).relative_to(self.directory))
                    for name in ("authority.drain.lock", "authority.start.lock")}
@@ -363,6 +398,36 @@ class TestCustodyAPI(unittest.TestCase):
         self.assertEqual(result["custody"]["relinquished_at"], 102)
         self.assertEqual(authority.decode(store.read_bytes(Path(entry["record_dir"]) / store.RECORD_NAME)), result)
         self.assertEqual(self.anchor.call_count, 3)
+
+    def test_recorded_host_is_used_for_status_and_relinquish(self):
+        directory = self.register()["record_dir"]
+        with native_environment("codex"):
+            custody.claim(self.repo, "p", self.state, now=101, mandate_bytes=MANDATE, host="codex")
+        record = store.read(directory)
+        self.assertEqual(record["custody"]["host"], "codex")
+        with native_environment("claude"):
+            self.assertFalse(self.status()["is_holder"])
+            with self.assertRaisesRegex(authority.AuthorityError, "ambiguous host"):
+                self.relinquish()
+        with native_environment("codex"):
+            self.assertTrue(self.status()["is_holder"])
+            self.assertEqual(self.relinquish()["custody"]["relinquished_at"], 102)
+        del record["custody"]["host"]
+        (Path(directory) / store.RECORD_NAME).write_bytes(authority.encode(record))
+        with native_environment("claude"):
+            self.assertTrue(self.status()["is_holder"])
+            self.assertEqual(self.relinquish()["custody"]["relinquished_at"], 102)
+
+    def test_missing_or_unknown_host_refuses_without_writing(self):
+        directory = self.register()["record_dir"]
+        before = self.tree()
+        with native_environment("claude"):
+            for kwargs in ({}, {"host": "other"}):
+                with self.assertRaisesRegex(authority.AuthorityError, "^D5 anchor is not verifiable$"):
+                    custody.claim(self.repo, "p", self.state, now=101, mandate_bytes=MANDATE, **kwargs)
+            with self.assertRaisesRegex(authority.AuthorityError, "^D5 anchor is not verifiable$"):
+                install.claim_custody(directory, mandate_path=self.repo / "docs/orchestrator-mandate.md")
+        self.assertEqual(self.tree(), before)
 
     def test_status_absent_and_ungranted_create_nothing(self):
         for registered in (False, True):

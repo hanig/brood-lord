@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from d5_authority import (AuthorityError, validate, encode, decode, evaluate,
-                          revoked, claimed, relinquished, replacement_allowed)
+                          revoked, claimed, relinquished, replacement_allowed, _same_holder)
 from d5_host import ProcessIdentity
 
 RECORD_NAME = "authority.json"
@@ -166,7 +166,7 @@ def observe_liveness(anchor, liveness):
     return result if type(result) is str and result in ("alive", "dead", "unknown") else "unknown"
 
 
-def claim(directory, now, mandate_bytes, session_id, anchor, liveness):
+def claim(directory, now, mandate_bytes, session_id, anchor, liveness, *, host="claude"):
     """Evaluate and claim under the permanent record lock; persist invalidation."""
     with _locked(directory) as directory:
         record, _ = _load(directory / RECORD_NAME)
@@ -179,19 +179,19 @@ def claim(directory, now, mandate_bytes, session_id, anchor, liveness):
         holder = "unknown"
         if custody is not None:
             identity = ProcessIdentity(custody["anchor_pid"], custody["anchor_start_us"])
-            if (session_id, anchor) != (custody["session_id"], identity):
+            if not _same_holder(custody, session_id, anchor.pid, anchor.start_us, host):
                 holder = observe_liveness(identity, liveness)
-        updated = claimed(record, session_id, anchor.pid, anchor.start_us, now, holder)
+        updated = claimed(record, session_id, anchor.pid, anchor.start_us, now, holder, host=host)
         if updated != record:
             _write(directory / RECORD_NAME, encode(updated))
         return updated
 
 
-def relinquish(directory, now, session_id, anchor):
+def relinquish(directory, now, session_id, anchor, *, host="claude"):
     """Retain the exact holder and its first relinquishment under the lock."""
     with _locked(directory) as directory:
         record, _ = _load(directory / RECORD_NAME)
-        updated = relinquished(record, session_id, anchor.pid, anchor.start_us, now)
+        updated = relinquished(record, session_id, anchor.pid, anchor.start_us, now, host=host)
         if updated != record:
             _write(directory / RECORD_NAME, encode(updated))
         return updated

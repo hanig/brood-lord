@@ -174,6 +174,11 @@ class TestD5Authority(unittest.TestCase):
         self.assertIsNone(A.decode(A.encode(grant()))["custody"])
         self.assertEqual(A.decode(A.encode(held())), held())
 
+    def test_unknown_custody_host_is_rejected(self):
+        record = held()
+        record["custody"]["host"] = "other"
+        self.refuses("custody.host", A.validate, record)
+
     def test_custody_field_schema(self):
         base = held()
         for field in base["custody"]:
@@ -221,7 +226,7 @@ class TestD5Authority(unittest.TestCase):
         for holder in ("alive", "dead", "unknown"):
             original = grant()
             r = A.claimed(original, "native", 42, 9000001, 101, holder)
-            self.assertEqual(r, held())
+            self.assertEqual(r, dict(held(), custody=dict(held()["custody"], host="claude")))
             self.assertEqual(original, grant())
             r["scope"]["plans"].append("local")
             r["confirmation"]["owner_response"] = "local"
@@ -275,7 +280,7 @@ class TestD5Authority(unittest.TestCase):
                 expected = copy.deepcopy(before)
                 expected["custody"] = dict(zip(
                     ("session_id", "anchor_pid", "anchor_start_us"), claimant),
-                    generation=8, claimed_at=103, relinquished_at=None)
+                    host="claude", generation=8, claimed_at=103, relinquished_at=None)
                 self.assertEqual(r, expected)
                 self.assertEqual(A.decode(A.encode(r)), expected)
                 r["confirmation"]["owner_response"] = "local"
