@@ -43,11 +43,12 @@ class TestCodeProtocolExtraction(unittest.TestCase):
         build.assert_called_once_with(intent)
 
     def test_owner_lookups(self):
-        tree = ast.parse(Path(S.__file__).read_text())
-        bare = [(n.id, n.lineno) for n in ast.walk(tree)
+        trees = [ast.parse(Path(m.__file__).read_text()) for m in (S, S.SV)]
+        bare = [(n.id, n.lineno) for tree in trees for n in ast.walk(tree)
                 if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
                 and n.id in DEFINITIONS + CONSTANTS]
-        consumers = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)
+        consumers = {n.attr for tree in trees for n in ast.walk(tree)
+                     if isinstance(n, ast.Attribute)
                      and isinstance(n.value, ast.Name) and n.value.id == "SCP"}
         self.assertEqual(consumers, {"_dispatch_prompt", "_code_protocol_problem"})
         self.assertEqual(bare, [], "facade bypasses owner patches")

@@ -1368,6 +1368,22 @@ class TestValidateExtraction(unittest.TestCase):
                 swarm.validate_plan(two)
         overlap.assert_called_once_with("dir_a", "dir_b")
 
+        with mock.patch.object(swarm.SPR, "partition_problems",
+                               return_value=[("u", "badpart")]) as parts:
+            with self.assertRaisesRegex(swarm.PlanError, "badpart"):
+                swarm.validate_plan({"units": [{
+                    "id": "u", "kind": "pipeline", "command": "true",
+                    "runtime": "none", "outputs": ["out"],
+                }]})
+        parts.assert_called_once()
+
+        with mock.patch.object(swarm.shutil, "which", return_value="/bin/paseo"), \
+             mock.patch.object(swarm.SCP, "_code_protocol_problem",
+                               return_value="missing marker") as proto:
+            with self.assertRaisesRegex(swarm.PlanError, "missing marker"):
+                swarm.validate_plan(code_plan)
+        proto.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
