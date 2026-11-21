@@ -103,14 +103,14 @@ class TestStateExtraction(unittest.TestCase):
         self.assertEqual(offenders, [])
 
     def test_coordinator_consumers_read_state_helpers_from_owner(self):
-        tree = ast.parse(Path(S.__file__).read_text())
+        trees = [ast.parse(Path(m.__file__).read_text()) for m in (S, S.SADV)]
         moved = set(DEFINITIONS) - {
             "_holds_the_path", "_StateSnapshot", "_read_state_epoch",
         }
-        bare = [(n.id, n.lineno) for n in ast.walk(tree)
+        bare = [(n.id, n.lineno) for tree in trees for n in ast.walk(tree)
                 if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
                 and n.id in moved]
-        consumers = {n.attr for n in ast.walk(tree)
+        consumers = {n.attr for tree in trees for n in ast.walk(tree)
                      if isinstance(n, ast.Attribute)
                      and isinstance(n.value, ast.Name) and n.value.id == "SS"}
         self.assertTrue({"save_state", "_unit_state", "_set_unit_state",

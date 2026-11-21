@@ -292,7 +292,7 @@ class TestReadyForPRIsNotADeadEnd(unittest.TestCase):
 
     def test_advance_reconsiders_a_unit_already_in_ready_for_pr(self):
         import ast
-        src = (SCRIPTS / "swarm.py").read_text()
+        src = (SCRIPTS / "swarm_advance.py").read_text()
         tree = ast.parse(src)
         found = False
         for node in ast.walk(tree):
@@ -369,13 +369,12 @@ class TestClosedIsClosed(unittest.TestCase):
     drove a DONE unit back to READY_FOR_PR."""
 
     def test_an_admitted_merge_is_recorded_on_the_unit(self):
-        import ast
-        src = (SCRIPTS / "swarm.py").read_text()
+        src = (SCRIPTS / "swarm_advance.py").read_text()
         self.assertIn('us["merged_as"] = receipt.get("merged_as")', src)
 
     def test_the_guard_skips_a_unit_that_already_closed(self):
         import ast
-        src = (SCRIPTS / "swarm.py").read_text()
+        src = (SCRIPTS / "swarm_advance.py").read_text()
         tree = ast.parse(src)
         guarded = False
         for node in ast.walk(tree):
@@ -446,18 +445,23 @@ class TestTheProducedHeadIsRecordedNotRederived(unittest.TestCase):
     answer changed between askings."""
 
     def test_advance_persists_the_produced_head(self):
-        src = (SCRIPTS / "swarm.py").read_text()
-        self.assertIn('setdefault("attempt_produced_heads", {})', src)
-        self.assertNotIn('us["produced_head"] = produced', src)
+        adv = (SCRIPTS / "swarm_advance.py").read_text()
+        facade = (SCRIPTS / "swarm.py").read_text()
+        self.assertIn('setdefault("attempt_produced_heads", {})', adv)
+        self.assertNotIn('us["produced_head"] = produced', adv)
+        self.assertNotIn('us["produced_head"] = produced', facade)
 
     def test_there_is_no_rejudging_fallback(self):
         import ast
-        tree = ast.parse((SCRIPTS / "swarm.py").read_text())
-        fn = next(n for n in ast.walk(tree)
-                  if isinstance(n, ast.FunctionDef) and n.name == "advance")
-        body = ast.unparse(fn)
-        self.assertIn("trusted_produced_head", body)
-        self.assertNotIn("W.produced_head", body)
+        swarm_tree = ast.parse((SCRIPTS / "swarm.py").read_text())
+        adv_tree = ast.parse((SCRIPTS / "swarm_advance.py").read_text())
+        advance_fn = next(n for n in ast.walk(swarm_tree)
+                          if isinstance(n, ast.FunctionDef) and n.name == "advance")
+        bodies = [ast.unparse(advance_fn)] + [
+            ast.unparse(n) for n in adv_tree.body if isinstance(n, ast.FunctionDef)]
+        combined = "\n".join(bodies)
+        self.assertIn("trusted_produced_head", combined)
+        self.assertNotIn("W.produced_head", combined)
 
 
 class TestTheJudgedHeadIsInTheReceipt(unittest.TestCase):
@@ -474,12 +478,16 @@ class TestTheJudgedHeadIsInTheReceipt(unittest.TestCase):
 
     def test_admission_uses_only_the_per_attempt_state_basis(self):
         import ast
-        tree = ast.parse((SCRIPTS / "swarm.py").read_text())
-        fn = next(n for n in ast.walk(tree)
-                  if isinstance(n, ast.FunctionDef) and n.name == "advance")
-        body = ast.unparse(fn)
-        self.assertIn("produced = SE.trusted_produced_head", body)
-        self.assertNotIn("produced = ((rec", body)
+        swarm_tree = ast.parse((SCRIPTS / "swarm.py").read_text())
+        adv_tree = ast.parse((SCRIPTS / "swarm_advance.py").read_text())
+        advance_fn = next(n for n in ast.walk(swarm_tree)
+                          if isinstance(n, ast.FunctionDef) and n.name == "advance")
+        admit_fn = next(n for n in ast.walk(adv_tree)
+                        if isinstance(n, ast.FunctionDef)
+                        and n.name == "_admit_code_closure")
+        combined = ast.unparse(advance_fn) + "\n" + ast.unparse(admit_fn)
+        self.assertIn("produced = SE.trusted_produced_head", ast.unparse(admit_fn))
+        self.assertNotIn("produced = ((rec", combined)
 
     def _att(self, d, receipt):
         """State as it stands after a coordinator-caused check wrote this."""

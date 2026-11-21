@@ -122,7 +122,8 @@ class TestEvidenceExtraction(unittest.TestCase):
     def test_coordinator_consumers_read_evidence_from_owner(self):
         trees = []
         for module, expected in ((S, "advance"), (S.SD, "_allocate"),
-                                 (S.SSB, "_persist_anchored_launch")):
+                                 (S.SSB, "_persist_anchored_launch"),
+                                 (S.SADV, "_check_unit_attempt")):
             part = ast.parse(Path(module.__file__).read_text())
             self.assertIn(expected, {n.name for n in part.body
                                      if isinstance(n, ast.FunctionDef)})

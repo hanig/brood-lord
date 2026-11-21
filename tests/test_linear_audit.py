@@ -1095,7 +1095,7 @@ class TestAudit(AuditCase):
             for node in ast.walk(function):
                 if isinstance(node, ast.Constant) and isinstance(node.value, str):
                     self.assertFalse(node.value.lstrip().startswith('mutation'))
-        for path in (SWARM / 'swarm.py', SWARM / 'swarm_routing.py', SWARM / 'swarm_types.py', SWARM / 'swarm_state.py', SWARM / 'swarm_journal.py', SWARM / 'swarm_evidence.py', SWARM / 'swarm_outbox.py', SWARM / 'swarm_plan_rules.py', SWARM / 'swarm_validate.py', SWARM / 'swarm_preflight.py', SWARM / 'swarm_code_protocol.py', SWARM / 'swarm_code_launch.py', SWARM / 'swarm_workspaces.py', SWARM / 'swarm_dispatch.py', SWARM / 'swarm_submit.py', PROJECT / 'tickets.py', PROJECT / 'drain_contract.py'):
+        for path in (SWARM / 'swarm.py', SWARM / 'swarm_routing.py', SWARM / 'swarm_types.py', SWARM / 'swarm_state.py', SWARM / 'swarm_journal.py', SWARM / 'swarm_evidence.py', SWARM / 'swarm_outbox.py', SWARM / 'swarm_plan_rules.py', SWARM / 'swarm_validate.py', SWARM / 'swarm_preflight.py', SWARM / 'swarm_code_protocol.py', SWARM / 'swarm_code_launch.py', SWARM / 'swarm_workspaces.py', SWARM / 'swarm_dispatch.py', SWARM / 'swarm_submit.py', SWARM / 'swarm_advance.py', PROJECT / 'tickets.py', PROJECT / 'drain_contract.py'):
             tree_boundary = ast.parse(path.read_text())
             if path.name == "swarm_outbox.py":
                 self.assertTrue({"emit_intent", "load_outbox_contract", "record_receipt",
@@ -1113,7 +1113,8 @@ class TestAudit(AuditCase):
                         "swarm_code_protocol.py": "_code_completion_protocol",
                         "swarm_code_launch.py": "_capture_code_launch",
                         "swarm_workspaces.py": "_archive_code_worktree",
-                        "swarm_submit.py": "_submit_slurm"}.get(path.name)
+                        "swarm_submit.py": "_submit_slurm",
+                        "swarm_advance.py": "_recover_unbound_attempts"}.get(path.name)
             if expected:
                 self.assertIn(expected, {n.name for n in tree_boundary.body
                                          if isinstance(n, (ast.FunctionDef, ast.ClassDef))})

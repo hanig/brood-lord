@@ -173,6 +173,12 @@ ALLOWED = {
         "pins the coordinator-created source observation before launch",
     ("swarm_evidence.py", "admit_merge"):
         "compares the merge attestation's repository to trusted state",
+    ("swarm_advance.py", "_recover_unbound_attempts"):
+        "uses repo and branch from the coordinator-state launch intent to "
+        "recover an exact-base worktree; no agent-writable record is read",
+    ("swarm_advance.py", "_admit_code_closure"):
+        "reads repo and repository_remote only from coordinator-state launch "
+        "facts to validate merge and verification receipts",
     ("swarm.py", "advance"):
         "uses repository identity from the coordinator-state snapshot",
     ("swarm_evidence.py", "trusted_base"):
