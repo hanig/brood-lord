@@ -104,8 +104,12 @@ ALLOWED = {
         "metadata only for preservation and cleanup, never from worker files",
     ("swarm_preflight.py", "_execution_workspace"):
         "reads the declared workspace from the PLAN, not from a record",
+    ("swarm_validate.py", "_validate_unit_fields"):
+        "validates the plan's own execution_workspace and repo fields before "
+        "any run; no launch record is involved",
     ("swarm.py", "validate_plan"):
-        "validates the plan's own execution_workspace field before any run",
+        "validates the plan's own repo and code-unit canary intent fields "
+        "before any run",
     ("swarm.py", "cmd_validate"):
         "reads values from _dispatch_source_identity(u, target), which the "
         "coordinator computes live from the plan and the repository, not "

@@ -459,6 +459,7 @@ class TestTheLiftIsClosed(unittest.TestCase):
     FILES = (SCRIPTS / "unit.py", SCRIPTS / "swarm.py",
                   SCRIPTS / "swarm_dispatch.py",
              SCRIPTS / "swarm_evidence.py", SCRIPTS / "swarm_plan_rules.py",
+             SCRIPTS / "swarm_validate.py",
              SCRIPTS / "swarm_outbox.py", SCRIPTS / "swarm_preflight.py",
              SCRIPTS / "swarm_code_protocol.py")
 
@@ -1314,6 +1315,59 @@ class TestContinuationSettleClock(Base):
                               state_dir, str(self.tmp / "runs"), False, max_new=0)
                 self.assertEqual(us["state"], expected, repr(observed))
                 self.assertEqual(len(us["continuations"]), 1)
+
+
+class TestValidateExtraction(unittest.TestCase):
+    def test_swarm_validate_imports_without_facade_or_network(self):
+        import ast
+        import subprocess
+        tree = ast.parse((SCRIPTS / "swarm_validate.py").read_text())
+        forbidden = {"swarm", "review", "committee", "resolve_models",
+                     "linear_api", "linear_sync", "merge_unit", "urllib",
+                     "http", "socket", "ssl"}
+        imports = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
+        imports |= {a.name for n in ast.walk(tree) if isinstance(n, ast.Import)
+                    for a in n.names}
+        self.assertFalse({str(n).split(".")[0] for n in imports} & forbidden)
+        runtime_forbidden = (forbidden - {"urllib"}) | {"urllib.request"}
+        result = subprocess.run([sys.executable, "-S", "-c", (
+            "import sys; sys.path.insert(0, sys.argv[1]); import swarm_validate; "
+            "assert not set(sys.modules).intersection(" + repr(runtime_forbidden) + ")"
+        ), str(SCRIPTS)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_validate_plan_patches_intercept_extracted_phases(self):
+        from unittest import mock
+        code_plan = {"units": [{
+            "id": "u", "kind": "code", "repo": "/fixture/repo",
+            "target_branch": "main", "mode": "auto", "prompt": "work",
+            "outputs": ["evidence.md"],
+        }]}
+        with mock.patch.object(swarm.shutil, "which", return_value=None) as which:
+            with self.assertRaisesRegex(swarm.PlanError, "paseo is not on PATH"):
+                swarm.validate_plan(code_plan)
+        which.assert_called_once_with("paseo")
+
+        with mock.patch.object(swarm.SPR, "converge_problem",
+                               return_value="fixture converge error") as check:
+            with self.assertRaisesRegex(swarm.PlanError, "fixture converge error"):
+                swarm.validate_plan({"units": [{
+                    "id": "u", "kind": "pipeline", "command": "true",
+                    "runtime": "none", "outputs": ["out"],
+                }]})
+        check.assert_called_once()
+
+        two = {"units": [
+            {"id": "a", "kind": "pipeline", "command": "true",
+             "runtime": "none", "outputs": ["a.out"], "write_scopes": ["dir_a"]},
+            {"id": "b", "kind": "pipeline", "command": "true",
+             "runtime": "none", "outputs": ["b.out"], "write_scopes": ["dir_b"]},
+        ]}
+        with mock.patch.object(swarm.SPR, "_scopes_overlap", return_value=True) as overlap:
+            with self.assertRaisesRegex(swarm.PlanError, "write scopes overlap"):
+                swarm.validate_plan(two)
+        overlap.assert_called_once_with("dir_a", "dir_b")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
