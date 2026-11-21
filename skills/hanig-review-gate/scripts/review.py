@@ -105,362 +105,63 @@ ROUND_LOCK_WAIT_SECONDS = 5
 MAX_ROUND_RELEASES = 5
 
 
-def change_identity(target="origin/main", plan_name=None, unit=None):
-    """Hash exact Git identity bytes, never the changing diff or tip commit.
+class _ModuleProxy:
+    """Live view over this module's globals even when loaded outside sys.modules."""
 
-    Fix commits preserve this identity while the target merge-base is unchanged.
-    Renaming the branch, changing the remote, rebasing, or changing an explicit
-    plan/unit declaration defines another identity; this is not a tamper barrier.
-    """
-    def git(*argv, fix):
+    def __init__(self, namespace):
+        self._ns = namespace
+
+    def __getattr__(self, name):
         try:
-            result = subprocess.run(["git", *argv], stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, timeout=15)
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise ValueError("cannot read change identity from Git; " + fix) from exc
-        if result.returncode or not result.stdout.endswith(b"\n"):
-            raise ValueError("cannot derive change identity; " + fix)
-        # Remove only Git's terminating newline. Replacement decoding would
-        # collapse distinct non-UTF-8 names into one decision value.
-        return result.stdout[:-1].decode("utf-8", "surrogateescape")
-
-    if not target or target.startswith("-"):
-        raise ValueError("--target must name a Git commit/ref; pass --target REF")
-    for value in (plan_name, unit):
-        if value is not None and not value.strip():
-            raise ValueError("--plan-name and --unit must be non-empty when given")
-    remote = git("remote", "get-url", "origin",
-                 fix="run in the intended Git checkout and configure its origin remote")
-    target_head = git("rev-parse", "--verify", target + "^{commit}",
-                      fix="fetch the target or pass --target REF naming an existing target commit")
-    base = git("merge-base", "HEAD", target_head,
-               fix="commit the checkout and fetch shared history with --target REF")
-    subject = (["plan-unit", plan_name, unit]
-               if plan_name is not None or unit is not None
-               else ["branch", git("symbolic-ref", "--short", "HEAD",
-                                   fix="check out the change branch or pass --plan-name NAME/--unit UNIT")])
-    payload = json.dumps([remote, base, subject], ensure_ascii=True,
-                         separators=(",", ":"))
-    return hashlib.sha256(payload.encode("ascii")).hexdigest()
+            return self._ns[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
 
 
-def round_ledger_root():
-    """Enforcing state has one location and no audit-journal fallback."""
-    configured = os.environ.get("XDG_STATE_HOME")
-    base = Path(configured) if configured else Path.home() / ".local" / "state"
-    if not base.is_absolute():
-        raise ValueError("round ledger requires an absolute XDG_STATE_HOME or HOME")
-    # Resolve the configured storage location once (including ordinary system
-    # aliases such as /var); marker names and identity values remain exact.
-    return (base / "hanig-review-gate" / "rounds").resolve()
+_SELF = _ModuleProxy(globals())
 
 
-def round_marker_name(cycle, number):
-    return "cycle-{}-round-{}.json".format(cycle, number)
+def _load_sibling(module_name, filename):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(module_name, HERE / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_ledger = _load_sibling("_hanig_review_gate_ledger", "review_ledger.py")
+_schema = _load_sibling("_hanig_review_gate_schema", "review_schema.py")
+
+change_identity = _ledger.change_identity
+round_ledger_root = _ledger.round_ledger_root
+round_marker_name = _ledger.round_marker_name
+replace_round_marker = _ledger.replace_round_marker
 
 
 def require_exhausted_rounds(entries):
-    """A validated prefix is exhausted only when all MAX_ROUNDS exist."""
-    if entries[-1].get("attempts", [{}])[-1].get("released_at"):
-        raise ValueError("released round is not exhausted")
-    cycle = entries[-1]["cycle"]
-    missing = list(range(entries[-1]["round"] + 1, MAX_ROUNDS + 1))
-    if missing:
-        raise ValueError("cycle is not exhausted; missing rounds: {}; files: {}".format(
-            ", ".join(map(str, missing)), ", ".join(
-                round_marker_name(cycle, number) for number in missing)))
+    return _ledger.require_exhausted_rounds(entries, MAX_ROUNDS)
 
 
 def validate_round_history(directory, identity):
-    """Read one closed grammar under the identity lock; return its last cycle.
-
-    This validates present shape, not write order, deleted history or the
-    authenticity of hand-edited bytes. No audit journal is consulted.
-    """
-    cycles = {}
-    for name in sorted(os.listdir(directory)):
-        if name == "lock":
-            continue
-        match = re.fullmatch(r"cycle-([1-9][0-9]*)-round-([1-9][0-9]*)\.json", name)
-        if match is None:
-            raise ValueError("unrecognized round ledger entry: {}".format(name))
-        try:
-            cycle, number = map(int, match.groups())
-            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-                         dir_fd=directory)
-            with os.fdopen(fd, "r", encoding="utf-8") as stream:
-                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                    raise ValueError("marker is not a regular file")
-                content = stream.read(4097)
-            if len(content) > 4096:
-                raise ValueError("oversized marker")
-            record = json.loads(content, object_pairs_hook=reject_duplicate_keys)
-            if (not isinstance(record, dict)
-                    or set(record) not in (
-                        {"identity", "cycle", "round", "profile", "predecessor"},
-                        {"identity", "cycle", "round", "profile", "predecessor", "attempts"})
-                    or record["identity"] != identity
-                    or type(record["cycle"]) is not int or record["cycle"] != cycle
-                    or type(record["round"]) is not int or record["round"] != number
-                    or not 1 <= number <= MAX_ROUNDS
-                    or record["profile"] not in ("plan", *LADDER)):
-                raise ValueError("invalid marker fields")
-            if "attempts" in record:
-                attempts = record["attempts"]
-                if not isinstance(attempts, list) or not 1 <= len(attempts) <= MAX_ROUND_RELEASES + 1:
-                    raise ValueError("invalid reservation attempts")
-                tokens = set()
-                for index, attempt in enumerate(attempts):
-                    if (not isinstance(attempt, dict)
-                            or set(attempt) not in ({"token", "reserved_at"},
-                                {"token", "reserved_at", "released_at", "verdict", "completed"})
-                            or not isinstance(attempt.get("token"), str)
-                            or not re.fullmatch(r"[0-9a-f]{32}", attempt["token"])
-                            or attempt["token"] in tokens):
-                        raise ValueError("invalid reservation attempt")
-                    tokens.add(attempt["token"])
-                    released = "released_at" in attempt
-                    if ((index < len(attempts) - 1 and not released)
-                            or (released and (index >= MAX_ROUND_RELEASES
-                                or attempt["verdict"] != "REVIEW_UNAVAILABLE"
-                                or type(attempt["completed"]) is not int
-                                or attempt["completed"] != 0))):
-                        raise ValueError("invalid round release")
-                    for field in (("reserved_at", "released_at") if released else ("reserved_at",)):
-                        if (not isinstance(attempt[field], str)
-                                or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d{4}", attempt[field])):
-                            raise ValueError("invalid reservation timestamp")
-                        datetime.datetime.strptime(attempt[field], "%Y-%m-%dT%H:%M:%S%z")
-        except (OSError, ValueError, TypeError, RecursionError) as exc:
-            raise ValueError("invalid round ledger marker {}: {}".format(name, exc)) from exc
-        cycles.setdefault(cycle, []).append(record)
-
-    previous = []
-    for expected_cycle, cycle in enumerate(sorted(cycles), 1):
-        entries = sorted(cycles[cycle], key=lambda r: r["round"])
-        names = ", ".join(round_marker_name(cycle, e["round"]) for e in entries)
-        if cycle != expected_cycle:
-            raise ValueError("{}: missing predecessor cycle; expected {}".format(
-                names, round_marker_name(expected_cycle, 1)))
-        missing = sorted(set(range(1, entries[-1]["round"] + 1))
-                         - {e["round"] for e in entries})
-        if missing:
-            raise ValueError("{}: missing rounds: {}; files: {}".format(
-                names, ", ".join(map(str, missing)), ", ".join(
-                    round_marker_name(cycle, number) for number in missing)))
-        if any(e.get("attempts", [{}])[-1].get("released_at") for e in entries[:-1]):
-            raise ValueError("{}: released round before a later reservation".format(names))
-        if any(e["profile"] != entries[0]["profile"] for e in entries):
-            raise ValueError("{}: profiles differ within cycle".format(names))
-        expected = None
-        if previous:
-            try:
-                require_exhausted_rounds(previous)
-            except ValueError as exc:
-                raise ValueError("{}: incomplete predecessor: {}".format(names, exc)) from exc
-            expected = {"cycle": cycle - 1, "profile": previous[0]["profile"]}
-        elif isinstance(entries[0]["predecessor"], dict):
-            declaration = entries[0]["predecessor"]
-            if (declaration.get("cycle") == "none declared"
-                    and declaration.get("profile") in LADDER):
-                expected = {"cycle": "none declared", "profile": declaration["profile"]}
-        for entry in entries:
-            predecessor = entry["predecessor"]
-            if (predecessor != expected or (expected is not None and (
-                    not isinstance(predecessor, dict)
-                    or (previous and type(predecessor.get("cycle")) is not int)))):
-                raise ValueError("{}: invalid round ledger predecessor".format(
-                    round_marker_name(cycle, entry["round"])))
-        previous = entries
-    return previous
+    return _ledger.validate_round_history(directory, identity, _SELF)
 
 
 def acquire_round_lock(lock):
-    """Wait for a short reservation critical section, with a monotonic bound.
-
-    Retrying nonblocking flock gives a bounded blocking wait without changing
-    process-global signal handlers or the review watchdog's timer.
-    """
-    deadline = time.monotonic() + ROUND_LOCK_WAIT_SECONDS
-    while True:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return
-        except BlockingIOError as exc:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise ValueError("round reservation lock wait exceeded {} seconds; "
-                                 "inspect the ledger before retrying".format(
-                                     ROUND_LOCK_WAIT_SECONDS)) from exc
-            time.sleep(min(0.05, remaining))
-
-
-def replace_round_marker(directory, name, record):
-    """Stage outside the identity grammar; rename is the settlement point."""
-    parent = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=directory)
-    pending = ".round-pending-" + os.urandom(16).hex()
-    fd = None
-    try:
-        fd = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent)
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(record, stream, sort_keys=True)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(pending, name, src_dir_fd=parent, dst_dir_fd=directory)
-        os.fsync(directory)
-    finally:
-        try:
-            if fd is not None:
-                os.unlink(pending, dir_fd=parent)
-        except FileNotFoundError:
-            pass
-        finally:
-            os.close(parent)
+    return _ledger.acquire_round_lock(lock, _SELF)
 
 
 def reserve_round(identity, round_no, profile, fresh_from=None):
-    """Reserve under flock and O_EXCL; only settled zero-completion unavailable
-    runs may release, five times. Partial markers fail closed. No audit access.
-    Local trusted-writer state cannot prevent owner edits or another state home.
-    """
-    if (not re.fullmatch(r"[0-9a-f]{64}", identity)
-            or type(round_no) is not int or not 1 <= round_no <= MAX_ROUNDS
-            or profile not in ("plan", *LADDER)
-            or (fresh_from is not None and fresh_from not in LADDER)):
-        raise ValueError("invalid round reservation")
-    ledger = round_ledger_root() / identity
-    directory = _open_directory_chain(ledger)
-    try:
-        lock = os.open("lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
-                       0o600, dir_fd=directory)
-        try:
-            if not stat.S_ISREG(os.fstat(lock).st_mode):
-                raise ValueError("lock: not a regular file")
-            acquire_round_lock(lock)
-            entries = validate_round_history(directory, identity)
-            last = entries[-1] if entries else None
-            cycle = last["cycle"] if last else 1
-            predecessor = last["predecessor"] if last else None
-            names = ", ".join(round_marker_name(cycle, e["round"]) for e in entries)
-            retry = bool(last and last.get("attempts", [{}])[-1].get("released_at"))
-            if retry:
-                if (round_no != last["round"] or profile != last["profile"]
-                        or fresh_from != (predecessor["profile"] if predecessor else None)):
-                    raise ValueError("released round must be reserved again with the same profile and predecessor")
-            elif last and round_no == 1 and fresh_from is not None:
-                require_exhausted_rounds(entries)
-                if fresh_from != last["profile"]:
-                    raise ValueError("{}: --fresh-cycle-from must name the exhausted "
-                                     "cycle's profile".format(names))
-                predecessor = {"cycle": cycle, "profile": last["profile"]}
-                cycle += 1
-            else:
-                if last and round_no <= last["round"]:
-                    raise ValueError("{}: round is already reserved or lower than the last "
-                                     "reservation; use the next round, or after exhaustion "
-                                     "--round 1 --fresh-cycle-from PROFILE".format(names))
-                if round_no != (last["round"] + 1 if last else 1):
-                    raise ValueError("{}: cannot reserve round {}; missing round {}; file: {}".format(
-                        names, round_no, round_no - 1, round_marker_name(cycle, round_no - 1)))
-                if last and profile != last["profile"]:
-                    raise ValueError("{}: profile must match this cycle's {}".format(
-                        names, last["profile"]))
-                if last is None and fresh_from is not None:
-                    predecessor = {"cycle": "none declared", "profile": fresh_from}
-                expected = predecessor["profile"] if predecessor else None
-                if fresh_from != expected:
-                    raise ValueError("{}: --fresh-cycle-from must match this cycle's "
-                                     "recorded predecessor; a new cycle needs exhaustion".format(names))
-            record = {"identity": identity, "cycle": cycle, "round": round_no,
-                      "profile": profile, "predecessor": predecessor}
-            record["attempts"] = (last["attempts"][:] if retry else []) + [
-                {"token": os.urandom(16).hex(), "reserved_at": now()}]
-            name = round_marker_name(cycle, round_no)
-            if retry:
-                replace_round_marker(directory, name, record)
-                return record
-            try:
-                fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                             0o600, dir_fd=directory)
-            except FileExistsError as exc:
-                raise ValueError("round is already reserved; marker retained: {}".format(name)) from exc
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                json.dump(record, stream, sort_keys=True)
-                stream.write("\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            try:
-                os.fsync(directory)
-            except OSError as exc:
-                cleanup_error = ""
-                try:
-                    os.unlink(name, dir_fd=directory)
-                except OSError as unlink_exc:
-                    cleanup_error = "; marker removal failed for {}: {}".format(name, unlink_exc)
-                raise ValueError("directory fsync failed for {}: {}; reservation was not "
-                                 "recorded{}".format(ledger, exc, cleanup_error)) from exc
-            return record
-        finally:
-            os.close(lock)
-    finally:
-        os.close(directory)
+    return _ledger.reserve_round(
+        identity, round_no, profile, fresh_from, _SELF)
 
 
 def reserve_review_round(args):
-    """CLI boundary: ledger failure is a review error, never an audit warning."""
-    try:
-        identity = change_identity(
-            "origin/main" if args.target is None else args.target, args.plan_name, args.unit)
-    except (OSError, ValueError, RuntimeError) as exc:
-        config_error("implementation identity required: {}. Pass a stable "
-                     "--plan-name/--unit when branch identity is unavailable; "
-                     "origin and a shared target commit are still required.".format(exc))
-    try:
-        record = reserve_round(identity, args.round, args.selected_profile,
-                               args.fresh_cycle_from)
-    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
-        config_error("round reservation refused: {}. Inspect the enforcing ledger "
-                     "and XDG_STATE_HOME/HOME; pass the next admissible round; do not delete "
-                     "reservations to restart a review.".format(exc))
-    args.round_reservation = (round_ledger_root() / identity, record)
-    return record
+    return _ledger.reserve_review_round(args, _SELF)
 
 
 def release_round(args, completed, verdict):
-    """Release our settled zero-completion unavailable round, never a watchdog's.
-    Audit success is not authority. Persistence failure fails closed.
-    """
-    if verdict != "REVIEW_UNAVAILABLE" or completed:
-        return
-    ledger, owned = args.round_reservation
-    directory = None
-    try:
-        directory = _open_directory_chain(ledger)
-        lock = os.open("lock", os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
-                       dir_fd=directory)
-        try:
-            acquire_round_lock(lock)
-            entries = validate_round_history(directory, owned["identity"])
-            if owned not in entries:
-                raise ValueError("reservation no longer belongs to this run")
-            if entries[-1] != owned:
-                print("Round kept: later round reserved.", file=sys.stderr)
-                return
-            attempts = owned["attempts"]
-            if len(attempts) > MAX_ROUND_RELEASES:
-                print("Round kept: release cap of 5 reached.", file=sys.stderr)
-                return
-            record = dict(owned, attempts=attempts[:-1] + [dict(
-                attempts[-1], released_at=now(), verdict=verdict, completed=0)])
-            name = round_marker_name(owned["cycle"], owned["round"])
-            replace_round_marker(directory, name, record)
-        finally:
-            os.close(lock)
-    except (OSError, ValueError, TypeError, KeyError) as exc:
-        config_error("round release refused: {}. Pass ledger {} to the operator for inspection.".format(exc, ledger))
-    finally:
-        if directory is not None:
-            os.close(directory)
+    return _ledger.release_round(args, completed, verdict, _SELF)
 
 HONEST_RUN_CLAIM = "This change cannot make an honest run fail."
 DISPOSITIONS = {"reproduced", "not-reproduced", "deferred"}
@@ -1470,276 +1171,16 @@ PROVIDERS = {"openai": call_openai, "openrouter": call_openrouter,
 
 # --- parsing ----------------------------------------------------------------
 
-def parse_verdict(text):
-    """Models sometimes wrap JSON in fences or prose. Recover the object."""
-    if not text or not text.strip():
-        return None, "empty response"
-    s = text.strip()
-    if s.startswith("```"):
-        s = s.split("```")[1] if "```" in s[3:] else s[3:]
-        if s.lstrip().startswith("json"):
-            s = s.lstrip()[4:]
-    start, depth, found = None, 0, None
-    in_str, esc = False, False
-    for i, ch in enumerate(s):
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == "{":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0 and start is not None:
-                found = s[start:i + 1]
-                break
-    if not found:
-        if start is not None:
-            # Braces opened and never closed: the model hit its token ceiling.
-            # Say that, rather than "no JSON found" for text starting with '{'.
-            return None, ("response truncated mid-JSON (raise max_output_tokens "
-                          f"for this reviewer); {len(s)} chars received")
-        return None, f"no JSON object found in: {text[:150]}"
-    try:
-        return json.loads(found), None
-    except json.JSONDecodeError as e:
-        return None, f"malformed JSON: {e}"
-
-
-def norm(v):
-    """Model-emitted enums vary in case ('Refuted' vs 'refuted'). Matching them
-    case-sensitively silently dropped refuted claims and let the gate pass."""
-    return str(v).strip().lower() if v is not None else ""
-
-
-# Words that appear in nearly every claim carry no discriminating signal; left
-# in, they let two unrelated claims "match" on filler alone.
-CLAIM_STOPWORDS = frozenset("""
-claim claims about that this then than there their they when where which while
-with without from into onto over under only ever never always cannot must
-should would could shall will does done doing have been being were was are
-same such each every both either neither also just even more most less least
-other another using used uses use make makes made give given gives take taken
-case cases thing things text output input value values return returns
-""".split())
-
-
-def claim_key(s):
-    """Normalise a claim for matching: models reword, so compare on distinctive
-    content words rather than demanding an exact string."""
-    words = [w for w in re.findall(r"[a-z0-9_]+", str(s).lower())
-             if len(w) > 3 and w not in CLAIM_STOPWORDS]
-    return set(words)
-
-
-def unassessed_claims(returned, asserted):
-    """Asserted claims with no corresponding entry in the reviewer's response.
-
-    Assignment is ONE-TO-ONE: an entry is consumed once it accounts for a claim.
-    Matching many-to-one let two identical entries for claim A satisfy both A
-    and B, so a claim could go unexamined while the count looked right."""
-    missing = []
-    used = set()
-    entries = [(j, c) for j, c in enumerate(returned) if isinstance(c, dict)]
-
-    # Explicit indices first: they are unambiguous, so honour them before
-    # spending entries on fuzzy content matches.
-    by_index, spent_text = {}, set()
-    for j, c in entries:
-        idx = c.get("claim_index")
-        if not (isinstance(idx, int) and not isinstance(idx, bool)
-                and 0 <= idx < len(asserted) and idx not in by_index):
-            continue
-        # An index alone was trusted, so unrelated text could "cover" a claim.
-        # A non-string claim (e.g. the integer 0) has no distinctive words and
-        # slipped past the overlap test entirely.
-        if not isinstance(c.get("claim"), str) or not c["claim"].strip():
-            continue
-        akey, ckey = claim_key(asserted[idx]), claim_key(c["claim"])
-        if akey and (not ckey
-                     or len(akey & ckey) < max(1, int(0.3 * len(akey)))):
-            continue
-        # Two entries with the same wording are one assessment, whatever they
-        # index. Otherwise duplicate text indexed 0 and 1 covered both claims.
-        sig = frozenset(claim_key(c.get("claim", "")))
-        if sig and sig in spent_text:
-            continue
-        if sig:
-            spent_text.add(sig)
-        by_index[idx] = j
-
-    for i, a in enumerate(asserted):
-        if i in by_index:
-            used.add(by_index[i])
-
-    # Score every (claim, entry) pair, then assign globally best-first AND
-    # exclusively: an entry may only account for the claim it most resembles.
-    # Global best-first alone was not enough -- a duplicate entry for claim A
-    # still cleared the threshold for a near-identical claim B and covered it.
-    # Under-crediting (reporting unassessed) is the safe direction here.
-    pending, scores = [], []
-    for i, a in enumerate(asserted):
-        if i in by_index:
-            continue
-        akey = claim_key(a)
-        if not akey:
-            # No distinctive words to match on. Only an explicit claim_index
-            # can account for this claim; skipping it silently counted an
-            # unexamined claim as assessed.
-            missing.append(a[:70] + "  [no distinctive terms; needs claim_index]")
-            continue
-        pending.append(i)
-        need = max(2, int(0.6 * len(akey)))
-        for j, c in entries:
-            ckey = claim_key(c.get("claim", ""))
-            if not ckey or frozenset(ckey) in spent_text:
-                continue
-            overlap = len(akey & ckey)
-            if overlap < need:
-                continue
-            # Jaccard breaks ties between claims that share wording: the entry
-            # goes to the claim it actually resembles most.
-            scores.append((overlap / len(akey | ckey), overlap, i, j))
-    # An entry's own best claim. If an entry resembles A more than B, it cannot
-    # be spent covering B, however far above threshold that pairing scored.
-    best_for_entry = {}
-    for score, overlap, i, j in scores:
-        prev = best_for_entry.get(j)
-        if prev is None or (score, overlap) > prev[0]:
-            best_for_entry[j] = ((score, overlap), i)
-
-    scores.sort(reverse=True)
-    assigned = {}
-    for score, overlap, i, j in scores:
-        if i in assigned or j in used:
-            continue
-        owner = best_for_entry.get(j)
-        if owner is not None and owner[1] != i:
-            continue  # this entry belongs to a claim it resembles more
-        assigned[i] = j
-        used.add(j)
-    for i in pending:
-        if i not in assigned:
-            missing.append(asserted[i][:70])
-    return missing
-
-
-def empty_evidence_value(value):
-    """Recognize only null and blank strings, without changing stored bytes."""
-    return value is None or (isinstance(value, str) and not value.strip())
-
-
-def counterexample_placeholder(value):
-    """An empty object or one containing only blank/null values is absent."""
-    return value is None or (isinstance(value, dict)
-                             and all(empty_evidence_value(v) for v in value.values()))
-
-
-def finding_for_text(finding):
-    """Omit optional placeholders from a display copy, never the audit value."""
-    return {key: value for key, value in finding.items()
-            if not ((key == "counterexample" and counterexample_placeholder(value))
-                    or (key == "non_executable_reason" and empty_evidence_value(value)))}
-
-
-def verdict_schema_error(v, require_claims=0, asserted=None):
-    """Reject anything that is not actually a review.
-
-    require_claims: when claims were asserted, a reviewer must actually assess
-    them. An empty claims array passed the schema while assessing nothing."""
-    if not isinstance(v, dict):
-        return "not an object"
-    if norm(v.get("verdict")) not in ("upheld", "refuted"):
-        return f"verdict must be 'upheld' or 'refuted', got {v.get('verdict')!r}"
-    # Required, not optional: a response carrying only a verdict word assessed
-    # nothing, and two of those could fill the quorum and pass the gate.
-    for key in ("findings", "claims"):
-        if key not in v:
-            return f"missing required '{key}' array"
-        if not isinstance(v[key], list):
-            return f"{key} must be a list"
-    for f in v.get("findings") or []:
-        if not isinstance(f, dict):
-            return "findings must contain objects"
-        sev = norm(f.get("severity"))
-        if sev not in ("critical", "major", "minor"):
-            return f"finding severity must be critical/major/minor, got {f.get('severity')!r}"
-        if norm(f.get("confidence")) not in ("high", "medium", "low"):
-            return f"finding confidence must be high/medium/low, got {f.get('confidence')!r}"
-        # Without this, a major finding lacking a scenario was accepted and then
-        # silently ignored, so the gate could pass over a reported defect.
-        scen = f.get("failure_scenario")
-        if sev in ("critical", "major") and \
-                (not isinstance(scen, str) or not scen.strip()):
-            return (f"{sev} finding has no failure_scenario: "
-                    f"{str(f.get('summary'))[:60]!r}")
-        example = f.get("counterexample")
-        if not counterexample_placeholder(example):
-            if not isinstance(example, dict):
-                return "finding counterexample must be an object"
-            for field in ("setup", "input", "expected", "observed"):
-                value = example.get(field)
-                if not isinstance(value, str) or not value.strip():
-                    return f"finding counterexample.{field} must be a non-empty string"
-        reason = f.get("non_executable_reason")
-        if reason is not None and not isinstance(reason, str):
-            return "finding non_executable_reason must be a string or null"
-    for c in v.get("claims") or []:
-        if not isinstance(c, dict):
-            return "claims must contain objects"
-        # An entry with no status and no text asserts nothing; counting it as
-        # an assessment let content-free stubs satisfy the claims requirement.
-        if norm(c.get("status")) not in ("supported", "refuted", "unverifiable"):
-            return (f"claim entry has no valid status: "
-                    f"{str(c.get('status'))[:40]!r}")
-        # An entry with an index and a status but no text asserts nothing
-        # about the claim, and unassessed_claims counted it as covered.
-        # Third iteration on this validator: text + status alone is still
-        # content-free -- a reviewer can echo the claim back and mark it
-        # supported without examining anything. Require the reasoning.
-        why = str(c.get("why", "")).strip()
-        # A length check alone is defeated by filler: fifteen x's passed.
-        # Require several distinct words, not just characters.
-        words = {w for w in re.findall(r"[a-z0-9_]{2,}", why.lower())}
-        if len(words) < 4:
-            return (f"claim entry's 'why' is not substantive "
-                    f"({len(words)} distinct word(s)): {why[:40]!r}")
-        if not isinstance(c.get("claim"), str) or not c["claim"].strip():
-            return ("claim entry has no claim TEXT (a non-string value does "
-                    "not identify a claim); an index alone does not show "
-                    "which claim was assessed")
-    if require_claims and len(v.get("claims") or []) < require_claims:
-        return (f"assessed {len(v.get('claims') or [])} of {require_claims} "
-                f"asserted claims")
-    if asserted:
-        missing = unassessed_claims(v.get("claims") or [], asserted)
-        if missing:
-            return f"did not assess: {'; '.join(missing)}"
-    return None
-
-
-def is_confirmed(f):
-    """A finding counts against the gate only if it is serious AND the reviewer
-    was reasonably sure AND it came with a concrete failure scenario AND it is
-    reachable inside the declared threat model.
-
-    in_scope defaults to True when the reviewer omits it: an unstated scope is
-    not evidence of irrelevance, and this gate fails closed. Only an explicit
-    false takes a finding out of the verdict, and it is still reported."""
-    if f.get("in_scope") is False:
-        return False
-    return (norm(f.get("severity")) in ("critical", "major")
-            and norm(f.get("confidence")) in ("high", "medium")
-            and bool(str(f.get("failure_scenario", "")).strip()))
-
+parse_verdict = _schema.parse_verdict
+norm = _schema.norm
+CLAIM_STOPWORDS = _schema.CLAIM_STOPWORDS
+claim_key = _schema.claim_key
+unassessed_claims = _schema.unassessed_claims
+empty_evidence_value = _schema.empty_evidence_value
+counterexample_placeholder = _schema.counterexample_placeholder
+finding_for_text = _schema.finding_for_text
+verdict_schema_error = _schema.verdict_schema_error
+is_confirmed = _schema.is_confirmed
 
 # --- input gathering --------------------------------------------------------
 
@@ -2020,172 +1461,31 @@ def cmd_size(args):
     return 2 if count >= MAX_CHARS else 1 if count >= PLANNING_CHARS else 0
 
 
-def finding_digest(location, summary):
-    """Stable key for a prior finding's human-visible identity."""
-    identity = json.dumps([location, summary], ensure_ascii=False,
-                          separators=(",", ":"))
-    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+finding_digest = _ledger.finding_digest
 
 
 def read_review_journal(path):
-    """Read canonical records only; damaged/unreadable history is not empty.
-
-    This is an audit query over trusted local storage, not an authentication
-    boundary. Never create state or modify legacy records during a query.
-    """
-    try:
-        events = sorted(Path(path).iterdir())
-    except FileNotFoundError:
-        return []
-    records = []
-    for event in events:
-        record_path = event / "record.jsonl"
-        try:
-            record_path.lstat()
-        except FileNotFoundError:
-            continue  # an interrupted or not-yet-published private write
-        raw, error = read_text_bounded(record_path)
-        if error:
-            raise ValueError(f"cannot read {record_path}: {error}")
-        if not raw.endswith("\n") or raw.count("\n") != 1:
-            raise ValueError(f"{record_path} is not one JSON line")
-        record = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
-        if not isinstance(record, dict):
-            raise ValueError(f"{record_path} is not a JSON object")
-        records.append((record_path, record))
-    return records
+    return _ledger.read_review_journal(path, _SELF)
 
 
 def adjudicator_is_author(accepted_by, authors):
-    """A bare acceptor can be a human name or a legacy model leaf."""
-    if "/" in accepted_by:
-        roster = [dict(zip(("provider", "model"), value.split("/", 1)))
-                  for value in [accepted_by, *authors] if "/" in value]
-        return bool(author_model_ids([accepted_by], roster) & author_model_ids(authors, roster))
-    return any(author.partition("/")[2] == accepted_by for author in authors)
+    return _ledger.adjudicator_is_author(accepted_by, authors, _SELF)
 
 
 def journal_identity_problems(record, allow_unbound=False):
-    """Check every persisted identity without inferring or repairing it.
-
-    Old redaction is irreversible here. The query separately attributes
-    problems by recorded head; an adjudication cannot repair damaged fields.
-    """
-    problems = []
-
-    def check(field):
-        if field not in record or not valid_ledger_field(field, record[field]):
-            problems.append(field + " is missing or invalid")
-
-    for field in ("type", "schema_version", "round"):
-        check(field)
-    if not (allow_unbound and record.get("reviewed_head") is None
-            and "reviewed_head" in record and record.get("type") == "review_round"):
-        check("reviewed_head")
-    if record.get("type") == "adjudication":
-        for field in ("finding_digest", "decision", "accepted_by", "timestamp"):
-            check(field)
-        authors = record.get("author")
-        if (not isinstance(authors, list) or not authors
-                or any(not valid_author(author) for author in authors)):
-            problems.append("author must be a nonempty list of PROVIDER/MODEL tokens")
-        elif valid_identity(record.get("accepted_by")) and adjudicator_is_author(
-                record["accepted_by"], authors):
-            problems.append("self-accepted adjudication record")
-        if not isinstance(record.get("reason"), str) or not record["reason"].strip():
-            problems.append("reason must be nonempty text")
-        if "notes" in record and not isinstance(record["notes"], str):
-            problems.append("notes must be text")
-    elif record.get("type") == "review_round":
-        for field in ("kind", "date", "verdict"):
-            check(field)
-        digests = record.get("claim_digests")
-        if not isinstance(digests, list) or any(not valid_digest(d) for d in digests):
-            problems.append("claim_digests is missing or contains an invalid digest")
-        results = record.get("results")
-        if not isinstance(results, list):
-            problems.append("results is missing or not a list")
-        else:
-            for i, result in enumerate(results):
-                if (not isinstance(result, dict)
-                        or not isinstance(result.get("findings"), list)):
-                    problems.append(f"results[{i}].findings is missing or not a list")
-                    continue
-                for j, finding in enumerate(result["findings"]):
-                    if (not isinstance(finding, dict)
-                            or not valid_digest(finding.get("finding_digest"))):
-                        problems.append(f"results[{i}].findings[{j}].finding_digest "
-                                        "is missing or not a SHA-256 digest")
-                    if (not isinstance(finding, dict)
-                            or not valid_ledger_field("confirmed", finding.get("confirmed"))):
-                        problems.append(f"results[{i}].findings[{j}].confirmed "
-                                        "is missing or not a boolean")
-    else:
-        problems.append("record type is missing or unknown")
-    return problems
+    return _ledger.journal_identity_problems(record, allow_unbound, _SELF)
 
 
 def validate_journal_record(record, allow_unbound=False):
-    """Refuse invalid decision data before redaction or publication."""
-    problems = journal_identity_problems(record, allow_unbound=allow_unbound)
-    if problems:
-        raise ValueError("invalid ledger record: " + "; ".join(problems))
+    return _ledger.validate_journal_record(record, allow_unbound, _SELF)
 
 
 def journal_findings(records, head):
-    """Attribute decoded records only by their exact, valid recorded head.
-
-    Missing or invalid heads are diagnostic-only unreadable_records, never
-    rebound by recency. Structural journal read errors are handled by the reader.
-    """
-    findings, adjudicated, unattributable, unreadable = {}, set(), [], []
-    for record_path, record in records:
-        recorded_head = record.get("reviewed_head")
-        if valid_head(recorded_head) and recorded_head != head:
-            continue
-        problems = journal_identity_problems(record)
-        if problems:
-            damaged = {
-                "record_path": str(record_path), "problems": problems,
-                "reviewed_head": recorded_head,
-                "type": record.get("type"), "round": record.get("round"),
-            }
-            if valid_head(recorded_head):
-                unattributable.append(damaged)
-            else:
-                unreadable.append(damaged)
-            continue
-        round_no = record["round"]
-        if record["type"] == "adjudication":
-            adjudicated.add((round_no, record["finding_digest"]))
-            continue
-        for result in record["results"]:
-            for finding in result["findings"]:
-                if not finding["confirmed"]:
-                    continue
-                digest = finding.get("finding_digest")
-                findings[(round_no, digest)] = {
-                    **finding, "round": round_no, "reviewed_head": head,
-                    "reviewer": result.get("name"),
-                }
-    return findings, adjudicated, unattributable, unreadable
+    return _ledger.journal_findings(records, head, _SELF)
 
 
 def record_adjudication(args, round_no):
-    """Append the external decision without revising any review verdict."""
-    record = {
-        "type": "adjudication", "schema_version": 2,
-        "finding_digest": args.adjudicate, "round": round_no,
-        "reviewed_head": args.head, "decision": args.decision,
-        "accepted_by": args.accepted_by, "reason": args.reason,
-        "author": list(args.author), "timestamp": journal_timestamp(),
-    }
-    validate_journal_record(record)
-
-    def write():
-        line = json.dumps(redact_ledger(record), sort_keys=True) + "\n"
-        return _run_journal_append(args.file, line)
-    return _record_journal(write)
+    return _ledger.record_adjudication(args, round_no, _SELF)
 
 
 def cmd_ledger(args):
@@ -2251,108 +1551,15 @@ def cmd_ledger(args):
     return 0  # valid request; persistence is separately confirmed or unconfirmed
 
 
-def reject_duplicate_keys(pairs):
-    """JSON object hook that refuses data lost by duplicate-key overwrite."""
-    obj = {}
-    for key, value in pairs:
-        if key in obj:
-            raise ValueError(f"duplicate object key {key!r}")
-        obj[key] = value
-    return obj
+reject_duplicate_keys = _schema.reject_duplicate_keys
 
 
 def load_dispositions(path):
-    """Read and validate a digest-keyed prior-finding disposition map."""
-    p = Path(path)
-    if not p.exists():
-        config_error(f"no dispositions file at {path}. Pass an existing JSON "
-                     f"file to --dispositions.")
-    raw, err = read_text_bounded(p)
-    if err:
-        config_error(f"cannot read dispositions file {path}: {err}. Pass a "
-                     f"readable regular JSON file to --dispositions.")
-    try:
-        data = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
-    except (json.JSONDecodeError, ValueError) as e:
-        config_error(f"invalid JSON in dispositions file {path}: {e}. Pass a "
-                     f"JSON object keyed by finding digest.")
-    if not isinstance(data, dict):
-        config_error("--dispositions must contain a JSON object keyed by "
-                     "finding digest. Pass an object, not a list or scalar.")
-
-    entries = []
-    for digest, entry in data.items():
-        if not isinstance(digest, str) or not isinstance(entry, dict):
-            config_error("each --dispositions key must be a digest and each "
-                         "value must be an object. Pass digest: {...} entries.")
-        location = entry.get("location")
-        summary = entry.get("summary")
-        disposition = entry.get("disposition")
-        reason = entry.get("reason")
-        if not isinstance(location, str) or not location.strip():
-            config_error(f"disposition {digest!r} needs a non-empty location. "
-                         f"Pass the prior finding's file:line location.")
-        if not isinstance(summary, str) or not summary.strip():
-            config_error(f"disposition {digest!r} needs a non-empty summary. "
-                         f"Pass the prior confirmed finding's summary.")
-        try:
-            expected = finding_digest(location, summary)
-        except UnicodeEncodeError:
-            config_error(
-                f"disposition {digest!r} has a location or summary that is "
-                f"not valid UTF-8 text. Pass text without lone surrogates.")
-        if digest != expected:
-            config_error(
-                f"disposition key {digest!r} does not match the SHA-256 digest "
-                f"of its location and summary (expected {expected}). Recompute "
-                f"the key with finding_digest(location, summary), then Pass "
-                f"that digest as the map key.")
-        if not isinstance(disposition, str) or disposition not in DISPOSITIONS:
-            config_error(
-                f"disposition {digest} must be reproduced, not-reproduced, or "
-                f"deferred, got {disposition!r}. Pass one of those values.")
-        if (not isinstance(reason, str) or not reason.strip()
-                or reason.splitlines() != [reason]):
-            config_error(f"disposition {digest} needs a non-empty one-line "
-                         f"reason. Pass the reason without a line break.")
-        try:
-            reason.encode("utf-8")
-        except UnicodeEncodeError:
-            config_error(f"disposition {digest!r} has a reason that is not "
-                         f"valid UTF-8 text. Pass text without lone surrogates.")
-        if disposition in ("reproduced", "not-reproduced"):
-            reproduction = entry.get("reproduction")
-            if not isinstance(reproduction, dict):
-                config_error(f"disposition {digest} needs a reproduction "
-                             "object. Pass setup, command, expected, observed "
-                             "and revision fields.")
-            for field in ("setup", "command", "expected", "observed", "revision"):
-                value = reproduction.get(field)
-                if not isinstance(value, str) or not value.strip():
-                    config_error(f"disposition {digest} needs a non-empty "
-                                 f"reproduction.{field} string. Pass the "
-                                 "recorded reproduction evidence.")
-                try:
-                    value.encode("utf-8")
-                except UnicodeEncodeError:
-                    config_error(f"disposition {digest} reproduction.{field} "
-                                 "is not valid UTF-8 text. Pass text without "
-                                 "lone surrogates.")
-            if not valid_head(reproduction["revision"]):
-                config_error(f"disposition {digest} reproduction.revision "
-                             "must be a full commit id. Pass 40 or 64 "
-                             "lowercase hexadecimal characters.")
-        entries.append(entry)
-    return entries
+    return _schema.load_dispositions(path, _SELF)
 
 
 def has_honest_run_claim(claims):
-    """The required assertion may vary only in case and a terminal period."""
-    allowed = {HONEST_RUN_CLAIM.casefold(),
-               HONEST_RUN_CLAIM.rstrip(".").casefold()}
-    return any(isinstance(claim, str)
-               and claim.strip().casefold() in allowed
-               for claim in claims)
+    return _schema.has_honest_run_claim(claims, HONEST_RUN_CLAIM)
 
 
 def build_prompt(body, claims, truncated, context, threat_model=None,
