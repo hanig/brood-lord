@@ -1337,6 +1337,7 @@ class TestValidateExtraction(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_validate_plan_patches_intercept_extracted_phases(self):
+        from unittest import mock
         code_plan = {"units": [{
             "id": "u", "kind": "code", "repo": "/fixture/repo",
             "target_branch": "main", "mode": "auto", "prompt": "work",

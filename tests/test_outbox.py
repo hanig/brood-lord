@@ -2417,16 +2417,14 @@ class TestRetryExposureIsDeclared(unittest.TestCase):
         # guard has matched the prose describing its own absence. ast.unparse
         # drops comments, so only real code is examined.
         import ast
-        src = SWARM.read_text()
+        src = (SWARM.parent / "swarm_validate.py").read_text()
         fn = next(n for n in ast.parse(src).body
                   if isinstance(n, ast.FunctionDef)
-                  and n.name == "validate_plan")
+                  and n.name == "_validate_retry_exposure")
         code = "\n".join(ast.unparse(x) for x in fn.body)
-        i = code.index("retry_limits")
-        j = code.index("partition_problems")
-        seg = code[i:j]
+        self.assertIn("retry_limits", code)
         for proxy in ("preemptible", "--time", "gpu_hours", "sbatch"):
-            self.assertNotIn(proxy, seg,
+            self.assertNotIn(proxy, code,
                              f"exposure is being inferred from {proxy!r}")
 
 
