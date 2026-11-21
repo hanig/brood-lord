@@ -50,13 +50,17 @@ class TestDispatchExtraction(unittest.TestCase):
                           Path(directory, "job.sbatch").read_text())
 
     def test_owner_lookups(self):
-        tree = ast.parse(Path(S.__file__).read_text())
-        self.assertIn("advance", {n.name for n in tree.body
-                                  if isinstance(n, ast.FunctionDef)})
-        bare = [(n.id, n.lineno) for n in ast.walk(tree)
+        trees = []
+        for module, expected in ((S, "advance"), (S.SSB, "_submit_slurm")):
+            tree = ast.parse(Path(module.__file__).read_text())
+            self.assertIn(expected, {n.name for n in tree.body
+                                     if isinstance(n, ast.FunctionDef)})
+            trees.append(tree)
+        bare = [(n.id, n.lineno) for tree in trees for n in ast.walk(tree)
                 if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
                 and n.id in DEFINITIONS + CONSTANTS]
-        consumers = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)
+        consumers = {n.attr for tree in trees for n in ast.walk(tree)
+                     if isinstance(n, ast.Attribute)
                      and isinstance(n.value, ast.Name) and n.value.id == "SD"}
         self.assertEqual(consumers, set(DEFINITIONS))
         self.assertEqual(bare, [], "facade bypasses owner patches")

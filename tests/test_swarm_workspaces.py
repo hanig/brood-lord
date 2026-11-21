@@ -51,11 +51,12 @@ class TestWorkspacesExtraction(unittest.TestCase):
             registry.assert_called_once_with()
 
     def test_owner_lookups(self):
-        tree = ast.parse(Path(S.__file__).read_text())
-        bare = [(n.id, n.lineno) for n in ast.walk(tree)
+        trees = [ast.parse(Path(m.__file__).read_text()) for m in (S, S.SSB)]
+        bare = [(n.id, n.lineno) for tree in trees for n in ast.walk(tree)
                 if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
                 and n.id in DEFINITIONS + CONSTANTS]
-        consumers = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)
+        consumers = {n.attr for tree in trees for n in ast.walk(tree)
+                     if isinstance(n, ast.Attribute)
                      and isinstance(n.value, ast.Name) and n.value.id == "SW"}
         self.assertEqual(consumers, {
             "_paseo_json", "_paseo_error", "_paseo_path_ownership_problem",

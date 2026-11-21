@@ -600,9 +600,9 @@ class TestTheWedges(unittest.TestCase):
 
     def test_the_pipeline_engine_is_not_run_to_completion(self):
         """An honest `nextflow run` was SIGKILLed at 120s by the coordinator."""
-        src = SWARM.read_text()
-        seg = src[src.index('if kind == "pipeline":'):]
-        seg = seg[:seg.index('if kind == "code":')]
+        import inspect
+        seg = inspect.getsource(S.SSB._submit_pipeline)
+        self.assertIn("def _submit_pipeline(", seg)
         self.assertIn("start_new_session=True", seg,
                       "the engine must be launched detached")
         self.assertNotIn("U.run(", seg,
@@ -725,7 +725,8 @@ class TestThePipelinePredicate(unittest.TestCase):
         outer shell before the status line ran, so engine.rc was never written
         and the check reported 'killed, or the node rebooted': false, and it
         pointed the operator at the wrong thing entirely."""
-        src = SWARM.read_text()
+        import inspect
+        src = inspect.getsource(S.SSB._submit_pipeline)
         seg = src[src.index("wrapped = "):]
         seg = seg[:seg.index("proc = subprocess.Popen")]
         self.assertIn("(\\n", seg,
@@ -877,7 +878,12 @@ class TestTheCodePredicate(unittest.TestCase):
         self.assertIn('us.pop("incomplete_since", None)', src[i:j])
 
     def test_the_agent_runs_in_a_coordinator_worktree_off_the_trusted_base(self):
-        src = SWARM.read_text()
+        import inspect
+        src = "\n".join((
+            inspect.getsource(S._submit),
+            inspect.getsource(S.SSB._prepare_code_worktree),
+            inspect.getsource(S.SSB._finalize_code_launch),
+        ))
         seg = src[src.index('if kind == "code":'):]
         seg = seg[:seg.index("return str(agent), None")]
         self.assertIn('_create_code_worktree(', seg)
@@ -2269,7 +2275,8 @@ class TestAUnitCanFindWhatItConsumes(unittest.TestCase):
     def test_paths_are_quoted_in_the_generated_script(self):
         """We generate a shell script. A directory with a space in its name
         must stay one word."""
-        src = SWARM.read_text()
+        import inspect
+        src = inspect.getsource(S.SSB._submit_slurm)
         self.assertIn("shlex.quote(v)", src)
         self.assertIn("shlex.quote(str(unit_dir))", src)
 

@@ -661,10 +661,12 @@ class TestTheBaseComesFromCoordinatorState(unittest.TestCase):
         storing it as trusted state launders the very value the trust was
         meant to protect: state would agree with the record because it came
         FROM the record."""
-        src = " ".join((SCRIPTS / "swarm.py").read_text().split())
+        submit_src = " ".join((SCRIPTS / "swarm_submit.py").read_text().split())
+        swarm_src = " ".join((SCRIPTS / "swarm.py").read_text().split())
         self.assertIn('setdefault("attempt_bases", {})[Path(unit_dir).name]',
-                      src)
-        self.assertNotIn('us.setdefault("base_commit", anchor_rec', src)
+                      submit_src)
+        self.assertNotIn('us.setdefault("base_commit", anchor_rec', submit_src)
+        self.assertNotIn('us.setdefault("base_commit", anchor_rec', swarm_src)
 
     def test_the_reanchor_path_does_not_launder_the_base(self):
         """Two reviewers found this independently: I removed the laundering
@@ -689,7 +691,7 @@ class TestTheBaseComesFromCoordinatorState(unittest.TestCase):
     def test_the_base_is_keyed_by_attempt(self):
         """A per-unit key kept the first attempt's base forever, so a retry
         anchored elsewhere was checked against a stale one."""
-        src = " ".join((SCRIPTS / "swarm.py").read_text().split())
+        src = " ".join((SCRIPTS / "swarm_submit.py").read_text().split())
         self.assertIn("attempt_bases", src)
         self.assertIn("[Path(unit_dir).name]", src)
 
@@ -849,7 +851,8 @@ class TestOneWayToGetTheBase(unittest.TestCase):
     def test_nothing_else_reads_a_base_out_of_a_launch_record(self):
         import ast
         trees = [ast.parse((SCRIPTS / name).read_text())
-                 for name in ("swarm.py", "swarm_evidence.py", "swarm_code_launch.py")]
+                 for name in ("swarm.py", "swarm_submit.py",
+                              "swarm_evidence.py", "swarm_code_launch.py")]
         self.assertTrue({"trusted_base", "_write_launch_record"} <= {
             n.name for tree in trees for n in tree.body if isinstance(n, ast.FunctionDef)})
         offenders = []
@@ -872,15 +875,18 @@ class TestOneWayToGetTheBase(unittest.TestCase):
     def test_every_caller_goes_through_it(self):
         import ast
         trees = [ast.parse((SCRIPTS / name).read_text())
-                 for name in ("swarm.py", "swarm_evidence.py", "swarm_code_launch.py")]
-        self.assertTrue({"trusted_base", "_submit"} <= {
+                 for name in ("swarm.py", "swarm_submit.py",
+                              "swarm_evidence.py", "swarm_code_launch.py")]
+        self.assertTrue({"trusted_base", "_submit",
+                         "_persist_anchored_launch"} <= {
             n.name for tree in trees for n in tree.body if isinstance(n, ast.FunctionDef)})
         readers = []
         for node in (n for tree in trees for n in ast.walk(tree)):
             if not isinstance(node, ast.FunctionDef):
                 continue
-            # _submit is the WRITER; it must index directly to write.
-            if node.name in ("trusted_base", "_submit"):
+            # _persist_anchored_launch (called by _submit) is the WRITER;
+            # it must index directly to write.
+            if node.name in ("trusted_base", "_persist_anchored_launch"):
                 continue
             body = ast.unparse(node)
             if "attempt_bases" in body and "trusted_base(" not in body:
