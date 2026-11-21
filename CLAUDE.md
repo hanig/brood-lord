@@ -87,7 +87,7 @@ An invariant written in prose is not an invariant. Run any test a docstring clai
 
 **Bind a mutation to its intended repository and branch before making it.** Verify repo and branch before editing and push an explicit source SHA to an explicit destination ref rather than trusting ambient state (unenforced locally; branch protection on `main` is the repository-level closure).
 
-**Report status with the time observed, and never read activity as progress.** Running, progressing, permission-blocked and last-observed are four distinct facts; never present a stale observation as current (unenforced; ARC-691).
+**Report status with the time observed, and never read activity as progress.** Running, progressing, permission-blocked and last-observed are four distinct facts; a watcher must track work evidence and permission events separately from liveness, and never present a stale observation as current (unenforced; ARC-691).
 
 **Preserve a blocked attempt's work before any cleanup path runs.** Cleanup depends on a completed, restore-checked snapshot carrying base identity, content digest and validation result; failed preservation retains work in place and neither resumes nor verifies it. Enforced for coordinator cleanup by `tests/test_arc682_recovery.py` (with bounded legacy migration).
 

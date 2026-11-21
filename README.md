@@ -337,11 +337,13 @@ merge, tracker, and reporting work around those passes.
 
 **D5 activation is installation-derived per state directory, and merge launch admission remains closed.**
 U8 has landed: [`d5_activation.py`](skills/hanig-swarm/scripts/d5_activation.py)
-derives activation from each state directory's installation evidence (absent
-evidence stays inactive; only the owner's `d5_install publish` at quiescence
-under [the cutover runbook](docs/d5-cutover-runbook.md) activates a directory,
-while partial or invalid evidence stays active and refuses with repair
-guidance). Separately, `merge_launch_admitted()` in
+derives activation from each state directory's installation evidence
+(`state != NOT_INSTALLED`). Absent installation evidence stays inactive; the
+owner's `d5_install publish` at quiescence under
+[the cutover runbook](docs/d5-cutover-runbook.md) is the only valid activation
+path, while partial or invalid evidence fails closed as active-contained and
+refuses with `d5_install` repair guidance rather than falling back to inactive.
+Separately, `merge_launch_admitted()` in
 [`merge_unit.py`](skills/hanig-orchestrate/scripts/merge_unit.py) still returns
 `False`, and post-activation `linear_sync` draining and row-75 refusals remain
 closed until P1 delivers per-item tracker lease authority and pre-D5 queue
