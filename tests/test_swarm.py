@@ -1343,15 +1343,15 @@ class TestValidateExtraction(unittest.TestCase):
             "target_branch": "main", "mode": "auto", "prompt": "work",
             "outputs": ["evidence.md"],
         }]}
-        with mock.patch.object(S.shutil, "which", return_value=None) as which:
-            with self.assertRaisesRegex(S.PlanError, "paseo is not on PATH"):
-                S.validate_plan(code_plan)
+        with mock.patch.object(swarm.shutil, "which", return_value=None) as which:
+            with self.assertRaisesRegex(swarm.PlanError, "paseo is not on PATH"):
+                swarm.validate_plan(code_plan)
         which.assert_called_once_with("paseo")
 
-        with mock.patch.object(S.SPR, "converge_problem",
+        with mock.patch.object(swarm.SPR, "converge_problem",
                                return_value="fixture converge error") as check:
-            with self.assertRaisesRegex(S.PlanError, "fixture converge error"):
-                S.validate_plan({"units": [{
+            with self.assertRaisesRegex(swarm.PlanError, "fixture converge error"):
+                swarm.validate_plan({"units": [{
                     "id": "u", "kind": "pipeline", "command": "true",
                     "runtime": "none", "outputs": ["out"],
                 }]})
@@ -1363,9 +1363,9 @@ class TestValidateExtraction(unittest.TestCase):
             {"id": "b", "kind": "pipeline", "command": "true",
              "runtime": "none", "outputs": ["b.out"], "write_scopes": ["dir_b"]},
         ]}
-        with mock.patch.object(S.SPR, "_scopes_overlap", return_value=True) as overlap:
-            with self.assertRaisesRegex(S.PlanError, "write scopes overlap"):
-                S.validate_plan(two)
+        with mock.patch.object(swarm.SPR, "_scopes_overlap", return_value=True) as overlap:
+            with self.assertRaisesRegex(swarm.PlanError, "write scopes overlap"):
+                swarm.validate_plan(two)
         overlap.assert_called_once_with("dir_a", "dir_b")
 
 
