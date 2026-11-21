@@ -97,7 +97,7 @@ every issue title for approval, files them in Linear, and dispatches.
 | `hanig-review-gate` | Adversarial multi-model review of code and of the claims made about it. |
 | `hanig-portable-handoff` | Capture and resume run state across machines. |
 | `hanig-wandb-logging` | Make W&B runs readable; caller supplies W&B, contracts judge outcomes. |
-| `hanig-debrief` | Skeleton for project lessons, a private dossier and an owner-approved public packet; debrief programs are not yet shipped. |
+| `hanig-debrief` | Collect project lessons into a private dossier, draft an owner-approved scrubbed packet, and triage/file learnings. |
 
 All eight are prefixed `hanig-` so they can never collide with an Arc
 org-managed skill name. That prefix is now load-bearing rather than tidy:
@@ -335,25 +335,29 @@ selective install names all five bundles:
 host scheduler repeats it; the orchestrating session performs connected review,
 merge, tracker, and reporting work around those passes.
 
-**D5 is inactive on main until the owner-merged U8.**
-[`d5_activation.py`](skills/hanig-swarm/scripts/d5_activation.py) returns false,
-and `merge_launch_admitted()` in
-[`merge_unit.py`](skills/hanig-orchestrate/scripts/merge_unit.py) separately
-refuses admission. The containment and entry-routing preparation has landed:
-the D5 merge child uses designated arguments, no shell, closed inherited
+**D5 activation is installation-derived per state directory, and merge launch admission remains closed.**
+U8 has landed: [`d5_activation.py`](skills/hanig-swarm/scripts/d5_activation.py)
+derives activation from each state directory's installation evidence (absent
+evidence stays inactive; only the owner's `d5_install publish` at quiescence
+under [the cutover runbook](docs/d5-cutover-runbook.md) activates a directory,
+while partial or invalid evidence stays active and refuses with repair
+guidance). Separately, `merge_launch_admitted()` in
+[`merge_unit.py`](skills/hanig-orchestrate/scripts/merge_unit.py) still returns
+`False`, and post-activation `linear_sync` draining and row-75 refusals remain
+closed until P1 delivers per-item tracker lease authority and pre-D5 queue
+migration/disposition. The containment and entry-routing preparation is in
+place: the D5 merge child uses designated arguments, no shell, closed inherited
 descriptors and a filtered environment; active-D5 entry guards refuse
 unadmitted merge launch, direct unit commands and remote verification. These
 are not an OS or same-UID isolation boundary. In active D5, `swarm.py` warns
 when bytecode writing is enabled and recommends `-B` or
 `PYTHONDONTWRITEBYTECODE=1`; bytecode and temporary-directory readiness remain
-advisory preconditions for U8 to enforce or waive.
+advisory preconditions.
 
 The [race tests](tests/test_d5_u7_races.py) exercise ordered histories with
 injected clocks and stub execution, not deployed death detection or exhaustive
-interleavings. The [cutover runbook](docs/d5-cutover-runbook.md) is preparatory:
-it records quiescence checks, parked writes and the unresolved pre-launch
-recovery gap. U8 and its redesign have not landed. The commands below describe
-the current inactive-D5 operation; preparation does not authorize activation.
+interleavings. The commands below describe the default inactive-D5 operation;
+shipped installation plumbing does not itself activate any state directory.
 
 `flake_triage.py` compares unittest outcomes on pinned head/base:
 
@@ -695,7 +699,7 @@ for replay rules and the same-host locking boundary.
 
 ### hanig-swarm
 
-The coordinator. Roughly 2,200 lines in `swarm.py`, 1,300 in `unit.py`.
+The coordinator (`swarm.py`, `unit.py`, and their supporting modules).
 
 ```sh
 python3 scripts/swarm.py validate plan.json [--check-seeds]
@@ -1534,7 +1538,8 @@ skills/hanig-swarm/         swarm.py, unit.py, converge.py, swarm-cron.sh
 skills/hanig-review-gate/   review.py, committee.py, reviewers.json, PROTOCOL.md
 skills/hanig-verified-workflow/  contract.py
 skills/hanig-portable-handoff/   handoff.py
-skills/hanig-debrief/        skeleton, declarations and bundled path resolver
+skills/hanig-wandb-logging/      wbkit.py, audit_project.py
+skills/hanig-debrief/            debrief.py, debrief_extract.py, debrief_packet.py, debrief_triage.py, debrief_file.py
 tests/                      stdlib unittest
 examples/                   reference config to copy elsewhere; nothing reads it here
 docs/probes/                measured environment data per cluster
