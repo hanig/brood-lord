@@ -56,9 +56,15 @@ ISOLATED = '''
         def test_env(self):
             self.assertNotIn("RUN_TESTS_LEAK", os.environ)
             home = os.environ["HOME"]
-            self.assertTrue(tempfile.gettempdir().startswith(os.path.dirname(home)))
-            self.assertEqual(os.listdir(home), [])
-            open(os.path.join(home, "marker"), "w").close()
+            scratch = os.path.dirname(home)
+            self.assertTrue(tempfile.gettempdir().startswith(scratch))
+            for key in ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+                        "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR"):
+                path = os.environ[key]
+                self.assertEqual(path, os.path.realpath(path), key)
+                self.assertTrue(path.startswith(scratch), key)
+                self.assertEqual(os.listdir(path), [], key)
+                open(os.path.join(path, "marker"), "w").close()
 '''
 
 
@@ -406,6 +412,55 @@ class TestMain(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 with contextlib.redirect_stderr(io.StringIO()):
                     self.run_main(root, ["test_nope"])
+
+    def test_module_env_isolates_all_xdg_directories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = RT.module_env(tmp, base={"PATH": "/usr/bin",
+                                           "XDG_STATE_HOME": "/leaked/state",
+                                           "XDG_CACHE_HOME": "/leaked/cache",
+                                           "XDG_DATA_HOME": "/leaked/data"})
+            root = Path(tmp)
+            for key, sub in (("HOME", "h"), ("XDG_CONFIG_HOME", "c"),
+                             ("XDG_STATE_HOME", "s"), ("XDG_CACHE_HOME", "k"),
+                             ("XDG_DATA_HOME", "d"), ("TMPDIR", "t")):
+                self.assertEqual(env[key], str(root / sub))
+                self.assertTrue((root / sub).is_dir())
+            # Keep TMPDIR suffix compact for macOS 104-byte AF_UNIX paths.
+            self.assertLessEqual(len(env["TMPDIR"]) - len(str(root)), 4)
+
+    def test_plan_jobs_matches_unittest_discover_test_id_multiset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_tree(root / "tests", {"test_a.py": MANY, "test_b.py": PASSING})
+            loader = unittest.TestLoader()
+            sys.path.insert(0, str(root / "tests"))
+            try:
+                suite = loader.discover(str(root / "tests"), top_level_dir=str(root / "tests"))
+            finally:
+                sys.path.remove(str(root / "tests"))
+                for name in ("test_a", "test_b"):
+                    sys.modules.pop(name, None)
+
+            def walk(s):
+                for item in s:
+                    if isinstance(item, unittest.TestSuite):
+                        yield from walk(item)
+                    else:
+                        yield item.id()
+
+            discovered = sorted(walk(suite))
+            modules = RT.discover_modules(root / "tests")
+            jobs, removed = RT.plan_jobs(modules, {}, split={"test_a": 2}, root=root)
+            self.assertEqual(removed, 0)
+            planned = []
+            for _label, module, ids, _weight in jobs:
+                planned.extend(ids if ids is not None else RT.list_tests(module, root=root))
+            self.assertEqual(sorted(planned), discovered)
+
+    def test_release_validation_workflow_invokes_run_tests(self):
+        workflow = (ROOT / ".github" / "workflows" / "release-validation.yml").read_text(encoding="utf-8")
+        self.assertIn("python3 -B -u scripts/run_tests.py", workflow)
+        self.assertNotIn("unittest discover -s tests", workflow)
 
 
 if __name__ == "__main__":

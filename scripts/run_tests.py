@@ -15,9 +15,10 @@ default pattern. Discovery would also recurse into a subdirectory with an
 as `python3 -B -m unittest <module>` from the repository root, with the same
 import path discovery gives it (the root, for `from tests import ...`, and
 tests/, for `import scheduler_fixture`), in a clean environment like release
-validation's: PATH is kept, and HOME, XDG_CONFIG_HOME and TMPDIR point into a
-fresh temporary directory per module, so modules running at the same time
-share no home, config or temp state.
+validation's: PATH is kept, and HOME, XDG_CONFIG_HOME, XDG_STATE_HOME,
+XDG_CACHE_HOME, XDG_DATA_HOME and TMPDIR point into a fresh temporary
+directory per module, so modules running at the same time share no home,
+config, XDG state/cache/data or temp state.
 
 A module listed in SPLIT runs as several processes instead of one, each
 running an interleaved share of its test ids
@@ -124,13 +125,16 @@ def module_env(home, base=None, root=None):
     base = os.environ if base is None else base
     root = ROOT if root is None else root
     home = Path(home)
-    for name in ("home", "config", "tmp"):
+    for name in ("h", "c", "s", "k", "d", "t"):
         (home / name).mkdir(parents=True, exist_ok=True)
     return {
         "PATH": base.get("PATH", os.defpath),
-        "HOME": str(home / "home"),
-        "XDG_CONFIG_HOME": str(home / "config"),
-        "TMPDIR": str(home / "tmp"),
+        "HOME": str(home / "h"),
+        "XDG_CONFIG_HOME": str(home / "c"),
+        "XDG_STATE_HOME": str(home / "s"),
+        "XDG_CACHE_HOME": str(home / "k"),
+        "XDG_DATA_HOME": str(home / "d"),
+        "TMPDIR": str(home / "t"),
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONPATH": os.pathsep.join([str(root), str(Path(root) / "tests")]),
     }
@@ -160,7 +164,7 @@ def chunk(ids, parts):
 def list_tests(module, root=None, python=sys.executable):
     """The module's test ids, listed in a clean child; None if unlistable."""
     root = ROOT if root is None else Path(root)
-    scratch = Path(tempfile.mkdtemp(prefix="run-tests-list-%s-" % module))
+    scratch = Path(tempfile.mkdtemp(prefix="r")).resolve()
     try:
         proc = subprocess.run(
             [python, "-B", "-c", LIST_TESTS, module], cwd=str(root),
@@ -209,7 +213,9 @@ def run_module(module, timeout=None, root=None, python=sys.executable, ids=None,
     """Run one module, or the given test ids from it, in its own clean
     environment; returns a result dict."""
     root = ROOT if root is None else Path(root)
-    scratch = Path(tempfile.mkdtemp(prefix="run-tests-%s-" % module))
+    # Keep scratch prefix short (macOS 104-byte AF_UNIX paths) and canonical
+    # (/var -> /private/var symlink breaks Path.home() vs Path.resolve()).
+    scratch = Path(tempfile.mkdtemp(prefix="r")).resolve()
     started = time.monotonic()
     try:
         try:
