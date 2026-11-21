@@ -54,8 +54,8 @@ configures no Antigravity permission, sandbox, model, or account setting.
 Antigravity sandbox policy can vary by command. When a sandbox denies process
 inspection, D5 anchor checks return Unknown (narrow mode). Death requires
 positive evidence. Codex and Antigravity can hold D5 custody only when
-launched through `bin/brood-host` and after the owner's mandate amendment
-merges. See the [D5 integration guide](d5-integration.md).
+launched through `bin/brood-host`, under the custody amendment in
+`docs/orchestrator-mandate.md`. See the [D5 integration guide](d5-integration.md).
 
 ## Capability contract
 

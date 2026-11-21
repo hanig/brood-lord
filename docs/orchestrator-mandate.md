@@ -42,6 +42,17 @@ local filesystem. Every admitted start rechecks identity and ancestry.
 Missing or unknown identity means narrow mode. There is no
 supervisor wrapper or generated fallback ID.
 
+Owner amendment, 2026-11-20: `CLAUDE_CODE_SESSION_ID` with `CLAUDE_PID` is the
+Claude Code host's native identity. A Codex or Antigravity orchestrator may also
+hold custody, with native `CODEX_SESSION_ID` or `ANTIGRAVITY_CONVERSATION_ID`
+(nonempty) and the ancestor named by `BROOD_HOST_PID`, but only when the host was
+started through `bin/brood-host`. That launcher execs the host in place, so no
+wrapper process remains. The host is declared when custody is claimed, recorded
+with custody, and never inferred. Another host's session ID in the environment,
+a host started without the launcher, or a sandbox that denies process inspection
+means Unknown, which is narrow mode. The per-host table is
+`docs/d5-integration.md`; this amendment does not activate D5.
+
 The same native ID and ancestor continue after compaction under a valid lease.
 A successor may claim a still-valid lease without renewed confirmation
 only after verified predecessor death, exclusive action-drain access, fresh
@@ -233,6 +244,14 @@ returned here on 2026-11-06, by owner decision, because Sol became the code
 author of every unit; Sol had replaced Astra on 2026-09-25 for the same reason,
 since an author does not accept its own rebuttal. If Astra authored the
 change, the disposition goes to the owner.
+
+Owner amendment, 2026-11-20: when the orchestrator itself runs on Astra or on
+another OpenAI model, the second party is Claude Sonnet 5.5 (the `sonnet-5.5`
+reviewer in `reviewers.json`) instead of Astra, so the two parties never share
+a model maker. Everything this rule says of Astra then applies to Sonnet 5.5,
+including being named in advance, being asked to refute, and deadlock failing
+toward more work. If Sonnet 5.5 is unavailable or authored the change, the
+disposition goes to the owner. Astra-authored changes still go to the owner.
 
 When Astra is consulted, deadlock fails toward more work, not toward shipping.
 

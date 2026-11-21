@@ -66,7 +66,8 @@ probe establishes death. A zombie with the same identity counts as alive.
 Session ID behavior across resume is unmeasured. A resumed process has a new
 kernel identity and must follow death-only succession.
 
-Codex and Antigravity custody require the owner's mandate amendment to merge.
+Codex and Antigravity custody follow the owner's custody amendment in
+`docs/orchestrator-mandate.md`.
 D5 stays inactive until the owner's `d5_install` publish.
 
 Cut applied by the orchestrator on 2026-10-20 (DG7): host recognition and
