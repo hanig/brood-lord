@@ -103,13 +103,19 @@ jobs:
           test_root=$(cd "$test_root" && pwd -P)
           mkdir -p "$test_root/h" "$test_root/c" "$test_root/s" "$test_root/k" "$test_root/d" "$test_root/t"
           if [[ "${RUNNER_ENVIRONMENT:-}" == 'self-hosted' ]]; then
+            # Forward empty RUNNER_TEMP XDG_* dirs verified by Check self-hosted test isolation.
             isolation_env=(XDG_STATE_HOME="$XDG_STATE_HOME" XDG_CACHE_HOME="$XDG_CACHE_HOME" XDG_DATA_HOME="$XDG_DATA_HOME")
           else
             isolation_env=(XDG_STATE_HOME="$test_root/s" XDG_CACHE_HOME="$test_root/k" XDG_DATA_HOME="$test_root/d")
           fi
+          if [[ "$(uname -s)" == 'Darwin' ]]; then
+            runner_jobs=2
+          else
+            runner_jobs=4
+          fi
           env -i "${isolation_env[@]}" HOME="$test_root/h" XDG_CONFIG_HOME="$test_root/c" \
             TMPDIR="$test_root/t" PATH="$PATH" PYTHONDONTWRITEBYTECODE=1 \
-            python3 -B -u scripts/run_tests.py \
+            python3 -B -u scripts/run_tests.py -j "$runner_jobs" \
             2>&1 | tee "$RUNNER_TEMP/regression.log"
       - name: Preserve regression evidence
         if: always()

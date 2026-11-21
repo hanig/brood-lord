@@ -56,13 +56,13 @@ ISOLATED = '''
         def test_env(self):
             self.assertNotIn("RUN_TESTS_LEAK", os.environ)
             home = os.environ["HOME"]
-            scratch = os.path.dirname(home)
-            self.assertTrue(tempfile.gettempdir().startswith(scratch))
+            self.assertEqual(home, os.path.realpath(home))
+            scratch = os.path.realpath(os.path.dirname(home))
+            self.assertTrue(os.path.realpath(tempfile.gettempdir()).startswith(scratch))
             for key in ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
                         "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR"):
                 path = os.environ[key]
-                self.assertEqual(path, os.path.realpath(path), key)
-                self.assertTrue(path.startswith(scratch), key)
+                self.assertTrue(os.path.realpath(path).startswith(scratch), key)
                 self.assertEqual(os.listdir(path), [], key)
                 open(os.path.join(path, "marker"), "w").close()
 '''
@@ -420,7 +420,9 @@ class TestMain(unittest.TestCase):
                                            "XDG_CACHE_HOME": "/leaked/cache",
                                            "XDG_DATA_HOME": "/leaked/data"})
             root = Path(tmp)
-            for key, sub in (("HOME", "h"), ("XDG_CONFIG_HOME", "c"),
+            self.assertEqual(env["HOME"], str((root / "h").resolve()))
+            self.assertTrue((root / "h").is_dir())
+            for key, sub in (("XDG_CONFIG_HOME", "c"),
                              ("XDG_STATE_HOME", "s"), ("XDG_CACHE_HOME", "k"),
                              ("XDG_DATA_HOME", "d"), ("TMPDIR", "t")):
                 self.assertEqual(env[key], str(root / sub))
@@ -428,18 +430,37 @@ class TestMain(unittest.TestCase):
             # Keep TMPDIR suffix compact for macOS 104-byte AF_UNIX paths.
             self.assertLessEqual(len(env["TMPDIR"]) - len(str(root)), 4)
 
+    def test_module_env_keeps_tmpdir_lexical_across_short_symlinks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            deep = root / ("x" * 80)
+            deep.mkdir()
+            short = root / "s"
+            short.symlink_to(deep, target_is_directory=True)
+            env = RT.module_env(short, base={"PATH": "/usr/bin"})
+            self.assertEqual(env["TMPDIR"], str(short / "t"))
+            self.assertEqual(env["HOME"], str((short / "h").resolve()))
+
     def test_plan_jobs_matches_unittest_discover_test_id_multiset(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            write_tree(root / "tests", {"test_a.py": MANY, "test_b.py": PASSING})
+            names = ("test_rt_parity_a", "test_rt_parity_b")
+            write_tree(root / "tests", {
+                names[0] + ".py": MANY,
+                names[1] + ".py": PASSING,
+            })
+            saved = {name: sys.modules.pop(name, None) for name in names}
             loader = unittest.TestLoader()
             sys.path.insert(0, str(root / "tests"))
             try:
                 suite = loader.discover(str(root / "tests"), top_level_dir=str(root / "tests"))
             finally:
                 sys.path.remove(str(root / "tests"))
-                for name in ("test_a", "test_b"):
-                    sys.modules.pop(name, None)
+                for name, prev in saved.items():
+                    if prev is None:
+                        sys.modules.pop(name, None)
+                    else:
+                        sys.modules[name] = prev
 
             def walk(s):
                 for item in s:
@@ -450,7 +471,7 @@ class TestMain(unittest.TestCase):
 
             discovered = sorted(walk(suite))
             modules = RT.discover_modules(root / "tests")
-            jobs, removed = RT.plan_jobs(modules, {}, split={"test_a": 2}, root=root)
+            jobs, removed = RT.plan_jobs(modules, {}, split={names[0]: 2}, root=root)
             self.assertEqual(removed, 0)
             planned = []
             for _label, module, ids, _weight in jobs:
@@ -459,7 +480,7 @@ class TestMain(unittest.TestCase):
 
     def test_release_validation_workflow_invokes_run_tests(self):
         workflow = (ROOT / ".github" / "workflows" / "release-validation.yml").read_text(encoding="utf-8")
-        self.assertIn("python3 -B -u scripts/run_tests.py", workflow)
+        self.assertIn('python3 -B -u scripts/run_tests.py -j "$runner_jobs"', workflow)
         self.assertNotIn("unittest discover -s tests", workflow)
 
 

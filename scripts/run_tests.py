@@ -129,7 +129,10 @@ def module_env(home, base=None, root=None):
         (home / name).mkdir(parents=True, exist_ok=True)
     return {
         "PATH": base.get("PATH", os.defpath),
-        "HOME": str(home / "h"),
+        # Canonicalize HOME so Path.home() matches Path.resolve() on macOS
+        # (/var -> /private/var), while keeping TMPDIR lexical so short TMPDIR
+        # symlinks stay within AF_UNIX socket-path limits.
+        "HOME": str((home / "h").resolve()),
         "XDG_CONFIG_HOME": str(home / "c"),
         "XDG_STATE_HOME": str(home / "s"),
         "XDG_CACHE_HOME": str(home / "k"),
@@ -164,7 +167,7 @@ def chunk(ids, parts):
 def list_tests(module, root=None, python=sys.executable):
     """The module's test ids, listed in a clean child; None if unlistable."""
     root = ROOT if root is None else Path(root)
-    scratch = Path(tempfile.mkdtemp(prefix="r")).resolve()
+    scratch = Path(tempfile.mkdtemp(prefix="r"))
     try:
         proc = subprocess.run(
             [python, "-B", "-c", LIST_TESTS, module], cwd=str(root),
@@ -213,9 +216,9 @@ def run_module(module, timeout=None, root=None, python=sys.executable, ids=None,
     """Run one module, or the given test ids from it, in its own clean
     environment; returns a result dict."""
     root = ROOT if root is None else Path(root)
-    # Keep scratch prefix short (macOS 104-byte AF_UNIX paths) and canonical
-    # (/var -> /private/var symlink breaks Path.home() vs Path.resolve()).
-    scratch = Path(tempfile.mkdtemp(prefix="r")).resolve()
+    # Keep the leaf prefix short so TMPDIR adds minimal overhead toward macOS
+    # 104-byte AF_UNIX socket-path limits, without resolving a short TMPDIR symlink.
+    scratch = Path(tempfile.mkdtemp(prefix="r"))
     started = time.monotonic()
     try:
         try:
