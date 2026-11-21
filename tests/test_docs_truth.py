@@ -2607,6 +2607,15 @@ class TestCanonicalDocumentPointers(unittest.TestCase):
             (ROOT / "docs/orchestrator-mandate.md").exists(),
             "the orchestrator mandate is referenced but absent")
 
+    def test_claude_md_stays_under_context_ceiling(self):
+        """Keep CLAUDE.md under 18,000 bytes so clients do not truncate tail rules."""
+        size = len(CANONICAL_DOCUMENT.read_bytes())
+        self.assertLess(
+            size, 18000,
+            "%s is %d bytes (limit < 18000); trim prose without dropping rules "
+            "so agent harnesses load the entire file"
+            % (CANONICAL_DOCUMENT.name, size))
+
 
 class TestScenarioCheckoutCommands(unittest.TestCase):
     def test_commands_run_from_existing_or_new_checkout(self):

@@ -372,9 +372,8 @@ upheld past. Two rounds, two different models catching what the other missed.
 
 ## Loose ends
 
-- `converge.py` is 647 lines that nothing calls: not wired into `swarm.py` or
-  `unit.py`. Either wire it in or delete it.
-- No wandb integration for ML training units. Asked about and never closed.
+- `converge.py` (resolved): wired into `swarm.py` (`converge_verdict` / `converge_problem`) as the declared-convergence metrics gate.
+- W&B logging (resolved): shipped as `skills/hanig-wandb-logging/` (`wbkit.py`, `audit_project.py`); caller supplies W&B and contracts judge outcomes.
 - Orphan paseo workspace `wks_acba5d75` from a probe run on 2026-08-31.
 - `paseo-advisor`, `paseo-committee`, `paseo-loop`, `paseo-handoff` and
   `pi-fleet` pin no provider and fall back to Paseo's discovery, so they are
