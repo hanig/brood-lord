@@ -1425,6 +1425,44 @@ class TestSubmitExtraction(unittest.TestCase):
             self.assertIn("export SWARM_DEP_X=/x",
                           (unit_dir / "job.sbatch").read_text())
 
+    def test_persist_anchored_launch_guards_none_state_dir_and_pipeline_reads_live_time(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            unit_dir = Path(tmp) / "att1"
+            unit_dir.mkdir()
+            u = {"id": "p1", "kind": "pipeline", "command": "true",
+                 "runtime": "none", "outputs": ["out.txt"], "repo": str(tmp)}
+            facts = {"unit_id": "p1", "attempt_id": "att1", "repo": str(tmp),
+                     "execution_workspace": str(tmp),
+                     "workspace_identity": {"realpath": str(tmp)},
+                     "base_commit": "a" * 40, "base_tree": "b" * 40,
+                     "branch": "main", "clean_at_launch": True}
+            state = {"units": {"p1": {"attempt_launch_facts": {"att1": facts}}}}
+            with mock.patch.object(swarm.SS, "save_state",
+                                   side_effect=AssertionError("should not save")) as save:
+                err = swarm.SSB._persist_anchored_launch(
+                    u, str(unit_dir), "pipeline", False, state, None, None)
+            self.assertIsNone(err)
+            save.assert_not_called()
+
+            fake_proc = type("P", (), {"pid": 4242})()
+            original_time = swarm.time.time
+
+            def popen_side_effect(*_a, **_kw):
+                swarm.time.time = lambda: 12345.0
+                return fake_proc
+
+            try:
+                with mock.patch.object(swarm.SSB.subprocess, "Popen",
+                                       side_effect=popen_side_effect):
+                    job_id, err = swarm.SSB._submit_pipeline(
+                        u, str(unit_dir), state, "true")
+            finally:
+                swarm.time.time = original_time
+            self.assertEqual((job_id, err), ("engine-4242", None))
+            rec = json.loads((unit_dir / "engine.json").read_text())
+            self.assertEqual(rec["launched_at"], 12345.0)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

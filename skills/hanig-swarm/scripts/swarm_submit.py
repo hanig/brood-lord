@@ -155,7 +155,7 @@ def _submit_slurm(u, unit_dir, state, record_enabled, submission_command):
     return out.split(";")[0].strip(), None
 
 
-def _submit_pipeline(u, unit_dir, state, submission_command, now=None):
+def _submit_pipeline(u, unit_dir, state, submission_command):
     """Launch a detached pipeline engine in a filtered child environment."""
     log = Path(unit_dir) / "engine.log"
     try:
@@ -177,11 +177,10 @@ def _submit_pipeline(u, unit_dir, state, submission_command, now=None):
         fh.close()
         return None, f"engine launch failed: {e}"
     fh.close()
-    clock = time.time if now is None else now
     werr = U.write_json(Path(unit_dir) / "engine.json",
                         {"pid": proc.pid, "command": u["command"],
                          "host": os.uname().nodename,
-                         "launched_at": clock(),
+                         "launched_at": time.time(),
                          "log": "engine.log"})
     if werr:
         return None, f"launched pid {proc.pid} but {werr}"

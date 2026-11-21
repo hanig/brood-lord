@@ -577,8 +577,7 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
         return SSB._submit_slurm(
             u, unit_dir, state, record_enabled, submission_command)
     if kind == "pipeline":
-        return SSB._submit_pipeline(
-            u, unit_dir, state, submission_command, now=time.time)
+        return SSB._submit_pipeline(u, unit_dir, state, submission_command)
     if kind == "code":
         attempt = Path(unit_dir).name
         codex = (u.get("provider") or SR.DEFAULT_AGENT_PROVIDER).split("/", 1)[0] == "codex"
