@@ -61,8 +61,17 @@ TESTS = ROOT / "tests"
 DURATIONS = TESTS / "durations.json"
 SLOW = TESTS / "slow_tests.json"
 SLOW_SECONDS = 5.0
-# Module -> number of processes. Keep each chunk near 100 s on a 4-vCPU host.
-SPLIT = {"test_remote_verification": 6, "test_project": 3}
+# Module -> number of processes. Keep each chunk near or below 100 s on a 4-vCPU host.
+SPLIT = {
+    "test_remote_verification": 6,
+    "test_project": 3,
+    "test_merge_unit": 2,
+    "test_arc683_shared_guard": 2,
+    "test_agent_diagnostics": 2,
+    "test_provider_resume": 2,
+    "test_arc683_merge_precondition": 2,
+    "test_fixture_processes": 2,
+}
 LIST_TESTS = (
     "import sys, unittest\n"
     "def walk(s):\n"

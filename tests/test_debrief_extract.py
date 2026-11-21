@@ -1,5 +1,6 @@
 """Synthetic, isolated adapter and mutation acceptance tests."""
 import ast
+import collections
 import hashlib
 import itertools
 import stat
@@ -767,23 +768,41 @@ class TestExtract(unittest.TestCase):
     shapes = [shape for n in range(4) for shape in itertools.product('fdh', repeat=n)]
     variants = [('f', ())] + [(kind, shape) for kind in 'dh' for shape in shapes]
     names = ('z', 'a', 'm')  # deliberately not sorted; h denotes dot-directory
-    def entries(shape):
-      return [(('.' if kind == 'h' else '') + names[i], kind)
-              for i, kind in enumerate(shape)]
+    Entry = collections.namedtuple('Entry', ('name',))
+    Stat = collections.namedtuple('Stat', ('st_mode',))
+    reg_stat = Stat(stat.S_IFREG)
+    dir_stat = Stat(stat.S_IFDIR)
+
+    class Scan:
+      __slots__ = ('_entries',)
+      def __init__(self, entries):
+        self._entries = entries
+      def __enter__(self):
+        return iter(self._entries)
+      def __exit__(self, *args):
+        pass
+
+    # Precompute immutable per-shape fixtures so each tree avoids rebuilding
+    # dicts and SimpleNamespace objects on every scandir/stat call.
+    shape_meta = {}
+    for shape in shapes:
+      pairs = tuple((('.' if kind == 'h' else '') + names[i], kind)
+                    for i, kind in enumerate(shape))
+      scan_obj = Scan(tuple(Entry(name) for name, _ in reversed(pairs)))
+      stats = types.MappingProxyType(
+          {name: reg_stat if kind == 'f' else dir_stat for name, kind in pairs})
+      files = tuple(sorted(name for name, kind in pairs if kind == 'f'))
+      dirs = (tuple(sorted(name for name, kind in pairs if kind == 'd'))
+              + tuple(sorted(name for name, kind in pairs if kind == 'h')))
+      shape_meta[shape] = (pairs, scan_obj, stats, files, dirs)
+    empty_node = shape_meta[()][1:3]
+
     tree, opened = {}, []
     def scan(fd):
       opened.append(fd)
-      return Scan(tree[fd])
-    class Scan:
-      def __init__(self, children):
-        self.children = children
-      def __enter__(self):
-        return (types.SimpleNamespace(name=name) for name, kind in reversed(self.children))
-      def __exit__(self, *args):
-        pass
+      return tree[fd][0]
     def info(name, dir_fd, **kwargs):
-      kind = dict(tree[dir_fd])[name]
-      return types.SimpleNamespace(st_mode=stat.S_IFREG if kind == 'f' else stat.S_IFDIR)
+      return tree[dir_fd][1][name]
     fake = types.SimpleNamespace(dup=lambda fd: fd, close=lambda fd: None,
       open=lambda name, flags, dir_fd: dir_fd + (name,), scandir=scan, stat=info,
       O_RDONLY=0, O_DIRECTORY=0, O_NOFOLLOW=0)
@@ -794,25 +813,30 @@ class TestExtract(unittest.TestCase):
       for size in range(4):
         for arrangement in itertools.product(variants, repeat=size):
           tree.clear()
-          tree[()] = entries([kind for kind, children in arrangement])
-          for (name, kind), (_, children) in zip(tree[()], arrangement):
+          root_shape = tuple(kind for kind, _ in arrangement)
+          root_pairs, root_scan, root_stats, root_files, root_dirs = shape_meta[root_shape]
+          tree[()] = (root_scan, root_stats)
+          child_shapes = {}
+          for (name, kind), (_, children) in zip(root_pairs, arrangement):
             if kind != 'f':
-              tree[(name,)] = entries(children)
-              for child, child_kind in tree[(name,)]:
+              child_shapes[name] = children
+              c_pairs, c_scan, c_stats, _, _ = shape_meta[children]
+              tree[(name,)] = (c_scan, c_stats)
+              for child, child_kind in c_pairs:
                 if child_kind != 'f':
-                  tree[(name, child)] = []
-          level, expected_files, expected_dirs = [()], [], []
-          while level:
-            following = []
-            for directory in level:
-              expected_dirs.append(directory)
-              children = tree[directory]
-              expected_files.extend(directory + (name,) for name in sorted(
-                name for name, kind in children if kind == 'f'))
-              for kind in ('d', 'h'):
-                following.extend(directory + (name,) for name in sorted(
-                  name for name, tag in children if tag == kind))
-            level = following
+                  tree[(name, child)] = empty_node
+          expected_dirs = [()]
+          expected_files = [(name,) for name in root_files]
+          level2_dirs = []
+          for name in root_dirs:
+            expected_dirs.append((name,))
+            _, _, _, c_files, c_dirs = shape_meta[child_shapes[name]]
+            if c_files:
+              expected_files.extend((name, f) for f in c_files)
+            if c_dirs:
+              level2_dirs.extend((name, d) for d in c_dirs)
+          if level2_dirs:
+            expected_dirs.extend(level2_dirs)
           opened.clear()
           got = [tuple(parts) for fd, parts, st in X._walk((), 100, 128, [], unexpected)]
           self.eq(got, expected_files)

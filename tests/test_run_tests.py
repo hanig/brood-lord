@@ -173,7 +173,9 @@ class TestSplit(unittest.TestCase):
         self.assertEqual(RT.chunk(ids[:2], 6), [["t0"], ["t1"]])
 
     def test_split_modules_share_no_state_across_tests(self):
-        for module in RT.SPLIT:
+        for module, parts in RT.SPLIT.items():
+            self.assertIs(type(parts), int, module)
+            self.assertGreaterEqual(parts, 2, module)
             path = ROOT / "tests" / (module + ".py")
             self.assertTrue(path.is_file(), module)
             tree = ast.parse(path.read_text())
