@@ -179,8 +179,9 @@ ALLOWED = {
     ("swarm_advance.py", "_admit_code_closure"):
         "reads repo and repository_remote only from coordinator-state launch "
         "facts to validate merge and verification receipts",
-    ("swarm.py", "advance"):
-        "uses repository identity from the coordinator-state snapshot",
+    ("swarm_advance.py", "_emit_unit_final_intent"):
+        "reads repo and repository_remote only from coordinator-state launch "
+        "facts to repair legacy merge receipts before outbox emission",
     ("swarm_evidence.py", "trusted_base"):
         "reads the base only from the coordinator-state snapshot",
     ("swarm.py", "cmd_verify"):
@@ -200,7 +201,7 @@ CLAIM_ALLOWED = {}
 
 RAW_READER = "read_launch_record"
 RAW_ALLOWED = {
-    ("swarm.py", "advance"):
+    ("swarm_advance.py", "_dispatch_ready_units"):
         "reads it only to cite a preflight audit receipt, never for judging",
     ("worktree.py", "refused_launch"):
         "fail-CLOSED: a record saying 'refused' can only cause a refusal, "

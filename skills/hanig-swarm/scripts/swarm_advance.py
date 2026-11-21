@@ -1,4 +1,4 @@
-"""Advance reconciliation phases: normalisation, cleanup, recovery, judgment, settlement.
+"""Advance phases: normalisation, recovery, judgment, settlement, retry, dispatch, outbox.
 
 Python 3.8+, standard library only; dependencies never point to the facade.
 """
@@ -13,14 +13,17 @@ import swarm_dispatch as SD
 import swarm_evidence as SE
 import swarm_outbox as SO
 import swarm_preflight as SP
+import swarm_provider_resume as SPRS
 import swarm_provider_stops as SPS
 import swarm_state as SS
 import swarm_workspaces as SW
 from swarm_types import (
     DONE,
+    FAILED,
     INCOMPLETE,
     NAME,
     NEEDS_HUMAN,
+    OutboxError,
     RUNNING,
 )
 
@@ -543,3 +546,355 @@ def _settle_incomplete_attempt(uid, u, us, state, state_dir, rc,
     else:
         us.pop("incomplete_since", None)
     return False
+
+
+def _handle_post_check_deadline_and_resume(
+        uid, u, us, state, state_dir, rc, protocol_problem, checked_state,
+        previous, dry_run, worktree_cleanup_states, report):
+    """Apply provider resume, post-check deadline escalation, and checked state.
+
+    Returns True when unit handling should stop for this pass (resumed or
+    deadline-escalated).
+    """
+    if (not dry_run and u.get("kind") == "code"
+            and (u.get("provider_resume") or {}).get("max", 0)
+            and previous not in worktree_cleanup_states
+            and not protocol_problem
+            and rc == FAILED
+            and SPRS.maybe_resume(state_dir, uid, u, us, report, state)):
+        return True
+
+    terminal = {"DONE", "FAILED", "FAILED_EVIDENCE", "READY_FOR_PR",
+                "PREFLIGHT_REFUSED", "HELD"}
+    if (checked_state not in terminal
+            and SS._deadline_exceeded(u, us, state, uid)):
+        if dry_run:
+            report.append(
+                f"{uid}: DRY RUN -- deadline_exceeded after check; would "
+                f"become NEEDS_HUMAN without cancellation, claim "
+                f"release, or retry")
+            return True
+        first_breach = SS._mark_deadline_exceeded(u, us)
+        if first_breach:
+            report.append(
+                f"{uid}: NEEDS_HUMAN -- deadline_exceeded while the "
+                f"attempt was being checked. It remains bound and its "
+                f"output claim is retained; no cancellation or retry "
+                f"was requested.")
+        SS.save_state(state_dir, state)
+        return True
+    SS._set_unit_state(us, checked_state)
+    if checked_state in terminal:
+        SS._clear_deadline_breach(us)
+    return False
+
+
+def _apply_retry_and_teardown(
+        uid, u, us, state, state_dir, attempt, rc, previous,
+        previous_state_changed_at, previous_state_changed_at_basis, dry_run,
+        retryable, default_max_attempts, worktree_cleanup_states, watch_fn,
+        report):
+    """Apply preemption retry policy, preserve unchanged state clock, and teardown."""
+    if rc in retryable:
+        policy = u.get("max_attempts", default_max_attempts)
+        real_attempts = [a for a in us["attempts"]
+                         if not str(a).startswith(SP.DRY_PREFIX)]
+        if len(real_attempts) < policy:
+            us["attempt_dir"] = None
+            report.append(f"{uid}: preempted, will re-attempt "
+                          f"({len(real_attempts)}/{policy})")
+        else:
+            SS._set_unit_state(us, "FAILED")
+            if policy == 1 and "max_attempts" not in u:
+                report.append(
+                    f"{uid}: preempted once and not retried, because "
+                    f"max_attempts defaults to 1. A retry starts in a "
+                    f"FRESH EMPTY directory and redoes the whole unit, so "
+                    f"repetition is opt-in: set max_attempts with a "
+                    f"'retry' contract stating what one interruption "
+                    f"costs, or split the unit smaller.")
+            elif policy == 1:
+                report.append(
+                    f"{uid}: preempted, and the plan allows one attempt, "
+                    f"so it is not retried. Raise max_attempts with a "
+                    f"'retry' contract, or split the unit smaller.")
+            else:
+                report.append(f"{uid}: preempted {policy} times, giving up")
+    if us.get("state") == previous:
+        us["state_changed_at"] = previous_state_changed_at
+        if previous_state_changed_at_basis is None:
+            us.pop("state_changed_at_basis", None)
+        else:
+            us["state_changed_at_basis"] = previous_state_changed_at_basis
+    if us.get("state") in worktree_cleanup_states:
+        if not dry_run:
+            if u.get("kind") == "code":
+                watch = watch_fn(
+                    state, uid, Path(attempt).name, us.get("job_id"))
+                if watch is not None and not (
+                        watch.get("status") == "checked"
+                        and watch.get("checked_at")):
+                    watch["status"] = "checked"
+                    watch["checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+            SS.save_state(state_dir, state)
+            SW._archive_code_worktree(
+                state, u, attempt, report, state_dir)
+        else:
+            SW._report_would_archive_code_worktree(
+                state, u, attempt, report)
+
+
+def _release_completed_output_claims(units, state, state_dir, root, dry_run,
+                                     report):
+    """Release output claims for units no longer occupying live resources."""
+    if not dry_run:
+        for uid, u in sorted(units.items()):
+            us = SS._unit_state(state, uid)
+            if (us.get("state") in SS.OPERATOR_TERMINAL_STATES
+                    and us.get("attempt_dir")
+                    and SS._occupies_live_resources(u, us)
+                    and (u.get("kind") != "code" or W.attempt_belongs_to_host(
+                        SS.trusted_launch_host_anchor(
+                            state, uid, us["attempt_dir"])) is True)):
+                live, why = SP._claim_liveness({
+                    "attempt": Path(us["attempt_dir"]).name,
+                    "kind": u.get("kind"), "job": us.get("job_id")})
+                if live == SP.CLAIM_FREE:
+                    us["terminal_resource_release"] = {
+                        "attempt_dir": us["attempt_dir"],
+                        "job_id": us.get("job_id"),
+                        "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                        "basis": why}
+                    SS.save_state(state_dir, state)
+                    report.append(
+                        f"{uid}: stopped attempt released resources -- {why}")
+            if not SS._occupies_live_resources(u, us):
+                SP._release_output_claims(u, root, state_dir)
+
+
+def _dispatch_ready_units(plan, units, state, state_dir, root, dry_run,
+                          max_new, plan_path, dispatch_targets, halted,
+                          report, submit_fn):
+    """Hold failed-upstream units and dispatch every ready unit within caps."""
+    budget = (plan.get("budget") or {}).get("gpu_hours")
+    spent = sum(SS._unit_state(state, uid)["gpu_hours"] for uid in units)
+    dispatched = 0
+    dispatch_refusal = None
+
+    for uid, u in sorted(units.items()):
+        us = SS._unit_state(state, uid)
+        if us["attempt_dir"] or us["state"] in ("DONE", "FAILED",
+                                                "FAILED_EVIDENCE", "ABANDONED",
+                                                "SUPERSEDED"):
+            continue
+        if uid == plan.get("canary") and us["state"] == "HELD":
+            continue
+        needs = u.get("needs") or []
+        failed_upstream = [d for d in needs
+                           if SS._unit_state(state, d)["state"] in
+                           ("FAILED", "HELD", "FAILED_EVIDENCE",
+                            "ABANDONED", "SUPERSEDED")]
+        if failed_upstream:
+            SS._set_unit_state(us, "HELD")
+            report.append(f"{uid}: held, upstream "
+                          f"{', '.join(failed_upstream)} will not complete")
+            SS.save_state(state_dir, state)
+            continue
+        unmet = [d for d in needs
+                 if SS._unit_state(state, d)["state"] != "DONE"]
+        if unmet:
+            if plan.get("canary") in unmet:
+                report.append(f"{uid}: waiting on canary {plan['canary']}")
+            continue
+        want = float(u.get("gpu_hours") or 0)
+        if budget is not None and spent + want > float(budget):
+            halted = (f"budget: {spent + want:.1f} of {budget} GPU-hours would "
+                      f"be committed")
+            report.append(f"{uid}: SKIPPED -- {halted}")
+            continue
+        if max_new is not None and dispatched >= max_new:
+            report.append(f"{uid}: skipped, --max-new-dispatches reached")
+            continue
+
+        live = [x for x in units
+                if SS._occupies_live_resources(
+                    units[x], SS._unit_state(state, x))]
+        cap_all = (plan.get("limits") or {}).get("max_running")
+        if cap_all is not None and len(live) >= cap_all:
+            report.append(f"{uid}: waiting, {len(live)} of {cap_all} slots in "
+                          f"use")
+            continue
+        pool = u.get("pool")
+        if pool:
+            caps = ((plan.get("limits") or {}).get("pools") or {})
+            in_pool = [x for x in live if units[x].get("pool") == pool]
+            if len(in_pool) >= caps.get(pool, 10**9):
+                report.append(f"{uid}: waiting, pool {pool!r} full "
+                              f"({len(in_pool)} of {caps[pool]})")
+                continue
+
+        dispatch_source = None
+        if u.get("kind") == "code":
+            target, problem = SP._dispatch_target_for_advance(
+                u, dispatch_targets)
+            if not problem:
+                dispatch_source, problem = SP._dispatch_source_identity(
+                    u, target)
+            if problem:
+                report.append(f"{uid}: REFUSING dispatch -- {problem}")
+                dispatch_refusal = str(problem)
+                continue
+
+        unit_dir, err = SD._allocate(plan, u, root, state_dir)
+        if err:
+            SS._set_unit_state(us, "FAILED")
+            report.append(f"{uid}: {err}")
+            SS.save_state(state_dir, state)
+            continue
+        us["attempt_dir"] = unit_dir
+        us["attempts"].append(f"{SP.DRY_PREFIX}{unit_dir}" if dry_run
+                              else unit_dir)
+        allocated_at = time.time()
+        us["allocated_at"] = allocated_at
+        SS._set_unit_state(us, "ALLOCATED", allocated_at)
+        us["gpu_hours"] = float(us.get("gpu_hours") or 0) + want
+        spent += want
+        SE._capture_artifact_basis(state, uid, unit_dir, u,
+                                   enable_slurm_exit=u.get("kind") == "slurm")
+        SS.save_state(state_dir, state)
+
+        claim_refusal, held_claims = (None, [])
+        if not dry_run:
+            claim_refusal, held_claims = SP._take_output_claims(
+                u, root, state_dir, Path(unit_dir).name)
+        submit_args = ({"dispatch_source": dispatch_source}
+                       if dispatch_source is not None else {})
+        if plan_path is not None:
+            submit_args["plan_path"] = plan_path
+        job_id, err = ((None, claim_refusal) if claim_refusal
+                       else submit_fn(u, unit_dir, dry_run, state, state_dir,
+                                      **submit_args))
+        if err:
+            if held_claims:
+                SP._release_output_claims(u, root, state_dir)
+            if isinstance(err, SP.PreflightRefusal):
+                launch, _launch_err = W.read_launch_record(unit_dir)
+                on_disk = ((launch or {}).get("preflight") or {})
+                receipt = str(W.launch_record_path(unit_dir))
+                us.setdefault("preflight_refusals", []).append({
+                    "attempt_dir": unit_dir,
+                    "receipt": (receipt if on_disk.get("status") == "refused"
+                                else None),
+                    "workspace": err.workspace,
+                    "dirty_path_count": err.dirty_count,
+                    "reason": err.reason,
+                    "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                })
+                if us.get("attempts"):
+                    last = str(us["attempts"][-1])
+                    if last in (str(unit_dir), f"{SP.DRY_PREFIX}{unit_dir}"):
+                        us["attempts"].pop()
+                us["attempt_dir"] = None
+                SS._set_unit_state(us, "PREFLIGHT_REFUSED")
+                us.pop("allocated_at", None)
+                us["gpu_hours"] = max(
+                    0.0, float(us.get("gpu_hours") or 0) - want)
+                spent -= want
+                cited = us["preflight_refusals"][-1]["receipt"]
+                report.append(f"{uid}: {err}" +
+                              (f"\n  receipt: {cited}" if cited else ""))
+            else:
+                SS._set_unit_state(us, "FAILED")
+                report.append(f"{uid}: {err}")
+            SS.save_state(state_dir, state)
+            continue
+        needs_bind = bool(
+            job_id and not str(job_id).startswith(("dry-", "engine-")))
+        us["job_id"] = str(job_id)
+        SS._set_unit_state(us, "SUBMITTED")
+        if needs_bind:
+            us["bind_pending"] = True
+        SS.save_state(state_dir, state)
+        if held_claims:
+            SP._note_claimed_attempt(u, root, state_dir, Path(unit_dir).name,
+                                     job_id)
+        berr = SD._bind(unit_dir, job_id, state_dir) if needs_bind else None
+        if berr:
+            us["bind_pending"] = True
+            report.append(f"{uid}: submitted {job_id} but {berr}. The job is "
+                          f"running; the binding will be retried next advance.")
+        else:
+            us.pop("bind_pending", None)
+        dispatched += 1
+        report.append(f"{uid}: submitted {job_id} -> {unit_dir}")
+        SS.save_state(state_dir, state)
+
+    state["halted"] = halted
+    SS.save_state(state_dir, state)
+    return dispatched, halted, dispatch_refusal
+
+
+def _emit_unit_final_intent(state_dir, project, uid, us, units, state,
+                            dry_run, existing_outbox_keys, report,
+                            emit_intent_fn):
+    """Assemble attested closing evidence and emit or preview one tracker intent."""
+    now = us.get("state")
+    if not now:
+        return
+    evidence = None
+    kind = (units.get(uid) or {}).get("kind")
+    if now == "SUPERSEDED":
+        evidence = SO.superseded_evidence(us, state_dir)
+    if now == "DONE" and us.get("attempt_dir"):
+        if SO.closing_evidence_for(kind) == "merged_pr":
+            rp = us.get("merge_receipt")
+            if not SO._has_bound_merge_evidence(
+                    uid, us, {"receipt": rp} if rp else None) and not dry_run:
+                produced = SE.trusted_produced_head(
+                    state, uid, us["attempt_dir"])
+                facts = SS.trusted_launch_facts(
+                    state, uid, us["attempt_dir"])
+                try:
+                    recover_args = {
+                        "expect_repo": (facts or {}).get("repository_remote")}
+                    if V.INTEGRATION_CLAIM in (
+                            (units.get(uid) or {}).get(
+                                "requires_verification") or []):
+                        recover_args["repo"] = (facts or {}).get("repo")
+                        recover_args["require_target_binding"] = True
+                        recover_args["expect_target"] = (
+                            (units.get(uid) or {}).get("target_branch"))
+                    recovered, _why = SE.admit_merge(
+                        state_dir, uid, produced, **recover_args)
+                except OutboxError:
+                    recovered = None
+                if (recovered
+                        and recovered.get("merged_as") == us.get("merged_as")
+                        and recovered.get("pr") == us.get("merge_pr")):
+                    us["merge_receipt"] = dict(recovered)
+                    SS.save_state(state_dir, state)
+                    rp = recovered
+        else:
+            rp, _why = SE.attested_receipt(state, uid, us["attempt_dir"])
+        evidence = {"receipt": rp} if rp else None
+    if dry_run:
+        action = SO.TRACKER_EVENTS.get(now)
+        if action:
+            verb = action[0]
+            if (verb == "close" and now != "SUPERSEDED"
+                    and SO.closing_evidence_for(kind) == "merged_pr"
+                    and not SO._has_bound_merge_evidence(uid, us, evidence)):
+                verb = "open_pr"
+            key = SO._intent_key(
+                project, uid, now, us, verb, kind, evidence)
+        if action and key not in existing_outbox_keys:
+            if verb == "close" and not evidence:
+                report.append(
+                    f"{uid}: DRY RUN -- would retry outbox emission for "
+                    f"{now}, but no attested closing receipt is readable")
+            else:
+                report.append(
+                    f"{uid}: DRY RUN -- would re-emit tracker {verb} "
+                    f"intent from durable state {now}")
+        return
+    emit_intent_fn(state_dir, project, uid, us, units[uid], evidence)

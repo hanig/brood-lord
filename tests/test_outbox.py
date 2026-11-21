@@ -557,9 +557,9 @@ class TestTheWedges(unittest.TestCase):
         job_id without a marker skipped the reconcile net, so the unit decayed
         to FAILED_EVIDENCE while its job succeeded."""
         import inspect
-        src = SWARM.read_text()
+        disp = inspect.getsource(S.SADV._dispatch_ready_units)
         rec = inspect.getsource(S.SADV._recover_unbound_attempts)
-        self.assertIn('us["bind_pending"] = True', src,
+        self.assertIn('us["bind_pending"] = True', disp,
                       "a failed bind must be marked for retry")
         i = rec.index("if us.get(\"bind_pending\")")
         j = rec.index("if us.get(\"job_id\"):\n            continue")
@@ -598,7 +598,8 @@ class TestTheWedges(unittest.TestCase):
     def test_retry_charges_accumulate(self):
         """Overwriting meant a unit preempted twice was charged once, so
         retries walked straight through the ceiling."""
-        src = SWARM.read_text()
+        import inspect
+        src = inspect.getsource(S.SADV._dispatch_ready_units)
         self.assertIn('us["gpu_hours"] = float(us.get("gpu_hours") or 0) + want',
                       src, "each attempt must add to the unit's charge")
 
@@ -2604,9 +2605,9 @@ class TestPreemptionUnderTheNewDefault(unittest.TestCase):
     giving up", which reads as a bug rather than a decision."""
 
     def test_the_message_explains_the_policy_and_names_the_way_out(self):
-        import ast
-        src = SWARM.read_text()
-        i = src.index("if rc in RETRYABLE:")
+        import inspect
+        src = inspect.getsource(S.SADV._apply_retry_and_teardown)
+        i = src.index("if rc in retryable:")
         seg = src[i:src.index("SS.save_state(state_dir, state)", i)]
         self.assertIn("max_attempts defaults to 1", seg)
         self.assertIn("opt-in", seg)

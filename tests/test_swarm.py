@@ -1523,5 +1523,36 @@ class TestAdvanceReconcileExtraction(unittest.TestCase):
             self.assertTrue(any("convergence NOT_CONVERGED" in line for line in rep))
 
 
+class TestAdvanceDispatchExtraction(unittest.TestCase):
+    def test_advance_orchestrator_delegates_and_submit_patch_intercepts(self):
+        import ast
+        from unittest import mock
+        tree = ast.parse(SWARM.read_text())
+        fn = next(n for n in tree.body
+                  if isinstance(n, ast.FunctionDef) and n.name == "advance")
+        self.assertLess(fn.end_lineno - fn.lineno + 1, 180)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_dir = root / "state"
+            state_dir.mkdir()
+            plan = {"name": "dispatch-patch", "units": [{
+                "id": "u1", "kind": "slurm", "command": "true",
+                "runtime": "none", "outputs": ["out.txt"],
+            }]}
+            state = {"units": {}}
+            with mock.patch.object(swarm.SS, "renew_lease", return_value=True), \
+                 mock.patch.object(swarm, "_submit",
+                                   return_value=("777", None)) as sub, \
+                 mock.patch.object(swarm.SD, "_bind", return_value=None) as bind:
+                _rep, disp, halted = swarm.advance(
+                    plan, state, str(state_dir), str(root / "runs"), False)
+            self.assertEqual(disp, 1)
+            self.assertIsNone(halted)
+            sub.assert_called_once()
+            bind.assert_called_once()
+            self.assertEqual(state["units"]["u1"]["job_id"], "777")
+            self.assertEqual(state["units"]["u1"]["state"], "SUBMITTED")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
