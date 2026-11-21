@@ -278,5 +278,34 @@ class TestReviewLedgerSchemaExtraction(unittest.TestCase):
             self.assertRegex(review.change_identity("HEAD", "plan", "unit"), r"^[0-9a-f]{64}$")
 
 
+class TestReviewCliExtraction(unittest.TestCase):
+    def test_review_cli_does_not_import_facade_and_main_is_compact(self):
+        cli_tree = ast.parse((SCRIPT.parent / "review_cli.py").read_text())
+        imports = {n.module for n in ast.walk(cli_tree) if isinstance(n, ast.ImportFrom)}
+        imports |= {a.name for n in ast.walk(cli_tree) if isinstance(n, ast.Import)
+                    for a in n.names}
+        self.assertNotIn("review", {str(n).split(".")[0] for n in imports})
+
+        review_tree = ast.parse(SCRIPT.read_text())
+        fn = next(n for n in review_tree.body
+                  if isinstance(n, ast.FunctionDef) and n.name == "_main")
+        self.assertLess(fn.end_lineno - fn.lineno + 1, 100)
+
+    def test_direct_script_help_and_size_work_with_extracted_cli(self):
+        import subprocess
+        r = subprocess.run([sys.executable, str(SCRIPT), "--help"],
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--escalate", r.stdout)
+        with tempfile.TemporaryDirectory() as tmp:
+            sample = Path(tmp) / "note.md"
+            sample.write_text("small test note\n")
+            s = subprocess.run([sys.executable, str(SCRIPT), "--size",
+                                "--file", str(sample)],
+                               capture_output=True, text=True, timeout=30)
+            self.assertEqual(s.returncode, 0, s.stderr)
+            self.assertIn("gathered input:", s.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
