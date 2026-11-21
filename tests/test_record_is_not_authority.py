@@ -107,9 +107,9 @@ ALLOWED = {
     ("swarm_validate.py", "_validate_unit_fields"):
         "validates the plan's own execution_workspace and repo fields before "
         "any run; no launch record is involved",
-    ("swarm.py", "validate_plan"):
-        "validates the plan's own repo and code-unit canary intent fields "
-        "before any run",
+    ("swarm_validate.py", "_validate_commands_and_code_units"):
+        "validates the plan's own repo field and builds a fixed canary intent "
+        "to check code prompt protocol; no launch record is involved",
     ("swarm.py", "cmd_validate"):
         "reads values from _dispatch_source_identity(u, target), which the "
         "coordinator computes live from the plan and the repository, not "
