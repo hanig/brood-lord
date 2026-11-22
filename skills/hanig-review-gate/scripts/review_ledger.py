@@ -16,18 +16,20 @@ import time
 from pathlib import Path
 
 
-def change_identity(target="origin/main", plan_name=None, unit=None):
+def change_identity(target="origin/main", plan_name=None, unit=None, facade=None):
     """Hash exact Git identity bytes, never the changing diff or tip commit.
 
     Fix commits preserve this identity while the target merge-base is unchanged.
     Renaming the branch, changing the remote, rebasing, or changing an explicit
     plan/unit declaration defines another identity; this is not a tamper barrier.
     """
+    _sp = facade.subprocess if facade is not None else subprocess
+
     def git(*argv, fix):
         try:
-            result = subprocess.run(["git", *argv], stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, timeout=15)
-        except (OSError, subprocess.SubprocessError) as exc:
+            result = _sp.run(["git", *argv], stdout=_sp.PIPE,
+                             stderr=_sp.PIPE, timeout=15)
+        except (OSError, _sp.SubprocessError) as exc:
             raise ValueError("cannot read change identity from Git; " + fix) from exc
         if result.returncode or not result.stdout.endswith(b"\n"):
             raise ValueError("cannot derive change identity; " + fix)

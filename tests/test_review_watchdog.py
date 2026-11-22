@@ -261,6 +261,21 @@ class TestReviewLedgerSchemaExtraction(unittest.TestCase):
             self.assertEqual(stopped.exception.code, 4)
         ident.assert_called_once()
         cfg.assert_called_once()
+        verdict = {"verdict": "upheld", "findings": [], "claims": [
+            {"claim": "x", "status": "supported", "why": "one two three four"}]}
+        with patch.object(review, "unassessed_claims", return_value=["PATCHED"]) as unass:
+            self.assertEqual(review.verdict_schema_error(verdict, asserted=["x"]),
+                             "did not assess: PATCHED")
+        unass.assert_called_once()
+        with patch.object(review, "norm", side_effect=lambda v: "minor" if v == "major" else str(v or "").strip().lower()):
+            self.assertFalse(review.is_confirmed(
+                {"severity": "major", "confidence": "high", "failure_scenario": "boom"}))
+        fake_sp = type("SP", (), {
+            "PIPE": -1, "SubprocessError": Exception,
+            "run": staticmethod(lambda *a, **k: type("R", (), {"returncode": 0, "stdout": b"stub\n"})()),
+        })
+        with patch.object(review, "subprocess", fake_sp):
+            self.assertRegex(review.change_identity("HEAD", "plan", "unit"), r"^[0-9a-f]{64}$")
 
 
 if __name__ == "__main__":

@@ -163,11 +163,14 @@ def finding_for_text(finding):
                     or (key == "non_executable_reason" and empty_evidence_value(value)))}
 
 
-def verdict_schema_error(v, require_claims=0, asserted=None):
+def verdict_schema_error(v, require_claims=0, asserted=None, facade=None):
     """Reject anything that is not actually a structured review verdict."""
+    _norm = facade.norm if facade is not None else norm
+    _unassessed = (facade.unassessed_claims if facade is not None
+                   else unassessed_claims)
     if not isinstance(v, dict):
         return "not an object"
-    if norm(v.get("verdict")) not in ("upheld", "refuted"):
+    if _norm(v.get("verdict")) not in ("upheld", "refuted"):
         return f"verdict must be 'upheld' or 'refuted', got {v.get('verdict')!r}"
     for key in ("findings", "claims"):
         if key not in v:
@@ -177,10 +180,10 @@ def verdict_schema_error(v, require_claims=0, asserted=None):
     for f in v.get("findings") or []:
         if not isinstance(f, dict):
             return "findings must contain objects"
-        sev = norm(f.get("severity"))
+        sev = _norm(f.get("severity"))
         if sev not in ("critical", "major", "minor"):
             return f"finding severity must be critical/major/minor, got {f.get('severity')!r}"
-        if norm(f.get("confidence")) not in ("high", "medium", "low"):
+        if _norm(f.get("confidence")) not in ("high", "medium", "low"):
             return f"finding confidence must be high/medium/low, got {f.get('confidence')!r}"
         scen = f.get("failure_scenario")
         if sev in ("critical", "major") and \
@@ -201,7 +204,7 @@ def verdict_schema_error(v, require_claims=0, asserted=None):
     for c in v.get("claims") or []:
         if not isinstance(c, dict):
             return "claims must contain objects"
-        if norm(c.get("status")) not in ("supported", "refuted", "unverifiable"):
+        if _norm(c.get("status")) not in ("supported", "refuted", "unverifiable"):
             return (f"claim entry has no valid status: "
                     f"{str(c.get('status'))[:40]!r}")
         why = str(c.get("why", "")).strip()
@@ -217,18 +220,19 @@ def verdict_schema_error(v, require_claims=0, asserted=None):
         return (f"assessed {len(v.get('claims') or [])} of {require_claims} "
                 f"asserted claims")
     if asserted:
-        missing = unassessed_claims(v.get("claims") or [], asserted)
+        missing = _unassessed(v.get("claims") or [], asserted)
         if missing:
             return f"did not assess: {'; '.join(missing)}"
     return None
 
 
-def is_confirmed(f):
+def is_confirmed(f, facade=None):
     """A finding counts against the gate only if serious, confident, concrete, and in scope."""
     if f.get("in_scope") is False:
         return False
-    return (norm(f.get("severity")) in ("critical", "major")
-            and norm(f.get("confidence")) in ("high", "medium")
+    _norm = facade.norm if facade is not None else norm
+    return (_norm(f.get("severity")) in ("critical", "major")
+            and _norm(f.get("confidence")) in ("high", "medium")
             and bool(str(f.get("failure_scenario", "")).strip()))
 
 

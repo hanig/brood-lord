@@ -133,7 +133,8 @@ def _load_sibling(module_name, filename):
 _ledger = _load_sibling("_hanig_review_gate_ledger", "review_ledger.py")
 _schema = _load_sibling("_hanig_review_gate_schema", "review_schema.py")
 
-change_identity = _ledger.change_identity
+def change_identity(target="origin/main", plan_name=None, unit=None):
+    return _ledger.change_identity(target, plan_name, unit, facade=_SELF)
 round_ledger_root = _ledger.round_ledger_root
 round_marker_name = _ledger.round_marker_name
 replace_round_marker = _ledger.replace_round_marker
@@ -1179,8 +1180,12 @@ unassessed_claims = _schema.unassessed_claims
 empty_evidence_value = _schema.empty_evidence_value
 counterexample_placeholder = _schema.counterexample_placeholder
 finding_for_text = _schema.finding_for_text
-verdict_schema_error = _schema.verdict_schema_error
-is_confirmed = _schema.is_confirmed
+def verdict_schema_error(v, require_claims=0, asserted=None):
+    return _schema.verdict_schema_error(v, require_claims, asserted, facade=_SELF)
+
+
+def is_confirmed(f):
+    return _schema.is_confirmed(f, facade=_SELF)
 
 # --- input gathering --------------------------------------------------------
 
