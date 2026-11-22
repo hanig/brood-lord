@@ -13,194 +13,44 @@ description: >-
 
 ## Host capability boundary
 
-Use the active host's real file, shell, and review capabilities under its
-normal approval policy.  A loaded skill does not supply reviewer providers,
-their configuration, or coordinator-held credentials; when they are absent,
-retain the evidence and report the change as **unreviewed** rather than
-substituting self-confidence or a paid worker-side call.  See
-`docs/agent-compatibility.md` for the portable capability and credential
-contract.
+Use the active host's real file, shell, and review capabilities under its normal approval policy. A loaded skill supplies no reviewer providers, configuration, or coordinator-held credentials; when absent, retain the evidence and report the change as **unreviewed** rather than substituting self-confidence or a paid worker-side call (`docs/agent-compatibility.md`).
 
-My claim that code works is exactly as inadmissible as a scheduler's
-`COMPLETED`. Same principle as `hanig-verified-workflow`, turned on the author.
-
-So before anything is reported complete, the work **and the specific claims made
-about it** go to models that did not write the code, each prompted to **refute**.
-A reviewer that cannot decide is instructed to refute, because a false "looks
-good" costs far more than one more look.
+Before anything is reported complete, send the diff and specific claims to independent models prompted to **refute** (instructed to refute when undecided). Review **against declared criteria** (goal, acceptance criteria, constraints, non-goals), never against unbounded perfection, and assert **"This change cannot make an honest run fail."** on every implementation round. Reviewers refute and carry no remediation field; never ask a refutation panel to design.
 
 ## Two phases, two different reviews
 
-A plan review and an implementation review are not the same review and must not
-use the same panel. `PROTOCOL.md` in this directory states the full model; the
-enforceable parts are enforced by `review.py` rather than left to memory,
-because these rules were written down once and drifted from anyway.
+See [PROTOCOL.md](PROTOCOL.md) for the full collaborative plan-review exchange, joint table, refutation floor, cost, and declared limits; `review.py` enforces the checkable rules directly.
 
 | | plan review | implementation review |
 |---|---|---|
 | when | before code exists | after the change is written |
-| panel | **two contrasting models, two turns** | fixed profile or cheapest-first ladder |
+| panel | **two contrasting models, two turns** (quorum 2, two makers) | fixed profile or cheapest-first ladder |
 | escalation | **never** | optional; `--escalate` starts at the selected tier |
-| flag | `--kind plan` | `--kind implementation --round N [--escalate]` |
+| flag | `--kind plan` (alias `--plan`) | `--kind implementation --round N [--escalate]` |
 | judged against | do these criteria hold together | does the code meet them |
 
-Plan review uses two contrasting seats and two turns, with the final verdict
-computed in code. See [Collaborative plan review](PROTOCOL.md)
-for the exchange, joint table, refutation floor, declared limits and cost.
+## Author exclusion and reserves
 
-**Plan review is Phase 1 and it is where the value is.** Three plan reviews cost
-about ten cents and twelve minutes and rejected two designs before any code
-existed. The 28-round session below spent all 28 rounds inside a framing that a
-plan review would have rejected.
+Both `review.py` and `committee.py` accept repeatable `--author PROVIDER/MODEL` and exclude by canonical maker and exact model leaf (vendor-qualified IDs supply their maker; Codex/Claude/Antigravity map to OpenAI/Anthropic/Google; resolved pin fallbacks matching an author are disabled; omitted authors stay caller-owned).
 
-## The author does not judge their own work
+- **Reviews:** Profile-selected reviews substitute ordered `reserves` from [reviewers.json](reviewers.json) if exclusion breaks quorum (including a fresh-cycle floor) or plan maker contrast; exhausted reserves return `REVIEW_UNAVAILABLE` before provider calls. `--only` and `--escalate` skip substitution.
+- **Committees:** Profile-selected committees search ordered reserve combinations to keep original size, distinct model identities, >= 2 makers, and >= 2 providers; `open` refuses if none qualify or an explicit `--member` conflicts with an author. Authors persist across `ask`, `review`, `synthesize`, and `tiebreak` (conflicting sets refuse; refused legacy resolution records `OWNER` and retains history).
 
-Both tools take repeatable `--author PROVIDER/MODEL` and exclude by canonical
-identity: model maker and exact model leaf. A vendor-qualified model supplies
-its maker (as in `openrouter/moonshotai/kimi-k3`). For unqualified models,
-Codex, Claude, and Antigravity map to OpenAI, Anthropic, and Google. Other
-transports can resolve through an exact roster model or pin. The gate reports
-exclusions and disables a resolved seat's pin fallback if the pin matches an
-author. Omitted authors remain the caller's responsibility.
+## Round bounds and step-back committee
 
-A profile-selected review uses ordered `reserves` in
-[reviewers.json](reviewers.json) if author exclusion breaks quorum (including
-a fresh-cycle floor) or plan maker contrast. Exhausted reserves can yield
-`REVIEW_UNAVAILABLE` before provider calls. `--only` and `--escalate` skip
-substitution.
+- **Max 3 substantive rounds per logical plan unit across attempts and continuations.** Track lineage rounds by hand in `PLAN.md`; the gate counts rounds per identity (a continuation branch is a new gate identity, not a fresh lineage budget). Unit R stopped on 2026-11-04; gate-enforced lineage budgeting did not merge.
+- **Stop patching if round N+1 finds a defect in round N's fix** and convene a step-back committee (two contrasting providers, analysis only, root-cause three levels deep).
+- **After budget exhaustion**, apply the mandate's committee step before any authorized successor cycle. For an authorized successor cycle, pass `--round 1 --fresh-cycle-from fast|standard|deep` and repeat `--fresh-cycle-from` on every round of that cycle (requires rounds 1..`MAX_ROUNDS` in the enforcing ledger for the predecessor cycle/profile; raises quorum floor to that profile's enabled count, minimum 2). Implementation `--quorum 1` requires `--allow-single-reviewer REASON` (printed and journaled; cannot lower a fresh-cycle floor).
+- **Committee resolution:** Run `python3 "$HANIG_REVIEW_GATE_DIR/scripts/committee.py" synthesize SESSION --author PROVIDER/MODEL` (or `tiebreak SESSION --author PROVIDER/MODEL` directly on an identified split). Divergence routes to the single enabled `tiebreak` seat (excluding authors and prior voters, falling back to the first eligible different-maker reserve, else `OWNER`). Both read `docs/orchestrator-mandate.md` (`--mandate-file PATH` overrides); declare known owner-only questions with `--stop-and-ask REASON` (refuses offline). Unavailable/malformed answers or missing/conflicting authors route to `OWNER` (exit 1). `show SESSION` displays resolution; a later member turn invalidates it while keeping its audit record.
 
-A profile-selected committee searches ordered reserve combinations to restore
-the original size with distinct model identities, at least two makers, and
-at least two providers. `open` refuses if no combination qualifies or if an
-explicit `--member` conflicts with an author. The author set persists across
-`ask`, `review`, `synthesize`, and `tiebreak`. Older sessions can declare
-authors on reuse, including legacy bare model IDs and configured seat aliases.
-The committee refuses conflicting author sets. A refused legacy resolution
-records `OWNER` and retains prior decisions in history.
+## Findings, counterexamples, and dispositions
 
-A design's author is the worst judge of whether
-its residual is complete. Asked to fix a recurring problem, one reviewer wrote a
-proposal with a "residual risk" section listing three ways through; the panel
-found two more it had not named, one of them inside the proposal's own API.
+- **Counterexamples:** Reviewers are asked for a `counterexample` (`setup`, `input`, `expected`, `observed`) or `non_executable_reason` on critical/major findings (either, both, or neither is valid; partially filled objects refuse; placeholders render as absent / `"no counterexample"`). The gate validates and displays them verbatim and never executes them.
+- **Reproduce before acting** and never silently drop non-reproducing findings. Round 2+ requires `--dispositions FILE` mapping each prior confirmed finding's digest (`location`, `summary`, `disposition` in `reproduced|not-reproduced|deferred`, one-line `reason`). Both `reproduced` and `not-reproduced` require a `reproduction` object (`setup`, `command`, `expected`, `observed`, full lowercase 40-/64-hex `revision`); `deferred` needs none. Missing/malformed fields exit 4 before network calls. Reviewers receive reproduction text verbatim (with recognized prior-decision text stripped) so they can refute it; the gate never executes `command` or auto-downgrades severity.
 
-## Reviewers refute; they do not design
+## External adjudication ledger
 
-The system prompt says so, and a finding carries severity, location, summary and
-failure scenario with **no remediation field**. Do not ask the panel for a plan.
-The author writes the plan and the panel attacks it. Asking a refutation panel
-to design is a category error that produces agreement-shaped noise.
-
-## Review against a declared plan, never against perfection
-
-**This is the rule that keeps the process finite, and the one this repo learned
-the hard way.** A first version of this skill asked reviewers "can you refute
-any claim about this code," which is unbounded by construction: with reviewers
-instructed to refute when uncertain, it can never terminate. It ran 28 rounds.
-
-The fix is the skill's own thesis, turned on itself. `hanig-verified-workflow`
-exists to say *declare the criteria before you execute, then check against
-them*. Apply that here:
-
-1. **Declare what the change is supposed to do, before writing it.** Goal,
-   acceptance criteria, constraints, what is explicitly out of scope.
-2. **Implement.**
-3. **Review the implementation AGAINST THAT PLAN** — "flag drift and missing
-   pieces" — not against an ideal.
-
-"Does this meet the declared criteria" is a finite question with an answer.
-"Can you find any flaw" is not.
-
-## Always assert the counter-claim
-
-Every round must assert **"this change cannot make an honest run fail."**
-Without it, each round tightens the screws with no counter-pressure, and the
-verifier drifts toward refusing legitimate work. The first round that asserted
-this caught a real regression that two reviewers found independently. A verifier
-that cries wolf gets switched off, which costs more than the defect it prevents.
-
-## Bound the loop, and know when to step back
-
-Open-ended loops are how runaways happen, so every review cycle is bounded:
-
-- **Max 3 substantive rounds per logical plan unit across attempts and continuations.** The orchestrator tracks each lineage by hand in the plan's PLAN.md round ledger. The gate counts rounds per identity; a continuation branch is a new identity to the gate and does not reset the orchestrator's budget. Unit R was stopped on 2026-11-04; gate-enforced lineage budgeting did not merge.
-- **If round N+1 finds a defect in round N's fix, stop patching.** That is the
-  signal that the problem is upstream of the symptom. Convene a step-back
-  committee (below) with the full history rather than shipping another patch.
-- **After budget exhaustion, apply the mandate's committee step** with full
-  history before any authorized successor cycle. The gate's per-identity
-  successor mechanism does not authorize more lineage rounds. For an authorized
-  successor cycle, declare the replaced profile with
-  `--round 1 --fresh-cycle-from fast|standard|deep`, and repeat
-  `--fresh-cycle-from` on each round of that cycle. The replacement must select
-  at least that profile's current enabled reviewer count (minimum two); the
-  gate raises quorum to that floor, including on the escalation ladder.
-  The enforcing round ledger requires rounds 1 through `MAX_ROUNDS` for the
-  same identity, cycle and `--fresh-cycle-from` profile. It creates
-  a successor cycle carrying the predecessor's cycle number and profile.
-  On an escalation ladder, the reserved profile is the selected starting
-  tier. The verdict and audit journal retain their caller-declared panel
-  provenance; the journal never decides exhaustion. Carrying the review
-  history remains the caller's responsibility.
-  An implementation `--quorum 1` requires `--allow-single-reviewer REASON`, a
-  non-empty one-line reason printed on the verdict and recorded in the journal.
-  This explicit exception cannot lower a declared fresh cycle's floor.
-
-## The step-back committee
-
-When stuck, looping, or patching symptoms, stop reviewing and convene two
-reviewers from contrasting providers with one question:
-
-> Here is what keeps happening across rounds: <history>. Do root cause analysis.
-> Ask why three levels deep. Am I patching a symptom or removing the problem?
-> Propose the change that makes this class of defect impossible, not the next
-> individual fix. Analysis only — do not write code.
-
-The purpose is to step back, not double down. The committee may well say the
-design is wrong, which is the point of asking.
-
-After challenging the members, run
-`python3 "$HANIG_REVIEW_GATE_DIR/scripts/committee.py" synthesize SESSION --author PROVIDER/MODEL`.
-Convergence produces a unified plan. Divergence invokes the tiebreak path,
-which starts with the single enabled seat whose only profile is `tiebreak`.
-It excludes declared authors and prior voters by canonical model identity.
-If the primary is excluded, it selects the first eligible ordered reserve
-whose maker differs from the primary's. A missing or misconfigured primary
-or an exhausted selection routes to `OWNER`. See [reviewers.json](reviewers.json)
-for the profile and reserve lists.
-
-Use `tiebreak SESSION --author PROVIDER/MODEL` directly for an identified split.
-The selected reviewer gets the question and verbatim final positions and can
-return a `RULING` adopting one position with the deciding evidence.
-
-Both commands read the current `docs/orchestrator-mandate.md` from the project;
-use `--mandate-file PATH` when it lives elsewhere. The mandate's stop-and-ask
-list and bounds go to the model. A known owner-only question must be declared
-with `--stop-and-ask REASON`, which refuses without calling a provider and is
-retained in the session. Semantic classification otherwise rests on the model
-and an honest caller; a ruling supplies analysis, never additional authority.
-An unavailable, empty, truncated or malformed answer routes to OWNER (exit 1)
-with a persisted reason. Missing or conflicting author declarations also
-route to the owner. Existing sessions can declare their authors on first use.
-`show SESSION` displays the current resolution, and a later member turn
-invalidates it while retaining the earlier decision's audit record.
-
-## Argue with findings; do not silently filter them
-
-Reviewers are asked for a `counterexample` with non-empty `setup`, `input`, `expected` and `observed` strings on every critical or major finding, or a non-empty `non_executable_reason` explaining why no check can be written. They should omit the unused alternative. Either, both or neither is valid; absence never changes a finding's status. Null, blank reasons, and empty counterexample objects (including objects whose values are all null or blank strings) are placeholders. Other malformed values, including partially filled counterexamples, are refused. Placeholders render as absent; confirmed findings without supplied evidence show "no counterexample". JSON output and the journal retain the values verbatim. The gate validates and displays evidence but never executes counterexamples.
-
-Reviewers produce findings that do not reproduce — one model here retracted its own conclusion inside the finding text more than a dozen times. The instinct is to add a severity filter and move on. **Reproduce the finding first.** If it does not reproduce, say so explicitly in the next round's context rather than quietly dropping it, and if a reviewer keeps asserting it, that disagreement is itself information.
-
-For `--dispositions FILE`, keep the digest-keyed prior finding's `location`, `summary`, `disposition` and one-line `reason`. Both `reproduced` and `not-reproduced` require a `reproduction` object containing non-empty strings for `setup`, `command`, `expected`, `observed` and `revision`. Use the full lowercase 40- or 64-hex commit id for `revision`; it records the tested revision, not necessarily the current review head. `deferred` needs no reproduction. Missing or malformed evidence returns configuration error 4 naming the digest and field before any network call. This validates the record's shape, not whether the reported experiment occurred or the commit exists locally.
-
-Reviewers receive both statuses' reproduction text with the prior finding so they can refute the evidence. The existing removal of recognized prior-review decision text also applies to these fields. The gate must not execute reviewer-supplied commands or automatically downgrade severity: inability to reproduce is evidence for the adjudicator, not proof of harmlessness. The gate forwards the record as text and never executes its `command`.
-
-## Record external adjudication
-
-The owner or the orchestrator acting under the owner's mandate can adjudicate a
-confirmed finding; the author can never accept its own rebuttal. This ledger
-records their declared decision, identity and reason, not authenticated authority.
-It grants no merge authority and never changes a recorded verdict: `REVIEW_FAIL` remains
-`REVIEW_FAIL`, including after an adjudication or a subsequent review.
+The owner or mandate-authorized orchestrator can adjudicate confirmed findings (an author can never accept its own rebuttal). The ledger records declared decisions, not authenticated or merge authority, and never changes recorded verdicts (`REVIEW_FAIL` stays `REVIEW_FAIL`).
 
 ```bash
 python3 "$HANIG_REVIEW_GATE_DIR/scripts/review.py" --open-findings --head SHA
@@ -209,86 +59,11 @@ python3 "$HANIG_REVIEW_GATE_DIR/scripts/review.py" --adjudicate FINDING_DIGEST \
   --decision overruled --author codex/gpt-6.2-sol
 ```
 
-Both commands are offline and emit JSON. Review input flags, including `--file`,
-are refused for ledger commands. `--head` takes the complete lowercase
-commit SHA. Reviews using two- or three-dot `--range` bind the journal head to the
-resolved commits supplied to Git's diff. Working-tree, single-revision and file
-inputs have no bound head; headless records remain intact and `UNATTRIBUTABLE`.
-Use the effective state home from the original `journal.path` and the original
-project directory; the configured state home may have fallen back during review.
+Both commands are offline, emit JSON, refuse review input flags (`--file`, etc.), and take a full lowercase 40-/64-hex `--head` (bound for two-/three-dot `--range`; headless records stay `UNATTRIBUTABLE`). Use the original `journal.path` state home and project dir. Specify `--round N` or `--round plan` when a digest spans multiple rounds; decisions are `overruled`, `accepted`, or `refuted_by_reproduction`. `--open-findings` exits 0 only when no open findings or `UNATTRIBUTABLE` records exist, 1 if any exist, and 4 on invalid input/unreadable history (pending files ignored; exit 0 certifies neither coverage nor complete capture). Decision fields validate strictly (ASCII tokens 1–256 chars; exact model-ID comparison after outer provider prefix); arbitrary text stays redacted. Persistence is non-gating: inspect `journal.written` and `ADJUDICATION_RECORDED` / `ADJUDICATION_UNCONFIRMED` (`JOURNAL_WRITE_FAILED` never closes a finding).
 
-Recording requires a matching confirmed finding on that head and a non-empty
-reason. If the digest occurs in multiple rounds, use the reported selectors:
-`--round N` for a numbered occurrence or `--round plan` for the null round.
-An omitted selector refuses ambiguity even after another occurrence is disposed. Decisions are
-`overruled`, `accepted` or `refuted_by_reproduction`; each records a disposition,
-not a fix or a pass. Declare all authors with repeatable `--author`; the record's
-`author` field is that list. Acceptor models use ARC-755's exact model-ID comparison
-after the outer provider prefix; names are not case-folded or substring-matched.
+## Running the gate
 
-The read-only query exits 1 when confirmed findings lack an adjudication for
-that head, round and digest, or when any canonical record has a missing/invalid
-decision field. It lists damaged records by path as `UNATTRIBUTABLE`, including
-already-redacted history and records otherwise associated with another head.
-It exits 0 only when neither open findings nor unattributable records exist,
-and 4 on invalid input or unreadable canonical history. Zero certifies neither
-review coverage nor complete historical capture. Unpublished pending files are ignored.
-
-Decision fields validate before recording and redaction exemption: full lowercase
-40-/64-hex heads, 64-hex finding/claim digests, positive integer or null rounds,
-boolean classifications, schema/type/decision/verdict labels, timestamps, and identities.
-Authors require PROVIDER/MODEL; acceptors may be names. Both are ASCII tokens of
-1–256 characters, slash-separated nonempty components starting with a letter or
-digit and continuing with letters, digits, `_ . : @ + -`. They retain exact bytes;
-invalid fields are refused before recording. Recognized schema keys retain their
-spelling; reason, notes and arbitrary reviewer text/extras remain redacted.
-The query preserves old bytes and reports obscured identities without guessing.
-
-Adjudications append redacted, immutable JSON lines through the same atomic,
-bounded, non-gating writer as reviews. A valid recording request exits 0 even
-when persistence is unconfirmed: inspect `journal.written` and the
-`ADJUDICATION_RECORDED` or `ADJUDICATION_UNCONFIRMED` status. A write failure
-emits `JOURNAL_WRITE_FAILED`; it never closes a finding without a canonical record.
-
-## Convergence
-
-Review is done when the findings still arriving are **out of scope, minor, or
-matters of taste**. It is never done when the findings list is empty; that will
-not happen, and waiting for it is the loop.
-
-### What "still finding things" actually meant here
-
-Across this repo's rounds the findings did not stop, but they changed character,
-and that change is the useful signal:
-
-| phase | what the findings were |
-|---|---|
-| early | false passes reachable by accident, no tampering needed |
-| middle | the same rule missing from a sibling path — twelve instances |
-| late | real findings whose honest fix had to be WEAKER than the finding implied |
-
-Recognising that last phase matters. Three times the strong fix was
-unavailable: an ownership anchor drawn from the evidence it validated, which
-created a worse false pass than it closed; interleaving detection that step
-numbers cannot support; and content-identity freshness that would have refused
-every deterministic re-run, which is a reproducibility tool's success case.
-**A real finding does not imply an available fix.** Documenting the limit is
-then the answer, and shipping the strong version of an unavailable fix costs
-more than the finding did. Once, building it was the only way to find that out.
-
-## The rule
-
-**Do not report work as complete, and do not assert that code works, until the
-gate has run and passed.** If it cannot run, say the work is unreviewed — do not
-substitute your own confidence for the review.
-
-**Whether to run another round is the user's call, not the agent's.**
-
-Set `HANIG_REVIEW_GATE_DIR` to the directory containing the `SKILL.md`
-instance this agent actually loaded. This normal shell variable has no
-agent-specific interpolation requirement; the quoted script path leaves the
-working directory, and therefore `--diff` or relative `--file` arguments,
-unchanged.
+**Do not report work complete or assert code works until the gate passes.** Whether to run another round is the user's call. Set `HANIG_REVIEW_GATE_DIR` to the loaded `SKILL.md` directory (leaving cwd and relative `--file`/`--diff` paths untouched):
 
 ```bash
 export HANIG_REVIEW_GATE_DIR="/path/to/loaded/hanig-review-gate"
@@ -300,211 +75,31 @@ python3 "$R" --kind implementation --round 1 --escalate --staged \
   --claim "This change cannot make an honest run fail."
 ```
 
-**Use `--escalate` for a ladder review.** It starts at the selected tier,
-adds reviewers not previously run, and stops at the first `REVIEW_FAIL` or
-`REVIEW_CLAIMS_REFUTED` with quorum:
+- **Escalation & profiles:** `--escalate` walks `fast` → `standard` → `deep`, calling only newly eligible reviewers and stopping on the first `REVIEW_FAIL` or `REVIEW_CLAIMS_REFUTED` with quorum. Without `--profile`, implementation reviews choose `fast` only when every changed path is documentation (`*.md`, `docs/**`, `examples/**`); paths under `scripts/`, `lib/`, `bin/`, `tests/`, any `reviewers.json`, external/parent `--file` targets, or empty/undeterminable sets choose `standard`. Explicit `--profile plan|fast|standard|deep` wins; `--only a,b` restricts seats and cannot combine with `--escalate`.
+- **Sizing preflight (offline, no credentials/ledger writes):**
+  ```bash
+  python3 "$HANIG_REVIEW_GATE_DIR/scripts/review.py" --size --range BASE..HEAD --json
+  ```
+  Reports decoded gathered `characters`, `planning_budget` (`100,000`), and `truncation_limit` (`180,000`): exit 0 `< 100,000`, 1 `100,000–179,999`, 2 `>= 180,000`, 4 invalid input (never a review verdict). Default answer budget is `64000` tokens (reasoning tokens come out of it); split oversized work instead of raising the budget.
+- **Context & contamination:** Describe what changed, never prior round verdicts/tiers/opinions (exact opening annotations and JSON gate reports are visibly stripped; see [PROTOCOL.md](PROTOCOL.md)). Pass `--threat-model` when applicable (excluded findings print under `OUT OF SCOPE` and do not gate). Sources: `--diff` (default), `--staged`, `--range`, repeatable `--file`; `--json` for machine output.
+- **Identity & enforcing round ledger:** `--round N` reserves against hashed identity `(origin URL, merge-base with --target [default origin/main], branch)` or explicit `--plan-name`/`--unit` (required in detached HEAD). Stored at `~/.local/state/hanig-review-gate/rounds/` (or absolute `XDG_STATE_HOME`; no fallback; lock timeout `ROUND_LOCK_WAIT_SECONDS` = 5s -> exit 4). Reused/lower/skipped rounds exit 4 before network calls; only settled zero-completion `REVIEW_UNAVAILABLE` runs may release (max 5 releases; a later reserved round keeps the older reservation with a warning; earlier interruptions, watchdog exits, and other verdicts keep reservations; offline commands `--list`, `--size`, `--open-findings`, and `--adjudicate` never reserve rounds; the audit journal never reads or writes the enforcing round ledger). Unreadable/partial ledger state refuses (retain and inspect rather than deleting); local state only (same state home, not cross-host). With no ledger history, round 1 accepts `--fresh-cycle-from PROFILE` recording `cycle: 1`, predecessor `"none declared"`.
 
-The tier order is `fast` → `standard` → `deep`. Enabled membership comes
-from `reviewers.json`; each step retains earlier results and calls only
-newly eligible reviewers. Use `--list --profile NAME` to inspect a fixed panel.
+## Claims, exit codes, and honest reporting
 
-A failing change costs its starting tier when that tier reaches quorum.
-Pass
-`--author codex/gpt-6.2-sol` for a change Sol authored: the gate excludes Sol
-even at `deep`, provided the remaining independent panel can reach quorum. This matters more than it
-sounds: across six review rounds on this repo, **every single one failed**, and
-running the full panel each time paid the slowest, dearest reviewer to re-find
-defects a cheap one had already caught.
-
-### Sizing a round
-
-Run an offline preflight with the same input flags as the intended review:
-```bash
-python3 "$HANIG_REVIEW_GATE_DIR/scripts/review.py" --size --range BASE..HEAD --json
-```
-`--size` uses the review's input-gathering function before truncation. It counts decoded characters, including file headers, separators and removal of recognized review-history signatures; it excludes UTF-8 byte expansion, prompt overhead and tokens. Text and JSON report `characters`, `planning_budget` (100,000) and `truncation_limit` (180,000).
-
-Exit 0 means below 100,000 characters; 1 means 100,000–179,999; 2 means at least 180,000. Empty input counts zero; invalid inputs retain usage-error exit 4. These are size results, never review verdicts. Plan coherent code units below the budget, including tests and documentation, and remeasure the complete PR delta before review.
-
-Sources are `--diff` (default), `--staged`, `--range` and repeatable `--file`, including the same combinations a review accepts. The preflight exits before provider configuration, transport, watchdog setup or review-journal writes. It needs no credentials, `--kind`, `--round` or claims.
-
-**Reasoning tokens come out of the answer's budget.** A large review can spend its allowance thinking and return no content; errors report token counts. The default answer budget is 64000. Split oversized work instead of relying on a larger answer budget.
-
-**Context describes what changed, not how the last round went.** Never tell the
-panel what a previous round decided, including through a `--file`. Put lengthy
-limits in files. Exact opening annotations and JSON gate reports are stripped;
-prompt and receipt notices identify removals. Unmatched allegations and
-measurements stay unchanged. See `PROTOCOL.md` for scope and blind spots.
-
-**Pass `--threat-model`** whenever the code has one. A finding whose
-preconditions it excludes is printed under OUT OF SCOPE and does not decide the
-verdict; everything else gates as before. Without the flag, every finding gates.
-
-Sources: `--diff` (working tree, default), `--staged`, `--range HEAD~3..HEAD`,
-`--file PATH` (repeatable). `--list` shows reviewers and live availability.
-Without `--profile`, implementation reviews select `fast` only when every
-changed path is documentation (`*.md`, `docs/**`, or `examples/**`). Paths
-under any `scripts/`, `lib/`, `bin/`, or `tests/` directory, and any
-`reviewers.json`, take precedence and select `standard`; all other changes
-also select `standard`. Git supplies the paths for `--diff`, `--staged`, and
-`--range`, including both sides of renames; repeatable `--file` inputs join
-that set. Explicit file symlinks retain both their supplied path and their
-resolved target in the set; targets outside the review root are undetermined.
-Empty or undeterminable path sets use `standard` and say why.
-Parent components in `--file` paths and files outside the review root are
-conservatively undetermined. The chosen tier and reason appear in text and
-JSON output. This is path classification, not an inspection of document contents.
-
-An explicit `--profile plan|fast|standard|deep` always wins: it picks a profile
-panel, or the starting tier with `--escalate`. Plan reviews retain their
-two-model panel, and `--list` without a profile retains the configured default.
-Author exclusion and panel floors apply after tier selection.
-`--only NAME` restricts to named reviewers, accepts `a,b,c` or repeated
-flags, and is not combinable with `--escalate`.
-
-`--kind plan|implementation` is REQUIRED for a real review, because a plan and
-an implementation get different panels and different rules, and leaving it
-implicit is how a design proposal got reviewed by the implementation panel.
-`--plan` is an alias for `--kind plan`. A plan review is validated on the panel
-that will ACTUALLY run, after `--only` and `--profile`: exactly two reviewers,
-from two different model makers, quorum 2, never escalated.
-
-`--round N` is required with `--kind implementation`. Before a review runs,
-the gate reserves that round for a hashed identity for `--staged`, `--range`,
-`--diff` and file reviews: origin URL, merge-base of HEAD with `--target`
-(default `origin/main`), and branch name. Optional `--plan-name` and/or `--unit` replace the branch component
-with the supplied plan/unit pair, preserving absent components as null.
-The repository must have an origin and a resolvable target; detached HEAD
-requires a plan/unit declaration. Normal fix commits and target advances
-that leave the merge-base unchanged retain the identity. Rebasing, branch
-renaming, remote changes and different plan/unit declarations can change it.
-
-The ledger lives at `~/.local/state/hanig-review-gate/rounds/` (or beneath an
-absolute `XDG_STATE_HOME`). It has no storage fallback. Each identity has an
-ordering lock and exclusive-create round markers. Lock acquisition waits up to
-`ROUND_LOCK_WAIT_SECONDS` (5 seconds); timeout returns exit 4. Reusing a round,
-claiming a lower one or skipping the preceding round returns exit 4 before
-providers run. Exhaustion requires every round 1 through `MAX_ROUNDS` for the
-same cycle and profile; missing rounds are named. Only an explicit successor
-cycle permits another round 1, except settled zero-completion
-`REVIEW_UNAVAILABLE` runs may release. Markers retain tokens, times, verdict and
-zero completions. Five releases are allowed; the sixth keeps the round and warns. A later reserved
-round also keeps the older reservation with a warning. Atomic replacement after
-audit append settles release; earlier interruptions, watchdog exits and other
-verdicts keep reservations. Orphan stages have no authority. Unreadable or
-partial state refuses review; retain and inspect it rather than deleting it
-to restart the bound. Plan reviews and offline size/list/adjudication commands
-do not reserve implementation rounds. The separate audit journal remains
-non-gating and is never read or written by the reservation operation.
-
-The ledger serializes processes sharing one state home only; it does not coordinate separate state homes or hosts. It cannot recover deleted history or prove hand-edited bytes authentic. It proves the ledger's present shape, not the order in which anyone wrote it.
-
-This is local enforcing state, not protection against a caller who deletes
-it, changes its location or deliberately changes the identity inputs. Existing
-audit history is not migrated into it. With no ledger history, round 1 accepts
-`--fresh-cycle-from PROFILE` and records cycle 1 with predecessor
-`{"cycle": "none declared", "profile": "PROFILE"}`. Repeat that declaration on
-later rounds to retain its panel floor; no historical exhaustion is inferred.
-An unresolvable home returns exit 4 with `XDG_STATE_HOME` and `HOME` guidance.
-Subsequent rounds also require `--dispositions FILE`. Identity refusals name the repair: configure origin, fetch the target or pass `--target REF`, or declare stable `--plan-name NAME --unit UNIT` for a detached checkout.
-`--json` for machine consumption.
-
-## Claims are the point
-
-Reviewing a diff finds bugs. Reviewing *claims against* a diff finds the more
-dangerous thing: a true-sounding statement the code does not support. Pass the
-actual assertions, verbatim — the ones that would go in the summary.
-
-Each reviewer marks every claim `supported`, `refuted`, or `unverifiable`.
-**Any refuted claim fails the gate**, regardless of findings.
-With quorum and no confirmed findings, that is `REVIEW_CLAIMS_REFUTED`;
-confirmed findings take precedence as `REVIEW_FAIL`. Correct the claim (or
-the code), then re-run the gate; do not argue a refuted claim into a pass.
-These rounds count toward the same round bound.
-
-## Exit codes
+Reviewers mark each claim `supported`, `refuted`, or `unverifiable`. **Any refuted claim fails the gate**: with quorum and zero confirmed findings that returns `REVIEW_CLAIMS_REFUTED` (exit 7); confirmed findings (critical/major, high/medium confidence, concrete failure scenario) take precedence as `REVIEW_FAIL` (exit 1). Correct the claim or code and re-run within the round bound.
 
 | Exit | State | Meaning |
 |---|---|---|
-| 0 | `REVIEW_PASS` / `PLAN_PASS` | Implementation quorum passed, or both plan seats completed and the joint criteria passed |
-| 1 | `REVIEW_FAIL` / `PLAN_FAIL` | Implementation has a confirmed defect, or the plan's joint criteria failed |
-| 2 | `REVIEW_UNAVAILABLE` | No implementation reviewer ran, or either plan seat failed in either turn — **not a pass** |
-| 3 | `REVIEW_PARTIAL` | Some ran, quorum unmet — degraded, caller decides |
+| 0 | `REVIEW_PASS` / `PLAN_PASS` | Implementation quorum passed, or both plan seats completed and joint criteria passed |
+| 1 | `REVIEW_FAIL` / `PLAN_FAIL` | Confirmed defect, or plan joint criteria failed |
+| 2 | `REVIEW_UNAVAILABLE` | No implementation reviewer ran, or either plan seat failed — **not a pass** |
+| 3 | `REVIEW_PARTIAL` | Quorum unmet — degraded, caller decides |
 | 4 | `REVIEW_ERROR` | Usage or configuration error |
 | 6 | `REVIEW_INCOMPLETE` | A required reviewer returned no usable content |
 | 7 | `REVIEW_CLAIMS_REFUTED` | Quorum reviewed; refuted claims and zero confirmed findings — **not a pass** |
 
-Exit 5 remains reserved; adjudication introduces no review verdict.
+Exit 5 is reserved. `REVIEW_PASS` means only that the named responding panel failed to refute the claims (never proof; always state who ran, errored, or was unavailable; never substitute for executing tests). Review is done when remaining findings are out of scope, minor, or taste; a real finding does not always imply an available strong fix (documenting the limit can be the right answer).
 
-Every nonzero state is non-success. Incomplete review is not an implementation
-failure, but it supplies no judgment and cannot satisfy required coverage.
-
-A finding counts against the implementation gate only if it is critical or major, at high or
-medium confidence, **and** carries a concrete failure scenario. That filter
-exists to keep speculative and stylistic noise from blocking real work.
-
-## Reading a pass honestly
-
-`REVIEW_PASS` means *N models failed to refute this*. It is not proof of
-correctness, and should be reported as what it is. Say which reviewers ran.
-Never describe a change as "reviewed by three models" when two were skipped —
-the gate prints exactly who ran, who errored, and who was unavailable, so the
-honest sentence is always available.
-
-## Reviewers
-
-Routing lives in `reviewers.json`; `review.py --list` measures availability live. The config carries **no quality scores**.
-
-Read the enabled seats, model IDs, efforts and profile membership from
-`reviewers.json`. Inspect standard and deep with `review.py --list --profile
-standard` and `review.py --list --profile deep`; these probe the selected
-providers live.
-Provider keys come from `~/.zshrc`; run through `zsh -ic` so the gate can read them.
-
-**Point releases resolve per project** (`scripts/resolve_models.py`; README, "Model families").
-
-Plan and committee membership also come from `reviewers.json`. Declared authors
-are excluded.
-Reviewers run in parallel, so wall time is the slowest one.
-
-Transient 5xx and 429 responses are retried with backoff — a gateway hiccup must
-not silently shrink the panel and make the gate weaker than it reports.
-
-## What this does not do
-
-It cannot prove correctness, only that several independent adversarial readers
-failed to break the claim. It does not review anything outside the diff you give
-it. And it is not a substitute for the tests — run those too; the gate reviews
-code, it does not execute it.
-
-## Reviewing the review: what three rounds actually produced
-
-Run against `hanig-verified-workflow/contract.py`, which had a passing test
-suite and had been reported as working:
-
-| Round | Reviewers completing | Real defects found |
-|---|---|---|
-| 1 | 1 of 3 | 1 |
-| 2 | 2 of 3 | 4 |
-| 3 | 2 of 3 | 5 |
-
-The worst failures were false passes: pre-created artifacts certified work
-that never ran, then unreachable scheduler history let a pending job pass.
-The author's tests missed both. Later rounds became useful only with a declared
-plan, bounded iterations and a step-back rule. Keep the threat model explicit
-and claims about behavior: taste and hypothetical adversaries outside the
-contract made earlier rounds unbounded.
-
-**Required-refusal limit (ARC-1163):** the gate cannot independently distinguish required from wrongful refusal; a counter-claim refutation always blocks a pass.
-Adjudicate required refusals outside the gate via `hanig-orchestrate`'s `adjudication.matrix`, preserving the verdict. See [PROTOCOL.md](PROTOCOL.md) for the owner-reversible orchestrator decision (not an owner decision), rationale and durable regression evidence.
-
-## Known limitation: `command` predicates are unsandboxed
-
-A `command` predicate in a contract runs through `sh` with the verifier's full
-privileges. A hostile one can `SIGKILL` the verifier, and no exception handler
-can prevent that — `contract.py` catches `BaseException`, which SIGKILL bypasses
-entirely. Sol raised this and it is correct.
-
-The honest statement is therefore narrower than "predicates cannot crash the
-verifier": *malformed* predicates cannot, but `contract.json` is trusted input.
-Do not run `check` against a contract you did not write.
+- **Reviewers & keys:** Routing lives in [reviewers.json](reviewers.json) (no quality scores); inspect live availability with `review.py --list --profile standard` and `review.py --list --profile deep`. Keys load from `~/.zshrc` (run via `zsh -ic`); point releases resolve per project via `scripts/resolve_models.py`. Reviewers run in parallel and retry transient 5xx/429 responses with backoff.
+- **Required-refusal limit (ARC-1163):** The gate cannot distinguish required from wrongful refusal; a counter-claim refutation always blocks a pass. Adjudicate required refusals outside the gate via `hanig-orchestrate`'s `adjudication.matrix`, preserving the verdict ([PROTOCOL.md](PROTOCOL.md)).
+- **Known limitation (`command` predicates are unsandboxed):** A `command` predicate in a contract runs through `sh` with the verifier's privileges; `contract.json` is trusted input — do not run `check` against a contract you did not write.
