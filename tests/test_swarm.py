@@ -1552,6 +1552,43 @@ class TestAdvanceDispatchExtraction(unittest.TestCase):
             bind.assert_called_once()
             self.assertEqual(state["units"]["u1"]["job_id"], "777")
             self.assertEqual(state["units"]["u1"]["state"], "SUBMITTED")
+            self.assertIs(swarm.SADV.V, swarm.V)
+            self.assertIs(swarm.SADV.W, swarm.W)
+
+    def test_live_submit_replacement_mid_advance_applies_to_next_unit(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_dir = root / "state"
+            state_dir.mkdir()
+            plan = {"name": "live-replace", "units": [
+                {"id": "u1", "kind": "slurm", "command": "true",
+                 "runtime": "none", "outputs": ["o1.txt"]},
+                {"id": "u2", "kind": "slurm", "command": "true",
+                 "runtime": "none", "outputs": ["o2.txt"]},
+            ]}
+            state = {"units": {}}
+
+            def first_submit(u, *args, **kwargs):
+                if u["id"] == "u1":
+                    swarm._submit = lambda *a, **kw: ("222", None)
+                    return "111", None
+                return None, "retired submitter"
+
+            orig_submit = swarm._submit
+            try:
+                swarm._submit = first_submit
+                with mock.patch.object(swarm.SS, "renew_lease", return_value=True), \
+                     mock.patch.object(swarm.SD, "_bind", return_value=None):
+                    _rep, disp, halted = swarm.advance(
+                        plan, state, str(state_dir), str(root / "runs"), False)
+            finally:
+                swarm._submit = orig_submit
+            self.assertEqual(disp, 2)
+            self.assertIsNone(halted)
+            self.assertEqual(state["units"]["u1"]["job_id"], "111")
+            self.assertEqual(state["units"]["u2"]["job_id"], "222")
+            self.assertEqual(state["units"]["u2"]["state"], "SUBMITTED")
 
 
 if __name__ == "__main__":
