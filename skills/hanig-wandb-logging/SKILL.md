@@ -51,75 +51,16 @@ values before -- or use --.
 
 ## Supported envelope and accepted limits
 
-Owner, 2026-11-10: lower() leaf keys; remove _ - . and spaces.
-DEFAULT_SECRET_KEYS (exact normalized frozenset):
+Secret redaction normalizes leaf keys (`lower()`, stripping `_ - .` and spaces) against `DEFAULT_SECRET_KEYS` plus caller `secret_keys` (excluding `RESERVED_KEYS`, which raises `ValueError` before SDK calls or writes), pruning matching config/base_config entries before labels/metadata and recording dotted paths in `provenance.redacted_keys`. Explicit `run_name` labels and free text pass through caller-owned; `git_remote` drops userinfo/query/fragment. Complete key sets (`DEFAULT_SECRET_KEYS`, `RESERVED_KEYS`), container recursion, equality, and name-validation details live in [naming](references/naming.md).
 
-```text
-apikey wandbapikey password passwd passphrase secret secretkey clientsecret
-secretaccesskey awssecretaccesskey accesstoken refreshtoken authtoken bearertoken
-sessiontoken hftoken githubtoken privatekey encryptionkey credentials
-```
-
-Orchestrator, 2026-11-10: dataclass fields (no deepcopy),
-argparse.Namespace and SimpleNamespace recurse as mappings; others serialize unchanged.
-secret_keys adds normalized names; config/base_config entries are removed before
-labels/metadata, with paths in provenance.redacted_keys. git_remote drops userinfo/query/fragment; unparseable becomes null. Newly secret resume keys are pruned with one
-path/earlier-exposure warning; labels stay: use a new output_dir with complete secret_keys.
-
-Owner, 2026-11-11: launch/resume keys become text (Enum string value/name,
-otherwise str(key)). Every Mapping, list, tuple, deque, set, frozenset and converted
-record recurses; deques/sets become lists, sets sorted if orderable, else iteration order.
-Metrics bind to trainer/step or the configured axis; config_deltas equality
-requires identical types/equal values; floats use == or both NaN, never serialized text.
-Collisions warn once/path/launch; last entry stays. Metrics, including loss/password, stay in artifacts/cards/summaries.
-Explicit names accept W&B letters/digits/-/_/., 1..128 chars; dates/versions/status warn.
-Status words match whole tokens; old-faithful-geyser never warns.
-RESERVED_KEYS is a normalized frozenset: provenance family model data seed name notes group,
-gitcommit gitdirty gitbranch gitremote command program flags positionalcount cwd host python torch wandb
-cudavisibledevices slurm startedat redactedkeys jobid arrayjobid arraytaskid
-jobpartition jobnumnodes ntasks restartcount clustername.
-secret_keys may not name these generated fields: ValueError before SDK calls/writes.
-Reserved config entries remain subject to the default secret list (no overlap).
-Explicit run_name model/data/seed/deltas are caller labels used as written,
-like free text; the helper validates secret_keys but does not redact labels.
-In-memory set signatures use a private sentinel, distinct from caller lists.
-Set signatures compare members by value, including signed zero, independent of order.
-Unknown remote card sizes say size unknown. Direct config_deltas warns once/path
-across config and base_config together, including empty/absent base.
-Explicit empty artifact names refuse; only None selects a generated name.
-run_name fits integer max_len>=1; <1 raises ValueError.
-
-## Known limits
-
-- "a.b"/nested a,b deltas collide; avoid dotted keys.
-- Pre-upgrade snapshots lack module/qualname identity: resume warns legacy-types,
-  compares normalized values, preserves the old evidence. Use a new output_dir
-  to record full identities; restore training independently.
-- An interrupted snapshot write can leave differing snapshots; the next start
-  refuses before init. Preserve both, copy the newer intact snapshot over the
-  other, or use a new output_dir. This follows the owner byte-equality rule.
+- `"a.b"` and nested `a`/`b` deltas collide; avoid dotted keys.
+- Pre-upgrade snapshots lack module/qualname identity (resume warns `legacy-types` and preserves old evidence; use a new `output_dir` for full identities).
+- Interrupted snapshot writes can leave differing snapshots (`wandb_config.json` vs `wandb_config.backup.json`): next start refuses before init; preserve both and copy the intact snapshot over the other, or use a new `output_dir`.
 
 ## Read-only project audit
 
-[audit_project.py](scripts/audit_project.py) reuses adjacent wbkit lint rules,
-loaded by file identity. With authorized read access:
-
-```python
-import wandb, audit_project
-report = audit_project.audit(wandb.Api(), "entity/project", limit=200)
-```
-
-A wandb module also works. The limit bounds runs; noninternal artifact collections are checked; `wandb-` prefixes, `run_table` and `job`
-are omitted, matching wbkit lint exclusions. The greatest numeric vN version
-is selected across the iterator. Adapters without vN metadata warn and use the
-first version; supply vN metadata before relying on results.
-Reports group issues by rule with rows and clean totals.
-API errors propagate; restore access and retry. No run or artifact is edited.
-Unreadable archives name the archive: preserve it and make it readable, or use a new output_dir.
-For CLI rendering, call audit_project.main(wandb.Api()); W&B stays caller-supplied.
+[audit_project.py](scripts/audit_project.py) reuses adjacent `wbkit` lint rules by file identity (`audit_project.audit(wandb.Api(), "entity/project", limit=200)` or `audit_project.main(wandb.Api())`). It omits internal `wandb-` prefixes, `run_table`, and `job`, selects the greatest numeric `vN` version (warning and falling back to the first version if `vN` metadata is absent), propagates API errors, names unreadable archives, and edits no runs or artifacts.
 
 ## Artifacts and lineage
 
-[Artifacts](references/artifacts.md): SDK calls, cards, metadata, lineage and
-checkpoint labels. Restore matching snapshots on disagreement; recovery archives
-prune secrets or withhold unsafe bytes.
+See [Artifacts](references/artifacts.md) for SDK calls, cards, metadata, lineage, and checkpoint labels; recovery archives prune secrets or withhold unsafe bytes.
