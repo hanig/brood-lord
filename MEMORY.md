@@ -16,37 +16,37 @@ discovery for the exact current total.
 The block below is preserved from its recorded commit. It is historical
 snapshot data, not a claim about the current checkout or running work.
 
-<!-- handoff:facts:begin sha=6e303ea4333a084a592bd739132046012f1eaae4 -->
+<!-- handoff:facts:begin sha=4a2935d3fe6a9e1d3df5d4b97365e32888b3a123 -->
 
 **Recent commits** (regenerated in full: no previous marker):
-- `6e303ea Merge pull request #29 from hanig/hanig/orchestrator-plan`
-- `533856e policy: set the orchestrator spend ceiling and scope`
-- `99560fa policy: the orchestrator mandate, and the concurrence rule for overriding a finding`
-- `6b8939c docs: what a handoff from a mortal orchestrator must carry`
-- `2c086de docs: plan for the orchestrator role, from GPT-Astra`
-- `5cf9ab5 Merge pull request #26 from hanig/swarm-94cd6f9014a5a20a`
-- `4d20935 feat: add audit-only review journal`
-- `099fddf chore: preserve review journal attempt`
-- `d143da1 Merge pull request #25 from hanig/hanig/effort-nulls`
-- `d3eb9b3 Merge pull request #24 from hanig/hanig/arc642-pushinsteadof`
-- `10adbdb test: stop the worktree-cleanup test depending on a host paseo`
-- `0e1f67c docs: record why glm-5.3 and kimi-k2.7-code carry a null effort`
-- `07bfb09 fix: anchor the push destination git actually writes to`
-- `bb9e40f fix: pin single-pass remote judgment routes`
-- `91c08e2 fix: judge code agents on terminal events`
-- `dc276bc fix: judge code attempts from anchored remote refs`
-- `90f7c44 wip: preserve ARC-642 review-blocked implementation`
-- `f1ea79a chore: preserve ARC-642 attempt branch`
-- `2eb10f4 Merge pull request #22 from hanig/swarm-2385ffdd697921cd`
-- `b98ab0a Merge pull request #23 from hanig/hanig/promisor-test-premise`
-- `c88a409 fix: make the promisor test establish its own premise`
-- `a3c349f Add versioned tracker drain contract`
-- `a150c65 chore: preserve swarm worktree branch`
-- `eea5d90 Merge pull request #20 from hanig/swarm-e38e56f2b0268969`
-- `fdfdd7d Add candidate-merge integration verification`
+- `4a2935d3 docs(skills): trim hanig-orchestrate, hanig-review-gate, and hanig-wandb-logging SKILL.md bloat (ARC-5105) (#411)`
+- `8dc0a7d5 refactor(review): extract CLI handlers, escalation policy, and _main phases to review_cli.py (ARC-5110) (#410)`
+- `758f48d6 docs(skills): trim hanig-swarm and hanig-project SKILL.md bloat and update drift.coordinator-size (ARC-5101) (#409)`
+- `f414c86c refactor(review): extract round-ledger and verdict-schema subsystems from review.py (ARC-5104) (#408)`
+- `c93086c3 refactor(swarm): extract advance retry, claims, dispatch, and final-intent phases to swarm_advance.py (ARC-5100) (#407)`
+- `200780a6 refactor(swarm): extract advance reconciliation, recovery, judgment, and settlement to swarm_advance.py (ARC-5099) (#406)`
+- `f622dc1b refactor(swarm): extract _submit phases to swarm_submit.py (ARC-5108) (#405)`
+- `e167a4d5 refactor(swarm): extract remaining validate_plan phases to swarm_validate.py (ARC-5102) (#404)`
+- `8d7efdea refactor(swarm): extract validate_plan schema, retry, limits, and DAG phases (ARC-5107) (#403)`
+- `8fe55ac4 perf(tests): speed up test_x_bfs_exhaustive fixtures, expand SPLIT, refresh durations (ARC-5109) (#402)`
+- `11381534 docs: trim CLAUDE.md below 18 KB and fix README/field-report drift (ARC-5106) (#401)`
+- `49e9a585 ci: adopt scripts/run_tests.py in release-validation with XDG parity (ARC-5098) (#400)`
+- `6edb2f65 Amend the mandate for multi-host custody and a Sonnet concurrence alternate (#399)`
+- `5297fa2f Document author exclusion, panel reserves, and D5 host custody (#397)`
+- `e8d8fef9 Give archive fixtures headroom under host load (#398)`
+- `9b5cd776 Persist the declared host in D5 custody (#396)`
+- `77f1f263 Declare the host for D5 session anchors and add the exec launcher (ARC-5091) (#395)`
+- `22daa115 Exclude authors by canonical model identity and restore panels from declared reserves (ARC-5089) (#394)`
+- `87081c54 Add an uncertified Antigravity installer adapter (#393)`
+- `c62b8de6 Seat Gemini Neon in committee and planning profiles (#392)`
+- `273f932b Move Sol and Astra seats and the code author to the 6.2 releases (ARC-5058) (#391)`
+- `23d3a487 Add a one-shot coordinator state event waiter (ARC-5040) (#389)`
+- `80f78f7a Record triage for debrief packet 5309ec23 (#388)`
+- `ce4d99e2 Preserve Slurm settle windows during accounting outages (#387)`
+- `3db8c426 Stop Linear commands at a rate limit and report what remains (ARC-5039) (#386)`
 
-**Uncommitted paths** (1):
-- `?? docs/handoff-2026-09-20.md`
+**Uncommitted paths** (0):
+- none
 
 **Open contracts** (0):
 - none found under this directory
