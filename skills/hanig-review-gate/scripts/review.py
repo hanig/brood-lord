@@ -132,6 +132,7 @@ def _load_sibling(module_name, filename):
 
 _ledger = _load_sibling("_hanig_review_gate_ledger", "review_ledger.py")
 _schema = _load_sibling("_hanig_review_gate_schema", "review_schema.py")
+_cli = _load_sibling("_hanig_review_gate_cli", "review_cli.py")
 
 def change_identity(target="origin/main", plan_name=None, unit=None):
     return _ledger.change_identity(target, plan_name, unit, facade=_SELF)
@@ -1494,66 +1495,7 @@ def record_adjudication(args, round_no):
 
 
 def cmd_ledger(args):
-    """Offline command outcomes are ledger status, never a review pass."""
-    if not valid_head(args.head):
-        config_error("--head must be a full lowercase commit SHA. Pass the "
-                     "reviewed range head, not a moving ref or abbreviation.")
-    if args.adjudicate is not None:
-        if not valid_digest(args.adjudicate):
-            config_error("--adjudicate must be a full lowercase SHA-256 digest. "
-                         "Pass a validated finding digest from --open-findings.")
-        if (not args.author or any(not valid_author(a) for a in args.author)
-                or not valid_identity(args.accepted_by)):
-            config_error("Pass --author PROVIDER/MODEL and --accepted-by NAME "
-                         "as ASCII tokens of at most 256 characters: letters, "
-                         "digits, _ . : @ + - and nonempty / components; "
-                         "each component starts with a letter or digit.")
-        if adjudicator_is_author(args.accepted_by, args.author):
-            config_error("the author cannot accept its own rebuttal. Pass the "
-                         "independent owner or mandated orchestrator in --accepted-by.")
-        if not args.reason or not args.reason.strip():
-            config_error("Pass a non-empty --reason for the external decision.")
-    elif any(value is not None for value in
-             (args.accepted_by, args.reason, args.decision, args.round)):
-        config_error("Drop adjudication fields when querying --open-findings.")
-    try:
-        records = read_review_journal(review_journal_path(args.file))
-        findings, adjudicated, unattributable, unreadable = journal_findings(records, args.head)
-    except (OSError, ValueError, argparse.ArgumentTypeError) as exc:
-        config_error(redact(f"cannot read adjudication history: {exc}. "
-                            "Pass the original state home after repairing its journal."))
-    if args.open_findings:
-        opened = [finding for key, finding in findings.items()
-                  if key not in adjudicated]
-        print(json.dumps(redact_ledger({
-            "state": ("UNATTRIBUTABLE" if unattributable else
-                      "OPEN_FINDINGS" if opened else "NO_OPEN_FINDINGS"),
-            "reviewed_head": args.head, "open_findings": opened,
-            "unattributable_records": unattributable,
-            "unreadable_records": unreadable,
-        }), indent=2))
-        return 1 if opened or unattributable else 0
-    selected_round = None if args.round == "plan" else args.round
-    matches = [key for key in findings if key[1] == args.adjudicate
-               and (args.round is None or key[0] == selected_round)]
-    if not matches:
-        config_error("no confirmed finding matches this digest, head and round. "
-                     "Pass a finding listed by --open-findings --head SHA.")
-    if len(matches) != 1:
-        selectors = sorted({"--round plan" if key[0] is None
-                            else f"--round {key[0]}" for key in matches})
-        config_error("the finding occurs in multiple rounds. Available selectors: "
-                     + ", ".join(selectors) + ". Pass one to identify the occurrence.")
-    args.decision = args.decision or "overruled"
-    journal = record_adjudication(args, matches[0][0])
-    print(json.dumps(redact_ledger({
-        "state": ("ADJUDICATION_RECORDED" if journal["written"]
-                  else "ADJUDICATION_UNCONFIRMED"),
-        "reviewed_head": args.head, "round": matches[0][0],
-        "finding_digest": args.adjudicate, "decision": args.decision,
-        "journal": journal, "review_verdict_changed": False,
-    }), indent=2))
-    return 0  # valid request; persistence is separately confirmed or unconfirmed
+    return _cli.cmd_ledger(args, _SELF)
 
 
 reject_duplicate_keys = _schema.reject_duplicate_keys
@@ -1904,309 +1846,43 @@ LADDER = ["fast", "standard", "deep"]
 
 
 def changed_paths(args):
-    """Collect paths for the same sources as gather; uncertainty costs a tier.
-
-    NUL delimiters preserve whitespace in names; --no-relative retains the
-    repository prefix even from a subdirectory with diff.relative enabled.
-    Disabling rename detection
-    includes both the removed and added path, so renaming code to docs cannot
-    hide the code side. Range syntax remains Git's, not another parser here.
-    """
-    paths = set()
-    revision = (["HEAD"] if args.diff else ["--cached"] if args.staged
-                else [args.range] if args.range else None)
-    if revision is not None:
-        try:
-            result = subprocess.run(
-                ["git", "diff", "--name-only", "-z", "--no-relative", "--no-renames",
-                 "--no-ext-diff", "--no-textconv", *revision, "--"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
-            if result.returncode:
-                return None, "Git could not determine changed paths"
-            raw = result.stdout.decode("utf-8")
-            if raw and not raw.endswith("\0"):
-                return None, "Git returned an incomplete changed-path set"
-            paths.update(raw[:-1].split("\0") if raw else [])
-        except (OSError, subprocess.SubprocessError, UnicodeError, ValueError):
-            return None, "Git changed-path lookup was unavailable"
-    if args.file:
-        top = git_out("rev-parse", "--show-toplevel").rstrip("\n")
-        root = Path(top) if top else Path.cwd()
-        for value in args.file:
-            path = Path(value)
-            if ".." in path.parts:
-                return None, "a --file path contains unresolved parent components"
-            absolute = path if path.is_absolute() else Path.cwd() / path
-            try:
-                lexical = absolute.relative_to(root)
-                target = absolute.resolve(strict=True).relative_to(root.resolve())
-                # Keep BOTH identities: a symlink must not hide either an
-                # executable lexical directory or an executable target path.
-                paths.update((lexical.as_posix(), target.as_posix()))
-            except (OSError, RuntimeError, ValueError):
-                return None, "a --file path or target is outside the review root or unresolved"
-    return paths, ""
+    return _cli.changed_paths(args, _SELF)
 
 
-def profile_for_paths(paths, unknown_reason=""):
-    """Only a known, nonempty, wholly documentary path set earns fast."""
-    if paths is None:
-        return "standard", unknown_reason or "changed paths could not be determined"
-    if not paths:
-        return "standard", "no changed paths could be determined"
-    for path in paths:
-        parts = path.split("/")
-        # Executable/gate locations take precedence over the .md convention.
-        if (parts[-1] == "reviewers.json"
-                or any(p in ("scripts", "lib", "bin", "tests") for p in parts[:-1])
-                or not (path.endswith(".md")
-                        or path.startswith(("docs/", "examples/")))):
-            return "standard", "at least one changed path is not documentation"
-    return "fast", f"all {len(paths)} changed paths are documentation"
+profile_for_paths = _cli.profile_for_paths
 
 
 def select_profile(args):
-    if args.profile is not None:
-        return args.profile, ("plan review" if args.kind == "plan"
-                              else "explicit --profile")
-    if args.list:
-        return DEFAULT_PROFILE, "configured default for --list"
-    return profile_for_paths(*changed_paths(args))
+    return _cli.select_profile(args, _SELF)
 
 
 def escalation_tiers(args):
-    # Direct callers predating automatic selection retain the original ladder.
-    start = getattr(args, "selected_profile", "fast")
-    if start not in LADDER:
-        config_error("--escalate requires an implementation tier: "
-                     "Pass --profile fast, standard, or deep.")
-    return LADDER[LADDER.index(start):]
+    return _cli.escalation_tiers(args, _SELF)
 
 
 def author_argument(value):
-    """Keep the complete model ID after the first provider separator."""
-    if not valid_author(value):
-        raise argparse.ArgumentTypeError(
-            "author must be PROVIDER/MODEL without whitespace or control "
-            "characters, using ASCII token components (at most 256 characters); "
-            "pass the provider and the model id the reviewer runs as, e.g. openai/MODEL")
-    return value
+    return _cli.author_argument(value, _SELF)
 
 
-def round_argument(value):
-    """Keep an explicit plan selector distinct from an omitted selector."""
-    if value == "plan":
-        return value
-    try:
-        return int(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError("round must be an integer or plan")
-
-
-def in_profile(rev, profile):
-    """THE eligibility rule. Both selection paths must call this one.
-
-    An UNDECLARED reviewer is in NO profile. It used to be in every profile,
-    so adding an entry without a `profiles` key silently put a third model on
-    the two-model plan panel. That was fixed once, in the normal selection
-    path, and NOT in escalate(), which kept
-    `not r.get("profiles") or tier in r["profiles"]`: the exact inclusive
-    spelling, still live on the path every escalated review takes. One fix,
-    two call sites, one of them missed, which is this repo's most repeated
-    defect.
-
-    An EMPTY list is treated the same as a missing key. "profiles": [] is a
-    reviewer who declared membership in nothing, and reading that as
-    membership in everything is the same inversion.
-    """
-    return profile in (rev.get("profiles") or [])
+round_argument = _cli.round_argument
+in_profile = _cli.in_profile
 
 
 def implementation_panel_policy(args, roster, selected):
-    """Validate the declared cycle, without turning audit history into authority.
-
-    The journal has no change identity or historical profile membership. A
-    fresh cycle declares its predecessor profile explicitly; the separate
-    round ledger checks exhaustion and identity. Count distinct reviewers from the
-    current routing config, never only those whose credentials are available.
-    """
-    override = args.allow_single_reviewer
-    if override is not None and (
-            not override.strip() or override.splitlines() != [override]):
-        config_error("--allow-single-reviewer needs a non-empty one-line "
-                     "reason. Pass the reason for the exceptional quorum.")
-    if args.kind != "implementation":
-        if override is not None or args.fresh_cycle_from is not None:
-            config_error("--allow-single-reviewer and --fresh-cycle-from are "
-                         "implementation-only. Drop them for a plan review.")
-        return {"single_reviewer_override": None, "fresh_cycle": None}
-    if override is not None and args.quorum != 1:
-        config_error("--allow-single-reviewer is only for --quorum 1. Drop "
-                     "the override when requesting a larger quorum.")
-
-    fresh = None
-    if args.fresh_cycle_from is not None:
-        previous = {r["name"] for r in roster
-                    if r.get("enabled", True)
-                    and in_profile(r, args.fresh_cycle_from)}
-        if not previous:
-            config_error("the replaced profile has no enabled reviewers. "
-                         "Pass --fresh-cycle-from with a populated profile.")
-        floor = max(2, len(previous))
-        selected_names = [r["name"] for r in selected if r.get("enabled", True)
-                          and (not args.escalate
-                               or any(in_profile(r, tier)
-                                      for tier in escalation_tiers(args)))]
-        panel = set(selected_names)
-        if len(panel) != len(selected_names):
-            config_error("a fresh cycle cannot count duplicate reviewer "
-                         "names as independent verdicts. Pass a routing "
-                         "configuration with distinct enabled reviewer names.")
-        if len(panel) < floor:
-            config_error(
-                f"fresh cycle from {args.fresh_cycle_from} requires at least "
-                f"{floor} reviewers; the selected panel has {len(panel)}. "
-                "Drop --only or select a profile with enough reviewers; "
-                "a single-reviewer override cannot lower this floor.")
-        fresh = {"replaces_profile": args.fresh_cycle_from,
-                 "profile_reviewers": sorted(previous),
-                 "minimum_reviewers": floor,
-                 "provenance": "caller-declared; current enabled profile"}
-
-    if args.quorum == 1 and override is None:
-        config_error(
-            "an implementation review needs at least two verdicts. Pass "
-            "--quorum 2 or, for an explicit exception, "
-            "--allow-single-reviewer REASON; the override will be recorded.")
-    # Use the same floor in decide_state and the ladder's early-stop test.
-    # Availability cannot silently shrink a declared replacement panel.
-    if fresh is not None:
-        args.quorum = max(args.quorum, fresh["minimum_reviewers"])
-    return {"single_reviewer_override": override, "fresh_cycle": fresh}
+    return _cli.implementation_panel_policy(args, roster, selected, _SELF)
 
 
 def panel_policy_text(policy):
-    """Provenance belongs on the verdict line, including non-pass outcomes."""
-    parts = []
-    fresh = policy["fresh_cycle"]
-    if fresh is not None:
-        parts.append(f"FRESH_CYCLE from {fresh['replaces_profile']}; "
-                     f"minimum {fresh['minimum_reviewers']} reviewers; "
-                     f"{fresh['provenance']}")
-    if policy["single_reviewer_override"] is not None:
-        parts.append("SINGLE_REVIEWER_OVERRIDE: "
-                     + redact(policy["single_reviewer_override"]))
-    return "" if not parts else " — " + "; ".join(parts)
+    return _cli.panel_policy_text(policy, _SELF)
 
 
 def validate_escalation_panel(all_reviewers, args):
-    """Refuse an empty ladder before main arms the provider watchdog."""
-    tiers = escalation_tiers(args)
-    # An escalation over an empty ladder used to run zero reviewers and
-    # return four empty lists, which reads downstream as "nobody found
-    # anything". Tightening in_profile() makes that reachable: a roster whose
-    # entries all lack a `profiles` key now matches no tier at all. Refuse it
-    # here, where the cause is still visible.
-    if not any(in_profile(r, tier) for tier in tiers for r in all_reviewers):
-        config_error(
-            "no reviewer is in any escalation tier "
-            f"({', '.join(tiers)}). A reviewer with no 'profiles' key, or an "
-            f"empty one, is in NO profile, so --escalate would run nobody "
-            f"and report no findings, which is indistinguishable from a "
-            f"clean review. Name one or more tiers in that reviewer's "
-            f"'profiles' in reviewers.json, or pass --only to select "
-            f"reviewers directly.")
-
-    return tiers
+    return _cli.validate_escalation_panel(all_reviewers, args, _SELF)
 
 
 def escalate(all_reviewers, prompt, args, truncated, label, body_len):
-    """Cheapest-first with early exit.
-
-    Running the full panel every time means paying for the slowest, dearest
-    reviewer to re-find what a cheap one already caught. Each tier adds only
-    the reviewers the previous tier did not run; the first failing tier with
-    quorum ends it, including a claims-only REVIEW_CLAIMS_REFUTED result.
-    """
-    seen, completed, failed, unavailable = set(), [], [], []
-    tiers_run = []
-    tiers = validate_escalation_panel(all_reviewers, args)
-    # Findings ACCUMULATE across tiers. Computed per tier, a finding from an
-    # earlier tier was forgotten once a later tier came back clean with quorum
-    # met, so the ladder fell through to the dearest reviewer with a defect
-    # already on the table (glm-5.1, MAJOR).
-
-    bad_so_far = False
-    for tier in tiers:
-        panel = [r for r in all_reviewers
-                 if in_profile(r, tier) and r["name"] not in seen]
-        runnable, tier_unavail = [], []
-        for rev in panel:
-            why = availability(rev)
-            (tier_unavail if why else runnable).append(
-                {"name": rev["name"], "reason": why} if why else rev)
-        unavailable.extend(tier_unavail)
-        for r in panel:
-            seen.add(r["name"])
-        if not runnable:
-            continue
-        tiers_run.append(tier)
-        if not args.json:
-            names = ", ".join(r["name"] for r in runnable)
-            print(f"\ntier {tier}: {names}")
-        with concurrent.futures.ThreadPoolExecutor(
-                max_workers=len(runnable)) as ex:
-            res = list(ex.map(
-                lambda r: run_one(r, prompt, args.timeout, len(args.claim),
-                                  args.claim),
-                runnable))
-        tier_completed = [r for r in res if r["ok"]]
-        completed.extend(tier_completed)
-        failed.extend(r for r in res if not r["ok"])
-        if not args.json:
-            for r in res:
-                if r["ok"]:
-                    print(f"  {r['name']:<18} {str(r['verdict']).upper():<9} "
-                          f"{len(r['findings'])} finding(s)  {r['elapsed_s']}s")
-                else:
-                    print(f"  {r['name']:<18} ERROR     {r['error'][:70]}")
-        # A confirmed defect or refuted claim ends the ladder -- but only once
-        # QUORUM is met. Checked before the quorum test, one reviewer's finding
-        # ended the ladder on its own: four of five reviews in one session were
-        # decided by a single model, and the committee never formed. A finding
-        # from one reviewer is a hypothesis; adjudicating it is what a panel is
-        # for, and stopping also leaves every other claim unexamined by anyone
-        # else. The round that did reach quorum is the one where the second and
-        # third readers found what the first had upheld.
-        bad_so_far = bad_so_far \
-            or any(is_confirmed(f) for r in tier_completed for f in r["findings"]) \
-            or any(norm(c.get("status")) == "refuted"
-                   for r in tier_completed for c in r["claims"])
-        bad = bad_so_far
-        if bad and len(completed) >= args.quorum:
-            if not args.json:
-                print(f"  -> tier {tier} found problems with "
-                      f"{len(completed)} verdict(s) (quorum {args.quorum}); "
-                      f"stopping before the dearer tiers.")
-            break
-        if bad:
-            # Still cheapest-first: this recruits the next tier only, and the
-            # ladder stops as soon as quorum is reached.
-            if not args.json:
-                print(f"  -> tier {tier} found problems but only "
-                      f"{len(completed)} verdict(s) (quorum {args.quorum}); "
-                      f"escalating to adjudicate rather than acting on one "
-                      f"opinion.")
-            continue
-        if len(completed) < args.quorum:
-            # Below quorum through reviewer errors, not findings. Escalating
-            # recruits more readers; stopping would waste the run and report a
-            # weaker result than the panel could actually give.
-            if not args.json:
-                print(f"  -> only {len(completed)} verdict(s) so far "
-                      f"(quorum {args.quorum}); escalating to recruit more.")
-            continue
-    return completed, failed, unavailable, tiers_run
+    return _cli.escalate(
+        all_reviewers, prompt, args, truncated, label, body_len, _SELF)
 
 
 def arm_watchdog(seconds):
@@ -2237,41 +1913,7 @@ def disarm_watchdog():
             pass
 
 
-def decide_state(n_completed, n_failed, confirmed, refuted_claims,
-                 rejecting, truncated, quorum, n_out_of_scope_critical=0,
-                 n_incomplete=0):
-    """The gate's verdict. Extracted from main() so it can be tested directly:
-    inline, the failed-reviewer hole below was invisible to every test."""
-    if n_completed == 0:
-        return "REVIEW_INCOMPLETE" if n_incomplete else "REVIEW_UNAVAILABLE"
-    # Quorum gates both FAIL and PASS; below quorum findings remain visible.
-    if n_completed >= quorum:
-        if confirmed:
-            return "REVIEW_FAIL"
-        if refuted_claims:
-            return "REVIEW_CLAIMS_REFUTED"
-    if n_incomplete:
-        return "REVIEW_INCOMPLETE"
-    if n_completed < quorum:
-        return "REVIEW_PARTIAL"
-    if n_failed:
-        # Quorum cannot excuse a dispatched reviewer producing no verdict.
-        return "REVIEW_PARTIAL"
-    if n_out_of_scope_critical:
-        # `in_scope: false` is a reviewer's judgment about MY threat model, and
-        # a reviewer that misreads it could dismiss a real defect with one word
-        # (deepseek). So it can demote a critical finding out of the verdict,
-        # but it cannot buy a clean pass: a human reads it and decides.
-        return "REVIEW_PARTIAL"
-    if rejecting:
-        # Rejected, but with nothing that met the confirmation filter. Neither a
-        # clean pass nor an actionable failure: a human has to read their notes.
-        return "REVIEW_PARTIAL"
-    if truncated:
-        # Part of the change was never sent. Upholding what was visible says
-        # nothing about the rest, so this must not read as a pass.
-        return "REVIEW_PARTIAL"
-    return "REVIEW_PASS"
+decide_state = _cli.decide_state
 
 
 # --- plan review ---
@@ -2329,67 +1971,8 @@ def _check_canonical_plan(members):
 
 
 def cmd_plan_review(args, members, prompt, label, truncated, profile_reason, excluded):
-    """Public plan-review entry."""
-    plan = _load_plan_review()
-    panel_error = _check_canonical_plan(members)
-    if panel_error:
-        disarm_watchdog()
-        print(f"error: {panel_error}", file=sys.stderr)
-        print("REVIEW_ERROR — configuration problem; no review took place.",
-              file=sys.stderr)
-        return STATES["REVIEW_ERROR"]
-    unavailable = [{"name": m["name"], "reason": availability(m)} for m in members
-                   if availability(m)]
-    if unavailable:
-        state, exchange, completed = "REVIEW_UNAVAILABLE", {
-            "members": {}, "turns": [], "joint_table": []}, []
-    else:
-        exchange, first, second = plan._run_plan_exchange(
-            members, prompt, args.claim, args.timeout, validate=plan._plan_schema_error)
-        state, exchange["joint_table"] = plan._joint_plan_verdict(
-            members, first, second, args.claim, truncated)
-        completed = [] if state == "REVIEW_UNAVAILABLE" else [
-            {**second[m["name"]], "name": m["name"],
-             "findings": [row["finding"] for row in exchange["joint_table"]
-                          if row["author"] == m["name"]
-                          and row["outcome"] not in ("refuted", "restated")]}
-            for m in members]
-    args.plan_exchange = exchange
-    disarm_watchdog()
-    journal = record_review_round(args, completed, state)
-    report = {"state": state, "checked_at": now(), "reviewed": label,
-              "profile": "plan", "profile_reason": profile_reason, "escalated": False,
-              "quorum": 2, "truncated": truncated, "excluded": excluded,
-              "unavailable": unavailable, "results": completed,
-              "panel_policy": args.panel_policy, "input_redactions": args.input_redactions,
-              "plan_exchange": exchange, "journal": journal}
-    if args.json:
-        print(redact(json.dumps(report, indent=2)))
-    else:
-        for name, member in exchange["members"].items():
-            for answer in member["answers"]:
-                print(redact(f"\n{name} TURN {answer['turn']} usage={answer['usage']}"))
-                raw = answer["raw"] or answer["error"] or "[no reply]"
-                verdict = answer["verdict"]
-                if isinstance(verdict, dict) and isinstance(verdict.get("findings"), list):
-                    displayed = dict(verdict, findings=[finding_for_text(f) if isinstance(f, dict) else f
-                                                       for f in verdict["findings"]])
-                    if displayed != verdict:
-                        raw = json.dumps(displayed, indent=2)
-                print(redact(raw))
-                if answer["error"]:
-                    print(redact(f"ERROR: {answer['error']}"))
-        print("\nJOINT TABLE:")
-        for row in exchange["joint_table"]:
-            finding = finding_for_text(row["finding"])
-            print(redact(json.dumps(dict(row, finding=finding))))
-            if (is_confirmed(finding) and "counterexample" not in finding
-                    and "non_executable_reason" not in finding):
-                print("      no counterexample")
-        for entry in unavailable:
-            print(redact(f"{entry['name']}: {entry['reason']}"))
-        print(f"\n{state} — two seats, two turns; a pass is not proof.")
-    return PLAN_STATES[state]
+    return _cli.cmd_plan_review(
+        args, members, prompt, label, truncated, profile_reason, excluded, _SELF)
 
 
 def build_parser():
@@ -2501,187 +2084,33 @@ def main():
 
 def _main():
     args = build_parser().parse_args()
-    if args.adjudicate is not None or args.open_findings:
-        if (args.diff or args.staged or args.range or args.file or args.list or args.size or args.kind
-                or args.plan or args.claim or args.escalate or args.only
-                or args.profile or args.dispositions or args.fresh_cycle_from
-                or args.allow_single_reviewer or args.context or args.threat_model
-                or args.target is not None or args.plan_name is not None or args.unit is not None):
-            config_error("Drop review options when using a ledger command; "
-                         "adjudication never runs or replaces a review.")
-        sys.exit(cmd_ledger(args))
-    if args.round == "plan":
-        config_error("--round plan is only an adjudication selector. "
-                     "Pass --kind plan without --round for a plan review.")
-    if any(value is not None for value in
-           (args.head, args.accepted_by, args.reason, args.decision)):
-        config_error("Pass --adjudicate or --open-findings with ledger fields.")
-    if not (args.diff or args.staged or args.range or args.file):
-        args.diff = True  # same default source for sizing, selection and gathering
-    if args.size:
-        if args.list:
-            config_error("Drop --list when using the offline --size preflight.")
-        sys.exit(cmd_size(args))
+    _cli._dispatch_early_commands(args, _SELF)
     # Validate evidence before any provider path, including --list probes.
     dispositions = (load_dispositions(args.dispositions)
                     if args.dispositions else [])
     reviewers = load_effective_reviewers()
     roster = reviewers
-    # --- the protocol, enforced rather than remembered ---------------------
-    # Every rule below was already written down, and drifted from anyway,
-    # because prose in a memory file is not a constraint. See PROTOCOL.md.
-    # --plan is an alias for --kind plan; --kind is what the rules key on, so
-    # `--profile plan` cannot set the panel while leaving the rules off.
-    if args.plan:
-        if args.kind and args.kind != "plan":
-            config_error(f"--plan and --kind {args.kind} disagree. Pass one.")
-        args.kind = "plan"
-    if args.profile == "plan" and args.kind is None:
-        args.kind = "plan"
-    if not args.list and args.kind is None:
-        config_error(
-            "--kind is required: pass `--kind plan` for acceptance criteria or "
-            "a design (two contrasting models, never escalated), or "
-            "`--kind implementation --round N` for code. Leaving it implicit "
-            "is how a design proposal got reviewed by the four-model "
-            "implementation panel.")
-    if args.kind == "implementation" and args.round is None and not args.list:
-        config_error(
-            f"--kind implementation requires --round N (1..{MAX_ROUNDS}), so "
-            f"the bound on rounds per change can be applied. Pass --round 1 if "
-            f"this is the first round for this change.")
-    if (args.kind == "implementation" and not args.list
-            and not has_honest_run_claim(args.claim)):
-        config_error(
-            f"every implementation review must assert the required "
-            f"counter-claim: {HONEST_RUN_CLAIM!r} Pass it with --claim so the "
-            f"gate checks that honest work still succeeds.")
-    if (args.kind == "implementation" and args.round is not None
-            and args.round >= 2 and not args.list and not args.dispositions):
-        config_error(
-            "implementation round 2 and later requires --dispositions FILE "
-            "mapping every prior confirmed finding to reproduced, "
-            "not-reproduced, or deferred with a one-line reason. Pass the "
-            "digest-keyed JSON file from the prior round.")
-    if args.kind == "plan":
-        if args.round is not None:
-            config_error("plan reviews take no --round; drop --round.")
-        if args.escalate:
-            config_error("--plan and --escalate are contradictory: a plan "
-                         "review is TWO contrasting models and stops there. "
-                         "Drop --escalate, or drop --plan if this is an "
-                         "implementation.")
-        if args.profile and args.profile != "plan":
-            config_error(f"a plan review uses the 'plan' panel; remove "
-                         f"--profile {args.profile}.")
-        args.profile = "plan"
-        if args.quorum > 2:
-            config_error(f"--plan runs two reviewers, so quorum {args.quorum} "
-                         f"can never be met. Pass --quorum 2, or drop --plan.")
-    if args.round is not None:
-        if args.round < 1:
-            config_error(f"--round must be 1 or more, got {args.round}.")
-        if args.round > MAX_ROUNDS:
-            config_error(
-                f"round {args.round} exceeds the bound of {MAX_ROUNDS} for one "
-                f"change. Past this, more rounds have not converged -- they "
-                f"have been finding defects in the previous round's fixes. "
-                f"Step back to root cause: state what keeps recurring, fix "
-                f"THAT, declare new acceptance criteria, and start again at "
-                f"--round 1 --fresh-cycle-from PROFILE naming the exhausted "
-                f"cycle's last reserved profile.")
+    _cli._validate_protocol_flags(args, _SELF)
     profile, profile_reason = select_profile(args)
     args.selected_profile = profile
     tier_text = f"tier: {profile} ({profile_reason})"
     if not args.json:
         print(tier_text)
     if not args.only and not args.escalate:
-        # An UNDECLARED reviewer is in NO profile. It used to be in every
-        # profile, so adding an entry without a `profiles` key silently put a
-        # third model on the two-model plan panel (sol). The residual must be
-        # exclusion, not inclusion.
         reviewers = [r for r in reviewers if in_profile(r, profile)]
         if not reviewers:
             config_error(f"no reviewers in profile {profile!r}")
-    # --escalate deliberately keeps the full roster: the ladder filters per
-    # tier itself, and pre-filtering here made the deep tier unreachable.
     if args.only:
-        # Accept both `--only a --only b` and `--only a,b`. The second form is
-        # the one a person actually types, and rejecting it cost a full review
-        # round to a usage error.
         wanted = [n.strip() for spec in args.only for n in spec.split(",")
                   if n.strip()]
         reviewers = [r for r in reviewers if r["name"] in wanted]
         if not reviewers:
-            # Name an action, and name the available reviewers: this refusal
-            # said only what was wrong. The rule "every refusal names an
-            # action" had been applied to the two verifiers and never to this
-            # tool, which is the sibling-miss class it exists to catch.
             have = ", ".join(sorted(r["name"] for r in load_effective_reviewers()))
             config_error(f"no reviewer matches {wanted}. Available: {have}. "
                          f"Pass one of those, or drop --only to use the "
                          f"profile.")
-    authors = author_model_ids(args.author, roster)
-    reviewers, excluded = exclude_authors(reviewers, authors)
-    if excluded and args.kind == "plan" and not (args.author or args.list):
-        config_error("Pass plan reviewers with a derivable model maker.")
-    if excluded:
-        # Check capacity before contacting anyone, including the entire ladder
-        # and any fresh-cycle floor. Author removal cannot relax either floor.
-        required = max(args.quorum, 2 if args.kind == "plan" else 1)
-        if args.fresh_cycle_from:
-            required = max(required, 2, len({r["name"] for r in roster
-                           if r.get("enabled", True)
-                           and in_profile(r, args.fresh_cycle_from)}))
-        eligible = [r for r in reviewers if r.get("enabled", True)
-                    and (not args.escalate or any(in_profile(r, tier)
-                                                  for tier in escalation_tiers(args)))]
-        plan_check = _check_canonical_plan if args.kind == "plan" else None
-        attempted = False
-        selection = None
-        if not (args.list or args.only or args.escalate):
-            panel, attempted = _panels.fill_profile(
-                roster, profile, eligible, authors, required, excluded, plan_check)
-            if panel is not None:
-                eligible, added = panel
-                reviewers = eligible
-                selection = _panels.panel_selection(profile, excluded, added, eligible)
-        if not args.json:
-            for removal in excluded:
-                print(f"{removal['name']} excluded: {removal['reason']}")
-        if selection:
-            print("Panel substitution " + redact(json.dumps(selection)),
-                  file=sys.stderr if args.json else sys.stdout, flush=True)
-        remaining = len(eligible)
-        if not args.list and not selection and (
-                attempted or (excluded and remaining < required)):
-            reason = (f"author exclusion leaves {remaining} eligible reviewers; "
-                      f"required quorum is {required}. Select more independent "
-                      "reviewers; author exclusion cannot lower quorum.")
-            if attempted:
-                reason += " Profile reserves cannot restore quorum and contrast."
-            disarm_watchdog()
-            if args.json:
-                print(json.dumps({"state": "REVIEW_UNAVAILABLE",
-                                  "profile": profile,
-                                  "profile_reason": profile_reason,
-                                  "checked_at": now(), "reason": reason,
-                                  "quorum": required, "excluded": excluded,
-                                  "results": []}, indent=2))
-            else:
-                print("REVIEW_UNAVAILABLE — " + reason)
-            sys.exit(STATES["REVIEW_UNAVAILABLE"])
-    # Validate the effective panel after selection, before dispatch.
-    if args.kind == "plan" and not args.list:
-        runnable = [r for r in reviewers if r.get("enabled", True)]
-        panel_error = _load_plan_review()._plan_panel_error(runnable)
-        if panel_error:
-            config_error(panel_error)
-        if args.quorum != 2:
-            config_error(
-                f"a plan review needs both verdicts: pass --quorum 2, not "
-                f"{args.quorum}. Below that one model decides; above it, the "
-                f"panel can never reach quorum.")
+    reviewers, excluded = _cli._apply_author_exclusion(
+        args, roster, reviewers, profile, profile_reason, _SELF)
 
     if args.list:
         print(f"profile: {profile}"
@@ -2701,19 +2130,7 @@ def _main():
     args.panel_policy = implementation_panel_policy(args, roster, reviewers)
     policy_text = panel_policy_text(args.panel_policy)
 
-    args.input_redactions = []
-    args.context = strip_review_input(args.context, "--context", args.input_redactions)
-    for index, entry in enumerate(dispositions):
-        if entry["disposition"] in ("reproduced", "not-reproduced"):
-            for field in ("location", "summary", "reason"):
-                entry[field] = strip_review_input(
-                    entry[field], f"--dispositions {args.dispositions} entry {index} {field}",
-                    args.input_redactions)
-            for field in ("setup", "command", "expected", "observed", "revision"):
-                entry["reproduction"][field] = strip_review_input(
-                    entry["reproduction"][field],
-                    f"--dispositions {args.dispositions} entry {index} reproduction.{field}",
-                    args.input_redactions)
+    _cli._sanitize_review_inputs(args, dispositions, _SELF)
     body, label = gather(args)
     if not body.strip() and not args.input_redactions:
         print(f"nothing to review ({label} is empty)")
@@ -2735,222 +2152,12 @@ def _main():
         sys.exit(cmd_plan_review(args, [r for r in reviewers if r.get("enabled", True)],
                                  prompt, label, truncated, profile_reason, excluded))
 
-    runnable, unavailable = [], []
-    for rev in reviewers:
-        why = availability(rev)
-        (unavailable if why else runnable).append(
-            {"name": rev["name"], "reason": why} if why else rev)
-
-    if not runnable:
-        disarm_watchdog()
-        journal = record_review_round(args, [], "REVIEW_UNAVAILABLE")
-        release_round(args, [], "REVIEW_UNAVAILABLE")
-        report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
-                  "profile": profile, "profile_reason": profile_reason,
-                  "reviewed": label, "unavailable": unavailable, "results": [],
-                  "excluded": excluded,
-                  "panel_policy": args.panel_policy,
-                  "input_redactions": args.input_redactions,
-                  "journal": journal}
-        if args.json:
-            print(redact(json.dumps(report, indent=2)))
-        else:
-            if args.input_redactions:
-                print(redact(redaction_notice(args.input_redactions)))
-            print("REVIEW_UNAVAILABLE" + policy_text
-                  + " — no reviewer could run:")
-            for u in unavailable:
-                print(f"  - {u['name']}: {u['reason']}")
-            print("\nThis is NOT a pass. The change is unreviewed.")
-        sys.exit(STATES["REVIEW_UNAVAILABLE"])
-
-    if not args.json:
-        print(f"reviewing {label} ({len(body)} chars"
-              f"{', TRUNCATED' if truncated else ''}) "
-              f"with {len(runnable)} reviewer(s) [profile: {profile}]...")
-
-    tiers_run = [profile]
-    if args.escalate:
-        validate_escalation_panel(reviewers, args)
-    # One total bound for the entire provider phase, including every tier.
-    arm_watchdog(args.watchdog if args.watchdog is not None
-                 else max(1800, args.timeout * 3))
-    if args.escalate:
-        completed, failed, unavailable, tiers_run = escalate(
-            reviewers, prompt, args, truncated, label, len(body))
-        if not completed and not failed:
-            disarm_watchdog()
-            journal = record_review_round(args, [], "REVIEW_UNAVAILABLE")
-            release_round(args, [], "REVIEW_UNAVAILABLE")
-            report = {"state": "REVIEW_UNAVAILABLE", "checked_at": now(),
-                      "profile": profile, "profile_reason": profile_reason,
-                      "reviewed": label, "unavailable": unavailable, "results": [],
-                      "excluded": excluded, "panel_policy": args.panel_policy,
-                      "input_redactions": args.input_redactions, "journal": journal}
-            if args.json:
-                print(redact(json.dumps(report, indent=2)))
-            elif args.input_redactions:
-                print(redact(redaction_notice(args.input_redactions)))
-            print("REVIEW_UNAVAILABLE" + policy_text
-                  + " — no reviewer could run in any tier", file=sys.stderr)
-            sys.exit(STATES["REVIEW_UNAVAILABLE"])
-    else:
-        with concurrent.futures.ThreadPoolExecutor(
-                max_workers=len(runnable)) as ex:
-            results = list(ex.map(
-                lambda r: run_one(r, prompt, args.timeout, len(args.claim),
-                                  args.claim),
-                runnable))
-        completed = [r for r in results if r["ok"]]
-        failed = [r for r in results if not r["ok"]]
-
-    confirmed, refuted_claims, rejecting = [], [], []
-    out_of_scope = []
-    for r in completed:
-        if norm(r.get("verdict")) == "refuted":
-            rejecting.append(r["name"])
-        for f in r["findings"]:
-            if is_confirmed(f):
-                confirmed.append({**f, "reviewer": r["name"]})
-            elif f.get("in_scope") is False:
-                # Never silently dropped: excluded from the verdict, still
-                # shown, because the threat model can be wrong too.
-                out_of_scope.append({**f, "reviewer": r["name"]})
-        for c in r["claims"]:
-            if norm(c.get("status")) == "refuted":
-                refuted_claims.append({**c, "reviewer": r["name"]})
-
-    oos_critical = [f for f in out_of_scope
-                    if norm(f.get("severity")) == "critical"]
-    incomplete = [r for r in failed if r.get("incomplete")]
-    state = decide_state(n_completed=len(completed), n_failed=len(failed),
-                         confirmed=confirmed, refuted_claims=refuted_claims,
-                         rejecting=rejecting, truncated=truncated,
-                         quorum=args.quorum,
-                         n_out_of_scope_critical=len(oos_critical),
-                         n_incomplete=len(incomplete))
-    disarm_watchdog()
-    journal = record_review_round(args, completed, state)
-    release_round(args, completed, state)
-
-    report = {
-        "state": state, "checked_at": now(), "reviewed": label,
-        "profile": profile, "escalated": bool(args.escalate),
-        "profile_reason": profile_reason,
-        "excluded": excluded,
-        "tiers_run": tiers_run,
-        "panel_policy": args.panel_policy,
-        "input_redactions": args.input_redactions,
-        "truncated": truncated, "quorum": args.quorum,
-        "completed": len(completed), "unavailable": unavailable,
-        "failed": [{"name": r["name"], "error": r["error"],
-                    "incomplete": bool(r.get("incomplete"))}
-                   for r in failed],
-        "confirmed_findings": confirmed, "refuted_claims": refuted_claims,
-        "out_of_scope_findings": out_of_scope,
-        "rejecting_reviewers": rejecting,
-        "journal": journal,
-        "results": completed,
-    }
-    if state == "REVIEW_CLAIMS_REFUTED":
-        report["next_action"] = (
-            "No confirmed defect, but refuted claims are not a pass. "
-            "Correct the claim (or the code), then re-run the gate. "
-            "Do not argue a refuted claim into a pass.")
-
-    if args.json:
-        # Reviewer-authored text is untrusted and may quote a key found in the
-        # reviewed source; redact the whole rendered report, not just errors.
-        print(redact(json.dumps(report, indent=2)))
-    else:
-        print()
-        if args.input_redactions:
-            print(redact(redaction_notice(args.input_redactions)))
-        if not args.escalate:
-            for r in completed:
-                tok = (f"{r.get('in_tokens') or '?'}in/"
-                       f"{r.get('out_tokens') or '?'}out")
-                print(f"  {r['name']:<18} {str(r['verdict']).upper():<9} "
-                      f"{len(r['findings'])} finding(s)  {r['elapsed_s']}s  {tok}")
-            for r in failed:
-                print(f"  {r['name']:<18} ERROR     {r['error'][:80]}")
-        else:
-            spent = sum((r.get("out_tokens") or 0) for r in completed)
-            print(f"  tiers run: {' -> '.join(tiers_run)}  "
-                  f"({len(completed)} verdict(s), {spent} output tokens)")
-        for u in unavailable:
-            print(f"  {u['name']:<18} SKIPPED   {u['reason']}")
-
-        if rejecting and not confirmed and not refuted_claims:
-            print(f"\nREJECTED BY: {', '.join(rejecting)}")
-            print("  (a top-level 'refuted' verdict, with no finding or claim "
-                  "that met the confirmation filter — read their notes)")
-            for r in completed:
-                if r["name"] in rejecting and r.get("notes"):
-                    print(f"  [{r['name']}] {redact(str(r['notes']))[:300]}")
-        if refuted_claims:
-            print("\nREFUTED CLAIMS:")
-            for c in refuted_claims:
-                print(redact(f"  [{c['reviewer']}] {c.get('claim','')}"))
-                print(redact(f"      {c.get('why','')}"))
-        if confirmed:
-            print("\nCONFIRMED FINDINGS:")
-            for f in confirmed:
-                loc = redact(f"{f.get('file','?')}:{f.get('line','?')}")
-                print(f"  [{f['reviewer']}] {f.get('severity','?').upper()} {loc}")
-                print(redact(f"      {f.get('summary','')}"))
-                print(redact(f"      -> {f.get('failure_scenario','')}"))
-                has_example = not counterexample_placeholder(f.get("counterexample"))
-                has_reason = not empty_evidence_value(f.get("non_executable_reason"))
-                if has_example:
-                    print("      counterexample:")
-                    for field in ("setup", "input", "expected", "observed"):
-                        print(redact(f"        {field}: {f['counterexample'][field]}"))
-                if has_reason:
-                    print(redact(f"      non_executable_reason: {f['non_executable_reason']}"))
-                elif not has_example:
-                    print("      no counterexample")
-
-        if out_of_scope:
-            print("\nOUT OF SCOPE (reported, not counted against the verdict "
-                  "— the threat model excludes their preconditions):")
-            for f in out_of_scope:
-                loc = redact(f"{f.get('file','?')}:{f.get('line','?')}")
-                print(f"  [{f['reviewer']}] {f.get('severity','?').upper()} {loc}")
-                print(redact(f"      {f.get('summary','')}"))
-                if f.get("preconditions"):
-                    print(redact(f"      requires: {f.get('preconditions')}"))
-
-        print(f"\n{state}{policy_text} [{tier_text}]")
-        if state == "REVIEW_CLAIMS_REFUTED":
-            print("  " + report["next_action"])
-        elif state == "REVIEW_PARTIAL":
-            if rejecting:
-                print(f"  Rejected by {', '.join(rejecting)} with no finding or "
-                      f"claim that met the confirmation filter. Not a pass and "
-                      f"not an actionable failure — read their notes above.")
-            elif truncated:
-                print(f"  Input was truncated at {MAX_CHARS} chars — part of the "
-                      f"change was never reviewed. Not a pass. Split it and "
-                      f"re-run.")
-            else:
-                print(f"  Only {len(completed)} of {args.quorum} required "
-                      f"reviewers completed. Not a pass — say so rather than "
-                      f"implying review.")
-        elif state == "REVIEW_UNAVAILABLE":
-            print("  No reviewer completed. The change is unreviewed.")
-        elif state == "REVIEW_INCOMPLETE":
-            names = ", ".join(r["name"] for r in incomplete)
-            print(f"  Required reviewer content was unusable ({names}). "
-                  "This spent review budget but supplied no judgment; it is "
-                  "not an implementation defect and not a pass.")
-        elif state == "REVIEW_PASS":
-            names = ", ".join(r["name"] for r in completed)
-            print(f"  Reviewed by: {names}. Absence of a finding is not proof "
-                  f"of correctness — it is {len(completed)} model(s) failing to "
-                  f"refute it.")
-
-    sys.exit(STATES[state])
+    completed, failed, unavailable, tiers_run = _cli._execute_implementation_panel(
+        args, reviewers, prompt, body, label, truncated, profile,
+        profile_reason, excluded, policy_text, _SELF)
+    _cli._collect_and_emit_verdict(
+        args, completed, failed, unavailable, tiers_run, label, truncated,
+        profile, profile_reason, excluded, policy_text, tier_text, _SELF)
 
 
 if __name__ == "__main__":
