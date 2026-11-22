@@ -823,11 +823,14 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
                  f"attempt. Units already DONE are not re-dispatched."], 0,
                 "plan changed mid-flight")
 
+    def _submit_live(*args, **kwargs):
+        return _submit(*args, **kwargs)
+
     SADV._evaluate_deadlines(
         units, state, state_dir, dry_run, advance_observed_at, report)
     SADV._recover_unbound_attempts(
         units, state, state_dir, dry_run, dispatch_targets, plan_path,
-        report, submit_fn=lambda *a, **kw: _submit(*a, **kw))
+        report, submit_fn=_submit_live)
 
     # 1. Re-check anything with a live attempt. The coordinator does not judge;
     #    unit.py does, and its exit code is the whole input.
@@ -915,8 +918,7 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
     # 2 & 3. Enforce budget/concurrency caps and dispatch ready units.
     dispatched, halted, dispatch_refusal = SADV._dispatch_ready_units(
         plan, units, state, state_dir, root, dry_run, max_new, plan_path,
-        dispatch_targets, halted, report,
-        submit_fn=lambda *a, **kw: _submit(*a, **kw))
+        dispatch_targets, halted, report, submit_fn=_submit_live)
 
     # Emit tracker intents from the FINAL state of the advance.
     project = plan.get("name") or "swarm"
