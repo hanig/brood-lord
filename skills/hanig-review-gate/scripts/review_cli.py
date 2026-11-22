@@ -4,11 +4,6 @@ Python 3.8+, standard library only; never imports the review facade.
 """
 
 import argparse
-import concurrent.futures
-import json
-import subprocess
-import sys
-from pathlib import Path
 
 
 def cmd_ledger(args, facade):
@@ -45,7 +40,7 @@ def cmd_ledger(args, facade):
     if args.open_findings:
         opened = [finding for key, finding in findings.items()
                   if key not in adjudicated]
-        print(json.dumps(facade.redact_ledger({
+        print(facade.json.dumps(facade.redact_ledger({
             "state": ("UNATTRIBUTABLE" if unattributable else
                       "OPEN_FINDINGS" if opened else "NO_OPEN_FINDINGS"),
             "reviewed_head": args.head, "open_findings": opened,
@@ -66,7 +61,7 @@ def cmd_ledger(args, facade):
                             + ", ".join(selectors) + ". Pass one to identify the occurrence.")
     args.decision = args.decision or "overruled"
     journal = facade.record_adjudication(args, matches[0][0])
-    print(json.dumps(facade.redact_ledger({
+    print(facade.json.dumps(facade.redact_ledger({
         "state": ("ADJUDICATION_RECORDED" if journal["written"]
                   else "ADJUDICATION_UNCONFIRMED"),
         "reviewed_head": args.head, "round": matches[0][0],
@@ -83,26 +78,26 @@ def changed_paths(args, facade):
                 else [args.range] if args.range else None)
     if revision is not None:
         try:
-            result = subprocess.run(
+            result = facade.subprocess.run(
                 ["git", "diff", "--name-only", "-z", "--no-relative", "--no-renames",
                  "--no-ext-diff", "--no-textconv", *revision, "--"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+                stdout=facade.subprocess.PIPE, stderr=facade.subprocess.PIPE, timeout=30)
             if result.returncode:
                 return None, "Git could not determine changed paths"
             raw = result.stdout.decode("utf-8")
             if raw and not raw.endswith("\0"):
                 return None, "Git returned an incomplete changed-path set"
             paths.update(raw[:-1].split("\0") if raw else [])
-        except (OSError, subprocess.SubprocessError, UnicodeError, ValueError):
+        except (OSError, facade.subprocess.SubprocessError, UnicodeError, ValueError):
             return None, "Git changed-path lookup was unavailable"
     if args.file:
         top = facade.git_out("rev-parse", "--show-toplevel").rstrip("\n")
-        root = Path(top) if top else Path.cwd()
+        root = facade.Path(top) if top else facade.Path.cwd()
         for value in args.file:
-            path = Path(value)
+            path = facade.Path(value)
             if ".." in path.parts:
                 return None, "a --file path contains unresolved parent components"
-            absolute = path if path.is_absolute() else Path.cwd() / path
+            absolute = path if path.is_absolute() else facade.Path.cwd() / path
             try:
                 lexical = absolute.relative_to(root)
                 target = absolute.resolve(strict=True).relative_to(root.resolve())
@@ -279,7 +274,7 @@ def escalate(all_reviewers, prompt, args, truncated, label, body_len, facade):
         if not args.json:
             names = ", ".join(r["name"] for r in runnable)
             print(f"\ntier {tier}: {names}")
-        with concurrent.futures.ThreadPoolExecutor(
+        with facade.concurrent.futures.ThreadPoolExecutor(
                 max_workers=len(runnable)) as ex:
             res = list(ex.map(
                 lambda r: facade.run_one(r, prompt, args.timeout, len(args.claim),
@@ -354,9 +349,9 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason,
     panel_error = facade._check_canonical_plan(members)
     if panel_error:
         facade.disarm_watchdog()
-        print(f"error: {panel_error}", file=sys.stderr)
+        print(f"error: {panel_error}", file=facade.sys.stderr)
         print("REVIEW_ERROR — configuration problem; no review took place.",
-              file=sys.stderr)
+              file=facade.sys.stderr)
         return facade.STATES["REVIEW_ERROR"]
     unavailable = [{"name": m["name"], "reason": facade.availability(m)}
                    for m in members if facade.availability(m)]
@@ -385,7 +380,7 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason,
               "panel_policy": args.panel_policy, "input_redactions": args.input_redactions,
               "plan_exchange": exchange, "journal": journal}
     if args.json:
-        print(facade.redact(json.dumps(report, indent=2)))
+        print(facade.redact(facade.json.dumps(report, indent=2)))
     else:
         for name, member in exchange["members"].items():
             for answer in member["answers"]:
@@ -398,14 +393,14 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason,
                         findings=[facade.finding_for_text(f) if isinstance(f, dict) else f
                                   for f in verdict["findings"]])
                     if displayed != verdict:
-                        raw = json.dumps(displayed, indent=2)
+                        raw = facade.json.dumps(displayed, indent=2)
                 print(facade.redact(raw))
                 if answer["error"]:
                     print(facade.redact(f"ERROR: {answer['error']}"))
         print("\nJOINT TABLE:")
         for row in exchange["joint_table"]:
             finding = facade.finding_for_text(row["finding"])
-            print(facade.redact(json.dumps(dict(row, finding=finding))))
+            print(facade.redact(facade.json.dumps(dict(row, finding=finding))))
             if (facade.is_confirmed(finding) and "counterexample" not in finding
                     and "non_executable_reason" not in finding):
                 print("      no counterexample")
@@ -425,7 +420,7 @@ def _dispatch_early_commands(args, facade):
                 or args.target is not None or args.plan_name is not None or args.unit is not None):
             facade.config_error("Drop review options when using a ledger command; "
                                 "adjudication never runs or replaces a review.")
-        sys.exit(facade.cmd_ledger(args))
+        facade.sys.exit(facade.cmd_ledger(args))
     if args.round == "plan":
         facade.config_error("--round plan is only an adjudication selector. "
                             "Pass --kind plan without --round for a plan review.")
@@ -437,7 +432,7 @@ def _dispatch_early_commands(args, facade):
     if args.size:
         if args.list:
             facade.config_error("Drop --list when using the offline --size preflight.")
-        sys.exit(facade.cmd_size(args))
+        facade.sys.exit(facade.cmd_size(args))
 
 
 def _validate_protocol_flags(args, facade):
@@ -532,8 +527,8 @@ def _apply_author_exclusion(args, roster, reviewers, profile, profile_reason, fa
             for removal in excluded:
                 print(f"{removal['name']} excluded: {removal['reason']}")
         if selection:
-            print("Panel substitution " + facade.redact(json.dumps(selection)),
-                  file=sys.stderr if args.json else sys.stdout, flush=True)
+            print("Panel substitution " + facade.redact(facade.json.dumps(selection)),
+                  file=facade.sys.stderr if args.json else facade.sys.stdout, flush=True)
         remaining = len(eligible)
         if not args.list and not selection and (
                 attempted or (excluded and remaining < required)):
@@ -544,15 +539,15 @@ def _apply_author_exclusion(args, roster, reviewers, profile, profile_reason, fa
                 reason += " Profile reserves cannot restore quorum and contrast."
             facade.disarm_watchdog()
             if args.json:
-                print(json.dumps({"state": "REVIEW_UNAVAILABLE",
-                                  "profile": profile,
-                                  "profile_reason": profile_reason,
-                                  "checked_at": facade.now(), "reason": reason,
-                                  "quorum": required, "excluded": excluded,
-                                  "results": []}, indent=2))
+                print(facade.json.dumps({"state": "REVIEW_UNAVAILABLE",
+                                         "profile": profile,
+                                         "profile_reason": profile_reason,
+                                         "checked_at": facade.now(), "reason": reason,
+                                         "quorum": required, "excluded": excluded,
+                                         "results": []}, indent=2))
             else:
                 print("REVIEW_UNAVAILABLE — " + reason)
-            sys.exit(facade.STATES["REVIEW_UNAVAILABLE"])
+            facade.sys.exit(facade.STATES["REVIEW_UNAVAILABLE"])
     if args.kind == "plan" and not args.list:
         runnable = [r for r in reviewers if r.get("enabled", True)]
         panel_error = facade._load_plan_review()._plan_panel_error(runnable)
@@ -607,7 +602,7 @@ def _execute_implementation_panel(args, reviewers, prompt, body, label,
                   "input_redactions": args.input_redactions,
                   "journal": journal}
         if args.json:
-            print(facade.redact(json.dumps(report, indent=2)))
+            print(facade.redact(facade.json.dumps(report, indent=2)))
         else:
             if args.input_redactions:
                 print(facade.redact(facade.redaction_notice(args.input_redactions)))
@@ -616,7 +611,7 @@ def _execute_implementation_panel(args, reviewers, prompt, body, label,
             for u in unavailable:
                 print(f"  - {u['name']}: {u['reason']}")
             print("\nThis is NOT a pass. The change is unreviewed.")
-        sys.exit(facade.STATES["REVIEW_UNAVAILABLE"])
+        facade.sys.exit(facade.STATES["REVIEW_UNAVAILABLE"])
 
     if not args.json:
         print(f"reviewing {label} ({len(body)} chars"
@@ -641,14 +636,14 @@ def _execute_implementation_panel(args, reviewers, prompt, body, label,
                       "excluded": excluded, "panel_policy": args.panel_policy,
                       "input_redactions": args.input_redactions, "journal": journal}
             if args.json:
-                print(facade.redact(json.dumps(report, indent=2)))
+                print(facade.redact(facade.json.dumps(report, indent=2)))
             elif args.input_redactions:
                 print(facade.redact(facade.redaction_notice(args.input_redactions)))
             print("REVIEW_UNAVAILABLE" + policy_text
-                  + " — no reviewer could run in any tier", file=sys.stderr)
-            sys.exit(facade.STATES["REVIEW_UNAVAILABLE"])
+                  + " — no reviewer could run in any tier", file=facade.sys.stderr)
+            facade.sys.exit(facade.STATES["REVIEW_UNAVAILABLE"])
     else:
-        with concurrent.futures.ThreadPoolExecutor(
+        with facade.concurrent.futures.ThreadPoolExecutor(
                 max_workers=len(runnable)) as ex:
             results = list(ex.map(
                 lambda r: facade.run_one(r, prompt, args.timeout, len(args.claim),
@@ -717,7 +712,7 @@ def _collect_and_emit_verdict(args, completed, failed, unavailable, tiers_run,
             "Do not argue a refuted claim into a pass.")
 
     if args.json:
-        print(facade.redact(json.dumps(report, indent=2)))
+        print(facade.redact(facade.json.dumps(report, indent=2)))
     else:
         print()
         if args.input_redactions:
@@ -806,4 +801,4 @@ def _collect_and_emit_verdict(args, completed, failed, unavailable, tiers_run,
                   f"of correctness — it is {len(completed)} model(s) failing to "
                   f"refute it.")
 
-    sys.exit(facade.STATES[state])
+    facade.sys.exit(facade.STATES[state])

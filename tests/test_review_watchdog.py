@@ -284,12 +284,33 @@ class TestReviewCliExtraction(unittest.TestCase):
         imports = {n.module for n in ast.walk(cli_tree) if isinstance(n, ast.ImportFrom)}
         imports |= {a.name for n in ast.walk(cli_tree) if isinstance(n, ast.Import)
                     for a in n.names}
-        self.assertNotIn("review", {str(n).split(".")[0] for n in imports})
+        roots = {str(n).split(".")[0] for n in imports}
+        self.assertEqual(roots, {"argparse"})
 
         review_tree = ast.parse(SCRIPT.read_text())
         fn = next(n for n in review_tree.body
                   if isinstance(n, ast.FunctionDef) and n.name == "_main")
         self.assertLess(fn.end_lineno - fn.lineno + 1, 100)
+
+    def test_changed_paths_and_select_profile_intercept_facade_subprocess(self):
+        from types import SimpleNamespace
+        seen = []
+
+        class StubSubprocess:
+            PIPE = -1
+            SubprocessError = RuntimeError
+
+            def run(self, cmd, **kwargs):
+                seen.append(cmd)
+                return SimpleNamespace(returncode=0, stdout=b"app.py\x00")
+
+        args = SimpleNamespace(
+            diff=True, staged=False, range=None, file=[],
+            profile=None, kind="implementation", list=False)
+        with patch.object(review, "subprocess", StubSubprocess()):
+            profile, reason = review.select_profile(args)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(profile, "standard", reason)
 
     def test_direct_script_help_and_size_work_with_extracted_cli(self):
         import subprocess
