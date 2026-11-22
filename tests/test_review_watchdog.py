@@ -235,5 +235,48 @@ class TestWatchdogGuard(unittest.TestCase):
         self.assertGreater(guarded, 0, "the shared guard must have real consumers")
 
 
+class TestReviewLedgerSchemaExtraction(unittest.TestCase):
+    def test_ledger_and_schema_do_not_import_facade(self):
+        for filename in ("review_ledger.py", "review_schema.py"):
+            tree = ast.parse((SCRIPT.parent / filename).read_text())
+            imports = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
+            imports |= {a.name for n in ast.walk(tree) if isinstance(n, ast.Import)
+                        for a in n.names}
+            self.assertNotIn("review", {str(n).split(".")[0] for n in imports})
+
+    def test_facade_patches_intercept_extracted_ledger_and_schema(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            disp = Path(tmp) / "dispositions.json"
+            disp.write_text("{}")
+            with patch.object(review, "read_text_bounded", return_value=("{}", None)) as reader:
+                self.assertEqual(review.load_dispositions(disp), [])
+            reader.assert_called_once()
+        with patch.object(review, "change_identity", side_effect=ValueError("fixture")) as ident, \
+             patch.object(review, "config_error", side_effect=SystemExit(4)) as cfg:
+            args = type("A", (), {"target": "origin/main", "plan_name": None,
+                                  "unit": None, "round": 1, "selected_profile": "standard",
+                                  "fresh_cycle_from": None})()
+            with self.assertRaises(SystemExit) as stopped:
+                review.reserve_review_round(args)
+            self.assertEqual(stopped.exception.code, 4)
+        ident.assert_called_once()
+        cfg.assert_called_once()
+        verdict = {"verdict": "upheld", "findings": [], "claims": [
+            {"claim": "x", "status": "supported", "why": "one two three four"}]}
+        with patch.object(review, "unassessed_claims", return_value=["PATCHED"]) as unass:
+            self.assertEqual(review.verdict_schema_error(verdict, asserted=["x"]),
+                             "did not assess: PATCHED")
+        unass.assert_called_once()
+        with patch.object(review, "norm", side_effect=lambda v: "minor" if v == "major" else str(v or "").strip().lower()):
+            self.assertFalse(review.is_confirmed(
+                {"severity": "major", "confidence": "high", "failure_scenario": "boom"}))
+        fake_sp = type("SP", (), {
+            "PIPE": -1, "SubprocessError": Exception,
+            "run": staticmethod(lambda *a, **k: type("R", (), {"returncode": 0, "stdout": b"stub\n"})()),
+        })
+        with patch.object(review, "subprocess", fake_sp):
+            self.assertRegex(review.change_identity("HEAD", "plan", "unit"), r"^[0-9a-f]{64}$")
+
+
 if __name__ == "__main__":
     unittest.main()
