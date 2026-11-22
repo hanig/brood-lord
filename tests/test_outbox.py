@@ -556,11 +556,13 @@ class TestTheWedges(unittest.TestCase):
         """The job is REAL and running; only the binding write failed. Setting
         job_id without a marker skipped the reconcile net, so the unit decayed
         to FAILED_EVIDENCE while its job succeeded."""
+        import inspect
         src = SWARM.read_text()
+        rec = inspect.getsource(S.SADV._recover_unbound_attempts)
         self.assertIn('us["bind_pending"] = True', src,
                       "a failed bind must be marked for retry")
-        i = src.index("if us.get(\"bind_pending\")")
-        j = src.index("if us.get(\"job_id\"):\n            continue")
+        i = rec.index("if us.get(\"bind_pending\")")
+        j = rec.index("if us.get(\"job_id\"):\n            continue")
         self.assertLess(i, j,
                         "the pending-bind retry must be attempted BEFORE the "
                         "reconcile loop skips anything that has a job_id")
@@ -569,13 +571,15 @@ class TestTheWedges(unittest.TestCase):
         """Crash between the ALLOCATED save and sbatch. The scheduler never
         heard of it, so nothing is running; keeping attempt_dir set wedged the
         unit forever, because only PREEMPTED cleared it."""
-        src = SWARM.read_text()
+        import inspect
+        src = inspect.getsource(S.SADV._recover_unbound_attempts)
         self.assertIn('elif us["state"] == "ALLOCATED":', src)
         self.assertIn('us["attempt_dir"] = None', src)
 
     def test_the_released_directory_is_not_deleted(self):
         """Never destroy evidence to tidy up. A new attempt gets a NEW root."""
-        src = SWARM.read_text()
+        import inspect
+        src = inspect.getsource(S.SADV._recover_unbound_attempts)
         seg = src[src.index('elif us["state"] == "ALLOCATED":'):]
         seg = seg[:seg.index("SS.save_state")]
         for destructive in ("rmtree", "unlink", "rmdir"):
@@ -870,7 +874,8 @@ class TestTheCodePredicate(unittest.TestCase):
     def test_needs_human_does_not_decay_into_a_failure(self):
         """Waiting for a person must not become FAILED_EVIDENCE because
         nobody was at the keyboard for ten minutes."""
-        src = SWARM.read_text()
+        import inspect
+        src = inspect.getsource(S.SADV._settle_incomplete_attempt)
         i = src.index("if rc == NEEDS_HUMAN:")
         j = src.index("if rc == INCOMPLETE:")
         self.assertLess(i, j, "NEEDS_HUMAN must be handled before the settle "
@@ -1514,12 +1519,13 @@ class TestTheTwoWaysAUnitCanBeUnjudgeable(unittest.TestCase):
     says COMPLETED 0:0, which is the one place that hides the problem."""
 
     def test_the_reason_is_machine_readable_not_grepped_prose(self):
+        import inspect
         sys.path.insert(0, str(SWARM.parent))
         import unit as U2
         self.assertTrue(hasattr(U2, "REASON_NO_OUTPUTS"))
         self.assertTrue(hasattr(U2, "REASON_NO_EVIDENCE"))
         self.assertNotEqual(U2.REASON_NO_OUTPUTS, U2.REASON_NO_EVIDENCE)
-        src = SWARM.read_text()
+        src = inspect.getsource(S.SADV._settle_incomplete_attempt)
         self.assertIn("U.REASON_NO_OUTPUTS", src,
                       "the coordinator must branch on the reason code, not on "
                       "the wording of a note")
@@ -1527,12 +1533,12 @@ class TestTheTwoWaysAUnitCanBeUnjudgeable(unittest.TestCase):
     def test_a_clean_exit_with_no_output_becomes_FAILED_not_FAILED_EVIDENCE(self):
         """Verified live on lambda: a job that exited 0 and wrote nothing."""
         import ast
-        tree = ast.parse(SWARM.read_text())
+        tree = ast.parse((SWARM.parent / "swarm_advance.py").read_text())
         functions = {node.name: node for node in tree.body
                      if isinstance(node, ast.FunctionDef)}
-        self.assertIn("advance", functions)
-        advance = functions["advance"]
-        branch = next(node for node in ast.walk(advance)
+        self.assertIn("_settle_incomplete_attempt", functions)
+        settle = functions["_settle_incomplete_attempt"]
+        branch = next(node for node in ast.walk(settle)
                       if isinstance(node, ast.If)
                       and "REASON_NO_OUTPUTS" in ast.dump(node.test)
                       and isinstance(node.test, ast.Compare))
@@ -1552,7 +1558,8 @@ class TestTheTwoWaysAUnitCanBeUnjudgeable(unittest.TestCase):
         self.assertIn("FAILED_EVIDENCE", transitions(branch.orelse))
 
     def test_the_message_does_not_send_the_operator_to_sacct_for_a_clean_job(self):
-        src = SWARM.read_text()
+        import inspect
+        src = inspect.getsource(S.SADV._settle_incomplete_attempt)
         seg = src[src.index("if reason == U.REASON_NO_OUTPUTS:"):]
         seg = seg[:seg.index("else:")]
         self.assertNotIn("sacct", seg,

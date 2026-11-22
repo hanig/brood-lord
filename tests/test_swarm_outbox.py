@@ -119,11 +119,12 @@ class TestOutboxExtraction(unittest.TestCase):
         self.assertEqual(offenders, [])
 
     def test_coordinator_consumers_read_outbox_from_owner(self):
-        tree = ast.parse(Path(S.__file__).read_text())
-        bare = [(n.id, n.lineno) for n in ast.walk(tree)
+        trees = [ast.parse(Path(m.__file__).read_text()) for m in (S, S.SADV)]
+        bare = [(n.id, n.lineno) for tree in trees for n in ast.walk(tree)
                 if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
                 and n.id in EXPORTS]
-        consumers = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)
+        consumers = {n.attr for tree in trees for n in ast.walk(tree)
+                     if isinstance(n, ast.Attribute)
                      and isinstance(n.value, ast.Name) and n.value.id == "SO"}
         self.assertTrue({"_intent_key", "_has_bound_merge_evidence", "emit_intent",
                          "backfill_tracker_intents", "read_outbox", "record_receipt",

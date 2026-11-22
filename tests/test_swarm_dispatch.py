@@ -51,7 +51,8 @@ class TestDispatchExtraction(unittest.TestCase):
 
     def test_owner_lookups(self):
         trees = []
-        for module, expected in ((S, "advance"), (S.SSB, "_submit_slurm")):
+        for module, expected in ((S, "advance"), (S.SSB, "_submit_slurm"),
+                                 (S.SADV, "_recover_unbound_attempts")):
             tree = ast.parse(Path(module.__file__).read_text())
             self.assertIn(expected, {n.name for n in tree.body
                                      if isinstance(n, ast.FunctionDef)})

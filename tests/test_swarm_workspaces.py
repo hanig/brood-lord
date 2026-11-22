@@ -51,7 +51,7 @@ class TestWorkspacesExtraction(unittest.TestCase):
             registry.assert_called_once_with()
 
     def test_owner_lookups(self):
-        trees = [ast.parse(Path(m.__file__).read_text()) for m in (S, S.SSB)]
+        trees = [ast.parse(Path(m.__file__).read_text()) for m in (S, S.SSB, S.SADV)]
         bare = [(n.id, n.lineno) for tree in trees for n in ast.walk(tree)
                 if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
                 and n.id in DEFINITIONS + CONSTANTS]

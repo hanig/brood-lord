@@ -458,6 +458,7 @@ class TestTheLiftIsClosed(unittest.TestCase):
 
     FILES = (SCRIPTS / "unit.py", SCRIPTS / "swarm.py",
                   SCRIPTS / "swarm_dispatch.py", SCRIPTS / "swarm_submit.py",
+             SCRIPTS / "swarm_advance.py",
              SCRIPTS / "swarm_evidence.py", SCRIPTS / "swarm_plan_rules.py",
              SCRIPTS / "swarm_validate.py",
              SCRIPTS / "swarm_outbox.py", SCRIPTS / "swarm_preflight.py",
@@ -1174,7 +1175,8 @@ class TestSafeUnattendedAdvance(Base):
         job after the attempt. Without that there is nothing to ask about."""
         self.assertIn("--job-name=swarm-",
                       SWARM.with_name("swarm_submit.py").read_text())
-        self.assertIn("reconcile_orphan", SWARM.read_text())
+        self.assertIn("reconcile_orphan",
+                      SWARM.with_name("swarm_advance.py").read_text())
 
     def test_reconcile_asks_the_scheduler_not_the_state(self):
         """It must consult squeue/sacct -- the only party that knows whether a
@@ -1462,6 +1464,63 @@ class TestSubmitExtraction(unittest.TestCase):
             self.assertEqual((job_id, err), ("engine-4242", None))
             rec = json.loads((unit_dir / "engine.json").read_text())
             self.assertEqual(rec["launched_at"], 12345.0)
+
+
+class TestAdvanceReconcileExtraction(unittest.TestCase):
+    def test_swarm_advance_imports_without_facade_or_network(self):
+        import ast
+        import subprocess
+        tree = ast.parse((SCRIPTS / "swarm_advance.py").read_text())
+        forbidden = {"swarm", "review", "committee", "resolve_models",
+                     "linear_api", "linear_sync", "merge_unit", "urllib",
+                     "http", "socket", "ssl"}
+        imports = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
+        imports |= {a.name for n in ast.walk(tree) if isinstance(n, ast.Import)
+                    for a in n.names}
+        self.assertFalse({str(n).split(".")[0] for n in imports} & forbidden)
+        runtime_forbidden = (forbidden - {"urllib"}) | {"urllib.request"}
+        result = subprocess.run([sys.executable, "-S", "-c", (
+            "import sys; sys.path.insert(0, sys.argv[1]); import swarm_advance; "
+            "assert not set(sys.modules).intersection(" + repr(runtime_forbidden) + ")"
+        ), str(SCRIPTS)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_advance_patches_intercept_extracted_reconcile_phases(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_dir = root / "state"
+            state_dir.mkdir()
+            att_dir = root / "runs" / "u1" / "att1"
+            att_dir.mkdir(parents=True)
+            plan = {"name": "patch-test", "units": [{
+                "id": "u1", "kind": "slurm", "command": "true",
+                "runtime": "none", "outputs": ["out.txt"],
+                "converge": {"metric": "loss", "target": 0.5, "direction": "min"},
+            }]}
+            state = {"units": {"u1": {
+                "state": "SUBMITTED", "attempt_dir": str(att_dir),
+                "job_id": "123", "attempts": [str(att_dir)],
+                "gpu_hours": 0.0,
+            }}}
+            report_line = json.dumps(
+                {"produced_head": None, "receipt_sha256": "a" * 64},
+                sort_keys=True, separators=(",", ":"))
+            with mock.patch.object(swarm.SS, "renew_lease", return_value=True), \
+                 mock.patch.object(swarm.time, "time", return_value=1700000000.0) as clock, \
+                 mock.patch.object(swarm.SE, "_check",
+                                   return_value=(swarm.DONE, "", "",
+                                                 f"{swarm.SE.CHECK_RESULT_PREFIX} {report_line}\n")) as chk, \
+                 mock.patch.object(swarm, "converge_verdict",
+                                   return_value=("NOT_CONVERGED", ["loss above target"])) as conv:
+                rep, _disp, _halted = swarm.advance(
+                    plan, state, str(state_dir), str(root / "runs"), False)
+            self.assertGreaterEqual(clock.call_count, 1)
+            chk.assert_called_once()
+            conv.assert_called_once_with(plan["units"][0], str(att_dir))
+            self.assertEqual(state["units"]["u1"]["state"], "NEEDS_HUMAN")
+            self.assertEqual(state["units"]["u1"]["converge_verdict"], "NOT_CONVERGED")
+            self.assertTrue(any("convergence NOT_CONVERGED" in line for line in rep))
 
 
 if __name__ == "__main__":

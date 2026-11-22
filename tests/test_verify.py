@@ -627,12 +627,11 @@ class TestAnUnreadablePolicyRefuses(unittest.TestCase):
     authorization source is the strongest reason to refuse."""
 
     def test_advance_refuses_when_the_policy_cannot_be_read(self):
-        import ast
-        src = (SCRIPTS / "swarm.py").read_text()
+        src = (SCRIPTS / "swarm_advance.py").read_text()
         self.assertIn("the authorizing policy cannot be read", src)
 
     def test_the_refusal_precedes_admission(self):
-        src = (SCRIPTS / "swarm.py").read_text()
+        src = (SCRIPTS / "swarm_advance.py").read_text()
         i = src.index("the authorizing policy cannot be read")
         j = src.index("admit_verification(", i)
         self.assertLess(i, j, "admission runs before the policy-read check")
@@ -851,7 +850,7 @@ class TestOneWayToGetTheBase(unittest.TestCase):
     def test_nothing_else_reads_a_base_out_of_a_launch_record(self):
         import ast
         trees = [ast.parse((SCRIPTS / name).read_text())
-                 for name in ("swarm.py", "swarm_submit.py",
+                 for name in ("swarm.py", "swarm_submit.py", "swarm_advance.py",
                               "swarm_evidence.py", "swarm_code_launch.py")]
         self.assertTrue({"trusted_base", "_write_launch_record"} <= {
             n.name for tree in trees for n in tree.body if isinstance(n, ast.FunctionDef)})
@@ -875,7 +874,7 @@ class TestOneWayToGetTheBase(unittest.TestCase):
     def test_every_caller_goes_through_it(self):
         import ast
         trees = [ast.parse((SCRIPTS / name).read_text())
-                 for name in ("swarm.py", "swarm_submit.py",
+                 for name in ("swarm.py", "swarm_submit.py", "swarm_advance.py",
                               "swarm_evidence.py", "swarm_code_launch.py")]
         self.assertTrue({"trusted_base", "_submit",
                          "_persist_anchored_launch"} <= {

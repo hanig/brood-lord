@@ -74,7 +74,8 @@ class TestPreflightExtraction(unittest.TestCase):
         for module, expected in ((S, "advance"), (S.SD, "_allocate"),
                                  (S.SCL, "_capture_code_launch"),
                                  (S.SV, "_validate_commands_and_code_units"),
-                                 (S.SSB, "_recheck_existing_code_intent")):
+                                 (S.SSB, "_recheck_existing_code_intent"),
+                                 (S.SADV, "_recover_unbound_attempts")):
             tree = ast.parse(Path(module.__file__).read_text())
             self.assertIn(expected, {n.name for n in tree.body
                                      if isinstance(n, ast.FunctionDef)})
