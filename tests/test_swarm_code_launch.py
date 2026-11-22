@@ -49,11 +49,12 @@ class TestCodeLaunchExtraction(unittest.TestCase):
             build.assert_called_once_with(facts)
 
     def test_owner_lookups(self):
-        tree = ast.parse(Path(S.__file__).read_text())
-        bare = [(n.id, n.lineno) for n in ast.walk(tree)
+        trees = [ast.parse(Path(m.__file__).read_text()) for m in (S, S.SSB)]
+        bare = [(n.id, n.lineno) for tree in trees for n in ast.walk(tree)
                 if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
                 and n.id in DEFINITIONS + CONSTANTS]
-        consumers = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)
+        consumers = {n.attr for tree in trees for n in ast.walk(tree)
+                     if isinstance(n, ast.Attribute)
                      and isinstance(n.value, ast.Name) and n.value.id == "SCL"}
         self.assertEqual(consumers, set(DEFINITIONS) - {
             "_code_launch_record_payload", "_write_code_launch_record"})

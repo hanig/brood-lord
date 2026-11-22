@@ -457,7 +457,7 @@ class TestTheLiftIsClosed(unittest.TestCase):
     `A, B = 0, 1` has a Tuple target, not a Name."""
 
     FILES = (SCRIPTS / "unit.py", SCRIPTS / "swarm.py",
-                  SCRIPTS / "swarm_dispatch.py",
+                  SCRIPTS / "swarm_dispatch.py", SCRIPTS / "swarm_submit.py",
              SCRIPTS / "swarm_evidence.py", SCRIPTS / "swarm_plan_rules.py",
              SCRIPTS / "swarm_validate.py",
              SCRIPTS / "swarm_outbox.py", SCRIPTS / "swarm_preflight.py",
@@ -1172,9 +1172,9 @@ class TestSafeUnattendedAdvance(Base):
     def test_the_job_is_named_so_reconciliation_can_find_it(self):
         """Reconciliation only works because the submitted script names the
         job after the attempt. Without that there is nothing to ask about."""
-        src = SWARM.read_text()
-        self.assertIn("--job-name=swarm-", src)
-        self.assertIn("reconcile_orphan", src)
+        self.assertIn("--job-name=swarm-",
+                      SWARM.with_name("swarm_submit.py").read_text())
+        self.assertIn("reconcile_orphan", SWARM.read_text())
 
     def test_reconcile_asks_the_scheduler_not_the_state(self):
         """It must consult squeue/sacct -- the only party that knows whether a
@@ -1383,6 +1383,85 @@ class TestValidateExtraction(unittest.TestCase):
             with self.assertRaisesRegex(swarm.PlanError, "missing marker"):
                 swarm.validate_plan(code_plan)
         proto.assert_called_once()
+
+
+class TestSubmitExtraction(unittest.TestCase):
+    def test_swarm_submit_imports_without_facade_or_network(self):
+        import ast
+        import subprocess
+        tree = ast.parse((SCRIPTS / "swarm_submit.py").read_text())
+        forbidden = {"swarm", "review", "committee", "resolve_models",
+                     "linear_api", "linear_sync", "merge_unit", "urllib",
+                     "http", "socket", "ssl"}
+        imports = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
+        imports |= {a.name for n in ast.walk(tree) if isinstance(n, ast.Import)
+                    for a in n.names}
+        self.assertFalse({str(n).split(".")[0] for n in imports} & forbidden)
+        runtime_forbidden = (forbidden - {"urllib"}) | {"urllib.request"}
+        result = subprocess.run([sys.executable, "-S", "-c", (
+            "import sys; sys.path.insert(0, sys.argv[1]); import swarm_submit; "
+            "assert not set(sys.modules).intersection(" + repr(runtime_forbidden) + ")"
+        ), str(SCRIPTS)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_submit_patches_intercept_extracted_helpers(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            unit_dir = Path(tmp) / "att1"
+            unit_dir.mkdir()
+            state_dir = Path(tmp) / "state"
+            state_dir.mkdir()
+            u = {"id": "s1", "kind": "slurm", "command": "echo hi",
+                 "runtime": "none", "outputs": ["out.txt"]}
+            with mock.patch.object(swarm.SD, "_dep_env",
+                                   return_value=[("SWARM_DEP_X", "/x")]) as deps, \
+                 mock.patch.object(swarm.U, "run",
+                                   return_value=(0, "999;cluster\n", "")) as run:
+                job_id, err = swarm._submit(u, str(unit_dir), False, {}, str(state_dir))
+            self.assertIsNone(err)
+            self.assertEqual(job_id, "999")
+            deps.assert_called_once()
+            run.assert_called_once()
+            self.assertIn("export SWARM_DEP_X=/x",
+                          (unit_dir / "job.sbatch").read_text())
+
+    def test_persist_anchored_launch_guards_none_state_dir_and_pipeline_reads_live_time(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            unit_dir = Path(tmp) / "att1"
+            unit_dir.mkdir()
+            u = {"id": "p1", "kind": "pipeline", "command": "true",
+                 "runtime": "none", "outputs": ["out.txt"], "repo": str(tmp)}
+            facts = {"unit_id": "p1", "attempt_id": "att1", "repo": str(tmp),
+                     "execution_workspace": str(tmp),
+                     "workspace_identity": {"realpath": str(tmp)},
+                     "base_commit": "a" * 40, "base_tree": "b" * 40,
+                     "branch": "main", "clean_at_launch": True}
+            state = {"units": {"p1": {"attempt_launch_facts": {"att1": facts}}}}
+            with mock.patch.object(swarm.SS, "save_state",
+                                   side_effect=AssertionError("should not save")) as save:
+                err = swarm.SSB._persist_anchored_launch(
+                    u, str(unit_dir), "pipeline", False, state, None, None)
+            self.assertIsNone(err)
+            save.assert_not_called()
+
+            fake_proc = type("P", (), {"pid": 4242})()
+            original_time = swarm.time.time
+
+            def popen_side_effect(*_a, **_kw):
+                swarm.time.time = lambda: 12345.0
+                return fake_proc
+
+            try:
+                with mock.patch.object(swarm.SSB.subprocess, "Popen",
+                                       side_effect=popen_side_effect):
+                    job_id, err = swarm.SSB._submit_pipeline(
+                        u, str(unit_dir), state, "true")
+            finally:
+                swarm.time.time = original_time
+            self.assertEqual((job_id, err), ("engine-4242", None))
+            rec = json.loads((unit_dir / "engine.json").read_text())
+            self.assertEqual(rec["launched_at"], 12345.0)
 
 
 if __name__ == "__main__":

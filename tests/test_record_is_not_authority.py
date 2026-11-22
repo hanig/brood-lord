@@ -156,8 +156,12 @@ ALLOWED = {
         "checks the live directory against coordinator-state identity",
     ("worktree.py", "validate_pinned_head"):
         "checks immutable objects named by coordinator state",
-    ("swarm.py", "_submit"):
-        "uses the coordinator-created snapshot for dispatch",
+    ("swarm_submit.py", "_recheck_existing_code_intent"):
+        "rechecks coordinator-state launch intent fields against live target "
+        "resolution before re-dispatch; no agent-writable record supplies authority",
+    ("swarm_submit.py", "_prepare_code_worktree"):
+        "uses repo and branch from the coordinator-state launch intent to "
+        "recover or create the attempt worktree; no record is read",
     ("swarm_dispatch.py", "_allocate"):
         "passes repository identity from the trusted plan into allocation",
     ("swarm_preflight.py", "_resolve_dispatch_target"):
