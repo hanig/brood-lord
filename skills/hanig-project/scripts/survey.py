@@ -249,9 +249,11 @@ _HB_PREFS = _pt("opt/homebrew/opt", "opt/homebrew/cellar", "usr/local/opt", "usr
 _HOME_VENV_LAYOUTS = ((("home",), 2), (("Users",), 2), (("mnt", "weka", "home"), 4), (("root",), 1),
                       (("System", "Volumes", "Data", "home"), 5), (("System", "Volumes", "Data", "Users"), 5))
 
-def _is_std_conda_loc(lo, i):
+def _is_std_conda_loc(lo, i, home=None):
+    h_lo = tuple(x.lower() for x in home.strip().split("/") if x) if (isinstance(home, str) and home.strip().startswith("/")) else None
     return ((i == 1 and lo[0] in ("opt", "usr")) or (i == 2 and lo[:2] == ("usr", "local"))
             or (i > 0 and lo[i - 1] == "caskroom")
+            or (h_lo is not None and lo[:len(h_lo)] == h_lo and i == len(h_lo))
             or any(lo[:len(h)] == tuple(x.lower() for x in h) and i == d for h, d in _HOME_VENV_LAYOUTS))
 
 _P = os.path
@@ -264,7 +266,9 @@ def _same_dir(a, b):
 def _is_conda_base_dir(root):
     if not isinstance(root, str) or not root or "\0" in root: return False
     try:
-        if not (_P.isdir(_P.join(root, "conda-meta")) and _P.isdir(_P.join(root, "condabin"))): return False
+        if not (_P.isdir(_P.join(root, "conda-meta")) and _P.isdir(_P.join(root, "condabin"))
+                and (_P.isdir(_P.join(root, "envs")) or _P.isdir(_P.join(root, "pkgs")))):
+            return False
         return not any(len(ps) >= 2 and ps[-2] == "envs" and ps[-1] != "base" for ps in ([x.lower() for x in _P.normpath(c).split("/") if x] for c in (root, _P.realpath(root))))
     except _SERR: return False
 
@@ -296,10 +300,12 @@ def _shared_python_env_reason(path, conda_name=None, home=None):
         for nm, hv in hvs:
             hp = tuple(p for p in hv.split("/") if p)
             if hp and len(ps) >= len(hp) and (ps[:len(hp)] == hp or _same_dir(hv, "/" + "/".join(ps[:len(hp)]))): return f"in shared home venv ({nm!r})"
+    if any(lo[i] == "condabin" and (i == len(lo) - 1 or lo[i + 1] in ("conda", "mamba", "micromamba")) for i in range(len(lo))):
+        return "in conda base condabin"
     for i in range(len(lo) - 1 if (len(lo) >= 2 and lo[-2] in ("bin", "scripts", "condabin")) else len(lo)):
         if i > 0 and lo[i - 1] == "envs": continue
         s = lo[i]
-        if (_CONDA_ROOT_RE.fullmatch(s) or s == "conda") and (_is_std_conda_loc(lo, i) or (i + 1 < len(lo) and lo[i + 1] in ("base", "envs", "condabin"))):
+        if (_CONDA_ROOT_RE.fullmatch(s) or s == "conda") and (_is_std_conda_loc(lo, i, home=home) or (i + 1 < len(lo) and lo[i + 1] in ("base", "envs", "condabin"))):
             r = lo[i + 1:]
             bo = 1 if (r and (r[0] == "base" or (i > 0 and lo[i - 1] == "caskroom" and r[0] not in ("bin", "scripts", "condabin", "envs")))) else 0
             r = r[bo:]
@@ -311,7 +317,7 @@ def _shared_python_env_reason(path, conda_name=None, home=None):
         if s in ("envs", "virtualenvs", ".virtualenvs") and i + 1 < len(lo) and lo[i + 1] in _SHARED_ENV_NAMES: return f"in shared personal env {ps[i + 1]!r}"
     return "in conda base installation" if _is_conda_base_dir(path.strip()) else None
 
-def _conda_name_from_prefix(prefix):
+def _conda_name_from_prefix(prefix, home=None):
     if not isinstance(prefix, str) or not prefix.startswith("/") or "\0" in prefix: return None
     cs = []
     try:
@@ -329,14 +335,14 @@ def _conda_name_from_prefix(prefix):
         for i in range(len(lo)):
             if i > 0 and lo[i - 1] == "envs": continue
             s = lo[i]
-            if (_CONDA_ROOT_RE.fullmatch(s) or s == "conda") and (_is_std_conda_loc(lo, i) or (i + 1 < len(lo) and lo[i + 1] in ("base", "envs"))):
+            if (_CONDA_ROOT_RE.fullmatch(s) or s == "conda") and (_is_std_conda_loc(lo, i, home=home) or (i + 1 < len(lo) and lo[i + 1] in ("base", "envs"))):
                 r = ps[i + 1:]
                 if r and (r[0].lower() == "base" or (i > 0 and lo[i - 1] == "caskroom" and r[0].lower() not in ("bin", "scripts", "envs"))): r = r[1:]
                 if not r: return "base"
                 if r[0].lower() == "envs" and len(r) == 2: return r[1]
     if hm:
         ps = tuple(p for p in cs[0].split("/") if p); lo = tuple(p.lower() for p in ps)
-        if ps: return "base" if (lo[-1] == "base" or (_CONDA_ROOT_RE.fullmatch(lo[-1]) and _is_std_conda_loc(lo, len(lo) - 1))) else ps[-1]
+        if ps: return "base" if (lo[-1] == "base" or (_CONDA_ROOT_RE.fullmatch(lo[-1]) and _is_std_conda_loc(lo, len(lo) - 1, home=home))) else ps[-1]
     return None
 
 def detect_python_env(env=None, executable=None, prefix=None, base_prefix=None):
@@ -349,11 +355,19 @@ def detect_python_env(env=None, executable=None, prefix=None, base_prefix=None):
         except _SERR: return x
     rex, rpr, rcpr = _rp(ex), _rp(pr), _rp((em.get("CONDA_PREFIX") or "").strip() or None)
     cde, cpr, ve = (em.get("CONDA_DEFAULT_ENV") or "").strip() or None, (em.get("CONDA_PREFIX") or "").strip() or None, (em.get("VIRTUAL_ENV") or "").strip() or None
-    icn, pv = _conda_name_from_prefix(pr), bool(pr and bp and pr != bp)
-    try: no_meta = bool(pr and "\0" not in pr and os.path.isdir(pr) and not os.path.isdir(os.path.join(pr, "conda-meta")))
-    except _SERR: no_meta = False
-    sc = _same_dir(rpr, rcpr) and not no_meta
-    if pv:
+    icn, pv = _conda_name_from_prefix(pr, home=hm), bool(pr and bp and pr != bp)
+    has_pyvenv, has_cmeta, is_dir_pr = False, False, False
+    try:
+        if pr and "\0" not in pr and _P.isdir(pr):
+            is_dir_pr = True
+            has_pyvenv = _P.isfile(_P.join(pr, "pyvenv.cfg"))
+            has_cmeta = _P.isdir(_P.join(pr, "conda-meta"))
+    except _SERR:
+        pass
+    no_meta = is_dir_pr and not has_cmeta
+    sc = _same_dir(rpr, rcpr) and not no_meta and not has_pyvenv
+    is_venv = pv and (has_pyvenv or (not has_cmeta and not sc))
+    if is_venv:
         kind, name = "venv", (Path(pr).name if pr else None)
         sr = _shared_python_env_reason(pr, home=hm) or (_shared_python_env_reason(rpr, home=hm) if rpr and rpr != pr else None)
     elif icn or sc:

@@ -169,11 +169,13 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             f"{hh}/envs/workbook{bp}",
             "/opt/miniforge3/condabin/conda",
             "/srv/proj/miniforge3/condabin/conda",
+            "/srv/science/dist/condabin/conda",
             u3,
             f"{u3}.13t",
             f"{u3}.13td",
             f"{u3}.7dm",
             f"{u3}-dbg",
+            "/usr/bin/graalpy",
             "/usr/libexec/platform-python",
             f"{ul}{bp}3.12",
             f"{hb}{bp}3.12",
@@ -208,8 +210,11 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             f"{u3} scripts/train.py",
             f"{sp} scripts/train.py",
             "/srv/tools/bin/env scripts/train.py",
+            "/usr/bin/sort input.txt",
+            "/usr/bin/sort -- input.txt",
             "/usr/bin/sort --output=/tmp/result",
             "/srv/bin/train --config=/tmp/fit.toml",
+            f"{STAGE_ROOT}/bin/train worker",
             "sort input.txt",
             "python3>out",
             f"{u3}>run.log",
@@ -237,15 +242,26 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             with self.subTest(ep=ep):
                 self._fail(self._plan([_slurm("u", runtime=_rt("b", ep))], None), "refused")
 
-    def test_case_sensitive_home_venv_and_declared_spaces(self):
-        # Case-sensitive Linux paths under HOME differing in case from .venv/venv are accepted.
+    def test_custom_home_and_case_sensitive_and_spaced_dirs(self):
+        # Custom HOME outside hard-coded layouts is refused lexically for .venv/venv and conda base.
+        with mock.patch.dict(os.environ, {"HOME": "/cluster/users/alice"}):
+            for bad in ("/cluster/users/alice/.venv", "/cluster/users/alice/venv"):
+                self._fail(self._plan([self._u(f"{bad}/bin/python", "stage")], self._e1(bad)), "shared home venv")
+                self._fail(self._plan([self._u(f"{bad}/bin/python")], None), "shared home venv")
+            self._fail(self._plan([self._u("/cluster/users/alice/miniforge3/bin/python")], None), "conda base")
+            # Exact-case non-matching names and project subdirs under custom HOME remain accepted.
+            for okp in ("/cluster/users/alice/.VENV", "/cluster/users/alice/Venv", "/cluster/users/alice/proj/.venv"):
+                S.validate_plan(self._plan([self._u(f"{okp}/bin/python", "stage")], self._e1(okp)))
+                S.validate_plan(self._plan([self._u(f"{okp}/bin/python")], None))
+        # Case-sensitive Linux paths under standard HOME differing in case from .venv/venv are accepted.
         for path in ("/home/alice/.VENV", "/home/alice/Venv"):
             S.validate_plan(self._plan([self._u(f"{path}/bin/python", "stage")], self._e1(path)))
-        # Declared env paths containing spaces or '-2' are allowed; flags after the prefix are refused.
+        # Spaced directory names with '-2' work in BOTH declared and legacy plans; flags after bin are refused.
         spaced = "/home/alice/Experiment -2/stage"
         S.validate_plan(self._plan([self._u(f"{spaced}/bin/python", "stage")], self._e1(spaced)))
+        S.validate_plan(self._plan([self._u(f"{spaced}/bin/python")], None))
+        S.validate_plan(self._plan([self._u("/home/alice/Experiment -2/fit", res="conda")], None))
         self._fail(self._plan([self._u(f"{spaced}/bin/train --config=/tmp/fit.toml", "stage")], self._e1(spaced)), "refused")
-        S.validate_plan(self._plan([self._u(f"{STAGE_ROOT}/bin/train worker", "stage")]))
         S.validate_plan(self._plan(
             [self._u("/srv/env experiments/stage/bin/python", "stage")],
             {"orchestration": _orch("/home/alice/Experiment - A/ops"), "stage": _env_spec("/srv/env experiments/stage", model_line="stage")},
@@ -254,6 +270,27 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             [self._u("/srv/bin/python experiments/stage/bin/python", "stage")],
             self._e1("/srv/bin/python experiments/stage"),
         ))
+
+    def test_resolution_path_and_uv_and_unbound_rules(self):
+        # Legacy PATH-resolved non-Python tools and bare uv validate; bare Python/env on PATH are refused.
+        for tool in ("sort", "samtools", "Rscript", "rg"):
+            S.validate_plan(self._plan([self._u(tool, res="path", command=f"{tool} --version")], None))
+            S.validate_plan(self._plan([self._u(tool, "none", res="path", command=f"{tool} --version")]))
+            # When top-level environments is declared, omitting environment on non-Python slurm/pipeline is refused.
+            self._fail(self._plan([self._u(tool, res="path", command=f"{tool} --version")]), "omits 'environment'")
+        for bad_path in ("python3", "python", "pip", "pytest", "graalpy", "torchrun", "conda", "env", "sort -u", "./sort", "--version"):
+            self._fail(self._plan([self._u(bad_path, res="path")], None), "refused")
+        # resolution="uv" with bare "uv" works in legacy plans and when bound; refused when unbound or "none".
+        S.validate_plan(self._plan([self._u("uv", res="uv")], None))
+        S.validate_plan(self._plan([self._u("uv", "stage", res="uv")]))
+        self._fail(self._plan([self._u("uv", res="uv")]), "undeclared")
+        self._fail(self._plan([self._u("uv", "none", res="uv")]), "environment='none'")
+        # Explicit environment binding on direct slurm requires executable directly inside that env (no graalpy/coverage bypass).
+        for outsider in ("/srv/proj/.venvs/other/bin/graalpy", "/srv/proj/.venvs/unregistered/bin/coverage"):
+            self._fail(self._plan([self._u(outsider, "stage")]), "does not belong directly")
+        # Inside the bound env, graalpy and coverage are accepted.
+        for insider in (f"{STAGE_ROOT}/bin/graalpy", f"{STAGE_ROOT}/bin/coverage"):
+            S.validate_plan(self._plan([self._u(insider, "stage")]))
 
     def test_bindings_and_sharing(self):
         st, mk, bp = "stage", "maxtoki", "/bin/python"
@@ -270,6 +307,7 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         self._fail(self._plan([_slurm("u", "o")], runtimes={"o": _rt("o", ORCH_ROOT + bp)}), "orchestration")
         self._fail(self._plan([_code("c", None)]), "environment")
         S.validate_plan(self._plan([_code("c", "none")]))
+        S.validate_plan(self._plan([_slurm("r", runtime="none")]))
         for badp in (STAGE_ROOT, STAGE_ROOT + "/nested"):
             es = _base_envs()
             es[mk]["path"] = badp
@@ -280,15 +318,30 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         )
         sh = _rt("s", f"/srv/proj/.venvs/one{bp}")
         self._fail(self._plan([_slurm("u1", "s", model_line=st), _slurm("u2", "s", model_line=mk)], None, runtimes={"s": sh}), "share environment root")
-        # Legacy non-python tool inside a venv directory (including plain `venv` and with environment="none") cannot be shared across model lines.
-        self._fail(
-            self._plan([self._u("/srv/project/venv/bin/coverage", uid="c1", model_line=st), self._u("/srv/project/venv/bin/coverage", uid="c2", model_line=mk)], None),
-            "share environment root",
-        )
-        self._fail(
-            self._plan([self._u("/srv/proj/.venvs/one/bin/coverage", "none", uid="c1", model_line=st), self._u("/srv/proj/.venvs/one/bin/coverage", "none", uid="c2", model_line=mk)], None),
-            "share environment root",
-        )
+        # Legacy inferred Python root sharing: python + console script in same bin dir (in either order, even with environment="none").
+        for pair in (
+            [self._u("/srv/stage/bin/python", uid="a", model_line=st), self._u("/srv/stage/bin/coverage", uid="b", model_line=mk)],
+            [self._u("/srv/stage/bin/coverage", "none", uid="b", model_line=mk), self._u("/srv/stage/bin/python", uid="a", model_line=st)],
+            [self._u("/srv/project/venv/bin/coverage", uid="c1", model_line=st), self._u("/srv/project/venv/bin/coverage", uid="c2", model_line=mk)],
+        ):
+            self._fail(self._plan(pair, None), "share environment root")
+        # Legacy non-Python native tools under dirs named 'envs' or '*-env' with environment='none' are NOT falsely rejected.
+        for native in ("/opt/envs/native-tools/bin/rg", "/srv/native-tools-env/bin/sort"):
+            units = [self._u(native, "none", uid=x, model_line=x, command=f"{native} --version") for x in (st, mk)]
+            S.validate_plan(self._plan(units, None))
+        # Legacy conda name vs standard absolute prefix/direct-executable collision (both orders), while distinct roots remain allowed.
+        for pair in (
+            [self._u("fit", res="conda", uid="a", model_line=st), self._u("/opt/miniforge3/envs/fit", res="conda", uid="b", model_line=mk)],
+            [self._u("/opt/miniforge3/envs/fit", res="conda", uid="b", model_line=mk), self._u("fit", res="conda", uid="a", model_line=st)],
+            [self._u("fit", res="conda", uid="a", model_line=st), self._u("/opt/miniforge3/envs/fit/bin/python", res="direct", uid="b", model_line=mk)],
+        ):
+            self._fail(self._plan(pair, None), "share conda environment")
+        # Nested executable inside declared env without explicit environment is refused.
+        self._fail(self._plan([self._u(f"{STAGE_ROOT}/tools/docs-venv/bin/coverage")]), "does not belong directly")
+        S.validate_plan(self._plan([
+            self._u("/opt/miniforge3/envs/fit", res="conda", uid="a", model_line=st),
+            self._u("/home/alice/miniforge3/envs/fit", res="conda", uid="b", model_line=mk),
+        ], None))
         for k, v in (("lock_file", "none"), ("path", "relative/venv"), ("path", "/srv/../other/venv"), ("path", "/srv/$PROJ/venv"), ("python", "latest"), ("build", ""), ("kind", "")):
             es = _base_envs()
             es[st][k] = v
@@ -312,7 +365,8 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         for t in (ub + "Rscript", ub + "sort", ul + "nextflow"):
             rt = _rt("t", t)
             S.validate_plan(self._plan([_slurm("u", rt, command=t)], None))
-            S.validate_plan(self._plan([_slurm("u", rt, command=t)]))
+            S.validate_plan(self._plan([_slurm("u", rt, command=t, environment="none")]))
+            self._fail(self._plan([_slurm("u", rt, command=t)]), "omits 'environment'")
         ce = _base_envs()
         ce[st]["path"] = "/home/owner/miniforge3/envs/stage"
         S.validate_plan(self._plan([_slurm("u", "sc")], ce, runtimes={"sc": _rt("sc", st, st, res="conda")}))
@@ -329,17 +383,18 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         S.validate_plan(self._plan([self._u(f"{spj}/bin/run-stage", st, "wrapper")]))
         for ep in (f"{ORCH_ROOT}/bin/run-stage", "/srv/old-stage/bin/python"):
             self._fail(self._plan([self._u(ep, st, "wrapper")]))
-        for ep in (OP, SP, f"{ORCH_ROOT}/bin/run-stage"):
+        for ep in (OP, SP, f"{ORCH_ROOT}/bin/run-stage", f"{STAGE_ROOT}/bin/rg"):
             self._fail(self._plan([self._u(ep, environment="none")]))
         cat = {n: _rt(n, ub + n, env="none", model_line=n) for n in ("sort", "cut")}
+        cat["nf_cat"] = _rt("nf_cat", ul + "nextflow", st, probe="nf -v")
         S.validate_plan(self._plan(
             [
                 _slurm("u1", "sort", environment="none"),
                 _slurm("u2", "cut", environment="none"),
-                self._u("/opt/homebrew/opt/r/bin/Rscript", uid="u3", model_line="eval"),
-                self._u("/usr/lib/git-core/git", uid="u4"),
-                self._u("/usr/sbin/ethtool", uid="u5"),
-                _slurm("u6", _rt("nf", ul + "nextflow", st, probe="nf -v"), kind="pipeline"),
+                self._u("/opt/homebrew/opt/r/bin/Rscript", "none", uid="u3", model_line="eval"),
+                self._u("/usr/lib/git-core/git", "none", uid="u4"),
+                self._u("/usr/sbin/ethtool", "none", uid="u5"),
+                _slurm("u6", "nf_cat", kind="pipeline"),
                 _slurm("u7", _rt("nf2", "/opt/nextflow/bin/nextflow", st, probe="nf -v"), kind="pipeline"),
                 self._u("stage/torchrun/2.4", st, "module", "u9"),
                 self._u(ul + "uv", st, "uv", "u10"),
@@ -356,20 +411,23 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             ],
             runtimes=cat,
         ))
+        # A slurm unit cannot borrow a pipeline-engine runtime bound to stage.
+        self._fail(self._plan([_slurm("u_bad", "nf_cat")], runtimes={"nf_cat": cat["nf_cat"]}), "does not belong directly")
         uv = _rt("uvl", ul + "uv", res="uv")
         S.validate_plan(self._plan([_slurm("u1", uv, model_line=st), _slurm("u2", uv, model_line="eval")], None))
         S.validate_plan(self._plan([_slurm("u1", _rt("c1", "/srv/envs/stage", res="conda"), model_line=st), _slurm("u2", _rt("c2", "/srv/envs/eval", res="conda"), model_line="eval")], None))
         S.validate_plan(self._plan([
             self._u("samtools", res="module", uid="ms"),
             self._u("cuda/12.1", res="module", uid="mc"),
+            self._u("compiler/gcc/12.3", res="module", uid="mg"),
             self._u("stage/python/3.12", res="module", uid="mp", model_line=st),
             self._u("stage/miniforge3/24.3", res="module", uid="mm", model_line=st),
         ], None))
         self._fail(self._plan([self._u("stage/python/3.12", res="module", uid="m1", model_line=st), self._u("stage/python/3.12", res="module", uid="m2", model_line=mk)], None))
         self._fail(self._plan([self._u("stage/python/3.12", st, "module", "m1", model_line=st), self._u("stage/python/3.12", mk, "module", "m2", model_line=mk)]))
         self._fail(self._plan([self._u("stage/python/3.12", res="module", uid="mu")]))
-        # Shared cluster Python/conda Lmod modules are unconditionally refused even when bound to an env.
-        for bm in ("python3", "python/3.12", "lang/python/3.12", "anaconda3/2024.02", "conda/24.3", "torchrun"):
+        # Shared cluster Python/conda Lmod modules (including deep hierarchies) are unconditionally refused even when bound.
+        for bm in ("python3", "python/3.12", "lang/python/3.12", "Core/lang/Python/3.12", "compiler/gcc/12.3/python/3.11", "anaconda3/2024.02", "conda/24.3", "torchrun"):
             self._fail(self._plan([self._u(bm, res="module")], None))
             self._fail(self._plan([self._u(bm, st, "module")]))
         for mp in ("/tmp/project/miniconda3", "/tmp/p/.venvs/miniconda3"):
@@ -389,7 +447,6 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             (f"{WB_ENV}/bin/coverage", "conda"),
             (f"{WB_ENV}/bin/coverage", "direct"),
             (f"{ha}/.venv/bin/rg", "direct"),
-            ("uv", "uv"),
             ("fit" + chr(0xD800), "conda"),
             ("cuda/12." + chr(0xD800), "module"),
         ):
@@ -413,7 +470,8 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             (_rt("sp", SP, probe="py -c 1", verified_by="preflight"), st, _UNSET),
             (_rt("sr", ub + "sort", probe="sort -V", verified_by="preflight"), "none", None),
         ):
-            S.validate_plan(self._plan([_slurm("can", cr, command=cr["probe"]), _slurm("wk", dict(cr, verified_by="canary:can"), needs=["can"], environment=we)], pe))
+            can_kw = {"environment": we} if (pe is _UNSET and cr["resolution"] == "container") else {}
+            S.validate_plan(self._plan([_slurm("can", cr, command=cr["probe"], **can_kw), _slurm("wk", dict(cr, verified_by="canary:can"), needs=["can"], environment=we)], pe))
         for bm in (f"env {ub}python3", f"env {ORCH_ROOT}/bin/jupyter", f"env {ORCH_ROOT}/bin/snakemake"):
             self._fail(self._plan([self._u(bm, st, "module")]))
         S.validate_plan(self._plan([_code("c", st)], self._e1(f"{ha}/project/conda")))
@@ -427,7 +485,7 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         ):
             self._fail(self._plan([bad_u]))
         crt = _rt("nf", ul + "nextflow", probe="nf -v", verified_by="preflight")
-        self._fail(self._plan([_slurm("can", crt, environment=st, command="nf -v"), _slurm("wk", dict(crt, verified_by="canary:can"), needs=["can"], environment=mk)]), "canary")
+        self._fail(self._plan([_slurm("can", crt, kind="pipeline", environment=st, command="nf -v"), _slurm("wk", dict(crt, verified_by="canary:can"), kind="pipeline", needs=["can"], environment=mk)]), "canary")
         ce2 = dict(self._e1("/srv/model-prefixes/stage"), py3line=_env_spec("/srv/model-prefixes/python3", model_line="py3line"))
         S.validate_plan(self._plan([_slurm("u1", _rt("cs", st, st, res="conda")), _slurm("u2", _rt("cp", "python3", "py3line", res="conda"))], ce2))
         self._fail(self._plan([self._u("fit", st, "conda")], {"orchestration": _orch("/opt/miniforge3/envs/fit"), st: _env_spec("/srv/one/envs/fit")}), "ambiguous")
@@ -453,6 +511,8 @@ class TestSurveyPythonEnvDetection(unittest.TestCase):
         for pr, bp, env, exp in (
             (WB_ENV, None, {CD: "workbook", CP: WB_ENV}, ("conda", "workbook", True)),
             (mf, None, {CD: "base", CP: mf}, ("conda", "base", True)),
+            # Active conda env even when prefix != base_prefix is classified as conda, not venv.
+            ("/opt/miniforge3/envs/stage", "/opt/miniforge3", {CD: "stage", CP: "/opt/miniforge3/envs/stage", "HOME": "/home/user"}, ("conda", "stage", False)),
             (ORCH_ROOT, "/opt/homebrew/opt/python@3.12", {VE: ORCH_ROOT}, ("venv", "orch-venv", False)),
             (ORCH_ROOT, mf, {CD: "base", CP: mf, VE: ORCH_ROOT}, ("venv", "orch-venv", False)),
             ("/opt/miniforge3/envs/stage-venv", "/opt/miniforge3", {CD: "base", CP: "/opt/miniforge3"}, ("venv", "stage-venv", False)),
@@ -464,7 +524,7 @@ class TestSurveyPythonEnvDetection(unittest.TestCase):
             self.assertEqual(_key(_det(pr, bp, **env)), exp, pr)
 
         # condabin under standard or custom conda roots is recognized as conda base.
-        for cbin in ("/opt/miniforge3/condabin/conda", "/srv/proj/miniforge3/condabin/conda"):
+        for cbin in ("/opt/miniforge3/condabin/conda", "/srv/proj/miniforge3/condabin/conda", "/srv/science/dist/condabin/conda"):
             self.assertIsNotNone(SURVEY._shared_python_env_reason(cbin), cbin)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -485,9 +545,22 @@ class TestSurveyPythonEnvDetection(unittest.TestCase):
                     (cp / "bin/conda").write_text("#!/bin/sh\n", encoding="utf-8")
                 self.assertEqual(_key(_det(cp)), ("conda", nm, False), rel)
 
+            # Unactivated on-disk conda env with prefix != base_prefix is still reported as conda (no pyvenv.cfg).
+            uc = T / "miniforge3/envs/unact"
+            (uc / "conda-meta").mkdir(parents=True)
+            self.assertEqual(_key(_det(uc, T / "miniforge3")), ("conda", "unact", False))
+
+            # Dedicated custom-prefix conda env containing conda package (conda-meta + condabin, no envs/pkgs) is NOT base.
+            cf = T / "models/fit"
+            (cf / "conda-meta").mkdir(parents=True)
+            (cf / "condabin").mkdir()
+            self.assertEqual(_key(_det(cf)), ("conda", "fit", False))
+
+            # Real custom-prefix conda base installation (conda-meta + condabin + envs/pkgs) IS base.
             dist, cur = T / "science/dist", T / "science/current"
             (dist / "conda-meta").mkdir(parents=True)
             (dist / "condabin").mkdir()
+            (dist / "envs").mkdir()
             cur.symlink_to(dist)
             for ce in ({CD: "base", CP: str(cur)}, {}):
                 self.assertEqual(_key(_det(dist, **ce)), ("conda", "base", True))
