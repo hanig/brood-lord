@@ -250,10 +250,20 @@ _HOME_VENV_LAYOUTS = ((("home",), 2), (("Users",), 2), (("mnt", "weka", "home"),
                       (("System", "Volumes", "Data", "home"), 5), (("System", "Volumes", "Data", "Users"), 5))
 
 def _is_std_conda_loc(lo, i, home=None):
-    h_lo = tuple(x.lower() for x in home.strip().split("/") if x) if (isinstance(home, str) and home.strip().startswith("/")) else None
+    hs = []
+    if isinstance(home, str) and home.strip().startswith("/") and "\0" not in home:
+        h0 = home.strip()
+        hs.append(h0)
+        try:
+            if _P.exists(h0):
+                rp = _P.realpath(h0)
+                if rp and rp.startswith("/") and rp != h0: hs.append(rp)
+        except _SERR:
+            pass
+    h_los = [tuple(x.lower() for x in h.split("/") if x) for h in hs]
     return ((i == 1 and lo[0] in ("opt", "usr")) or (i == 2 and lo[:2] == ("usr", "local"))
             or (i > 0 and lo[i - 1] == "caskroom")
-            or (h_lo is not None and lo[:len(h_lo)] == h_lo and i == len(h_lo))
+            or any(h_lo and lo[:len(h_lo)] == h_lo and i == len(h_lo) for h_lo in h_los)
             or any(lo[:len(h)] == tuple(x.lower() for x in h) and i == d for h, d in _HOME_VENV_LAYOUTS))
 
 _P = os.path

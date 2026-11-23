@@ -167,6 +167,7 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             f"{hh}/miniforge3/envs/base{bp}",
             f"{hh}/anaconda3{bp}",
             f"{hh}/envs/workbook{bp}",
+            "/srv/conda-prefixes/workbook/bin/python",
             "/opt/miniforge3/condabin/conda",
             "/srv/proj/miniforge3/condabin/conda",
             "/srv/science/dist/condabin/conda",
@@ -306,6 +307,9 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         es = _base_envs()
         es["orchestration"]["path"] = WB_ENV
         self._fail(self._plan([_code()], es), "workbook")
+        es_wb = _base_envs()
+        es_wb[st]["path"] = "/srv/conda-prefixes/workbook"
+        self._fail(self._plan([_code()], es_wb), "workbook")
         self._fail(self._plan([_slurm("u", "m")], runtimes={"m": _rt("m", f"/srv/proj/.venvs/mystery{bp}")}), "undeclared")
         self._fail(self._plan([_code("c", "ghost")]), "not declared")
         self._fail(self._plan([_slurm("u", "m")], runtimes={"m": _rt("m", MAXTOKI_ROOT + bp, st)}), "does not belong directly")
@@ -335,8 +339,24 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             [self._u("/srv/stage/bin/python", uid="a"), self._u("/srv/stage/libexec/coverage", "none", uid="b")],
             [self._u("/srv/fit/bin/torchrun", res="wrapper", uid="a"), self._u("/srv/fit/bin/coverage", "none", uid="b")],
             [self._u("/srv/project/venv/bin/coverage", uid="c1", model_line=st), self._u("/srv/project/venv/bin/coverage", uid="c2", model_line=mk)],
+            [self._u("/srv/project/venv/bin/coverage", uid="c1", model_line=st), self._u("/srv/project/venv/bin/coverage", "none", uid="c2", model_line=mk)],
+            [self._u("/srv/project/fit-venv/bin/coverage", uid="c1"), self._u("/srv/project/fit-venv/bin/coverage", "none", uid="c2")],
         ):
             self._fail(self._plan(pair, None))
+        # Unused Python runtime in catalogue does not register its parent as a plan-used root against native units.
+        S.validate_plan(self._plan(
+            [self._u("/srv/tools/bin/sort", "none", uid="n")],
+            None,
+            runtimes={"unused": _rt("unused", "/srv/tools/bin/python3")},
+        ))
+        # Named wrapper runtime inside a declared env's libexec/ matches inline behavior when bound on the unit.
+        wrap_ep = f"{STAGE_ROOT}/libexec/run-stage"
+        S.validate_plan(self._plan([_slurm("u", "run", environment=st, command=wrap_ep)], runtimes={"run": _rt("run", wrap_ep, res="wrapper")}))
+        # Distinct legacy conda prefixes under /srv/common/bin/ are not misread as executables in a shared 'common' env.
+        S.validate_plan(self._plan([
+            self._u("/srv/common/bin/fit", res="conda", uid="a", model_line=st),
+            self._u("/srv/common/bin/eval", res="conda", uid="b", model_line=mk),
+        ], None))
         # A bound external non-Python wrapper does not turn its parent bin dir into a Python root for sibling native tools.
         S.validate_plan(self._plan([
             self._u("/opt/tools/bin/run-stage", st, res="wrapper", uid="w", model_line=st),
@@ -455,13 +475,15 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             self._u("samtools", res="module", uid="ms"),
             self._u("cuda/12.1", res="module", uid="mc"),
             self._u("compiler/gcc/12.3", res="module", uid="mg"),
+            self._u("genomics/scripts/qc/1.0", res="module", uid="mq"),
+            self._u("stage/scripts/python/3.12", res="module", uid="msp", model_line=st),
             self._u("stage/python/3.12", res="module", uid="mp", model_line=st),
             self._u("stage/miniforge3/24.3", res="module", uid="mm", model_line=st),
         ], None))
         self._fail(self._plan([self._u("stage/python/3.12", res="module", uid="m1", model_line=st), self._u("stage/python/3.12", res="module", uid="m2", model_line=mk)], None))
         self._fail(self._plan([self._u("stage/python/3.12", st, "module", "m1", model_line=st), self._u("stage/python/3.12", mk, "module", "m2", model_line=mk)]))
         self._fail(self._plan([self._u("stage/python/3.12", res="module", uid="mu")]))
-        # Shared cluster Python/conda Lmod modules (including versioned tokens and nested shared categories) are refused even when bound.
+        # Shared cluster Python/conda Lmod modules (including versioned/compiler-suffixed tokens and nested shared categories) are refused even when bound.
         for bm in (
             "python3",
             "python/3.12",
@@ -469,6 +491,9 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             "lang/python/3.12",
             "Core/lang/Python/3.12",
             "Core/lang/Python-3.12.2",
+            "Core/lang/Python-v3.12.2",
+            "Core/Python-v3.12.2",
+            "Core/Python3.12-GCCcore-13.2.0",
             "Core/compilers/gcc/12/Python-3.12.2",
             "compiler/gcc/12.3/python/3.11",
             "mysite/lang/python/3.12",
@@ -622,6 +647,14 @@ class TestSurveyPythonEnvDetection(unittest.TestCase):
             (dist / "condabin").mkdir()
             cur.symlink_to(dist)
             self.assertEqual(_key(_det(dist, **{CD: "base", CP: str(cur)})), ("conda", "base", True))
+
+            # Unactivated $HOME/miniforge3 via symlinked HOME is still recognized as shared conda base.
+            home_real = (T / "storage/alice").resolve()
+            mf_home = home_real / "miniforge3"
+            (mf_home / "conda-meta").mkdir(parents=True)
+            home_link = T / "home-link"
+            home_link.symlink_to(home_real, target_is_directory=True)
+            self.assertEqual(_key(_det(mf_home, HOME=str(home_link))), ("conda", "base", True))
 
             sc = T / "miniforge3/envs/compiler"
             sc.mkdir(parents=True)
