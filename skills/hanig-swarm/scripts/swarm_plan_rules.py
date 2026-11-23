@@ -443,8 +443,8 @@ _PYTHON_EXE_RE = re.compile(
     r"pypy(?:\d+(?:\.\d+)*)?|graalpy(?:\d+(?:\.\d+)*)?|jython(?:\d+(?:\.\d+)*)?|micropython(?:\d+(?:\.\d+)*)?|pyston(?:\d+(?:\.\d+)*)?|"
     r"pip(?:x|\d+(?:\.\d+)*)?|ipython(?:\d+)?|ptpython(?:\d+)?|bpython(?:\d+)?|"
     r"py\.?test(?:-?\d+(?:\.\d+)*)?|nosetests(?:\d+)?|jupyter(?:-[a-z0-9._-]+)?|"
-    r"torchrun|accelerate|deepspeed|snakemake|poetry|pdm|hatch|flask|uvicorn|gunicorn|celery|ray|wandb|mlflow|"
-    r"dask(?:-[a-z0-9._-]+)?|conda|mamba|micromamba)$",
+    r"torchrun|accelerate|deepspeed|snakemake|poetry|pdm|hatch|flask|uvicorn|gunicorn|celery|wandb|mlflow|"
+    r"dask(?:-[a-z0-9._-]+)?|conda|mamba|micromamba)(?:\.exe)?$",
     re.IGNORECASE,
 )
 _BAD_SHELL_CHARS = ("'", '"', "`", "$", ";", "|", "&", "<", ">", "\\", "*", "?", "[", "]", "{", "}", "\n", "\r", "\0")
@@ -470,7 +470,7 @@ _HB_PY_PREFIXES = _pt("opt/homebrew/opt", "opt/homebrew/cellar", "usr/local/opt"
 _SHARED_LMOD_CATS = frozenset({"lang", "languages", "compilers", "compiler", "tools", "system", "shared", "default", "core", "devel", "common", "global", "mpi", "apps", "software"})
 _LMOD_PY_RE = re.compile(
     r"^(?:pythonw?|pypy|graalpy|jython|micropython|pyston|conda|miniconda|miniforge|anaconda|mambaforge|micromamba|torchrun|snakemake)"
-    r"(?:\d+(?:\.\d+)*)?(?:[-_@][A-Za-z0-9][0-9a-zA-Z._+-]*)?$",
+    r"(?:\d+(?:\.\d+)*[tdmu]*(?:[-_@+][A-Za-z0-9][0-9a-zA-Z._+-]*)?|[-_@+]v?\d[0-9a-zA-Z._+-]*)?$",
     re.IGNORECASE,
 )
 _PIPELINE_NON_PY_ENGINES = frozenset({"nextflow", "cromwell", "make"})
@@ -529,13 +529,12 @@ def shared_env_reason(path, is_env_root=False, allow_bare=False, home=None):
         return f"{t!r} in shared home venv ({ps[len(hp)]!r})"
     if any(lo[i] == "condabin" and (i == len(lo) - 1 or lo[i + 1] in ("conda", "mamba", "micromamba")) for i in range(len(lo))):
         return f"{t!r} in conda base condabin"
-    h_lo = tuple(x.lower() for x in hp) if (not herr and hp) else None
     for i in range(len(lo) if is_env_root else len(lo) - 1):
         if i > 0 and lo[i - 1] == "envs": continue
         s = lo[i]
         std_c = ((i == 1 and lo[0] in ("opt", "usr")) or (i == 2 and lo[:2] == ("usr", "local")) or (i > 0 and lo[i - 1] == "caskroom")
-                 or (h_lo is not None and lo[:len(h_lo)] == h_lo and i == len(h_lo))
-                 or any(lo[:len(h)] == tuple(x.lower() for x in h) and i == d for h, d in _HOME_VENV_LAYOUTS))
+                 or (not herr and hp is not None and ps[:len(hp)] == hp and i == len(hp))
+                 or any(ps[:len(h)] == h and i == d for h, d in _HOME_VENV_LAYOUTS))
         if (_CONDA_ROOT_RE.fullmatch(s) or s == "conda") and (std_c or (i + 1 < len(lo) and lo[i + 1] in ("base", "envs", "condabin"))):
             r = lo[i + 1:]
             bo = 1 if (r and (r[0] == "base" or (i > 0 and lo[i - 1] == "caskroom" and r[0] not in ("bin", "scripts", "condabin", "envs")))) else 0
@@ -545,7 +544,9 @@ def shared_env_reason(path, is_env_root=False, allow_bare=False, home=None):
                 if r[1] in SHARED_ENV_NAMES: return f"{t!r} in shared conda env {ps[i + 2 + bo]!r}"
                 if len(r) == 2 or r[2] in ("bin", "scripts"): break
     for i, s in enumerate(lo):
-        if s in ("envs", "virtualenvs", ".virtualenvs") and i + 1 < len(lo) and lo[i + 1] in SHARED_ENV_NAMES: return f"{t!r} in shared personal env {ps[i + 1]!r}"
+        if s in ("envs", "virtualenvs", ".virtualenvs") and i + 1 < len(lo) and lo[i + 1] in SHARED_ENV_NAMES:
+            if is_env_root or py or s != "envs" or lo[i + 1] in ("workbook", "base"):
+                return f"{t!r} in shared personal env {ps[i + 1]!r}"
     return None
 
 
@@ -935,10 +936,12 @@ def _validate_environments(plan, units):
     def _is_lmod_py_tok(x):
         return bool(_PYTHON_EXE_RE.fullmatch(x) or _CONDA_ROOT_RE.fullmatch(x) or _LMOD_PY_RE.fullmatch(x))
 
-    def _entrypoint_is_python_exe(e):
+    def _entrypoint_is_python_exe(e, res=None):
         if not e: return False
         p, err = _clean_abs_parts(e)
-        return bool(_PYTHON_EXE_RE.fullmatch(p[-1])) if (not err and p) else any(_is_lmod_py_tok(s) for s in e.split("/"))
+        if not err and p: return bool(_PYTHON_EXE_RE.fullmatch(p[-1]))
+        if res == "module": return any(_is_lmod_py_tok(s) for s in e.split("/"))
+        return bool(_PYTHON_EXE_RE.fullmatch(e))
 
     def _is_shared_lmod_python(e):
         s = [x.lower() for x in e.split("/")]
@@ -951,7 +954,7 @@ def _validate_environments(plan, units):
         if err or not p: return False
         if ("/" + "/".join(p)) in env_paths.values(): return True
         if len(p) >= 2 and p[-2].lower() in ("bin", "scripts"):
-            if _PYTHON_EXE_RE.fullmatch(p[-1]) or p[-1] == "env": return False
+            if _PYTHON_EXE_RE.fullmatch(p[-1]): return False
             par = "/" + "/".join(p[:-2]) if len(p) > 2 else "/"
             if par in env_paths.values(): return False
             if len(p) >= 3 and p[-3].lower() == "workbook": return False
@@ -961,7 +964,7 @@ def _validate_environments(plan, units):
     def _is_python_targeting(e, r, er):
         if r == "container": return False
         if not e: return bool(er and er != "none")
-        return r in ("conda", "uv") or _entrypoint_is_python_exe(e) or (r == "wrapper" and bool(er and er != "none"))
+        return r in ("conda", "uv") or _entrypoint_is_python_exe(e, r) or (r == "wrapper" and bool(er and er != "none"))
 
     def _ref(lb, m): raise PlanError(f"{lb} interpreter refused: {m}")
 
@@ -990,7 +993,7 @@ def _validate_environments(plan, units):
         if entry and res != "container" and not nc:
             if lm:
                 if _is_shared_lmod_python(entry): _ref(lb, f"module {entry!r} is shared Python/conda")
-                if er not in envs and not allow_u and has_envs and _entrypoint_is_python_exe(entry): _ref(lb, f"module {entry!r} unbound Python")
+                if er not in envs and not allow_u and has_envs and _entrypoint_is_python_exe(entry, res): _ref(lb, f"module {entry!r} unbound Python")
             else:
                 allow_b = (res == "path") or (res == "uv" and entry == "uv")
                 sh = shared_env_reason(entry, is_env_root=ac, allow_bare=allow_b)
@@ -1023,12 +1026,14 @@ def _validate_environments(plan, units):
                     if "/" + "/".join(ps) != exp: raise PlanError(f"{lb} conda prefix {entry!r} mismatches {er!r}")
                 elif lm:
                     pass
+                elif res == "path" and not entry.startswith("/"):
+                    pass
                 elif _is_uv_launcher(entry, res) and not any(eid != er and _env_path_contains(ep, entry) for eid, ep in env_paths.items()):
                     pass
                 elif res == "wrapper":
                     for eid, ep in env_paths.items():
                         if eid != er and _env_path_contains(ep, entry): raise PlanError(f"{lb} wrapper {entry!r} in {eid!r}, not {er!r}")
-                    if _entrypoint_is_python_exe(entry) and not _interpreter_belongs_to_env(exp, entry): raise PlanError(f"{lb} wrapper {entry!r} outside {er!r}")
+                    if _entrypoint_is_python_exe(entry, res) and not _interpreter_belongs_to_env(exp, entry): raise PlanError(f"{lb} wrapper {entry!r} outside {er!r}")
                 elif _is_pipeline_engine(entry, kind, allow_u) and not any(eid != er and _env_path_contains(ep, entry) for eid, ep in env_paths.items()):
                     pass
                 elif not _interpreter_belongs_to_env(exp, entry):
@@ -1058,7 +1063,8 @@ def _validate_environments(plan, units):
                 if own is not None:
                     if er and own != er: raise PlanError(f"{lb} {entry!r} belongs to declared env {own!r}, not {er!r}")
                     if er is None:
-                        if not (_interpreter_belongs_to_env(env_paths[own], entry) or (res == "wrapper" and not _entrypoint_is_python_exe(entry))):
+                        cat_ok = allow_u and ((res == "wrapper" and not _entrypoint_is_python_exe(entry, res)) or _is_pipeline_engine(entry, kind, allow_u=True))
+                        if not (_interpreter_belongs_to_env(env_paths[own], entry) or cat_ok):
                             raise PlanError(f"{lb} {entry!r} does not belong directly to {own!r} ({env_paths[own]})")
                         m = own
             if m is None and er and er != "none": m = er
@@ -1084,9 +1090,11 @@ def _validate_environments(plan, units):
 
     def _looks_py_venv_root(e):
         ps, err = _clean_abs_parts(e)
-        return bool(not err and ps and len(ps) >= 3 and ps[-2].lower() in ("bin", "scripts")
-                    and any(x.lower() in ("venv", ".venv", ".venvs", "venvs", "virtualenvs", ".virtualenvs")
-                            or x.lower().startswith(".venv") or x.lower().endswith(("-venv", "_venv")) for x in ps[:-2]))
+        if err or not ps or len(ps) < 3 or ps[-2].lower() not in ("bin", "scripts"): return False
+        env_dir = ps[-3].lower()
+        par_dir = ps[-4].lower() if len(ps) >= 4 else ""
+        return (env_dir in ("venv", ".venv") or env_dir.startswith(".venv") or env_dir.endswith(("-venv", "_venv"))
+                or par_dir in (".venvs", "venvs", "virtualenvs", ".virtualenvs"))
 
     def _chk_env_ref(er, lb):
         if er is not None and er != "none":
@@ -1097,8 +1105,8 @@ def _validate_environments(plan, units):
     def _registers_py_root(entry, res, mid=None, er=None):
         if mid in env_paths: return False
         if not entry or not entry.startswith("/") or res == "container" or _is_uv_launcher(entry, res): return False
-        if res == "wrapper": return _entrypoint_is_python_exe(entry)
-        return res == "conda" or _entrypoint_is_python_exe(entry) or (er != "none" and _looks_py_venv_root(entry))
+        if res == "wrapper": return _entrypoint_is_python_exe(entry, res) or (er != "none" and _looks_py_venv_root(entry))
+        return res == "conda" or _entrypoint_is_python_exe(entry, res) or (er != "none" and _looks_py_venv_root(entry))
 
     records = []
     known_py_roots = {ep for eid, ep in env_paths.items() if envs[eid]["_kind"] == "model_line"}
@@ -1155,7 +1163,7 @@ def _validate_environments(plan, units):
         if ml and ((mid in env_paths) or (pt and er != "none") or (res != "container" and (in_known or (er != "none" and _looks_py_venv_root(entry))))):
             _claim_ml(ml, mid, (env_paths[mid] if mid in env_paths else (contained or inferred)), lb)
             if nc: _claim_ml(ml, None, "conda:" + entry, lb)
-            if res == "module" and _entrypoint_is_python_exe(entry): _claim_ml(ml, None, "module:" + entry, lb)
+            if res == "module" and _entrypoint_is_python_exe(entry, res): _claim_ml(ml, None, "module:" + entry, lb)
     return unit_envs
 
 
@@ -1257,7 +1265,7 @@ def _validate_runtimes(plan, units):
                     f"does not run the runtime it vouches for proves nothing "
                     f"about it. Give the canary the same runtime.")
             cenv, uenv = unit_envs.get(canary, "none"), unit_envs.get(uid, "none")
-            if cenv != uenv:
+            if (rt.get("resolution") if isinstance(rt, dict) else None) != "container" and cenv != uenv:
                 raise PlanError(
                     f"unit {uid!r} declares environment {uenv!r} but its canary "
                     f"{canary!r} declares environment {cenv!r}; give the canary "

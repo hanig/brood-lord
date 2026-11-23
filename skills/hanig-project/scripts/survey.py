@@ -249,7 +249,7 @@ _HB_PREFS = _pt("opt/homebrew/opt", "opt/homebrew/cellar", "usr/local/opt", "usr
 _HOME_VENV_LAYOUTS = ((("home",), 2), (("Users",), 2), (("mnt", "weka", "home"), 4), (("root",), 1),
                       (("System", "Volumes", "Data", "home"), 5), (("System", "Volumes", "Data", "Users"), 5))
 
-def _is_std_conda_loc(lo, i, home=None):
+def _is_std_conda_loc(ps, lo, i, home=None):
     hs = []
     if isinstance(home, str) and home.strip().startswith("/") and "\0" not in home:
         h0 = home.strip()
@@ -260,11 +260,16 @@ def _is_std_conda_loc(lo, i, home=None):
                 if rp and rp.startswith("/") and rp != h0: hs.append(rp)
         except _SERR:
             pass
-    h_los = [tuple(x.lower() for x in h.split("/") if x) for h in hs]
+    for h in hs:
+        hp = tuple(x for x in h.split("/") if x)
+        if hp and i == len(hp) and (ps[:len(hp)] == hp or _same_dir(h, "/" + "/".join(ps[:len(hp)]))):
+            return True
+    for h, d in _HOME_VENV_LAYOUTS:
+        hl = tuple(x.lower() for x in h)
+        if i == d and lo[:len(h)] == hl and (ps[:len(h)] == h or _same_dir("/" + "/".join(ps[:d]), "/" + "/".join(h + ps[len(h):d]))):
+            return True
     return ((i == 1 and lo[0] in ("opt", "usr")) or (i == 2 and lo[:2] == ("usr", "local"))
-            or (i > 0 and lo[i - 1] == "caskroom")
-            or any(h_lo and lo[:len(h_lo)] == h_lo and i == len(h_lo) for h_lo in h_los)
-            or any(lo[:len(h)] == tuple(x.lower() for x in h) and i == d for h, d in _HOME_VENV_LAYOUTS))
+            or (i > 0 and lo[i - 1] == "caskroom"))
 
 _P = os.path
 def _same_dir(a, b):
@@ -309,7 +314,7 @@ def _shared_python_env_reason(path, conda_name=None, home=None):
     for i in range(len(lo) - 1 if (len(lo) >= 2 and lo[-2] in ("bin", "scripts", "condabin")) else len(lo)):
         if i > 0 and lo[i - 1] == "envs": continue
         s = lo[i]
-        if (_CONDA_ROOT_RE.fullmatch(s) or s == "conda") and (_is_std_conda_loc(lo, i, home=home) or (i + 1 < len(lo) and lo[i + 1] in ("base", "envs", "condabin"))):
+        if (_CONDA_ROOT_RE.fullmatch(s) or s == "conda") and (_is_std_conda_loc(ps, lo, i, home=home) or (i + 1 < len(lo) and lo[i + 1] in ("base", "envs", "condabin"))):
             r = lo[i + 1:]
             bo = 1 if (r and (r[0] == "base" or (i > 0 and lo[i - 1] == "caskroom" and r[0] not in ("bin", "scripts", "condabin", "envs")))) else 0
             r = r[bo:]
@@ -338,14 +343,14 @@ def _conda_name_from_prefix(prefix, home=None):
         for i in range(len(lo)):
             if i > 0 and lo[i - 1] == "envs": continue
             s = lo[i]
-            if (_CONDA_ROOT_RE.fullmatch(s) or s == "conda") and (_is_std_conda_loc(lo, i, home=home) or (i + 1 < len(lo) and lo[i + 1] in ("base", "envs"))):
+            if (_CONDA_ROOT_RE.fullmatch(s) or s == "conda") and (_is_std_conda_loc(ps, lo, i, home=home) or (i + 1 < len(lo) and lo[i + 1] in ("base", "envs"))):
                 r = ps[i + 1:]
                 if r and (r[0].lower() == "base" or (i > 0 and lo[i - 1] == "caskroom" and r[0].lower() not in ("bin", "scripts", "envs"))): r = r[1:]
                 if not r: return "base"
                 if r[0].lower() == "envs" and len(r) == 2: return r[1]
     if hm:
         ps = tuple(p for p in cs[0].split("/") if p); lo = tuple(p.lower() for p in ps)
-        if ps: return "base" if (lo[-1] == "base" or (_CONDA_ROOT_RE.fullmatch(lo[-1]) and _is_std_conda_loc(lo, len(lo) - 1, home=home))) else ps[-1]
+        if ps: return "base" if (lo[-1] == "base" or (_CONDA_ROOT_RE.fullmatch(lo[-1]) and _is_std_conda_loc(ps, lo, len(lo) - 1, home=home))) else ps[-1]
     return None
 
 def detect_python_env(env=None, executable=None, prefix=None, base_prefix=None):
@@ -357,6 +362,9 @@ def detect_python_env(env=None, executable=None, prefix=None, base_prefix=None):
     """
     em = os.environ if env is None else env
     hm = (em.get("HOME") or "").strip() or None
+    if hm is None and env is None:
+        try: hm = str(Path.home())
+        except _SERR: hm = None
     ex, pr, bp = (sys.executable if executable is None else executable), (sys.prefix if prefix is None else prefix), (sys.base_prefix if base_prefix is None else base_prefix)
     def _rp(x):
         try: return os.path.realpath(x) if x else None
