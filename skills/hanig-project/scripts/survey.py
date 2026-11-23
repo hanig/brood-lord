@@ -915,7 +915,7 @@ def _tally_walk(root, deadline, report=None):
                         total_bytes += st_size
                     except OSError:
                         pass
-                    if depth <= 4 and len(locks) < 200 and (entry.name == "uv.lock" or (entry.name.startswith("requirements") and entry.name.endswith(".lock"))):
+                    if len(locks) < 200 and (entry.name == "uv.lock" or (entry.name.startswith("requirements") and entry.name.endswith(".lock"))):
                         locks.append({"path": os.path.relpath(entry.path, str(root)).replace(os.sep, "/"), "bytes": st_size})
         except OSError:
             continue

@@ -172,6 +172,11 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             "/srv/science/dist/condabin/conda",
             "/opt/homebrew/Cellar/pypy3.11/7.3.19/bin/pypy3.11",
             "/srv/tools/env -i python3 scripts/train.py",
+            "/srv/tools/env FOO=bar python3 scripts/train.py",
+            "/srv/tools/env LC_ALL=C python3 scripts/train.py",
+            "/usr/bin/sort -u data/reads.txt",
+            "/home/alice/Python Projects/stage/bin/python",
+            "/srv/bin/python experiments/stage/bin/python",
             "/usr/bin/(python3)",
             u3,
             f"{u3}.13t",
@@ -195,7 +200,7 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             f"{WB_ENV}/bin/snakemake",
             f"{WB_ENV}/bin/jupyter-lab",
             f"{WB_ENV}/bin/py.test",
-            f"/srv/ML Tools/miniforge3/base{bp}",
+            f"/srv/ML_Tools/miniforge3/base{bp}",
             f"{hh}/.pyenv/shims/python3",
             f"{hh}/.pyenv{pyv}",
             f"/opt/pyenv{pyv}",
@@ -225,7 +230,7 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             "--version",
             "env",
             f"{ub}/env",
-            "/srv/ML Tools/bin/env",
+            "/srv/ML_Tools/bin/env",
             f"{ub}/p[y]thon3",
             f"{ub}/python[3]",
             f"{ub}/python*",
@@ -259,27 +264,19 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         # Case-sensitive Linux paths under standard HOME differing in case from .venv/venv are accepted.
         for path in ("/home/alice/.VENV", "/home/alice/Venv"):
             S.validate_plan(self._plan([self._u(f"{path}/bin/python", "stage")], self._e1(path)))
-        # Spaced/parenthesized directory names (including under bin/ or scripts/) work in declared and legacy plans; flags after bin are refused.
-        for ok_dir in (
+        # Whitespace is refused in declared env paths and non-container entrypoints; non-space parentheses in parent dirs are allowed.
+        for bad_sp in (
             "/home/alice/Experiment -2/stage",
             "/tmp/bin/Experiment -2/stage",
-            "/home/alice/scripts/Experiment -2/stage",
-            "/srv/bin/Experiment -2/stage",
             "/home/alice/Experiment (2)/stage",
+            "/srv/env experiments/stage",
         ):
-            S.validate_plan(self._plan([self._u(f"{ok_dir}/bin/python", "stage")], self._e1(ok_dir)))
-            S.validate_plan(self._plan([self._u(f"{ok_dir}/bin/python")], None))
-        spaced = "/home/alice/Experiment -2/stage"
-        S.validate_plan(self._plan([self._u("/home/alice/Experiment -2/fit", res="conda")], None))
-        self._fail(self._plan([self._u(f"{spaced}/bin/train --config=/tmp/fit.toml", "stage")], self._e1(spaced)), "refused")
-        S.validate_plan(self._plan(
-            [self._u("/srv/env experiments/stage/bin/python", "stage")],
-            {"orchestration": _orch("/home/alice/Experiment - A/ops"), "stage": _env_spec("/srv/env experiments/stage", model_line="stage")},
-        ))
-        S.validate_plan(self._plan(
-            [self._u("/srv/bin/python experiments/stage/bin/python", "stage")],
-            self._e1("/srv/bin/python experiments/stage"),
-        ))
+            self._fail(self._plan([self._u(f"{bad_sp}/bin/python", "stage")], self._e1(bad_sp)), "whitespace")
+            self._fail(self._plan([self._u(f"{bad_sp}/bin/python")], None), "whitespace")
+        self._fail(self._plan([self._u("/home/alice/Experiment -2/fit", res="conda")], None), "whitespace")
+        ok_paren = "/home/alice/Experiment_(2)/stage"
+        S.validate_plan(self._plan([self._u(f"{ok_paren}/bin/python", "stage")], self._e1(ok_paren)))
+        S.validate_plan(self._plan([self._u(f"{ok_paren}/bin/python")], None))
 
     def test_resolution_path_and_uv_and_unbound_rules(self):
         # Legacy PATH-resolved non-Python tools and bare uv validate; bare Python/env on PATH are refused.
@@ -329,21 +326,38 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         )
         sh = _rt("s", f"/srv/proj/.venvs/one{bp}")
         self._fail(self._plan([_slurm("u1", "s", model_line=st), _slurm("u2", "s", model_line=mk)], None, runtimes={"s": sh}), "share environment root")
-        # Legacy inferred Python root sharing and environment='none' refusal (regardless of model_line or unit order).
+        # Legacy inferred Python root sharing and environment='none' containment refusal (regardless of subdir, model_line, or order).
         for pair in (
             [self._u("/srv/stage/bin/python", uid="a", model_line=st), self._u("/srv/stage/bin/coverage", uid="b", model_line=mk)],
             [self._u("/srv/stage/bin/coverage", "none", uid="b", model_line=mk), self._u("/srv/stage/bin/python", uid="a", model_line=st)],
             [self._u("/srv/stage/bin/python", uid="a", model_line=st), self._u("/srv/stage/bin/coverage", "none", uid="b", model_line=st)],
             [self._u("/srv/stage/bin/python", uid="a"), self._u("/srv/stage/bin/coverage", "none", uid="b")],
+            [self._u("/srv/stage/bin/python", uid="a"), self._u("/srv/stage/libexec/coverage", "none", uid="b")],
+            [self._u("/srv/fit/bin/torchrun", res="wrapper", uid="a"), self._u("/srv/fit/bin/coverage", "none", uid="b")],
             [self._u("/srv/project/venv/bin/coverage", uid="c1", model_line=st), self._u("/srv/project/venv/bin/coverage", uid="c2", model_line=mk)],
         ):
             self._fail(self._plan(pair, None))
-        # A bound external wrapper does not turn its parent bin dir into a Python root for sibling native tools.
+        # A bound external non-Python wrapper does not turn its parent bin dir into a Python root for sibling native tools.
         S.validate_plan(self._plan([
             self._u("/opt/tools/bin/run-stage", st, res="wrapper", uid="w", model_line=st),
             self._u("/opt/tools/bin/sort", "none", uid="s", model_line=st),
             self._u("/opt/tools/bin/cut", "none", uid="c", model_line=mk),
         ]))
+        # Independent container images stored under a *-venv directory do not falsely collide.
+        S.validate_plan(self._plan([
+            self._u("/srv/tool-venv/bin/stage.sif", res="container", uid="c1", model_line=st),
+            self._u("/srv/tool-venv/bin/eval.sif", res="container", uid="c2", model_line=mk),
+        ], None))
+        # Declared conda prefix named .../bin/python3 does not register its grandparent /srv/tools as a Python root.
+        S.validate_plan(self._plan(
+            [self._u("/srv/tools/bin/python3", st, res="conda", uid="a"), self._u("/srv/tools/bin/rg", "none", uid="b")],
+            self._e1("/srv/tools/bin/python3"),
+        ))
+        # Distinct declared conda prefixes under bin/ named python3 and python3.12 stay distinct.
+        S.validate_plan(self._plan(
+            [self._u("/srv/bin/python3", st, res="conda", uid="a"), self._u("/srv/bin/python3.12", mk, res="conda", uid="b")],
+            {"orchestration": _orch(), st: _env_spec("/srv/bin/python3", model_line=st), mk: _env_spec("/srv/bin/python3.12", model_line=mk)},
+        ))
         # Legacy non-Python native tools under dirs named 'envs' or '*-env' with environment='none' are NOT falsely rejected.
         for native in ("/opt/envs/native-tools/bin/rg", "/srv/native-tools-env/bin/sort"):
             units = [self._u(native, "none", uid=x, model_line=x, command=f"{native} --version") for x in (st, mk)]
@@ -447,10 +461,28 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         self._fail(self._plan([self._u("stage/python/3.12", res="module", uid="m1", model_line=st), self._u("stage/python/3.12", res="module", uid="m2", model_line=mk)], None))
         self._fail(self._plan([self._u("stage/python/3.12", st, "module", "m1", model_line=st), self._u("stage/python/3.12", mk, "module", "m2", model_line=mk)]))
         self._fail(self._plan([self._u("stage/python/3.12", res="module", uid="mu")]))
-        # Shared cluster Python/conda Lmod modules (including deep hierarchies) are unconditionally refused even when bound.
-        for bm in ("python3", "python/3.12", "lang/python/3.12", "Core/lang/Python/3.12", "compiler/gcc/12.3/python/3.11", "anaconda3/2024.02", "conda/24.3", "torchrun"):
+        # Shared cluster Python/conda Lmod modules (including versioned tokens and nested shared categories) are refused even when bound.
+        for bm in (
+            "python3",
+            "python/3.12",
+            "Python-3.12.2",
+            "lang/python/3.12",
+            "Core/lang/Python/3.12",
+            "Core/lang/Python-3.12.2",
+            "Core/compilers/gcc/12/Python-3.12.2",
+            "compiler/gcc/12.3/python/3.11",
+            "mysite/lang/python/3.12",
+            "proj/Core/conda/24.3",
+            "anaconda3/2024.02",
+            "conda/24.3",
+            "torchrun",
+        ):
             self._fail(self._plan([self._u(bm, res="module")], None))
             self._fail(self._plan([self._u(bm, st, "module")]))
+        # Project-scoped versioned Python module binds cleanly, while absolute paths are refused under resolution="module".
+        S.validate_plan(self._plan([self._u("stage/Python-3.12.2", st, "module")]))
+        self._fail(self._plan([self._u("stage/Python-3.12.2", "none", "module")]))
+        self._fail(self._plan([_code("m", st, runtime=_rt("mod", SP, st, res="module"))]), "not a valid lmod module")
         for mp in ("/tmp/project/miniconda3", "/tmp/p/.venvs/miniconda3"):
             S.validate_plan(self._plan([_code("c", st)], self._e1(mp)))
         S.validate_plan(self._plan([self._u(f"{STAGE_ROOT}/bin/micromamba", st)]))
@@ -648,7 +680,7 @@ class TestSurveyPythonEnvDetection(unittest.TestCase):
                     SURVEY.detect_python_env(env={}, executable=f"{vl}/bin/python", prefix=str(vl), base_prefix="/usr")["shared_risk"]
                 )
             repo = T / "proj"
-            for d in ("models/maxtoki", ".venv/pkg", "docs", "a/b/c/d"):
+            for d in ("models/maxtoki", ".venv/pkg", "docs", "a/b/c/d/e"):
                 (repo / d).mkdir(parents=True)
             for i in range(42):
                 (repo / f"docs/d{i:02d}.md").write_text("x\n", encoding="utf-8")
@@ -656,18 +688,18 @@ class TestSurveyPythonEnvDetection(unittest.TestCase):
                 (repo / f".venv/pkg/requirements.{i}.lock").write_text("x\n", encoding="utf-8")
                 (repo / f"sub{i:02d}").mkdir()
                 (repo / f"sub{i:02d}/uv.lock").write_text("v=1\n", encoding="utf-8")
-            for rel in ("requirements.lock", "models/maxtoki/uv.lock", "a/b/c/d/uv.lock"):
+            for rel in ("requirements.lock", "models/maxtoki/uv.lock", "a/b/c/d/uv.lock", "a/b/c/d/e/uv.lock"):
                 (repo / rel).write_text("x\n", encoding="utf-8")
             with mock.patch.object(SURVEY.os, "walk", side_effect=AssertionError("unbounded os.walk")):
                 ro = SURVEY.repo(repo)
-            self.assertIn("a/b/c/d/uv.lock", {d["path"] for d in ro["documents"]})
+            self.assertTrue({"a/b/c/d/uv.lock", "a/b/c/d/e/uv.lock"} <= {d["path"] for d in ro["documents"]})
             proc = _run([sys.executable, str(PROJECT_SCRIPTS / "survey.py"), "--repo", str(repo), "--json"])
             self.assertEqual(proc.returncode, 0, proc.stderr)
             data = json.loads(proc.stdout)
             self.assertEqual(data["schema_version"], 4)
             self.assertIn(data["machine"]["python_env"]["kind"], ("conda", "venv", "system"))
             docs = {d["path"] for d in data["repo"]["documents"]}
-            self.assertTrue({"requirements.lock", "models/maxtoki/uv.lock", "sub13/uv.lock", "a/b/c/d/uv.lock"} <= docs)
+            self.assertTrue({"requirements.lock", "models/maxtoki/uv.lock", "sub13/uv.lock", "a/b/c/d/uv.lock", "a/b/c/d/e/uv.lock"} <= docs)
             self.assertFalse(any(".venv/" in p for p in docs))
 
 
