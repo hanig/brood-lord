@@ -170,6 +170,9 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             "/opt/miniforge3/condabin/conda",
             "/srv/proj/miniforge3/condabin/conda",
             "/srv/science/dist/condabin/conda",
+            "/opt/homebrew/Cellar/pypy3.11/7.3.19/bin/pypy3.11",
+            "/srv/tools/env -i python3 scripts/train.py",
+            "/usr/bin/(python3)",
             u3,
             f"{u3}.13t",
             f"{u3}.13td",
@@ -256,10 +259,17 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         # Case-sensitive Linux paths under standard HOME differing in case from .venv/venv are accepted.
         for path in ("/home/alice/.VENV", "/home/alice/Venv"):
             S.validate_plan(self._plan([self._u(f"{path}/bin/python", "stage")], self._e1(path)))
-        # Spaced directory names with '-2' work in BOTH declared and legacy plans; flags after bin are refused.
+        # Spaced/parenthesized directory names (including under bin/ or scripts/) work in declared and legacy plans; flags after bin are refused.
+        for ok_dir in (
+            "/home/alice/Experiment -2/stage",
+            "/tmp/bin/Experiment -2/stage",
+            "/home/alice/scripts/Experiment -2/stage",
+            "/srv/bin/Experiment -2/stage",
+            "/home/alice/Experiment (2)/stage",
+        ):
+            S.validate_plan(self._plan([self._u(f"{ok_dir}/bin/python", "stage")], self._e1(ok_dir)))
+            S.validate_plan(self._plan([self._u(f"{ok_dir}/bin/python")], None))
         spaced = "/home/alice/Experiment -2/stage"
-        S.validate_plan(self._plan([self._u(f"{spaced}/bin/python", "stage")], self._e1(spaced)))
-        S.validate_plan(self._plan([self._u(f"{spaced}/bin/python")], None))
         S.validate_plan(self._plan([self._u("/home/alice/Experiment -2/fit", res="conda")], None))
         self._fail(self._plan([self._u(f"{spaced}/bin/train --config=/tmp/fit.toml", "stage")], self._e1(spaced)), "refused")
         S.validate_plan(self._plan(
@@ -278,7 +288,7 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             S.validate_plan(self._plan([self._u(tool, "none", res="path", command=f"{tool} --version")]))
             # When top-level environments is declared, omitting environment on non-Python slurm/pipeline is refused.
             self._fail(self._plan([self._u(tool, res="path", command=f"{tool} --version")]), "omits 'environment'")
-        for bad_path in ("python3", "python", "pip", "pytest", "graalpy", "torchrun", "conda", "env", "sort -u", "./sort", "--version"):
+        for bad_path in ("python3", "python", "pip", "pytest", "graalpy", "torchrun", "conda", "env", "sort -u", "./sort", "--version", "(python3)"):
             self._fail(self._plan([self._u(bad_path, res="path")], None), "refused")
         # resolution="uv" with bare "uv" works in legacy plans and when bound; refused when unbound or "none".
         S.validate_plan(self._plan([self._u("uv", res="uv")], None))
@@ -307,6 +317,7 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         self._fail(self._plan([_slurm("u", "o")], runtimes={"o": _rt("o", ORCH_ROOT + bp)}), "orchestration")
         self._fail(self._plan([_code("c", None)]), "environment")
         S.validate_plan(self._plan([_code("c", "none")]))
+        S.validate_plan(self._plan([_code("docs", None, runtime="none", prompt="Edit docs")]))
         S.validate_plan(self._plan([_slurm("r", runtime="none")]))
         for badp in (STAGE_ROOT, STAGE_ROOT + "/nested"):
             es = _base_envs()
@@ -318,30 +329,40 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         )
         sh = _rt("s", f"/srv/proj/.venvs/one{bp}")
         self._fail(self._plan([_slurm("u1", "s", model_line=st), _slurm("u2", "s", model_line=mk)], None, runtimes={"s": sh}), "share environment root")
-        # Legacy inferred Python root sharing: python + console script in same bin dir (in either order, even with environment="none").
+        # Legacy inferred Python root sharing and environment='none' refusal (regardless of model_line or unit order).
         for pair in (
             [self._u("/srv/stage/bin/python", uid="a", model_line=st), self._u("/srv/stage/bin/coverage", uid="b", model_line=mk)],
             [self._u("/srv/stage/bin/coverage", "none", uid="b", model_line=mk), self._u("/srv/stage/bin/python", uid="a", model_line=st)],
+            [self._u("/srv/stage/bin/python", uid="a", model_line=st), self._u("/srv/stage/bin/coverage", "none", uid="b", model_line=st)],
+            [self._u("/srv/stage/bin/python", uid="a"), self._u("/srv/stage/bin/coverage", "none", uid="b")],
             [self._u("/srv/project/venv/bin/coverage", uid="c1", model_line=st), self._u("/srv/project/venv/bin/coverage", uid="c2", model_line=mk)],
         ):
-            self._fail(self._plan(pair, None), "share environment root")
+            self._fail(self._plan(pair, None))
+        # A bound external wrapper does not turn its parent bin dir into a Python root for sibling native tools.
+        S.validate_plan(self._plan([
+            self._u("/opt/tools/bin/run-stage", st, res="wrapper", uid="w", model_line=st),
+            self._u("/opt/tools/bin/sort", "none", uid="s", model_line=st),
+            self._u("/opt/tools/bin/cut", "none", uid="c", model_line=mk),
+        ]))
         # Legacy non-Python native tools under dirs named 'envs' or '*-env' with environment='none' are NOT falsely rejected.
         for native in ("/opt/envs/native-tools/bin/rg", "/srv/native-tools-env/bin/sort"):
             units = [self._u(native, "none", uid=x, model_line=x, command=f"{native} --version") for x in (st, mk)]
             S.validate_plan(self._plan(units, None))
-        # Legacy conda name vs standard absolute prefix/direct-executable collision (both orders), while distinct roots remain allowed.
-        for pair in (
-            [self._u("fit", res="conda", uid="a", model_line=st), self._u("/opt/miniforge3/envs/fit", res="conda", uid="b", model_line=mk)],
-            [self._u("/opt/miniforge3/envs/fit", res="conda", uid="b", model_line=mk), self._u("fit", res="conda", uid="a", model_line=st)],
-            [self._u("fit", res="conda", uid="a", model_line=st), self._u("/opt/miniforge3/envs/fit/bin/python", res="direct", uid="b", model_line=mk)],
-        ):
-            self._fail(self._plan(pair, None), "share conda environment")
-        # Nested executable inside declared env without explicit environment is refused.
-        self._fail(self._plan([self._u(f"{STAGE_ROOT}/tools/docs-venv/bin/coverage")]), "does not belong directly")
+        # Distinct legacy conda prefixes under a dir named bin/ stay distinct; offline validation does not guess name-to-prefix mappings.
+        S.validate_plan(self._plan([
+            self._u("/srv/bin/fit", res="conda", uid="a", model_line=st),
+            self._u("/srv/bin/eval", res="conda", uid="b", model_line=mk),
+        ], None))
+        S.validate_plan(self._plan([
+            self._u("fit", res="conda", uid="a", model_line=st),
+            self._u("/home/alice/miniforge3/envs/fit", res="conda", uid="b", model_line=mk),
+        ], None))
         S.validate_plan(self._plan([
             self._u("/opt/miniforge3/envs/fit", res="conda", uid="a", model_line=st),
             self._u("/home/alice/miniforge3/envs/fit", res="conda", uid="b", model_line=mk),
         ], None))
+        # Nested executable inside declared env without explicit environment is refused.
+        self._fail(self._plan([self._u(f"{STAGE_ROOT}/tools/docs-venv/bin/coverage")]), "does not belong directly")
         for k, v in (("lock_file", "none"), ("path", "relative/venv"), ("path", "/srv/../other/venv"), ("path", "/srv/$PROJ/venv"), ("python", "latest"), ("build", ""), ("kind", "")):
             es = _base_envs()
             es[st][k] = v
@@ -523,8 +544,13 @@ class TestSurveyPythonEnvDetection(unittest.TestCase):
         ):
             self.assertEqual(_key(_det(pr, bp, **env)), exp, pr)
 
-        # condabin under standard or custom conda roots is recognized as conda base.
-        for cbin in ("/opt/miniforge3/condabin/conda", "/srv/proj/miniforge3/condabin/conda", "/srv/science/dist/condabin/conda"):
+        # condabin under standard or custom conda roots and Homebrew PyPy are recognized as shared.
+        for cbin in (
+            "/opt/miniforge3/condabin/conda",
+            "/srv/proj/miniforge3/condabin/conda",
+            "/srv/science/dist/condabin/conda",
+            "/opt/homebrew/Cellar/pypy3.11/7.3.19/bin/pypy3.11",
+        ):
             self.assertIsNotNone(SURVEY._shared_python_env_reason(cbin), cbin)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -550,20 +576,20 @@ class TestSurveyPythonEnvDetection(unittest.TestCase):
             (uc / "conda-meta").mkdir(parents=True)
             self.assertEqual(_key(_det(uc, T / "miniforge3")), ("conda", "unact", False))
 
-            # Dedicated custom-prefix conda env containing conda package (conda-meta + condabin, no envs/pkgs) is NOT base.
+            # Dedicated custom-prefix conda env containing conda package (even with local pkgs/) is NOT guessed to be base.
             cf = T / "models/fit"
             (cf / "conda-meta").mkdir(parents=True)
             (cf / "condabin").mkdir()
             self.assertEqual(_key(_det(cf)), ("conda", "fit", False))
+            (cf / "pkgs").mkdir()
+            self.assertEqual(_key(_det(cf)), ("conda", "fit", False))
 
-            # Real custom-prefix conda base installation (conda-meta + condabin + envs/pkgs) IS base.
+            # Active custom-prefix conda base (via CONDA_DEFAULT_ENV=base + CONDA_PREFIX alias) IS flagged as base.
             dist, cur = T / "science/dist", T / "science/current"
             (dist / "conda-meta").mkdir(parents=True)
             (dist / "condabin").mkdir()
-            (dist / "envs").mkdir()
             cur.symlink_to(dist)
-            for ce in ({CD: "base", CP: str(cur)}, {}):
-                self.assertEqual(_key(_det(dist, **ce)), ("conda", "base", True))
+            self.assertEqual(_key(_det(dist, **{CD: "base", CP: str(cur)})), ("conda", "base", True))
 
             sc = T / "miniforge3/envs/compiler"
             sc.mkdir(parents=True)

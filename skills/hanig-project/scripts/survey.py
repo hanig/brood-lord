@@ -263,21 +263,15 @@ def _same_dir(a, b):
     try: return _P.exists(a) and _P.exists(b) and _P.samefile(a, b)
     except _SERR: return False
 
-def _is_conda_base_dir(root):
-    if not isinstance(root, str) or not root or "\0" in root: return False
-    try:
-        if not (_P.isdir(_P.join(root, "conda-meta")) and _P.isdir(_P.join(root, "condabin"))
-                and (_P.isdir(_P.join(root, "envs")) or _P.isdir(_P.join(root, "pkgs")))):
-            return False
-        return not any(len(ps) >= 2 and ps[-2] == "envs" and ps[-1] != "base" for ps in ([x.lower() for x in _P.normpath(c).split("/") if x] for c in (root, _P.realpath(root))))
-    except _SERR: return False
-
 def _shared_python_env_reason(path, conda_name=None, home=None):
     if conda_name and conda_name.strip().lower() in _SHARED_ENV_NAMES: return f"active conda env {conda_name.strip()!r} is shared"
     if not isinstance(path, str) or not path.strip().startswith("/"): return None
     ps = tuple(p for p in path.strip().split("/") if p); lo = tuple(p.lower() for p in ps)
     for hb in _HB_PREFS:
-        if lo[:len(hb)] == hb and len(lo) > len(hb) and (lo[len(hb)] == "python" or lo[len(hb)].startswith(("python@", "python3"))): return "in shared Homebrew Python"
+        if lo[:len(hb)] == hb and len(lo) > len(hb):
+            fm = lo[len(hb)]
+            if fm in ("python", "pypy", "pypy3", "graalpy", "micropython") or fm.startswith(("python@", "python3", "pypy@", "pypy3", "graalpy@", "micropython@")):
+                return "in shared Homebrew Python"
     if any(lo[:len(pr)] == pr for pr in _SYSTEM_SHARED_PREFIXES): return "in shared system dir"
     for i, s in enumerate(lo):
         if s in (".pyenv", "pyenv") and i + 1 < len(lo) and lo[i + 1] in ("shims", "versions"): return "in shared pyenv tree"
@@ -315,7 +309,7 @@ def _shared_python_env_reason(path, conda_name=None, home=None):
                 if len(r) == 2 or r[2] in ("bin", "scripts"): break
     for i, s in enumerate(lo):
         if s in ("envs", "virtualenvs", ".virtualenvs") and i + 1 < len(lo) and lo[i + 1] in _SHARED_ENV_NAMES: return f"in shared personal env {ps[i + 1]!r}"
-    return "in conda base installation" if _is_conda_base_dir(path.strip()) else None
+    return None
 
 def _conda_name_from_prefix(prefix, home=None):
     if not isinstance(prefix, str) or not prefix.startswith("/") or "\0" in prefix: return None
@@ -326,7 +320,6 @@ def _conda_name_from_prefix(prefix, home=None):
     except _SERR: pass
     cs.append(prefix)
     try:
-        if _is_conda_base_dir(cs[0]) or _is_conda_base_dir(prefix): return "base"
         hm = _P.isdir(_P.join(prefix, "conda-meta"))
         if _P.isdir(prefix) and not hm: return None
     except _SERR: hm = False
@@ -346,7 +339,12 @@ def _conda_name_from_prefix(prefix, home=None):
     return None
 
 def detect_python_env(env=None, executable=None, prefix=None, base_prefix=None):
-    """Detect active conda, venv, or system Python and shared-env risk (read-only)."""
+    """Detect active conda, venv, or system Python and shared-env risk (read-only).
+
+    Limit: an unactivated custom-named conda prefix (neither active CONDA_DEFAULT_ENV=base
+    nor a standard conda distribution path) shares directory markers with `conda create -p ... python conda`
+    and is reported under its directory basename rather than guessed to be base.
+    """
     em = os.environ if env is None else env
     hm = (em.get("HOME") or "").strip() or None
     ex, pr, bp = (sys.executable if executable is None else executable), (sys.prefix if prefix is None else prefix), (sys.base_prefix if base_prefix is None else base_prefix)
