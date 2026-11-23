@@ -144,13 +144,24 @@ from swarm_plan_rules import (
     isolation_problem,
     _ancestors,
     resolve_runtime,
+    _clean_abs_parts,
+    shared_env_reason,
+    _env_path_contains,
+    _interpreter_belongs_to_env,
+    _inferred_env_root,
+    resolve_environment,
     _looks_unresolved,
     _runtime_identity,
+    _validate_environments,
     _validate_runtimes,
     converge_problem,
     _units_with_canary,
     plan_digest,
     RESOLUTIONS,
+    ENV_KINDS,
+    ENV_KEYS,
+    CONDA_ROOT_NAMES,
+    SHARED_ENV_NAMES,
     ISOLATION_BACKENDS,
     ISOLATION_KEYS,
     ISOLATION_ROOT_TOKENS,
@@ -1902,6 +1913,13 @@ SCHEMA_PLAN_FIELDS = [
      "needs it: wait for DONE; FAILED, FAILED_EVIDENCE or HELD holds the "
      "others through ordinary upstream-failure handling. Omit for normal "
      "fan-out. This does not replace runtime verification."),
+    ("environments", "all", "optional",
+     "object of env_id -> {path, python, lock_file, build[, model_line, kind]}. "
+     "Declares one dedicated Python environment per model/code line plus one "
+     "dedicated orchestration environment (kind='orchestration' or key "
+     "'orchestration', where lock_file may be 'none' for stdlib-only scripts). "
+     "Shared personal/system envs (conda base, workbook, /usr/bin, etc.) and "
+     "two model lines sharing one env are refused."),
 ]
 
 SCHEMA_FIELDS = [
@@ -1969,7 +1987,14 @@ SCHEMA_FIELDS = [
      "and also binds the pre-merge target commit"),
     ("runtime", "slurm, pipeline", "required",
      'inline or a "runtimes" id, or the literal "none". Declares resolution, '
-     "entrypoint, probe and verified_by"),
+     "entrypoint, probe and verified_by; optional environment/model_line"),
+    ("environment", "all", "optional",
+     'id from plan "environments" (or "none" for non-Python code units). '
+     "Required on code units when plan declares 'environments'. Must not "
+     "target the orchestration env or a shared personal/system env"),
+    ("model_line", "all", "optional",
+     "logical model or code line name (for example STAGE or MaxToki); "
+     "validate refuses two distinct model lines sharing one environment"),
     ("isolation", "slurm, pipeline", "optional",
      '{"kind": "container", "backend": "apptainer", "image": "...", '
      '"writable": ["$SWARM_UNIT_DIR"], "read_only": [...]}. Restricts the '
@@ -2044,6 +2069,10 @@ SCHEMA_COUPLINGS = [
     "A unit declaring findings.json must declare promote_to. Outputs stay in "
     "the attempt write root and the report reads findings.json from the "
     "project directory, so an unpromoted one is read by nobody.",
+    "Nothing may run in a shared personal/system Python env (such as conda "
+    "base or workbook): validate refuses shared interpreter paths, units "
+    "resolving outside declared plan environments, workload units targeting "
+    "the orchestration environment, and two model lines sharing one env.",
 ]
 
 

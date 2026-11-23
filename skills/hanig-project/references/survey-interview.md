@@ -100,6 +100,10 @@ changing cadence mid-run does not invalidate recorded attempts. <!-- declaration
 Nothing enforces cadence; the orchestrator honours it. Enforcing it is
 ARC-691's clock rather than a sentence in a skill. <!-- declaration: interview.reporting-cadence -->
 
+## Orchestration environment
+
+`survey.py` records `machine.python_env` (conda/venv/system, `shared_risk`) and repo lock files (`requirements*.lock`, `uv.lock`). Ask once where orchestration's dedicated stdlib-only env lives, recommending `~/.local/state/PROJECT/orch-venv` (`uv`, Python 3.12), and record `environments.orchestration` in `plan.json` so cron and helpers never use shared personal envs. <!-- declaration: interview.orchestration-env -->
+
 For a half-finished repository, the initial draft must be based on its project <!-- declaration: adoption.context -->
 documents, architecture decisions, recent commits, and outputs already on
 disk. <!-- declaration: adoption.context -->

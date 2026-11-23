@@ -68,3 +68,19 @@ pull-request target, but it cannot isolate Unix principals. <!-- declaration: co
 The coordinator creates the source branch. The unit must declare its repository <!-- declaration: code.target-branch -->
 and `target_branch`, the destination into which its pull request merges; legacy
 `branch` cannot substitute. <!-- declaration: code.target-branch -->
+
+## Dedicated environments per model line
+
+Every model/code line and orchestration runs in its own dedicated Python environment, never a shared personal or system env (conda `base`/`workbook`, `/usr/bin/python3`, `/opt/homebrew`, `~/.venv`). <!-- declaration: env.dedicated -->
+
+Declare top-level `environments` in `plan.json` (`path`, `python`, `lock_file`, `build`, optional `model_line`, `kind`):
+
+```json
+"environments": {
+  "orchestration": {"kind": "orchestration", "path": "/home/USER/.local/state/PROJECT/orch-venv", "python": "3.12", "lock_file": "none", "build": "uv venv --python 3.12 /home/USER/.local/state/PROJECT/orch-venv"},
+  "stage": {"model_line": "stage", "path": "/home/USER/proj/.venvs/stage", "python": "3.12", "lock_file": "requirements.stage.lock", "build": "uv venv --python 3.12 /home/USER/proj/.venvs/stage && uv pip sync --python /home/USER/proj/.venvs/stage/bin/python requirements.stage.lock"},
+  "maxtoki": {"model_line": "maxtoki", "path": "/home/USER/proj/.venvs/maxtoki", "python": "3.12", "lock_file": "requirements.maxtoki.lock", "build": "uv venv --python 3.12 /home/USER/proj/.venvs/maxtoki && uv pip sync --python /home/USER/proj/.venvs/maxtoki/bin/python requirements.maxtoki.lock"}
+}
+```
+
+Each `slurm`, `pipeline`, and `code` unit binds to its model-line env via `environment` (or `runtimes.ID.environment`), or declares `environment: "none"` for non-Python units; declared env dirs must be disjoint and include one `orchestration` entry; non-container `runtime.entrypoint` values name one clean absolute executable (or unqualified conda/Lmod name), never shell quotes, globs, flags, relative paths, or `env` wrappers; `swarm.py validate` checks declarations lexically (no shell parsing or statting), refusing shared/undeclared envs, workloads targeting `orchestration`, unbound `code` units when `environments` is declared, and cross-model-line sharing. <!-- declaration: env.dedicated -->

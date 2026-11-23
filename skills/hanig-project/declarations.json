@@ -24,12 +24,14 @@
     "interview.retry-boundary",
     "interview.dispatch-complete",
     "interview.reporting-cadence",
+    "interview.orchestration-env",
     "plan.inputs",
     "plan.scheduler-route",
     "plan.promotion",
     "code.configuration",
     "code.target-branch",
     "runtime.contract",
+    "env.dedicated",
     "retry.contract",
     "cluster.memory-flag",
     "cluster.account-allowance",
@@ -184,7 +186,7 @@
     },
     {
       "id": "interview.judgment-only",
-      "normative_text": "Use `grill-with-docs` when installed, otherwise ask one recommended-answer question at a time, only about judgment THAT inspection cannot settle. At least: done criteria, the scientific claim, discardable work, budget, protected destinations, retry exposure, and reporting cadence. The list is a floor, not an exhaustive set -- a value `swarm.py schema` requires and inspection cannot supply is a question too.",
+      "normative_text": "Use `grill-with-docs` when installed, otherwise ask one recommended-answer question at a time, only about judgment THAT inspection cannot settle. At least: done criteria, the scientific claim, discardable work, budget, protected destinations, retry exposure, orchestration environment, and reporting cadence. The list is a floor, not an exhaustive set -- a value `swarm.py schema` requires and inspection cannot supply is a question too.",
       "references": [
         "references/survey-interview.md"
       ]
@@ -203,6 +205,13 @@
     {
       "id": "interview.reporting-cadence",
       "normative_text": "Ask how often the owner wants a report while the run lasts -- hourly, at each unit's close, only when something needs them, or at the end -- recommending hourly while units are live. Capture cadence and escalation separately: \"only at the end\" is a legitimate cadence and never a legitimate escalation policy, and a NEEDS_HUMAN unit, an exhausted budget, a blocked merge or a conflict a machine must not settle reaches them regardless. Record both in the plan as a top-level `reporting` block, never in a session's memory, because a session dies and its successor inherits the plan rather than the conversation. It sits outside `plan_digest`, so changing cadence mid-run needs no --accept-plan-change. Nothing enforces cadence; the orchestrator honours it, and enforcing it is ARC-691's clock rather than a sentence here.",
+      "references": [
+        "references/survey-interview.md"
+      ]
+    },
+    {
+      "id": "interview.orchestration-env",
+      "normative_text": "Read `machine.python_env` from `survey.py` to see the active conda or virtualenv and whether it is a shared personal or system environment. Ask once where orchestration's dedicated Python environment lives and recommend a project-local `uv` venv such as `~/.local/state/<project>/orch-venv` (Python 3.12; skill scripts are stdlib-only). Record it under top-level `environments.orchestration` in `plan.json`.",
       "references": [
         "references/survey-interview.md"
       ]
@@ -239,6 +248,13 @@
     {
       "id": "runtime.contract",
       "normative_text": "Declare each `slurm` and `pipeline` unit's runtime resolution, entrypoint, probe, and verification; a canary must use the same runtime, verbatim probe, partition, and account and be a DAG ancestor, while `runtime: none` is an explicit claim."
+    },
+    {
+      "id": "env.dedicated",
+      "normative_text": "Declare a top-level `environments` map in `plan.json` with one dedicated Python environment per major model or code line (for example STAGE, the MaxToki baseline, and each experiment branch) plus a separate `orchestration` environment. Each entry declares its absolute `path`, its `lock_file` (for example `requirements.lock` or `uv.lock`; `none` is allowed only for a stdlib-only orchestration environment), its `python` version, and its `build` command (`uv venv` plus sync from the lock file). Every `slurm`, `pipeline`, and `code` unit names the model-line environment it runs in through `environments` plus `environment` or `runtimes` (or explicitly declares `environment: \"none\"` for non-Python units); nothing may run in a shared personal or system environment such as conda `base` or `workbook`, and two model lines must never share one environment.",
+      "references": [
+        "references/unit-contract.md"
+      ]
     },
     {
       "id": "retry.contract",
