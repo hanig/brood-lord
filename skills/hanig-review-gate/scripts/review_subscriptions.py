@@ -442,8 +442,16 @@ def _run_cli(cmd, stdin_text, stripped_env, timeout, deadline=None,
     return proc.returncode, stdout, stderr, None
 
 
-def _parse_json_object(stdout):
-    """Parse a JSON object from stdout (whole output or last non-empty JSON line)."""
+def _extract_result_event(parsed):
+    """Return the final `type == 'result'` dict from a Claude CLI event array."""
+    for item in reversed(parsed):
+        if isinstance(item, dict) and item.get("type") == "result":
+            return item
+    return None
+
+
+def _parse_json_object(stdout, *, allow_event_list=False):
+    """Parse a JSON object (or Claude CLI event array when allowed) from stdout."""
     text = (stdout or "").strip()
     if not text:
         return None
@@ -451,18 +459,29 @@ def _parse_json_object(stdout):
         parsed = json.loads(text)
         if isinstance(parsed, dict):
             return parsed
+        if allow_event_list and isinstance(parsed, list):
+            return _extract_result_event(parsed)
+        return None
     except ValueError:
         pass
     for line in reversed(text.splitlines()):
         s = line.strip()
-        if not s.startswith("{"):
-            continue
-        try:
-            parsed = json.loads(s)
-            if isinstance(parsed, dict):
-                return parsed
-        except ValueError:
-            continue
+        if s.startswith("{"):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, dict):
+                    return parsed
+            except ValueError:
+                continue
+        elif allow_event_list and s.startswith("["):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, list):
+                    found = _extract_result_event(parsed)
+                    if found is not None:
+                        return found
+            except ValueError:
+                continue
     return None
 
 
@@ -546,10 +565,11 @@ def claude_messages(rev, messages, system, timeout, deadline=None,
         extra_env=extra_env)
     if run_err:
         return None, run_err
-    data = _parse_json_object(stdout)
+    data = _parse_json_object(stdout, allow_event_list=True)
     if data is None:
         detail = (stderr or stdout or f"exit {rc}").strip()[:200]
-        return None, f"claude CLI returned non-JSON output (exit {rc}): {detail}"
+        return None, (f"claude CLI returned non-JSON or missing-result output "
+                      f"(exit {rc}): {detail}")
     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
     detail = (usage.get("output_tokens_details")
               if isinstance(usage.get("output_tokens_details"), dict) else {})

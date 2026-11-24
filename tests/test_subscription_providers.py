@@ -362,6 +362,36 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertIsNone(res)
         self.assertIn("whole output budget", err)
 
+    def test_claude_accepts_json_event_array_and_fails_closed_without_result_event(self):
+        result_obj = json.loads(self._claude_json("array reply"))
+        result_obj["type"] = "result"
+        events = [
+            {"type": "system", "subtype": "init", "session_id": "s1"},
+            {"type": "assistant", "message": {"content": []}},
+            {"type": "rate_limit_event"},
+            result_obj,
+        ]
+        proc = _FakeProc(stdout=json.dumps(events))
+        with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
+                mock.patch.object(RS.subprocess, "Popen",
+                                  side_effect=self._claude_popen_router(proc)):
+            res, err = R.PROVIDERS["claude"](self.CLAUDE_SEAT, "p", 10)
+        self.assertIsNone(err)
+        self.assertEqual(res["text"], "array reply")
+        self.assertEqual(res["served_model"], "claude-sonnet-5-5")
+        self.assertEqual(res["status"], "completed")
+
+        # Event array without a type=='result' entry must fail closed.
+        proc_no_res = _FakeProc(stdout=json.dumps(events[:-1]))
+        with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
+                mock.patch.object(RS.subprocess, "Popen",
+                                  side_effect=self._claude_popen_router(proc_no_res)):
+            res2, err2 = R.PROVIDERS["claude"](self.CLAUDE_SEAT, "p", 10)
+        self.assertIsNone(res2)
+        self.assertIn("missing-result", err2)
+        # claude auth status must still require a top-level JSON object, not a list.
+        self.assertIsNone(RS._parse_json_object(json.dumps(events)))
+
     def test_codex_strips_all_api_keys_disables_tools_and_keeps_served_model_honest(self):
         captured = {}
         proc = _FakeProc(stdout=self._codex_jsonl("codex reply"))
