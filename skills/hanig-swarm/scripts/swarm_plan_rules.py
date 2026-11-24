@@ -453,21 +453,21 @@ _BAD_TOKEN_CHARS = _BAD_SHELL_CHARS + ("(", ")")
 _CONDA_ROOT_RE = re.compile(r"^(?:\.conda|micromamba|(?:miniconda|miniforge|anaconda|mambaforge)(?:\d+)?)$", re.I)
 CONDA_ROOT_NAMES = frozenset({"conda", "miniconda", "miniconda3", "miniforge", "miniforge3", "mambaforge", "anaconda", "anaconda3", "micromamba"})
 SHARED_ENV_NAMES = frozenset({"base", "workbook", "default", "shared", "personal", "common", "global", "root"})
-_pt = lambda *xs: tuple(tuple(x.split("/")) for x in xs)
-_SYSTEM_BIN_PREFIXES = _pt("usr/bin", "usr/local/bin", "usr/sbin", "usr/libexec", "bin", "sbin", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew/bin",
-                           "Library/Developer/CommandLineTools/usr/bin", "Applications/Xcode.app/Contents/Developer/usr/bin")
-_SHARED_ENV_ROOT_EXACT = frozenset(_pt("usr", "usr/local", "usr/bin", "usr/local/bin", "usr/sbin", "usr/libexec", "usr/lib", "usr/local/lib", "usr/share",
-                                       "usr/local/share", "bin", "sbin", "opt/homebrew", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew", "home/linuxbrew/.linuxbrew/bin"))
-_SHARED_ENV_ROOT_PREFIXES = _pt("usr/bin", "usr/local/bin", "usr/sbin", "usr/libexec", "bin", "sbin", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew/bin",
-                                "System/Library", "Library/Developer/CommandLineTools", "Applications/Xcode.app")
-_PYTHON_SHARED_PREFIXES = _pt("Library/Frameworks/Python.framework", "System/Library/Frameworks/Python.framework",
-                              "Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework",
-                              "Library/Developer/CommandLineTools/Library/Frameworks/Python.framework",
-                              "Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework",
-                              "Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python.framework")
+_pt = lambda xs: tuple(tuple(x.split("/")) for x in xs)
+_SYSTEM_BIN_PREFIXES = _pt(("usr/bin", "usr/local/bin", "usr/sbin", "usr/libexec", "bin", "sbin", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew/bin",
+                            "Library/Developer/CommandLineTools/usr/bin", "Applications/Xcode.app/Contents/Developer/usr/bin"))
+_SHARED_ENV_ROOT_EXACT = frozenset(_pt(("usr", "usr/local", "usr/bin", "usr/local/bin", "usr/sbin", "usr/libexec", "usr/lib", "usr/local/lib", "usr/share",
+                                        "usr/local/share", "bin", "sbin", "opt/homebrew", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew", "home/linuxbrew/.linuxbrew/bin")))
+_SHARED_ENV_ROOT_PREFIXES = _pt(("usr/bin", "usr/local/bin", "usr/sbin", "usr/libexec", "bin", "sbin", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew/bin",
+                                 "System/Library", "Library/Developer/CommandLineTools", "Applications/Xcode.app"))
+_PYTHON_SHARED_PREFIXES = _pt(("Library/Frameworks/Python.framework", "System/Library/Frameworks/Python.framework",
+                               "Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework",
+                               "Library/Developer/CommandLineTools/Library/Frameworks/Python.framework",
+                               "Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework",
+                               "Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python.framework"))
 _HOME_VENV_LAYOUTS = ((("home",), 2), (("Users",), 2), (("mnt", "weka", "home"), 4), (("root",), 1),
                       (("System", "Volumes", "Data", "home"), 5), (("System", "Volumes", "Data", "Users"), 5))
-_HB_PY_PREFIXES = _pt("opt/homebrew/opt", "opt/homebrew/Cellar", "usr/local/opt", "usr/local/Cellar", "home/linuxbrew/.linuxbrew/opt", "home/linuxbrew/.linuxbrew/Cellar")
+_HB_PY_PREFIXES = _pt(("opt/homebrew/opt", "opt/homebrew/Cellar", "usr/local/opt", "usr/local/Cellar", "home/linuxbrew/.linuxbrew/opt", "home/linuxbrew/.linuxbrew/Cellar"))
 _SHARED_LMOD_CATS = frozenset({"lang", "languages", "compilers", "compiler", "tools", "system", "shared", "default", "core", "devel", "common", "global", "mpi", "apps", "software"})
 _LMOD_EXACT_SHARED_RE = re.compile(
     r"^(?:python(?:\d+(?:\.\d+)*)?|pypy(?:\d+(?:\.\d+)*)?|graalpy(?:\d+(?:\.\d+)*)?|"
