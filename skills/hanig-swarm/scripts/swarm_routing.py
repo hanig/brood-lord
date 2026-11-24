@@ -3,6 +3,8 @@
 Python 3.8+, standard library only.
 """
 
+from collections import OrderedDict
+import hashlib
 import json
 import os
 import re
@@ -161,7 +163,17 @@ PINNED_AGENT_PROVIDER = DEFAULT_AGENT_PROVIDER
 PINNED_AGENT_THINKING = DEFAULT_AGENT_THINKING
 PINNED_THINKING_BY_MODEL = dict(THINKING_BY_MODEL)
 ACTIVE_ORCHESTRATOR = None
-_PLAN_RESOLUTIONS = {}
+_PLAN_RESOLUTIONS = OrderedDict()
+_MAX_PLAN_RESOLUTIONS = 128
+
+
+def _plan_fingerprint(plan):
+    """Lightweight content digest of a plan dict; holds zero reference to plan."""
+    try:
+        raw = json.dumps(plan, sort_keys=True, default=repr)
+    except Exception:
+        raw = repr(plan)
+    return hashlib.sha256(raw.encode("utf-8", "surrogateescape")).hexdigest()
 
 
 def _plan_orchestrator(plan_path=None, plan=None):
@@ -185,16 +197,22 @@ def _plan_orchestrator(plan_path=None, plan=None):
     return orch if isinstance(orch, str) and orch in VALID_ORCHESTRATORS else None
 
 
+def _plan_routing_entry(plan):
+    """Return (provider, thinking, table) for plan without retaining plan."""
+    orch = _plan_orchestrator(plan=plan)
+    entry = _PLAN_RESOLUTIONS.get(_plan_fingerprint(plan))
+    if entry is not None and entry[0] == orch:
+        return entry[1], entry[2], entry[3]
+    if orch in ORCHESTRATOR_DEFAULTS:
+        seat = ORCHESTRATOR_DEFAULTS[orch]
+        return seat["provider"], seat["thinking"], PINNED_THINKING_BY_MODEL
+    return PINNED_AGENT_PROVIDER, PINNED_AGENT_THINKING, PINNED_THINKING_BY_MODEL
+
+
 def effective_default_provider(plan=None):
     """Default code-agent provider for plan, without leaking another plan's state."""
     if isinstance(plan, dict):
-        orch = _plan_orchestrator(plan=plan)
-        entry = _PLAN_RESOLUTIONS.get(id(plan))
-        if entry is not None and entry[0] is plan and entry[1] == orch:
-            return entry[2]
-        if orch in ORCHESTRATOR_DEFAULTS:
-            return ORCHESTRATOR_DEFAULTS[orch]["provider"]
-        return PINNED_AGENT_PROVIDER
+        return _plan_routing_entry(plan)[0]
     return DEFAULT_AGENT_PROVIDER
 
 
@@ -299,7 +317,12 @@ def apply_agent_resolution(plan_path, plan=None):
 
     def _record_plan(resolved):
         if isinstance(plan, dict):
-            _PLAN_RESOLUTIONS[id(plan)] = (plan, orch, resolved)
+            key = _plan_fingerprint(plan)
+            _PLAN_RESOLUTIONS.pop(key, None)
+            _PLAN_RESOLUTIONS[key] = (
+                orch, resolved, DEFAULT_AGENT_THINKING, dict(THINKING_BY_MODEL))
+            while len(_PLAN_RESOLUTIONS) > _MAX_PLAN_RESOLUTIONS:
+                _PLAN_RESOLUTIONS.popitem(last=False)
         return resolved
 
     try:
@@ -327,7 +350,7 @@ def apply_agent_resolution(plan_path, plan=None):
     return _record_plan(DEFAULT_AGENT_PROVIDER)
 
 
-def default_thinking_for(u):
+def default_thinking_for(u, plan=None):
     """The reasoning effort one unit gets when it declares none.
 
     Keyed on the model that will actually run, which is the provider string
@@ -335,9 +358,16 @@ def default_thinking_for(u):
     the same way, so both have to resolve here or the mapping would apply to
     one plan and not its equivalent. An unrecognised model falls back rather
     than refusing: a new model on the roster should dispatch at a sane effort,
-    and the fallback is the level the two strongest models use.
+    and the fallback is the level the two strongest models use. When ``plan``
+    is supplied, uses that plan's own resolved provider, default thinking, and
+    thinking table without cross-plan leakage.
     """
-    provider = str(u.get("provider") or DEFAULT_AGENT_PROVIDER)
+    if isinstance(plan, dict):
+        default_provider, default_thinking, table = _plan_routing_entry(plan)
+    else:
+        default_provider, default_thinking, table = (
+            DEFAULT_AGENT_PROVIDER, DEFAULT_AGENT_THINKING, THINKING_BY_MODEL)
+    provider = str(u.get("provider") or default_provider)
     model = u.get("model")
     key = "%s/%s" % (provider.split("/", 1)[0], model) if model else provider
-    return THINKING_BY_MODEL.get(key, DEFAULT_AGENT_THINKING)
+    return table.get(key, default_thinking)

@@ -1559,6 +1559,59 @@ class TestOrchestratorHighestOpus(StateHome):
         S.apply_agent_resolution(cl_plan, plan=plan_c)
         self.assertEqual(SR.effective_default_provider(plan_a), "claude/claude-opus-6")
         self.assertEqual(SR.effective_default_provider(plan_c), S.PINNED_AGENT_PROVIDER)
+        # default_thinking_for(unit, plan=...) preserves per-plan default thinking
+        # even after another plan with a different default thinking becomes active.
+        custom_agents = json.loads(SR.AGENTS_FILE.read_text(encoding="utf-8"))
+        custom_agents["default_by_orchestrator"]["codex"]["provider"] = "claude/claude-opus-5-6"
+        custom_agents["default_by_orchestrator"]["codex"]["thinking"] = "medium"
+        custom_path = Path(self.tmp.name) / "agents-custom-thinking.json"
+        custom_path.write_text(json.dumps(custom_agents), encoding="utf-8")
+        plan_med = {"orchestrator": "codex", "units": [{"id": "a", "kind": "code"}]}
+        plan_hi = {"orchestrator": "claude", "units": [{"id": "b", "kind": "code"}]}
+        with mock.patch.object(SR, "AGENTS_FILE", custom_path), \
+                mock.patch.object(SR, "_model_family", return_value=None):
+            S.apply_agent_resolution(cd_plan, plan=plan_med)
+            self.assertEqual(SR.default_thinking_for(plan_med["units"][0], plan=plan_med), "medium")
+            S.apply_agent_resolution(cl_plan, plan=plan_hi)
+            self.assertEqual(SR.effective_default_provider(plan_med), "claude/claude-opus-5-6")
+            self.assertEqual(SR.default_thinking_for(plan_med["units"][0], plan=plan_med), "medium")
+            self.assertEqual(SR.default_thinking_for(plan_hi["units"][0], plan=plan_hi), "high")
+        # Cache is bounded and retains no strong references to plan dicts.
+        SR._PLAN_RESOLUTIONS.clear()
+        with mock.patch.object(SR, "_model_family", return_value=None):
+            for idx in range(SR._MAX_PLAN_RESOLUTIONS + 25):
+                S.apply_agent_resolution(
+                    cd_plan, plan={"orchestrator": "codex", "name": f"p-{idx}", "units": []})
+        self.assertLessEqual(len(SR._PLAN_RESOLUTIONS), SR._MAX_PLAN_RESOLUTIONS)
+        self.assertTrue(all(isinstance(k, str) for k in SR._PLAN_RESOLUTIONS))
+        # Resolver and reader both refuse candidates forbidden by forbid_when_orchestrator.
+        forbid_agents = json.loads(SR.AGENTS_FILE.read_text(encoding="utf-8"))
+        forbid_rule = {"routes": [], "model_substrings": ["6"]}
+        forbid_agents["forbid_when_orchestrator"]["codex"] = forbid_rule
+        snap_out = {"agent_defaults_by_orchestrator": {}}
+        from types import SimpleNamespace
+        RM._resolve_agent_seat(
+            "agent-default:codex", "codex",
+            forbid_agents["default_by_orchestrator"]["codex"], forbid_agents,
+            lambda _listing: (["claude-opus-5-6", "claude-opus-6"], None),
+            lambda route, model, thinking: (
+                {"Provider": route, "Model": model, "Thinking": thinking}, None),
+            lambda *args: None, snap_out, SimpleNamespace(dry_run=False))
+        self.assertNotIn("codex", snap_out["agent_defaults_by_orchestrator"])
+        # Even if a snapshot already contains a forbidden entry, model_family refuses it.
+        forbid_path = Path(self.tmp.name) / "agents-forbid.json"
+        forbid_path.write_text(json.dumps(forbid_agents), encoding="utf-8")
+        f_digests = MF.config_digests(R.CONFIG, forbid_path)
+        MF.write_snapshot(self.project, dict(
+            self.snapshot(), config_sha256=f_digests,
+            agent_defaults_by_orchestrator={
+                "codex": {"provider": "claude/claude-opus-6",
+                          "probe": {"Provider": "claude", "Model": "claude-opus-6",
+                                    "Thinking": "high"}}}))
+        self.assertEqual(
+            MF.resolved_orchestrator_agent("codex", forbid_agents, f_digests,
+                                           start=self.project),
+            ("claude/claude-opus-5-5", None))
 
     def test_validate_plan_orchestrator_rules_and_digest(self):
         import swarm as S

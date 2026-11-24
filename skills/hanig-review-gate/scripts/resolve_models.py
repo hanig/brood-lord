@@ -561,7 +561,15 @@ def _resolve_agent_seat(seat_name, orchestrator, default, agents, listed,
     if error:
         report("LISTING_FAILED", seat_name, default["provider"], error)
     else:
-        chosen, newer = MF.select(ids, family, pin_model)
+        forbid_map = (agents or {}).get("forbid_when_orchestrator")
+        rule = (forbid_map.get(orchestrator)
+                if isinstance(orchestrator, str) and isinstance(forbid_map, dict)
+                else None)
+        eligible_ids = [
+            model_id for model_id in ids
+            if not _provider_forbidden_for_rule(route + "/" + model_id, rule)
+        ] if rule else ids
+        chosen, newer = MF.select(eligible_ids, family, pin_model)
         if newer:
             report("NEW_GENERATION", seat_name, default["provider"],
                    "listed above major %d, not adopted: %s" % (

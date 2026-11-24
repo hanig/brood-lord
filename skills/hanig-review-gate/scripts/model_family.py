@@ -450,21 +450,43 @@ def resolved_agent_default(default, thinking_table, digests, start=None):
     return provider, "code-agent default resolved %s -> %s" % (pinned, provider)
 
 
+def _provider_forbidden_for_rule(provider, rule):
+    if not isinstance(provider, str) or not isinstance(rule, dict):
+        return False
+    route, _slash, model = provider.partition("/")
+    routes = {r.casefold() for r in rule.get("routes", ()) if isinstance(r, str)}
+    if route.casefold() in routes and not model:
+        return True
+    for sub in rule.get("model_substrings", ()):
+        if isinstance(sub, str) and sub and re.search(
+                r"(?:^|[^a-z])" + re.escape(sub) + r"(?:$|[^a-z])", model, re.I):
+            return True
+    return False
+
+
 def resolved_orchestrator_agent(orchestrator, routing, digests, start=None):
     """(provider string, note) for this orchestrator's code-agent seat.
 
     When orchestrator names an entry in routing['default_by_orchestrator'],
     reads snapshot['agent_defaults_by_orchestrator'][orchestrator] against
     that seat's family and pin; otherwise falls back to resolved_agent_default.
+    Refuses any snapshot candidate disallowed by forbid_when_orchestrator.
     """
     table = routing.get("thinking_by_model") or {}
+    forbid = routing.get("forbid_when_orchestrator")
+    rule = (forbid.get(orchestrator)
+            if isinstance(orchestrator, str) and isinstance(forbid, dict)
+            else None)
     by_orch = routing.get("default_by_orchestrator")
     seat = (by_orch.get(orchestrator)
             if isinstance(orchestrator, str) and isinstance(by_orch, dict)
             else None)
     if not isinstance(seat, dict):
-        return resolved_agent_default(
+        provider, note = resolved_agent_default(
             routing.get("default") or {}, table, digests, start=start)
+        if note and _provider_forbidden_for_rule(provider, rule):
+            return (routing.get("default") or {}).get("provider"), None
+        return provider, note
     pinned = seat.get("provider")
     path, data, project = find_snapshot(start)
     if data is None or not _snapshot_matches(data, project, digests):
@@ -472,7 +494,7 @@ def resolved_orchestrator_agent(orchestrator, routing, digests, start=None):
     overrides = data.get("agent_defaults_by_orchestrator")
     entry = overrides.get(orchestrator) if isinstance(overrides, dict) else None
     provider = agent_default_override(seat, table, entry)
-    if provider is None:
+    if provider is None or _provider_forbidden_for_rule(provider, rule):
         return pinned, None
     return provider, ("code-agent default for orchestrator %s resolved %s -> %s"
                       % (orchestrator, pinned, provider))
