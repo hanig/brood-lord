@@ -123,9 +123,7 @@ class TestEscalationOverAnEmptyLadderRefuses(unittest.TestCase):
 class TestShippedLadderAddsReviewers(unittest.TestCase):
     def test_upgraded_models_reach_the_openai_request_with_existing_limits(self):
         roster = {r["name"]: r for r in R.load_reviewers()}
-        for name, model, effort in (("luna", "gpt-6-luna", "max"),
-                                    ("terra", "gpt-6.1-terra", "xhigh"),
-                                    ("astra", "gpt-6.2-astra", "xhigh"),
+        for name, model, effort in (("astra", "gpt-6.2-astra", "xhigh"),
                                     ("sol", "gpt-6.2-sol", "xhigh")):
             with self.subTest(reviewer=name), \
                     patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}), \
@@ -141,6 +139,25 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
                 self.assertEqual(request["model"], model)
                 self.assertEqual(request["reasoning"], {"effort": effort})
                 self.assertEqual(request["max_output_tokens"], 128000)
+        for name, model, effort in (("luna", "gpt-6-luna", "max"),
+                                    ("terra", "gpt-6.1-terra", "xhigh")):
+            with self.subTest(reviewer=name), \
+                    patch.object(R._subs, "codex_availability", return_value=None), \
+                    patch.object(R._subs.shutil, "which", return_value="/bin/codex"), \
+                    patch.object(R._subs, "_run_cli", return_value=(
+                        0,
+                        '{"type":"thread.started","thread_id":"t1"}\n'
+                        '{"type":"item.completed","item":{"type":"agent_message","text":"OK"}}\n'
+                        '{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":5}}\n',
+                        "", None)) as run_cli:
+                response, error = R.PROVIDERS[roster[name]["provider"]](roster[name], "probe", 1)
+                self.assertIsNone(error)
+                self.assertEqual(response["text"], "OK")
+                cmd = run_cli.call_args.args[0]
+                self.assertEqual(cmd[cmd.index("-m") + 1], model)
+                self.assertEqual(cmd[cmd.index("-c") + 1],
+                                 f'model_reasoning_effort="{effort}"')
+                self.assertEqual(roster[name]["max_output_tokens"], 128000)
 
     def test_owner_decision_profiles_are_exact(self):
         roster = R.load_reviewers()
@@ -169,16 +186,16 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
 
     def test_owner_decision_efforts_and_transports_are_exact(self):
         expected = {
-            "luna": ("openai", "gpt-6-luna", "max"),
-            "terra": ("openai", "gpt-6.1-terra", "xhigh"),
-            "haiku-5.5": ("anthropic", "claude-haiku-5-5", "high"),
+            "luna": ("codex", "gpt-6-luna", "max"),
+            "terra": ("codex", "gpt-6.1-terra", "xhigh"),
+            "haiku-5.5": ("claude", "claude-haiku-5-5", "high"),
             "astra": ("openai", "gpt-6.2-astra", "xhigh"),
             "kimi-k3": ("openrouter", "moonshotai/kimi-k3", "xhigh"),
             "gemini-argon": ("openrouter", "google/gemini-4-argon", "xhigh"),
             "gemini-neon": ("openrouter", "google/gemini-4-neon", "high"),
             "muse-wonder": ("openrouter", "meta/muse-wonder", "high"),
             "kimi-k2.7-code": ("openrouter", "moonshotai/kimi-k2.7-code", None),
-            "sonnet-5.5": ("anthropic", "claude-sonnet-5-5", "high"),
+            "sonnet-5.5": ("claude", "claude-sonnet-5-5", "high"),
             "deepseek-v4-pro": ("openrouter", "deepseek/deepseek-v4-pro", None),
             "sol": ("openai", "gpt-6.2-sol", "xhigh"),
             "astra-tiebreak": ("openai", "gpt-6.2-astra", "xhigh"),
@@ -189,21 +206,27 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
 
     def test_new_seats_reach_the_real_provider_payload_builders(self):
         roster = {r["name"]: r for r in R.load_reviewers()}
-        for name in ("gemini-argon", "gemini-neon", "haiku-5.5", "kimi-k3", "muse-wonder"):
+        for name in ("gemini-argon", "gemini-neon", "kimi-k3", "muse-wonder"):
             seat = roster[name]
             with self.subTest(seat=name), patch.dict(os.environ, {
-                    "OPENROUTER_API_KEY": "test-key",
-                    "ANTHROPIC_API_KEY": "test-key"}), patch.object(
+                    "OPENROUTER_API_KEY": "test-key"}), patch.object(
                         R, "_post", return_value=(None, "transport stopped")) as post:
                 R.PROVIDERS[seat["provider"]](seat, "ping", 1)
                 payload = post.call_args.args[1]
                 self.assertEqual(payload["model"], seat["model"])
                 self.assertEqual(payload["max_tokens"], 128000)
-                if seat["provider"] == "anthropic":
-                    self.assertEqual(payload["output_config"], {"effort": "high"})
-                    self.assertEqual(payload["thinking"], {"type": "adaptive"})
-                else:
-                    self.assertEqual(payload["reasoning"], {"effort": seat["effort"]})
+                self.assertEqual(payload["reasoning"], {"effort": seat["effort"]})
+        for name in ("haiku-5.5", "sonnet-5.5"):
+            seat = roster[name]
+            with self.subTest(seat=name), \
+                    patch.object(R._subs, "claude_availability", return_value=None), \
+                    patch.object(R._subs.shutil, "which", return_value="/bin/claude"), \
+                    patch.object(R._subs, "_run_cli",
+                                 return_value=(None, None, None, "transport stopped")) as run_cli:
+                R.PROVIDERS[seat["provider"]](seat, "ping", 1)
+                cmd = run_cli.call_args.args[0]
+                self.assertEqual(cmd[cmd.index("--model") + 1], seat["model"])
+                self.assertEqual(cmd[cmd.index("--effort") + 1], seat["effort"])
 
     def test_planning_selects_exactly_three_members_across_two_providers(self):
         import committee
@@ -212,7 +235,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
                          {"terra", "gemini-neon", "muse-wonder"})
         self.assertEqual(len(members), 3)
         self.assertEqual({m["provider"] for m in members},
-                         {"openai", "openrouter"})
+                         {"codex", "openrouter"})
         muse = next(m for m in members if m["name"] == "muse-wonder")
         self.assertEqual(muse["profiles"], ["planning"])
         self.assertEqual(muse["family"], {
@@ -241,7 +264,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
                          {"deepseek-v4-pro", "gemini-neon", "sonnet-5.5"})
         self.assertEqual(len(members), 3)
         self.assertEqual({m["provider"] for m in members},
-                         {"openrouter", "anthropic"})
+                         {"openrouter", "claude"})
 
 
 class TestChangedPathProfiles(unittest.TestCase):

@@ -52,10 +52,10 @@
   },
   {
    "name": "luna",
-   "provider": "openai",
+   "provider": "codex",
    "model": "gpt-6-luna",
    "family": {
-    "listing": "openai",
+    "listing": "paseo:codex",
     "vendor": "",
     "prefix": "gpt-",
     "separator": ".",
@@ -73,21 +73,34 @@
     "out": 1.2
    },
    "max_output_tokens": 128000,
-   "_max_output_tokens": "MEASURED through review.PROVIDERS with review.SYSTEM and input ping at the configured effort and 128000 cap. Establishes budget acceptance and usable output, not capacity for every review.",
+   "_max_output_tokens": "MEASURED through review.PROVIDERS['codex'] (ChatGPT subscription, OPENAI_API_KEY unset) with review.SYSTEM and input ping at effort max and 128000 cap. Establishes subscription transport acceptance and usable verdict output, not capacity for every review.",
    "_max_output_tokens_accepted": {
-    "date": "2026-10-13",
+    "date": "2026-11-24",
     "max_output_tokens": 128000,
-    "provider": "openai",
+    "provider": "codex",
     "model": "gpt-6-luna",
     "effort": "max",
     "outcome": "completed",
-    "input_tokens": 904,
-    "output_tokens": 541,
-    "reasoning_tokens": 440,
-    "response_id": "resp_0627454d72ac55c5006acd9c88336087d084675c5d47a3ebc3",
-    "observed_in": "g1-panel-roster live preflight via zsh -ic and review.PROVIDERS; observed 2026-10-13T02:50:55.383945+00:00"
+    "input_tokens": 22010,
+    "output_tokens": 398,
+    "reasoning_tokens": 287,
+    "response_id": "01a20eb9-9ad5-7451-ab80-a90897e28e38",
+    "observed_in": "2026-11-24 subscription routing change; review.PROVIDERS['codex'] (OPENAI_API_KEY unset, ChatGPT subscription) with review.SYSTEM and input ping; observed 2026-11-24T18:03:05.361101+00:00"
    },
    "_max_output_tokens_history": [
+    {
+     "date": "2026-10-13",
+     "max_output_tokens": 128000,
+     "provider": "openai",
+     "model": "gpt-6-luna",
+     "effort": "max",
+     "outcome": "completed",
+     "input_tokens": 904,
+     "output_tokens": 541,
+     "reasoning_tokens": 440,
+     "response_id": "resp_0627454d72ac55c5006acd9c88336087d084675c5d47a3ebc3",
+     "observed_in": "g1-panel-roster live preflight via zsh -ic and review.PROVIDERS; observed 2026-10-13T02:50:55.383945+00:00"
+    },
     {
      "date": "2026-09-26",
      "max_output_tokens": 128000,
@@ -111,14 +124,14 @@
      "observed_in": "gate run, PR #39 fresh-cycle round 1"
     }
    ],
-   "_note": "Owner decision 2026-10-12: muse-wonder takes the committee seat; fast, standard and deep stay. Effort becomes max, accepted live by the coordinator on 2026-10-12."
+   "_note": "Owner decision 2026-10-12: muse-wonder takes the committee seat; fast, standard and deep stay. Effort becomes max, accepted live by the coordinator on 2026-10-12. Owner decision 2026-11-24: routed through Codex CLI ChatGPT subscription (fail-closed, OPENAI_API_KEY stripped)."
   },
   {
    "name": "terra",
-   "provider": "openai",
+   "provider": "codex",
    "model": "gpt-6.1-terra",
    "family": {
-    "listing": "openai",
+    "listing": "paseo:codex",
     "vendor": "",
     "prefix": "gpt-",
     "separator": ".",
@@ -135,19 +148,34 @@
    "_cost": null,
    "_cost_note": "Unknown at 2026-10-28; no recorded Terra price.",
    "max_output_tokens": 128000,
-   "_max_output_tokens": "MEASURED in bench, not preflight; counts below describe one reply.",
+   "_max_output_tokens": "MEASURED through review.PROVIDERS['codex'] (ChatGPT subscription, OPENAI_API_KEY unset) with review.SYSTEM and input ping at effort xhigh and 128000 cap. Prior OpenAI API bench records are preserved in _max_output_tokens_history.",
    "_max_output_tokens_accepted": {
-    "date": "2026-10-28",
+    "date": "2026-11-24",
     "max_output_tokens": 128000,
-    "provider": "openai",
+    "provider": "codex",
     "model": "gpt-6.1-terra",
-    "effort": "max",
+    "effort": "xhigh",
     "outcome": "completed",
-    "input_tokens": 9853,
-    "output_tokens": 50422,
-    "completed_replies": 171,
-    "observed_in": "Bench, not preflight: corpus-v2, terra-20261027; bench/score-terra/runs-view/std-terra-for-luna/trial-1/a1b-r1.json token counts. 57 replies each: terra, std-terra-for-luna, std-terra-for-kimi."
+    "input_tokens": 19212,
+    "output_tokens": 294,
+    "reasoning_tokens": 190,
+    "response_id": "01a20eb9-c547-7313-be78-8cd0d2a4a84f",
+    "observed_in": "2026-11-24 subscription routing change; review.PROVIDERS['codex'] (OPENAI_API_KEY unset, ChatGPT subscription) with review.SYSTEM and input ping; observed 2026-11-24T18:03:13.377893+00:00"
    },
+   "_max_output_tokens_history": [
+    {
+     "date": "2026-10-28",
+     "max_output_tokens": 128000,
+     "provider": "openai",
+     "model": "gpt-6.1-terra",
+     "effort": "max",
+     "outcome": "completed",
+     "input_tokens": 9853,
+     "output_tokens": 50422,
+     "completed_replies": 171,
+     "observed_in": "Bench, not preflight: corpus-v2, terra-20261027; bench/score-terra/runs-view/std-terra-for-luna/trial-1/a1b-r1.json token counts. 57 replies each: terra, std-terra-for-luna, std-terra-for-kimi."
+    }
+   ],
    "_effort_comment": "Owner decision 2026-10-28 (ARC-4179): xhigh replaces max. Frozen corpus-v2, 3 solo trials each, same method and adjudication: in-envelope recall xhigh 24/51 = 47% [34, 61] vs max 25/51 = 49% [36, 62]; McNemar 3:4, p = 1.0; held-out 6/18 vs 7/18; clean controls with a false finding 1/9 vs 2/9; xhigh unavailable 0/57; median review 148 s vs 579 s; output tokens 12.9k vs 53k per review. review.py --list --only terra-xhigh returned ready; replies reported effort xhigh. Bench: /Users/hani/.local/state/hanig-swarm/orchestrator/bench/score-terra-effort/.",
    "_max_output_tokens_xhigh_accepted": {
     "date": "2026-10-28",
@@ -198,10 +226,10 @@
   },
   {
    "name": "sonnet-5.5",
-   "provider": "anthropic",
+   "provider": "claude",
    "model": "claude-sonnet-5-5",
    "family": {
-    "listing": "anthropic",
+    "listing": "paseo:claude",
     "vendor": "",
     "prefix": "claude-sonnet-",
     "separator": "-",
@@ -219,23 +247,36 @@
     "in": 2.0,
     "out": 10.0
    },
-   "_note": "Added 2026-09-28 by owner decision, taking kimi-k2.7-code's fast and committee seats, so no tier lacks a second model maker. Released the same day: no third-party code-review data yet, and AA-Omniscience rates it more likely than Opus 5.5 to state a wrong answer confidently. Every finding is reproduced before it is acted on, which bounds that cost. Owner decision 2026-10-12: haiku-5.5 takes fast; standard, deep and committee stay, with high effort unchanged. Since 2026-11-20: sonnet-5.5 is the first plan reserve. Author exclusion removes the reserve when its Sonnet model authored the plan, including through Claude Code.",
+   "_note": "Added 2026-09-28 by owner decision, taking kimi-k2.7-code's fast and committee seats, so no tier lacks a second model maker. Released the same day: no third-party code-review data yet, and AA-Omniscience rates it more likely than Opus 5.5 to state a wrong answer confidently. Every finding is reproduced before it is acted on, which bounds that cost. Owner decision 2026-10-12: haiku-5.5 takes fast; standard, deep and committee stay, with high effort unchanged. Since 2026-11-20: sonnet-5.5 is the first plan reserve. Author exclusion removes the reserve when its Sonnet model authored the plan, including through Claude Code. Owner decision 2026-11-24: routed through Claude CLI subscription (fail-closed, ANTHROPIC_API_KEY stripped).",
    "max_output_tokens": 128000,
-   "_max_output_tokens": "MEASURED through the native Anthropic Messages API at the unchanged high effort and 128000 cap. Prior OpenRouter acceptance is retained in _max_output_tokens_history. The minimal probe establishes budget acceptance, not capacity for every review.",
+   "_max_output_tokens": "MEASURED through review.PROVIDERS['claude'] (claude.ai subscription, ANTHROPIC_API_KEY unset) at effort high and 128000 cap. Prior Anthropic API and OpenRouter acceptances are retained in _max_output_tokens_history.",
    "_max_output_tokens_accepted": {
-    "date": "2026-10-12",
+    "date": "2026-11-24",
     "max_output_tokens": 128000,
-    "provider": "anthropic",
+    "provider": "claude",
     "model": "claude-sonnet-5-5",
     "effort": "high",
     "outcome": "completed",
-    "input_tokens": 1378,
-    "output_tokens": 78,
-    "reasoning_tokens": 0,
-    "response_id": "msg_011CfxsXrL8fd7ev2kGZGvcS",
-    "observed_in": "2026-10-12 native routing change; review.probe_liveness through review._post to api.anthropic.com/v1/messages, review.SYSTEM, input ping; end_turn with usable text. Measures budget acceptance and response, not capacity for every review."
+    "input_tokens": 2,
+    "output_tokens": 385,
+    "reasoning_tokens": 303,
+    "response_id": "028cb9df-20bb-4bbc-93f6-3eb91c9ecd2c",
+    "observed_in": "2026-11-24 subscription routing change; review.PROVIDERS['claude'] (ANTHROPIC_API_KEY unset, claude.ai subscription) with review.SYSTEM and input ping; served claude-sonnet-5-5; observed 2026-11-24T18:03:13.175597+00:00"
    },
    "_max_output_tokens_history": [
+    {
+     "date": "2026-10-12",
+     "max_output_tokens": 128000,
+     "provider": "anthropic",
+     "model": "claude-sonnet-5-5",
+     "effort": "high",
+     "outcome": "completed",
+     "input_tokens": 1378,
+     "output_tokens": 78,
+     "reasoning_tokens": 0,
+     "response_id": "msg_011CfxsXrL8fd7ev2kGZGvcS",
+     "observed_in": "2026-10-12 native routing change; review.probe_liveness through review._post to api.anthropic.com/v1/messages, review.SYSTEM, input ping; end_turn with usable text. Measures budget acceptance and response, not capacity for every review."
+    },
     {
      "date": "2026-09-28",
      "max_output_tokens": 128000,
@@ -514,7 +555,7 @@
   },
   {
    "name": "haiku-5.5",
-   "provider": "anthropic",
+   "provider": "claude",
    "model": "claude-haiku-5-5",
    "effort": "high",
    "max_output_tokens": 128000,
@@ -523,7 +564,7 @@
     "fast"
    ],
    "family": {
-    "listing": "anthropic",
+    "listing": "paseo:claude",
     "vendor": "",
     "prefix": "claude-haiku-",
     "separator": "-",
@@ -532,21 +573,36 @@
    },
    "_cost": null,
    "_cost_note": "Unmeasured: models.json contains no Anthropic Haiku price list.",
-   "_note": "Owner decision 2026-10-12: replaces sonnet-5.5 in fast through native Anthropic. Orchestrator change 2026-11-03 under the owner's standing delegation: high replaces that decision's max effort. In two of two small-diff reviews (unit e-m-inline-markers, rounds 1 and 2), the model used all 128000 output tokens on reasoning and emitted no review, giving REVIEW_INCOMPLETE.",
-   "_max_output_tokens": "MEASURED through review.PROVIDERS with review.SYSTEM and input ping at the configured effort and 128000 cap. Establishes budget acceptance and usable output, not capacity for every review.",
+   "_note": "Owner decision 2026-10-12: replaces sonnet-5.5 in fast through native Anthropic. Orchestrator change 2026-11-03 under the owner's standing delegation: high replaces that decision's max effort. In two of two small-diff reviews (unit e-m-inline-markers, rounds 1 and 2), the model used all 128000 output tokens on reasoning and emitted no review, giving REVIEW_INCOMPLETE. Owner decision 2026-11-24: routed through Claude CLI subscription (fail-closed, ANTHROPIC_API_KEY stripped).",
+   "_max_output_tokens": "MEASURED through review.PROVIDERS['claude'] (claude.ai subscription, ANTHROPIC_API_KEY unset) at effort high and 128000 cap. Prior Anthropic API acceptance is retained in _max_output_tokens_history.",
    "_max_output_tokens_accepted": {
-    "date": "2026-11-03",
+    "date": "2026-11-24",
     "max_output_tokens": 128000,
-    "provider": "anthropic",
+    "provider": "claude",
     "model": "claude-haiku-5-5",
     "effort": "high",
     "outcome": "completed",
-    "input_tokens": 1610,
-    "output_tokens": 945,
-    "reasoning_tokens": 781,
-    "response_id": "msg_011CggwskJAutxSa5X7Anekk",
-    "observed_in": "e-h-haiku-effort live preflight via zsh -ic and review.PROVIDERS with review.SYSTEM and input ping; observed 2026-11-04T00:32:44.805739+00:00 (2026-11-03 America/Los_Angeles)"
-   }
+    "input_tokens": 2,
+    "output_tokens": 573,
+    "reasoning_tokens": 488,
+    "response_id": "22fb22a5-e058-4ccc-a850-2633ac43dcde",
+    "observed_in": "2026-11-24 subscription routing change; review.PROVIDERS['claude'] (ANTHROPIC_API_KEY unset, claude.ai subscription) with review.SYSTEM and input ping; served claude-haiku-5-5; observed 2026-11-24T18:03:18.101555+00:00"
+   },
+   "_max_output_tokens_history": [
+    {
+     "date": "2026-11-03",
+     "max_output_tokens": 128000,
+     "provider": "anthropic",
+     "model": "claude-haiku-5-5",
+     "effort": "high",
+     "outcome": "completed",
+     "input_tokens": 1610,
+     "output_tokens": 945,
+     "reasoning_tokens": 781,
+     "response_id": "msg_011CggwskJAutxSa5X7Anekk",
+     "observed_in": "e-h-haiku-effort live preflight via zsh -ic and review.PROVIDERS with review.SYSTEM and input ping; observed 2026-11-04T00:32:44.805739+00:00 (2026-11-03 America/Los_Angeles)"
+    }
+   ]
   },
   {
    "name": "kimi-k3",

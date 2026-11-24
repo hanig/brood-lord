@@ -237,7 +237,8 @@ class TestWatchdogGuard(unittest.TestCase):
 
 class TestReviewLedgerSchemaExtraction(unittest.TestCase):
     def test_ledger_and_schema_do_not_import_facade(self):
-        for filename in ("review_ledger.py", "review_schema.py"):
+        for filename in ("review_ledger.py", "review_schema.py",
+                         "review_subscriptions.py"):
             tree = ast.parse((SCRIPT.parent / filename).read_text())
             imports = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
             imports |= {a.name for n in ast.walk(tree) if isinstance(n, ast.Import)

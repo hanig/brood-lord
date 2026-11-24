@@ -232,6 +232,8 @@ class TestCommitteeTiebreak(unittest.TestCase):
                 seat["model"] = "gpt-6-astra"
             elif seat["name"] in ("sol", "sol-tiebreak"):
                 seat["model"] = "gpt-6.1-sol"
+            elif seat["name"] in ("luna", "terra"):
+                seat["provider"] = "openai"
         routing = mock.patch.object(committee.R, "load_reviewers", return_value=roster)
         routing.start()
         self.addCleanup(routing.stop)
@@ -744,6 +746,8 @@ class TestCommitteeAuthorMembers(unittest.TestCase):
                 seat["model"] = "gpt-6-astra"
             elif seat["name"] in ("sol", "sol-tiebreak"):
                 seat["model"] = "gpt-6.1-sol"
+            elif seat["name"] in ("luna", "terra"):
+                seat["provider"] = "openai"
         routing = mock.patch.object(committee.R, "load_reviewers", return_value=roster)
         routing.start()
         self.addCleanup(routing.stop)
