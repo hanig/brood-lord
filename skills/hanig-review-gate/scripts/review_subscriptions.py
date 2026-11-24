@@ -477,9 +477,7 @@ def _parse_json_object(stdout, *, allow_event_list=False):
             try:
                 parsed = json.loads(s)
                 if isinstance(parsed, list):
-                    found = _extract_result_event(parsed)
-                    if found is not None:
-                        return found
+                    return _extract_result_event(parsed)
             except ValueError:
                 continue
     return None
