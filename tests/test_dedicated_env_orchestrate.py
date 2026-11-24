@@ -161,7 +161,7 @@ class TestOrchestrationEnvCheckAndHelpers(unittest.TestCase):
             wbs = T / "wb-store"
             (wbs / "conda-meta").mkdir(parents=True)
             mfw = T / "miniforge3/envs/workbook"
-            mfw.parent.mkdir(parents=True)
+            mfw.parent.mkdir(parents=True, exist_ok=True)
             mfw.symlink_to(wbs)
             af(ok(py3, py, plan=oe(v, stage=mfw)))
             pc = self._mkx(v / "bin/python-copy")
