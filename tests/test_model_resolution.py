@@ -1533,6 +1533,25 @@ class TestOrchestratorHighestOpus(StateHome):
         self.assertEqual(S.apply_agent_resolution(cl_plan), S.PINNED_AGENT_PROVIDER)
         self.assertEqual(S.apply_agent_resolution(no_plan), S.PINNED_AGENT_PROVIDER)
         self.assertNotIn("claude/claude-opus-6", S.THINKING_BY_MODEL)
+        # Project A's resolved snapshot for codex never leaks into direct validation
+        # of a separate project B dict sharing the same orchestrator.
+        plan_a = {"orchestrator": "codex", "units": []}
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(S.apply_agent_resolution(cd_plan, plan=plan_a),
+                             "claude/claude-opus-6")
+        self.addCleanup(setattr, SR, "ACTIVE_PLAN", None)
+        plan_b = {"orchestrator": "codex", "root": str(self.project / "other")}
+        self.assertEqual(SR.effective_default_provider(plan_a), "claude/claude-opus-6")
+        self.assertEqual(SR.effective_default_provider(plan_b), "claude/claude-opus-5-5")
+        import swarm_validate as SV
+        with mock.patch.dict(SR.FORBID_WHEN_ORCHESTRATOR,
+                             {"codex": {"routes": [], "model_substrings": ["opus-6"]}}):
+            u_b = {"id": "b", "kind": "code", "prompt": "implement fix",
+                   "outputs": ["out.txt"], "repo": str(self.project),
+                   "target_branch": "main", "mode": "bypass"}
+            SV._validate_orchestrator(plan_b, [u_b])
+            with self.assertRaises(S.PlanError):
+                SV._validate_orchestrator(plan_a, [u_b])
 
     def test_validate_plan_orchestrator_rules_and_digest(self):
         import swarm as S

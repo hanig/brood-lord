@@ -943,6 +943,7 @@ def _load_plan(path):
     plan, err = U.read_json(path)
     if err:
         sys.exit(f"error: no readable plan at {path}: {err}")
+    SR.apply_agent_resolution(path, plan=plan)
     # Dispatch validates against the survey too, not just `validate`. A
     # refusal that only fires when someone runs the optional command is a
     # refusal that fires after the DAG is live.
@@ -1339,11 +1340,11 @@ def cmd_continue(args):
 def cmd_validate(args, plan=None):
     if getattr(args, "check_seeds", False):
         _d5_refuse('cmd_validate', getattr(args, "state_dir", None), plan=getattr(args, "plan", None))
-    SR.apply_agent_resolution(args.plan, plan=plan)
     if plan is None:
         plan, err = U.read_json(args.plan)
         if err:
             sys.exit(f"error: no readable plan at {args.plan}: {err}")
+    SR.apply_agent_resolution(args.plan, plan=plan)
     explicit = getattr(args, "survey", None)
     if explicit:
         # NAMED, so unreadable is an error rather than a shrug. Degrading a
@@ -1421,7 +1422,6 @@ def cmd_run(args):
     """Dispatch what is ready, then EXIT. Does not babysit."""
     _d5_bytecode_advisory(getattr(args, "state_dir", None), plan=getattr(args, "plan", None))
     _d5_refuse('cmd_run', getattr(args, "state_dir", None), plan=getattr(args, "plan", None))
-    SR.apply_agent_resolution(args.plan)
     plan = _load_plan(args.plan)
     _prepare_command_paths(args, plan=plan, need_root=True)
     # ONE WRITER. Two schedulers firing at once, or a human running `advance`

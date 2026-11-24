@@ -164,6 +164,7 @@ VALID_ORCHESTRATORS = frozenset(
     | set(FORBID_WHEN_ORCHESTRATOR)
 )
 ACTIVE_ORCHESTRATOR = None
+ACTIVE_PLAN = None
 
 
 def _plan_orchestrator(plan_path=None, plan=None):
@@ -191,7 +192,7 @@ def effective_default_provider(plan=None):
     """Default code-agent provider for plan, without leaking another plan's state."""
     if isinstance(plan, dict):
         orch = _plan_orchestrator(plan=plan)
-        if orch == ACTIVE_ORCHESTRATOR:
+        if plan is ACTIVE_PLAN and orch == ACTIVE_ORCHESTRATOR:
             return DEFAULT_AGENT_PROVIDER
         if orch in ORCHESTRATOR_DEFAULTS:
             return ORCHESTRATOR_DEFAULTS[orch]["provider"]
@@ -269,10 +270,11 @@ def apply_agent_resolution(plan_path, plan=None):
     provider, model or thinking still wins. The resolved model inherits its
     seat's pinned thinking level unless agents.json names one for it.
     """
-    global DEFAULT_AGENT_PROVIDER, DEFAULT_AGENT_THINKING, ACTIVE_ORCHESTRATOR
+    global DEFAULT_AGENT_PROVIDER, DEFAULT_AGENT_THINKING, ACTIVE_ORCHESTRATOR, ACTIVE_PLAN
     DEFAULT_AGENT_PROVIDER = PINNED_AGENT_PROVIDER
     DEFAULT_AGENT_THINKING = PINNED_AGENT_THINKING
     ACTIVE_ORCHESTRATOR = None
+    ACTIVE_PLAN = plan if isinstance(plan, dict) else None
     # In place, so every reference to the table sees the reset.
     THINKING_BY_MODEL.clear()
     THINKING_BY_MODEL.update(PINNED_THINKING_BY_MODEL)
