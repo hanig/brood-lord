@@ -119,7 +119,14 @@ file and exit codes unchanged.
   loudly and never counts toward a pass. Subscription CLI reviewer seats
   (`provider: "claude"` or `"codex"`) list from `paseo:<provider>` so upgrades
   never select API-only models unavailable to the subscription, and run through
-  their fail-closed CLI transports with API keys stripped.
+  their fail-closed CLI transports with all provider/billing API keys stripped
+  and tools/settings/hooks disabled. Claude CLI enforces `max_output_tokens`
+  via `CLAUDE_CODE_MAX_OUTPUT_TOKENS` and reports `canonicalModel` in
+  `modelUsage`. Codex CLI (`codex exec --json`) exposes no client-side
+  `max_output_tokens` cap and omits a served-model id in JSONL events, so
+  `codex_messages` returns `served_model: None` unless an event explicitly
+  names one (failing closed to the shipped pin rather than adopting an
+  unverified model).
 - Paseo code-agent seats: one `paseo run` at the seat's thinking id, then
   `paseo inspect`. Pass means inspected Provider, Model and Thinking exactly
   equal what was requested. The canary agent is archived afterwards. A Paseo

@@ -73,7 +73,7 @@
     "out": 1.2
    },
    "max_output_tokens": 128000,
-   "_max_output_tokens": "MEASURED through review.PROVIDERS['codex'] (ChatGPT subscription, OPENAI_API_KEY unset) with review.SYSTEM and input ping at effort max and 128000 cap. Establishes subscription transport acceptance and usable verdict output, not capacity for every review.",
+   "_max_output_tokens": "MEASURED through review.PROVIDERS['codex'] (ChatGPT subscription, STRIPPED_ENV, tools disabled) with review.SYSTEM and input ping at effort max. Codex CLI exposes no client-side max_output_tokens flag; 128000 retains the seat's previously measured API output ceiling (see _max_output_tokens_history) while this probe records live subscription completion and usable verdict output.",
    "_max_output_tokens_accepted": {
     "date": "2026-11-24",
     "max_output_tokens": 128000,
@@ -81,11 +81,11 @@
     "model": "gpt-6-luna",
     "effort": "max",
     "outcome": "completed",
-    "input_tokens": 22010,
-    "output_tokens": 398,
-    "reasoning_tokens": 287,
-    "response_id": "01a20eb9-9ad5-7451-ab80-a90897e28e38",
-    "observed_in": "2026-11-24 subscription routing change; review.PROVIDERS['codex'] (OPENAI_API_KEY unset, ChatGPT subscription) with review.SYSTEM and input ping; observed 2026-11-24T18:03:05.361101+00:00"
+    "input_tokens": 20395,
+    "output_tokens": 496,
+    "reasoning_tokens": 420,
+    "response_id": "01a20ecd-0f1d-7a10-84c5-f4e4700026c0",
+    "observed_in": "2026-11-24 subscription routing change; review.PROVIDERS['codex'] (STRIPPED_ENV, tools disabled, ChatGPT subscription) with review.SYSTEM and input ping; codex exec has no client-side max_output_tokens flag; observed 2026-11-24T18:24:22.017637+00:00"
    },
    "_max_output_tokens_history": [
     {
@@ -148,7 +148,7 @@
    "_cost": null,
    "_cost_note": "Unknown at 2026-10-28; no recorded Terra price.",
    "max_output_tokens": 128000,
-   "_max_output_tokens": "MEASURED through review.PROVIDERS['codex'] (ChatGPT subscription, OPENAI_API_KEY unset) with review.SYSTEM and input ping at effort xhigh and 128000 cap. Prior OpenAI API bench records are preserved in _max_output_tokens_history.",
+   "_max_output_tokens": "MEASURED through review.PROVIDERS['codex'] (ChatGPT subscription, STRIPPED_ENV, tools disabled) with review.SYSTEM and input ping at effort xhigh. Codex CLI exposes no client-side max_output_tokens flag; 128000 retains the seat's previously measured API output ceiling (see _max_output_tokens_history) while this probe records live subscription completion and usable verdict output.",
    "_max_output_tokens_accepted": {
     "date": "2026-11-24",
     "max_output_tokens": 128000,
@@ -156,11 +156,11 @@
     "model": "gpt-6.1-terra",
     "effort": "xhigh",
     "outcome": "completed",
-    "input_tokens": 19212,
-    "output_tokens": 294,
-    "reasoning_tokens": 190,
-    "response_id": "01a20eb9-c547-7313-be78-8cd0d2a4a84f",
-    "observed_in": "2026-11-24 subscription routing change; review.PROVIDERS['codex'] (OPENAI_API_KEY unset, ChatGPT subscription) with review.SYSTEM and input ping; observed 2026-11-24T18:03:13.377893+00:00"
+    "input_tokens": 24756,
+    "output_tokens": 291,
+    "reasoning_tokens": 188,
+    "response_id": "01a20ecd-407b-7823-bcb0-4d81838420fd",
+    "observed_in": "2026-11-24 subscription routing change; review.PROVIDERS['codex'] (STRIPPED_ENV, tools disabled, ChatGPT subscription) with review.SYSTEM and input ping; codex exec has no client-side max_output_tokens flag; observed 2026-11-24T18:24:32.160454+00:00"
    },
    "_max_output_tokens_history": [
     {
@@ -249,7 +249,7 @@
    },
    "_note": "Added 2026-09-28 by owner decision, taking kimi-k2.7-code's fast and committee seats, so no tier lacks a second model maker. Released the same day: no third-party code-review data yet, and AA-Omniscience rates it more likely than Opus 5.5 to state a wrong answer confidently. Every finding is reproduced before it is acted on, which bounds that cost. Owner decision 2026-10-12: haiku-5.5 takes fast; standard, deep and committee stay, with high effort unchanged. Since 2026-11-20: sonnet-5.5 is the first plan reserve. Author exclusion removes the reserve when its Sonnet model authored the plan, including through Claude Code. Owner decision 2026-11-24: routed through Claude CLI subscription (fail-closed, ANTHROPIC_API_KEY stripped).",
    "max_output_tokens": 128000,
-   "_max_output_tokens": "MEASURED through review.PROVIDERS['claude'] (claude.ai subscription, ANTHROPIC_API_KEY unset) at effort high and 128000 cap. Prior Anthropic API and OpenRouter acceptances are retained in _max_output_tokens_history.",
+   "_max_output_tokens": "MEASURED through review.PROVIDERS['claude'] (claude.ai subscription, STRIPPED_ENV, --setting-sources \"\", CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000) at effort high. Prior Anthropic API and OpenRouter acceptances are retained in _max_output_tokens_history.",
    "_max_output_tokens_accepted": {
     "date": "2026-11-24",
     "max_output_tokens": 128000,
@@ -258,10 +258,10 @@
     "effort": "high",
     "outcome": "completed",
     "input_tokens": 2,
-    "output_tokens": 385,
-    "reasoning_tokens": 303,
-    "response_id": "028cb9df-20bb-4bbc-93f6-3eb91c9ecd2c",
-    "observed_in": "2026-11-24 subscription routing change; review.PROVIDERS['claude'] (ANTHROPIC_API_KEY unset, claude.ai subscription) with review.SYSTEM and input ping; served claude-sonnet-5-5; observed 2026-11-24T18:03:13.175597+00:00"
+    "output_tokens": 62,
+    "reasoning_tokens": 0,
+    "response_id": "3202d57c-3eaa-4750-96fa-22349e18d633",
+    "observed_in": "2026-11-24 subscription routing change; review.PROVIDERS['claude'] (STRIPPED_ENV, --setting-sources '', CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000, claude.ai subscription) with review.SYSTEM and input ping; served claude-sonnet-5-5; observed 2026-11-24T18:24:25.309658+00:00"
    },
    "_max_output_tokens_history": [
     {
@@ -574,7 +574,7 @@
    "_cost": null,
    "_cost_note": "Unmeasured: models.json contains no Anthropic Haiku price list.",
    "_note": "Owner decision 2026-10-12: replaces sonnet-5.5 in fast through native Anthropic. Orchestrator change 2026-11-03 under the owner's standing delegation: high replaces that decision's max effort. In two of two small-diff reviews (unit e-m-inline-markers, rounds 1 and 2), the model used all 128000 output tokens on reasoning and emitted no review, giving REVIEW_INCOMPLETE. Owner decision 2026-11-24: routed through Claude CLI subscription (fail-closed, ANTHROPIC_API_KEY stripped).",
-   "_max_output_tokens": "MEASURED through review.PROVIDERS['claude'] (claude.ai subscription, ANTHROPIC_API_KEY unset) at effort high and 128000 cap. Prior Anthropic API acceptance is retained in _max_output_tokens_history.",
+   "_max_output_tokens": "MEASURED through review.PROVIDERS['claude'] (claude.ai subscription, STRIPPED_ENV, --setting-sources \"\", CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000) at effort high. Prior Anthropic API acceptance is retained in _max_output_tokens_history.",
    "_max_output_tokens_accepted": {
     "date": "2026-11-24",
     "max_output_tokens": 128000,
@@ -583,10 +583,10 @@
     "effort": "high",
     "outcome": "completed",
     "input_tokens": 2,
-    "output_tokens": 573,
-    "reasoning_tokens": 488,
-    "response_id": "22fb22a5-e058-4ccc-a850-2633ac43dcde",
-    "observed_in": "2026-11-24 subscription routing change; review.PROVIDERS['claude'] (ANTHROPIC_API_KEY unset, claude.ai subscription) with review.SYSTEM and input ping; served claude-haiku-5-5; observed 2026-11-24T18:03:18.101555+00:00"
+    "output_tokens": 612,
+    "reasoning_tokens": 524,
+    "response_id": "c3a9995f-8df8-4aad-ac12-3ca4218cdb96",
+    "observed_in": "2026-11-24 subscription routing change; review.PROVIDERS['claude'] (STRIPPED_ENV, --setting-sources '', CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000, claude.ai subscription) with review.SYSTEM and input ping; served claude-haiku-5-5; observed 2026-11-24T18:24:30.218402+00:00"
    },
    "_max_output_tokens_history": [
     {

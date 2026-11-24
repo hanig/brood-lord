@@ -1171,7 +1171,8 @@ def call_anthropic(rev, prompt, timeout, deadline=None):
 def _claude_messages(rev, messages, system, timeout, deadline=None):
     return _subs.claude_messages(
         rev, messages, system, timeout, deadline=deadline,
-        no_content_error=no_content_error)
+        no_content_error=no_content_error,
+        default_max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS)
 
 
 @redact_provider_result

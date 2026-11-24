@@ -1,7 +1,6 @@
 """Fail-closed CLI subscription transports (claude and codex); all tests offline."""
 
 import ast
-import io
 import json
 import os
 from pathlib import Path
@@ -10,7 +9,6 @@ import sys
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -110,8 +108,13 @@ class TestSubscriptionTransports(unittest.TestCase):
             "CODEX_HOME": str(self.codex_dir),
             "ANTHROPIC_API_KEY": 'sk-ant-secret-"quoted\\1',
             "ANTHROPIC_AUTH_TOKEN": "tok-ant-secret-2",
+            "ANTHROPIC_BASE_URL": "https://proxy.invalid",
+            "CLAUDE_CODE_USE_BEDROCK": "1",
             "OPENAI_API_KEY": 'sk-openai-secret-"quoted\\3',
+            "OPENAI_BASE_URL": "https://openai-proxy.invalid",
             "OPENROUTER_API_KEY": "sk-or-secret-4",
+            "LINEAR_API_KEY": "lin_api_secret_5",
+            "GH_TOKEN": "ghp_secret_6",
             "HANIG_ROUTING_SNAPSHOTS": "off",
         })
         env.start()
@@ -141,20 +144,24 @@ class TestSubscriptionTransports(unittest.TestCase):
 
     def _codex_jsonl(self, text="OK", *, thread_id="thr-codex-1",
                      in_tokens=20, out_tokens=7, reasoning=4,
-                     extra_events=()):
+                     before_complete=(), model=None):
         events = [
             {"type": "thread.started", "thread_id": thread_id},
             {"type": "turn.started"},
-            {"type": "item.completed", "item": {
-                "id": "item_0", "type": "agent_message", "text": text}},
-            {"type": "turn.completed", "usage": {
-                "input_tokens": in_tokens, "output_tokens": out_tokens,
-                "reasoning_output_tokens": reasoning}},
         ]
-        events.extend(extra_events)
+        events.extend(before_complete)
+        if text is not None:
+            events.append({"type": "item.completed", "item": {
+                "id": "item_0", "type": "agent_message", "text": text}})
+        done = {"type": "turn.completed", "usage": {
+            "input_tokens": in_tokens, "output_tokens": out_tokens,
+            "reasoning_output_tokens": reasoning}}
+        if model is not None:
+            done["model"] = model
+        events.append(done)
         return "\n".join(json.dumps(e) for e in events) + "\n"
 
-    def test_claude_strips_api_keys_runs_in_empty_cwd_and_parses_result(self):
+    def test_claude_strips_all_api_keys_disables_settings_and_applies_max_output(self):
         captured = {}
         proc = _FakeProc(stdout=self._claude_json("verdict body"))
 
@@ -176,21 +183,35 @@ class TestSubscriptionTransports(unittest.TestCase):
         })
         cmd = captured["cmd"]
         self.assertEqual(cmd[:4], ["/bin/claude", "-p", "--model", "claude-sonnet-5-5"])
-        self.assertIn("--tools", cmd)
         self.assertEqual(cmd[cmd.index("--tools") + 1], "")
         self.assertIn("--strict-mcp-config", cmd)
         self.assertIn("--no-session-persistence", cmd)
-        self.assertEqual(cmd[cmd.index("--setting-sources") + 1], "user")
+        # Empty --setting-sources skips user/project/local settings.json (hooks & apiKeyHelper).
+        self.assertEqual(cmd[cmd.index("--setting-sources") + 1], "")
         self.assertEqual(cmd[cmd.index("--effort") + 1], "high")
         self.assertEqual(cmd[cmd.index("--output-format") + 1], "json")
         self.assertEqual(proc.stdin_received, "review diff")
-        self.assertNotIn("ANTHROPIC_API_KEY", captured["kwargs"]["env"])
-        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", captured["kwargs"]["env"])
+        child_env = captured["kwargs"]["env"]
+        for var in RS.STRIPPED_ENV:
+            self.assertNotIn(var, child_env, f"{var} leaked into claude child env")
+        self.assertEqual(child_env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], "128000")
         self.assertTrue(captured["kwargs"]["start_new_session"])
         self.assertEqual(captured["cwd_entries"], [])
         self.assertFalse(Path(captured["kwargs"]["cwd"]).exists())
 
-    def test_codex_strips_openai_key_runs_in_empty_cwd_and_parses_jsonl(self):
+    def test_claude_max_output_tokens_api_error_uses_no_content_classifier(self):
+        proc = _FakeProc(
+            stdout=self._claude_json(
+                is_error=True, api_error="max_output_tokens",
+                result="API Error: exceeded output token maximum"),
+            returncode=1)
+        with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
+                mock.patch.object(RS.subprocess, "Popen", return_value=proc):
+            res, err = R.PROVIDERS["claude"](self.CLAUDE_SEAT, "p", 10)
+        self.assertIsNone(res)
+        self.assertIn("whole output budget", err)
+
+    def test_codex_strips_all_api_keys_disables_tools_and_keeps_served_model_honest(self):
         captured = {}
         proc = _FakeProc(stdout=self._codex_jsonl("codex reply"))
 
@@ -207,7 +228,7 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertIsNone(err)
         self.assertEqual(res, {
             "text": "codex reply", "in_tokens": 20, "out_tokens": 7,
-            "reasoning_tokens": 4, "served_model": "gpt-6.1-terra",
+            "reasoning_tokens": 4, "served_model": None,
             "status": "completed", "response_id": "thr-codex-1",
         })
         cmd = captured["cmd"]
@@ -215,6 +236,8 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertIn("--ephemeral", cmd)
         self.assertIn("--ignore-user-config", cmd)
         self.assertIn("--ignore-rules", cmd)
+        disabled = [cmd[i + 1] for i, tok in enumerate(cmd[:-1]) if tok == "--disable"]
+        self.assertEqual(tuple(disabled), RS.CODEX_DISABLED_FEATURES)
         self.assertEqual(cmd[cmd.index("--sandbox") + 1], "read-only")
         self.assertIn("--skip-git-repo-check", cmd)
         self.assertEqual(cmd[cmd.index("-C") + 1], captured["kwargs"]["cwd"])
@@ -223,10 +246,49 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertEqual(cmd[-1], "-")
         self.assertIn("review diff", proc.stdin_received)
         self.assertIn(R.SYSTEM, proc.stdin_received)
-        self.assertNotIn("OPENAI_API_KEY", captured["kwargs"]["env"])
+        child_env = captured["kwargs"]["env"]
+        for var in RS.STRIPPED_ENV:
+            self.assertNotIn(var, child_env, f"{var} leaked into codex child env")
         self.assertTrue(captured["kwargs"]["start_new_session"])
         self.assertEqual(captured["cwd_entries"], [])
         self.assertFalse(Path(captured["kwargs"]["cwd"]).exists())
+
+        # When Codex JSONL omits model, exact-model resolution probe fails closed.
+        verdict = json.dumps({"verdict": "upheld", "findings": [], "claims": [
+            {"claim_index": 0, "claim": "c", "status": "supported", "why": "ok ok ok"}]})
+        proc_v = _FakeProc(stdout=self._codex_jsonl(verdict))
+        with mock.patch.object(RS.shutil, "which", return_value="/bin/codex"), \
+                mock.patch.object(RS.subprocess, "Popen", return_value=proc_v):
+            rec, why = RM.probe_reviewer(self.CODEX_SEAT, "gpt-6.1-terra", 10)
+        self.assertIsNone(rec)
+        self.assertIn("served None", why)
+
+        # If a Codex event explicitly reports a model, served_model carries it.
+        proc_m = _FakeProc(stdout=self._codex_jsonl(verdict, model="gpt-6.1-terra"))
+        with mock.patch.object(RS.shutil, "which", return_value="/bin/codex"), \
+                mock.patch.object(RS.subprocess, "Popen", return_value=proc_m):
+            rec, why = RM.probe_reviewer(self.CODEX_SEAT, "gpt-6.1-terra", 10)
+        self.assertIsNone(why)
+        self.assertEqual(rec["model"], "gpt-6.1-terra")
+
+    def test_codex_transient_error_recovers_on_turn_completed_and_empty_reply_cleanly_errors(self):
+        # Transient reconnect notice before turn.completed must not discard a valid reply.
+        proc_rec = _FakeProc(stdout=self._codex_jsonl(
+            "OK", before_complete=({"type": "error", "message": "Reconnecting... 1/5"},)))
+        with mock.patch.object(RS.shutil, "which", return_value="/bin/codex"), \
+                mock.patch.object(RS.subprocess, "Popen", return_value=proc_rec):
+            res, err = R.PROVIDERS["codex"](self.CODEX_SEAT, "p", 10)
+        self.assertIsNone(err)
+        self.assertEqual(res["text"], "OK")
+        self.assertEqual(res["status"], "completed")
+
+        # Empty completed reply invokes review.no_content_error(..., status='completed') cleanly.
+        proc_empty = _FakeProc(stdout=self._codex_jsonl(None))
+        with mock.patch.object(RS.shutil, "which", return_value="/bin/codex"), \
+                mock.patch.object(RS.subprocess, "Popen", return_value=proc_empty):
+            res, err = R.PROVIDERS["codex"](self.CODEX_SEAT, "p", 10)
+        self.assertIsNone(res)
+        self.assertIn("no content", err)
 
     def test_timeout_kills_process_group_and_expired_deadline_never_spawns(self):
         with mock.patch.object(RS.shutil, "which", return_value="/bin/codex"), \
@@ -248,7 +310,6 @@ class TestSubscriptionTransports(unittest.TestCase):
 
     def test_errors_and_redaction_cover_both_subscription_transports(self):
         secret = os.environ["OPENAI_API_KEY"]
-        # Reflected secret in stdout/error must be redacted at the provider boundary.
         proc_cl = _FakeProc(stdout=self._claude_json(result="leak " + secret,
                                                       uuid=secret))
         with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
@@ -259,7 +320,16 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertIn("OPENAI_API_KEY redacted", res["text"])
         self.assertIn("OPENAI_API_KEY redacted", res["response_id"])
 
-        # Claude is_error and Codex turn.failed both fail cleanly with redaction.
+        # committee.ask_member with preserve_reply=True still redacts before returning.
+        proc_cl2 = _FakeProc(stdout=self._claude_json(result="leak " + secret))
+        with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
+                mock.patch.object(RS.subprocess, "Popen", return_value=proc_cl2):
+            text, err, _usage = C.ask_member(
+                self.CLAUDE_SEAT, [], "p", 10, preserve_reply=True)
+        self.assertIsNone(err)
+        self.assertNotIn(secret, text)
+        self.assertIn("OPENAI_API_KEY redacted", text)
+
         proc_cl_err = _FakeProc(
             stdout=self._claude_json(is_error=True, result="auth failed " + secret),
             returncode=1)
@@ -282,7 +352,6 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertNotIn(secret, err)
         self.assertIn("codex CLI error", err)
 
-        # Empty text invokes no_content_error.
         proc_empty = _FakeProc(stdout=self._claude_json(
             result="", stop_reason="max_tokens"))
         with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
@@ -315,7 +384,6 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertIn("turn 1 a", proc_cx.stdin_received)
         self.assertIn("turn 2 q", proc_cx.stdin_received)
 
-        # Codex + OpenAI share maker 'openai' and must be rejected as non-contrasting.
         plan_err = R._load_plan_review()._plan_panel_error([
             {"name": "terra", "provider": "codex", "model": "gpt-6.1-terra"},
             {"name": "astra", "provider": "openai", "model": "gpt-6.2-astra"},

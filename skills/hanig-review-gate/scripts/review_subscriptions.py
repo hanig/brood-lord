@@ -1,10 +1,19 @@
 """Fail-closed CLI subscription transports for Claude and Codex reviewers.
 
 Routes review-gate and committee calls through local `claude` (claude.ai OAuth)
-and `codex` (ChatGPT account) CLIs with API keys stripped from the child
-environment so a subscription seat never silently falls back to billed API
-credits. Runs inside a fresh empty temporary directory with tools, hooks, user
-config, and session persistence disabled.
+and `codex` (ChatGPT account) CLIs with all provider/billing API keys stripped
+from the child environment so a subscription seat never silently falls back to
+billed API credits or leaks sibling credentials. Runs inside a fresh empty
+temporary directory with tools, user/project settings/hooks, and session
+persistence disabled.
+
+Declared limits:
+- Claude CLI enforces `max_output_tokens` via `CLAUDE_CODE_MAX_OUTPUT_TOKENS`
+  and reports `canonicalModel` in `modelUsage`.
+- Codex CLI (`codex exec --json`) does not expose a client-side
+  `max_output_tokens` cap and currently omits the served model id from JSONL
+  events, so `codex_messages` reports `served_model: None` unless an event
+  explicitly carries a `model` string (fail-closed for exact-model resolution).
 
 Python 3.8+, standard library only. Must never import review.py.
 """
@@ -18,10 +27,35 @@ import subprocess
 import tempfile
 import time
 
-CLAUDE_STRIPPED_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
-CODEX_STRIPPED_ENV = ("OPENAI_API_KEY",)
+STRIPPED_ENV = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENROUTER_API_KEY",
+    "GOOGLE_API_KEY",
+    "GEMINI_API_KEY",
+    "LINEAR_API_KEY",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "WANDB_API_KEY",
+)
+CLAUDE_STRIPPED_ENV = STRIPPED_ENV
+CODEX_STRIPPED_ENV = STRIPPED_ENV
 CLAUDE_EFFORTS = ("low", "medium", "high", "max")
 CODEX_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+CODEX_DISABLED_FEATURES = (
+    "shell_tool",
+    "unified_exec",
+    "apps",
+    "computer_use",
+    "browser_use",
+    "sleep_tool",
+)
 SUBSCRIPTION_PROVIDERS = ("claude", "codex")
 
 
@@ -42,7 +76,12 @@ def codex_home_dir():
 
 
 def claude_availability():
-    """Offline check for Claude CLI subscription transport, or None if ready."""
+    """Offline check for Claude CLI subscription transport, or None if ready.
+
+    Live OAuth validity is verified at call time with `--setting-sources ""`
+    and all API/cloud credentials stripped, so user settings (`apiKeyHelper`,
+    hooks) and API keys can never satisfy authentication.
+    """
     if not shutil.which("claude"):
         return "claude CLI not found on PATH"
     cfg = claude_config_dir()
@@ -113,7 +152,8 @@ def _kill_process_group(proc):
             pass
 
 
-def _run_cli(cmd, stdin_text, stripped_env, timeout, deadline=None):
+def _run_cli(cmd, stdin_text, stripped_env, timeout, deadline=None,
+             *, extra_env=None):
     """Run CLI in a fresh empty directory with stripped API keys and group kill."""
     rem, err = _remaining_seconds(timeout, deadline)
     if err:
@@ -121,6 +161,8 @@ def _run_cli(cmd, stdin_text, stripped_env, timeout, deadline=None):
     env = dict(os.environ)
     for var in stripped_env:
         env.pop(var, None)
+    if extra_env:
+        env.update(extra_env)
     with tempfile.TemporaryDirectory(prefix="hanig-review-cli-") as tmp_dir:
         resolved_cmd = [tmp_dir if arg == "__HANIG_EMPTY_CWD__" else arg for arg in cmd]
         try:
@@ -201,7 +243,7 @@ def _claude_served_model(data, requested):
 
 
 def claude_messages(rev, messages, system, timeout, deadline=None,
-                    *, no_content_error=None):
+                    *, no_content_error=None, default_max_output_tokens=64000):
     """Run one review or committee turn via Claude Code OAuth subscription."""
     why = claude_availability()
     if why:
@@ -212,22 +254,37 @@ def claude_messages(rev, messages, system, timeout, deadline=None,
         "--model", rev["model"],
         "--tools", "",
         "--strict-mcp-config",
-        "--setting-sources", "user",
+        "--setting-sources", "",
         "--no-session-persistence",
         "--system-prompt", system,
         "--output-format", "json",
     ]
     if rev.get("effort"):
         cmd.extend(["--effort", rev["effort"]])
+    budget = rev.get("max_output_tokens", default_max_output_tokens)
+    extra_env = {}
+    if isinstance(budget, int) and not isinstance(budget, bool) and budget > 0:
+        extra_env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(budget)
     rc, stdout, stderr, run_err = _run_cli(
-        cmd, format_messages(messages), CLAUDE_STRIPPED_ENV, timeout,
-        deadline=deadline)
+        cmd, format_messages(messages), STRIPPED_ENV, timeout,
+        deadline=deadline, extra_env=extra_env)
     if run_err:
         return None, run_err
     data = _parse_json_object(stdout)
     if data is None:
         detail = (stderr or stdout or f"exit {rc}").strip()[:200]
         return None, f"claude CLI returned non-JSON output (exit {rc}): {detail}"
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    detail = (usage.get("output_tokens_details")
+              if isinstance(usage.get("output_tokens_details"), dict) else {})
+    thinking = detail.get("thinking_tokens")
+    if thinking is None:
+        thinking = usage.get("reasoning_tokens")
+    out_tokens = usage.get("output_tokens")
+    if data.get("api_error") == "max_output_tokens" and no_content_error is not None:
+        return None, no_content_error(
+            rev, "", finish_reason="max_output_tokens",
+            reasoning_tokens=thinking, completion_tokens=out_tokens)
     if data.get("is_error") or rc != 0:
         msg = data.get("result") or stderr or f"exit {rc}"
         return None, f"claude CLI error: {str(msg).strip()[:300]}"
@@ -236,19 +293,12 @@ def claude_messages(rev, messages, system, timeout, deadline=None,
         text = ""
     elif not isinstance(text, str):
         return None, f"claude CLI unexpected result type: {type(text).__name__}"
-    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
-    detail = (usage.get("output_tokens_details")
-              if isinstance(usage.get("output_tokens_details"), dict) else {})
-    thinking = detail.get("thinking_tokens")
-    if thinking is None:
-        thinking = usage.get("reasoning_tokens")
     stop = data.get("stop_reason")
     terminal = data.get("terminal_reason")
     if stop == "end_turn" or (stop is None and terminal == "completed"):
         status = "completed"
     else:
         status = stop or terminal
-    out_tokens = usage.get("output_tokens")
     if no_content_error is not None:
         empty_err = no_content_error(
             rev, text,
@@ -279,12 +329,16 @@ def codex_messages(rev, messages, system, timeout, deadline=None,
         "--ephemeral",
         "--ignore-user-config",
         "--ignore-rules",
+    ]
+    for feature in CODEX_DISABLED_FEATURES:
+        cmd.extend(["--disable", feature])
+    cmd.extend([
         "--sandbox", "read-only",
         "--skip-git-repo-check",
         "-C", "__HANIG_EMPTY_CWD__",
         "--json",
         "-m", rev["model"],
-    ]
+    ])
     if rev.get("effort"):
         cmd.extend(["-c", f"model_reasoning_effort={json.dumps(rev['effort'])}"])
     cmd.append("-")
@@ -293,14 +347,16 @@ def codex_messages(rev, messages, system, timeout, deadline=None,
             f"directly from the provided text.)\n\n---\n\n"
             f"{format_messages(messages)}")
     rc, stdout, stderr, run_err = _run_cli(
-        cmd, body, CODEX_STRIPPED_ENV, timeout, deadline=deadline)
+        cmd, body, STRIPPED_ENV, timeout, deadline=deadline)
     if run_err:
         return None, run_err
     thread_id = None
+    observed_model = None
     agent_messages = []
     usage = None
     completed = False
-    turn_error = None
+    turn_failed_error = None
+    stream_error = None
     parsed_any = False
     for line in (stdout or "").splitlines():
         s = line.strip()
@@ -313,6 +369,8 @@ def codex_messages(rev, messages, system, timeout, deadline=None,
         if not isinstance(ev, dict):
             continue
         parsed_any = True
+        if isinstance(ev.get("model"), str) and ev["model"].strip():
+            observed_model = ev["model"].strip()
         etype = ev.get("type")
         if etype == "thread.started" and isinstance(ev.get("thread_id"), str):
             thread_id = ev["thread_id"]
@@ -324,18 +382,20 @@ def codex_messages(rev, messages, system, timeout, deadline=None,
                     agent_messages.append(msg_text)
         elif etype == "turn.completed":
             completed = True
+            stream_error = None
             if isinstance(ev.get("usage"), dict):
                 usage = ev["usage"]
         elif etype == "turn.failed":
             err_obj = ev.get("error")
             if isinstance(err_obj, dict) and err_obj.get("message"):
-                turn_error = str(err_obj["message"])
+                turn_failed_error = str(err_obj["message"])
             else:
-                turn_error = str(err_obj or "turn.failed")
+                turn_failed_error = str(err_obj or "turn.failed")
         elif etype == "error" and ev.get("message"):
-            turn_error = str(ev["message"])
-    if turn_error or rc != 0 or not parsed_any:
-        detail = turn_error or (stderr or stdout or f"exit {rc}").strip()[:300]
+            stream_error = str(ev["message"])
+    fatal = turn_failed_error or (stream_error if not completed else None)
+    if fatal or rc != 0 or not parsed_any:
+        detail = fatal or (stderr or stdout or f"exit {rc}").strip()[:300]
         return None, f"codex CLI error: {detail}"
     text = agent_messages[-1] if agent_messages else ""
     usage = usage or {}
@@ -353,7 +413,7 @@ def codex_messages(rev, messages, system, timeout, deadline=None,
         "in_tokens": usage.get("input_tokens"),
         "out_tokens": out_tokens,
         "reasoning_tokens": reasoning,
-        "served_model": rev["model"],
+        "served_model": observed_model,
         "status": status,
         "response_id": thread_id,
     }, None
