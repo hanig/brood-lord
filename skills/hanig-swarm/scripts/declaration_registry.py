@@ -66,7 +66,7 @@ CLOSED_DECLARATIONS = {
         capability.python-git capability.slurm capability.paseo-bus
         capability.review capability.tracker capability.worker-backend
         paths.skill-directory code.default-agent code.provider-mode
-        runtime.declaration runtime.verification runtime.canary plan.canary plan.tracker retry.boundary
+        runtime.declaration runtime.verification runtime.canary env.dedicated plan.canary plan.tracker retry.boundary
         retry.checkpoint retry.exposure retry.concurrency
         isolation.exclusive-root isolation.done-predicate
         isolation.artifact-basis isolation.container-profile
@@ -94,7 +94,7 @@ CLOSED_DECLARATIONS = {
         report.scheduled-facts owner.questions
         placement.behavior-deciding placement.reference-elaboration
         placement.reference-dialect capability.host-policy
-        capability.dependencies paths.skill-directory authority.source
+        capability.dependencies paths.skill-directory env.dedicated authority.source
         authority.confirmation authority.narrow-mode authority.revocation
         authority.lease authority.session-cap authority.admission
         authority.rollover authority.worker-delegation
@@ -123,8 +123,8 @@ CLOSED_DECLARATIONS = {
         adoption.context repository.destination repository.source-data
         repository.creation-approval interview.judgment-only
         interview.retry-boundary interview.dispatch-complete
-        interview.reporting-cadence plan.inputs plan.scheduler-route
-        plan.promotion code.configuration code.target-branch runtime.contract
+        interview.reporting-cadence interview.orchestration-env plan.inputs plan.scheduler-route
+        plan.promotion code.configuration code.target-branch runtime.contract env.dedicated
         retry.contract cluster.memory-flag cluster.account-allowance
         cluster.memory-charging cluster.qos-scope findings.interview
         unit.retry-size judgment.by-kind slurm.command-boundary

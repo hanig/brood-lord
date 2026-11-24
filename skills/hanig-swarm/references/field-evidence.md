@@ -86,3 +86,7 @@ Paseo client's environment. This is why coordinator child filtering is not
 described as worker credential isolation. Exact-name and value-shape matching
 also broke legitimate runtime configuration; `HF_TOKEN` under a second name is
 the standing example.
+
+## Dedicated orchestration environment (STAGE, 2026-11-22)
+
+STAGE ran coordinator cron, hourly facts, merge helpers, and probes from shared `workbook` conda until 2026-11-22 while STAGE and MaxToki already had separate venvs; moving orchestration to `~/.local/state/PROJECT/orch-venv` (`uv`, Python 3.12; stdlib-only scripts) decoupled orchestration from personal conda state. <!-- declaration: env.dedicated -->

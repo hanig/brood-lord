@@ -78,13 +78,16 @@ not the eventual merge tree or a later PR head.
 
 ## Cron shape
 
-Use the host's deterministic scheduler, for example:
+Use the host's deterministic scheduler and call the declared orchestration
+interpreter by absolute path via `ORCH_PYTHON`, never bare `python3` from PATH: <!-- declaration: env.dedicated -->
 
 ```bash
-LINE="*/5 * * * * $HOME/swarm-live/scripts/swarm-cron.sh $HOME/swarm-live/PROJ  # hanig-swarm"
+LINE="*/5 * * * * ORCH_PYTHON=\"$HOME/.local/state/PROJ/orch-venv/bin/python\" HANIG_ORCH_PYTHON=\"$HOME/.local/state/PROJ/orch-venv/bin/python\" \"$HOME/swarm-live/scripts/swarm-cron.sh\" \"$HOME/swarm-live/PROJ\"  # hanig-swarm"
 { crontab -l 2>/dev/null | grep -v swarm-cron.sh; echo "$LINE"; } | crontab -
 crontab -l | grep swarm
 ```
+
+`swarm-cron.sh` refuses a missing, relative, or non-executable `ORCH_PYTHON` so a host cron pass cannot silently fall back to a shared personal or system env. Escape any literal `%` in substituted crontab paths as `\%`. <!-- declaration: env.dedicated -->
 
 Cron on lambda was observed advancing the DAG without a connected human on
 2026-08-28. This observation does not strengthen the lock topology. <!-- declaration: placement.reference-elaboration -->
