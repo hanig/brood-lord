@@ -49,6 +49,10 @@ class _FakeProc:
 
 
 CLAUDE_AUTH_OK = json.dumps({"loggedIn": True, "authMethod": "claude.ai"})
+CODEX_AUTH_OK = json.dumps({
+    "auth_mode": "chatgpt",
+    "tokens": {"access_token": "tok-access-test", "refresh_token": "tok-refresh-test"},
+})
 
 
 class TestSubscriptionAvailability(unittest.TestCase):
@@ -106,7 +110,7 @@ class TestSubscriptionAvailability(unittest.TestCase):
                 self.assertIsNone(RS._codex_credential_store_mode(home))
                 self.assertIn("not 'chatgpt'", RS.codex_availability())
                 (home / "config.toml").write_text(
-                    'cli_auth_credentials_store = "keyring"\n', encoding="utf-8")
+                    '"cli_auth_credentials_store" = "keyring"\n', encoding="utf-8")
                 with mock.patch.object(
                         RS, "_run_cli",
                         return_value=(0, "Logged in using ChatGPT\n", "", None)):
@@ -117,12 +121,14 @@ class TestSubscriptionAvailability(unittest.TestCase):
                     self.assertIn("not an active ChatGPT", RS.codex_availability())
                 (home / "config.toml").unlink()
                 for bad in ("{", "[]", json.dumps({"auth_mode": "apikey"}),
-                            json.dumps({"auth_mode": None}), json.dumps({})):
+                            json.dumps({"auth_mode": None}), json.dumps({}),
+                            json.dumps({"auth_mode": "chatgpt"}),
+                            json.dumps({"auth_mode": "chatgpt", "tokens": {}}),
+                            json.dumps({"auth_mode": "chatgpt", "tokens": {"access_token": ""}})):
                     (home / "auth.json").write_text(bad, encoding="utf-8")
                     why = RS.codex_availability()
                     self.assertIsNotNone(why, bad)
-                (home / "auth.json").write_text(
-                    json.dumps({"auth_mode": "chatgpt"}), encoding="utf-8")
+                (home / "auth.json").write_text(CODEX_AUTH_OK, encoding="utf-8")
                 self.assertIsNone(RS.codex_availability())
                 self.assertIsNone(R.availability(
                     {"name": "t", "provider": "codex", "model": "m", "enabled": True}))
@@ -144,8 +150,7 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.claude_dir.mkdir()
         self.codex_dir = self.root / "codex"
         self.codex_dir.mkdir()
-        (self.codex_dir / "auth.json").write_text(
-            json.dumps({"auth_mode": "chatgpt"}), encoding="utf-8")
+        (self.codex_dir / "auth.json").write_text(CODEX_AUTH_OK, encoding="utf-8")
         env = mock.patch.dict(os.environ, {
             "CLAUDE_CONFIG_DIR": str(self.claude_dir),
             "CODEX_HOME": str(self.codex_dir),
@@ -155,8 +160,11 @@ class TestSubscriptionTransports(unittest.TestCase):
             "CLAUDE_CODE_USE_BEDROCK": "1",
             "CLAUDECODE": "1",
             "CLAUDE_CODE_SESSION_ID": "parent-sess",
+            "CODEX_API_KEY": "sk-codex-secret-override",
+            "CODEX_ACCESS_TOKEN": "tok-codex-secret",
             "OPENAI_API_KEY": 'sk-openai-secret-"quoted\\3',
             "OPENAI_BASE_URL": "https://openai-proxy.invalid",
+            "OPENAI_ORGANIZATION": "org-secret",
             "OPENROUTER_API_KEY": "sk-or-secret-4",
             "LINEAR_API_KEY": "lin_api_secret_5",
             "GH_TOKEN": "ghp_secret_6",
@@ -291,27 +299,37 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertIn("<system_instructions>", proc.stdin_received)
         self.assertIn(big_system, proc.stdin_received)
 
-    def test_relative_config_dirs_are_resolved_before_empty_tmpdir_cwd(self):
+    def test_relative_config_dirs_and_relative_path_bins_resolve_before_tmpdir_cwd(self):
         rel_claude = "rel-claude"
         rel_codex = "rel-codex"
         (self.root / rel_claude).mkdir()
         (self.root / rel_codex).mkdir()
-        (self.root / rel_codex / "auth.json").write_text(
-            json.dumps({"auth_mode": "chatgpt"}), encoding="utf-8")
+        (self.root / rel_codex / "auth.json").write_text(CODEX_AUTH_OK, encoding="utf-8")
+        (self.root / "bin").mkdir()
+        fake_claude = self.root / "bin/claude"
+        fake_claude.write_text("#!/bin/sh\necho '" + CLAUDE_AUTH_OK + "'\n", encoding="utf-8")
+        fake_claude.chmod(0o755)
         old_cwd = os.getcwd()
         os.chdir(self.root)
         self.addCleanup(os.chdir, old_cwd)
+        # Real subprocess invocation through relative PATH entry ("bin:...").
+        with mock.patch.dict(os.environ, {
+                "PATH": "bin:" + os.environ.get("PATH", ""),
+                "CLAUDE_CONFIG_DIR": rel_claude}):
+            self.assertIsNone(RS.claude_availability())
         captured_cl, captured_cx = {}, {}
         proc_cl = _FakeProc(stdout=self._claude_json("OK"))
         proc_cx = _FakeProc(stdout=self._codex_jsonl("OK"))
         with mock.patch.dict(os.environ, {
                 "CLAUDE_CONFIG_DIR": rel_claude, "CODEX_HOME": rel_codex}), \
-                mock.patch.object(RS.shutil, "which", return_value="/bin/cli"):
+                mock.patch.object(RS.shutil, "which", return_value="bin/cli"):
             with mock.patch.object(
                     RS.subprocess, "Popen",
                     side_effect=self._claude_popen_router(proc_cl, captured=captured_cl)):
                 res, err = R.PROVIDERS["claude"](self.CLAUDE_SEAT, "p", 10)
             self.assertIsNone(err)
+            self.assertEqual(
+                Path(captured_cl["cmd"][0]).resolve(), (self.root / "bin/cli").resolve())
             self.assertEqual(
                 Path(captured_cl["kwargs"]["env"]["CLAUDE_CONFIG_DIR"]).resolve(),
                 (self.root / rel_claude).resolve())
@@ -319,11 +337,14 @@ class TestSubscriptionTransports(unittest.TestCase):
                 Path(captured_cl["auth_kwargs"]["env"]["CLAUDE_CONFIG_DIR"]).resolve(),
                 (self.root / rel_claude).resolve())
             def fake_cx(cmd, **kwargs):
+                captured_cx["cmd"] = cmd
                 captured_cx["kwargs"] = kwargs
                 return proc_cx
             with mock.patch.object(RS.subprocess, "Popen", side_effect=fake_cx):
                 res, err = R.PROVIDERS["codex"](self.CODEX_SEAT, "p", 10)
             self.assertIsNone(err)
+            self.assertEqual(
+                Path(captured_cx["cmd"][0]).resolve(), (self.root / "bin/cli").resolve())
             self.assertEqual(
                 Path(captured_cx["kwargs"]["env"]["CODEX_HOME"]).resolve(),
                 (self.root / rel_codex).resolve())
@@ -409,8 +430,7 @@ class TestSubscriptionTransports(unittest.TestCase):
         kr_c = [exec_cmd[i + 1] for i, tok in enumerate(exec_cmd[:-1]) if tok == "-c"]
         self.assertIn('cli_auth_credentials_store="keyring"', kr_c)
         (self.codex_dir / "config.toml").unlink()
-        (self.codex_dir / "auth.json").write_text(
-            json.dumps({"auth_mode": "chatgpt"}), encoding="utf-8")
+        (self.codex_dir / "auth.json").write_text(CODEX_AUTH_OK, encoding="utf-8")
 
         verdict = json.dumps({"verdict": "upheld", "findings": [], "claims": [
             {"claim_index": 0, "claim": "c", "status": "supported", "why": "ok ok ok"}]})

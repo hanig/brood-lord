@@ -38,14 +38,24 @@ STRIPPED_ENV = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AWS_API_KEY",
+    "ANTHROPIC_FOUNDRY_API_KEY",
+    "ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+    "CLAUDE_CODE_API_BASE_URL",
+    "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_FOUNDRY",
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
     "CLAUDE_CODE_SESSION_ID",
+    "CODEX_API_KEY",
+    "CODEX_ACCESS_TOKEN",
+    "CODEX_OSS_BASE_URL",
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
+    "OPENAI_ORGANIZATION",
+    "OPENAI_PROJECT",
     "OPENROUTER_API_KEY",
     "GOOGLE_API_KEY",
     "GEMINI_API_KEY",
@@ -69,9 +79,17 @@ CODEX_DISABLED_FEATURES = (
 SUBSCRIPTION_PROVIDERS = ("claude", "codex")
 _MAX_ARGV_SYSTEM_BYTES = 65536
 _CRED_STORE_RE = re.compile(
-    r'^\s*cli_auth_credentials_store\s*=\s*["\'](keyring|auto|file)["\']\s*(?:#.*)?$'
+    r'^\s*(?:cli_auth_credentials_store|"cli_auth_credentials_store"'
+    r"|'cli_auth_credentials_store')\s*=\s*"
+    r'["\'](keyring|auto|file)["\']\s*(?:#.*)?$'
 )
 _TOML_SECTION_RE = re.compile(r'^\s*\[')
+
+
+def _resolve_cli_bin(name):
+    """Locate CLI binary as an absolute path before chdir to empty tmpdir."""
+    found = shutil.which(name)
+    return os.path.abspath(found) if found else None
 
 
 def claude_config_dir():
@@ -105,7 +123,7 @@ def claude_availability(timeout=15.0, deadline=None):
     `authMethod == "claude.ai"` login via `claude auth status` with all API
     and cloud billing env vars stripped (refusing Console / API-key logins).
     """
-    claude_bin = shutil.which("claude")
+    claude_bin = _resolve_cli_bin("claude")
     if not claude_bin:
         return "claude CLI not found on PATH"
     cfg = claude_config_dir()
@@ -152,7 +170,7 @@ def _verify_codex_keyring_login(codex_bin, home_dir, timeout=10.0, deadline=None
 
 def codex_availability(timeout=10.0, deadline=None):
     """Check Codex CLI ChatGPT subscription auth (`auth.json` or keyring)."""
-    codex_bin = shutil.which("codex")
+    codex_bin = _resolve_cli_bin("codex")
     if not codex_bin:
         return "codex CLI not found on PATH"
     home_dir = codex_home_dir()
@@ -172,6 +190,12 @@ def codex_availability(timeout=10.0, deadline=None):
         if mode != "chatgpt":
             return (f"codex auth_mode is {mode!r}, not 'chatgpt' subscription; "
                     f"run 'codex login' with a ChatGPT account (refusing API-key fallback)")
+        tokens = data.get("tokens")
+        if not isinstance(tokens, dict) or not any(
+                isinstance(tokens.get(k), str) and tokens.get(k).strip()
+                for k in ("access_token", "refresh_token")):
+            return (f"codex auth at {auth_path} has auth_mode='chatgpt' but no "
+                    f"active tokens; run 'codex login' with a ChatGPT account")
         return None
     if home_dir.is_dir() and store_mode != "file":
         return _verify_codex_keyring_login(
@@ -339,7 +363,7 @@ def claude_messages(rev, messages, system, timeout, deadline=None,
     why = claude_availability(timeout=min(float(timeout), 15.0), deadline=deadline)
     if why:
         return None, why
-    claude_bin = shutil.which("claude")
+    claude_bin = _resolve_cli_bin("claude")
     extra_env = _abs_env_override("CLAUDE_CONFIG_DIR")
     sys_text = str(system or "")
     body = format_messages(messages)
@@ -422,7 +446,7 @@ def codex_messages(rev, messages, system, timeout, deadline=None,
     why = codex_availability(timeout=min(float(timeout), 10.0), deadline=deadline)
     if why:
         return None, why
-    codex_bin = shutil.which("codex")
+    codex_bin = _resolve_cli_bin("codex")
     home_dir = codex_home_dir()
     extra_env = _abs_env_override("CODEX_HOME")
     store_mode = _codex_credential_store_mode(home_dir)
