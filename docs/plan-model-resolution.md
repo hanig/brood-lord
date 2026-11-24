@@ -101,12 +101,13 @@ reporting leaves selection, existing status lines, the per-project snapshot
 file and exit codes unchanged.
 
 `listing` is `openai` (`GET /v1/models`), `openrouter` (`GET /api/v1/models`),
-or `paseo:<provider>` (`paseo provider models <provider>`).
+`anthropic` (`GET /v1/models`), or `paseo:<provider>` (`paseo provider models <provider>`).
 
 ### A candidate is adopted only after its probe passes
 
-- API seats: one request through the gate's own call path at the seat's effort
-  and `max_output_tokens`, prompt `Reply with exactly OK.`. Pass means status
+- Reviewer seats (API and subscription CLI): one request through the gate's own
+  call path (`review.PROVIDERS[provider]`) at the seat's effort and
+  `max_output_tokens`, prompt `Reply with exactly OK.`. Pass means status
   completed, non-empty text, positive output tokens, and a reported `model`
   exactly equal to the requested id. The typed response fields become the
   candidate's `_max_output_tokens_accepted` record. That record proves budget
@@ -115,14 +116,23 @@ or `paseo:<provider>` (`paseo provider models <provider>`).
   budget. Capacity is caught where it matters: a reviewer whose answer is
   truncated or empty is already classified `REVIEW_INCOMPLETE` by ARC-689 and
   gives no judgment, so an under-delivering resolved model fails a review
-  loudly and never counts toward a pass.
-- Paseo seats: one `paseo run` at the seat's thinking id, then `paseo inspect`.
-  Pass means inspected Provider, Model and Thinking exactly equal what was
-  requested. The canary agent is archived afterwards. A Paseo seat is a coding
-  agent, not an API reviewer: it has no `max_output_tokens` and no budget
-  record, so the output-budget rule does not apply to it. Families are only
-  declared for API reviewer seats in `reviewers.json` and the code-agent
-  default in `agents.json`; a reviewer seat is never routed through Paseo.
+  loudly and never counts toward a pass. Subscription CLI reviewer seats
+  (`provider: "claude"` or `"codex"`) list from `paseo:<provider>` so upgrades
+  never select API-only models unavailable to the subscription, and run through
+  their fail-closed CLI transports with all provider/billing API keys stripped
+  and tools/settings/hooks disabled. Claude CLI enforces `max_output_tokens`
+  via `CLAUDE_CODE_MAX_OUTPUT_TOKENS` and reports `canonicalModel` in
+  `modelUsage`. Codex CLI (`codex exec --json`) exposes no client-side
+  `max_output_tokens` cap and omits a served-model id in JSONL events, so
+  `codex_messages` returns `served_model: None` unless an event explicitly
+  names one (failing closed to the shipped pin rather than adopting an
+  unverified model).
+- Paseo code-agent seats: one `paseo run` at the seat's thinking id, then
+  `paseo inspect`. Pass means inspected Provider, Model and Thinking exactly
+  equal what was requested. The canary agent is archived afterwards. A Paseo
+  code-agent seat is a coding agent, not a reviewer: it has no
+  `max_output_tokens` and no budget record, so the output-budget rule does not
+  apply to it.
 
 Anything else, including a reported id that differs in any way, keeps the pin
 and is reported `PROBE_FAILED` with the reason. Exact equality is what the

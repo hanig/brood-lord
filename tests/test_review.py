@@ -47,7 +47,8 @@ spec.loader.exec_module(review)
 def copy_review_script(destination):
     """Copy the entry point and its eager shipped dependencies as fixture data."""
     for name in ("review.py", "plan_review.py", "review_panels.py",
-                 "review_ledger.py", "review_schema.py", "review_cli.py"):
+                 "review_ledger.py", "review_schema.py", "review_cli.py",
+                 "review_subscriptions.py"):
         (destination.parent / name).write_bytes((SCRIPT.parent / name).read_bytes())
 
 
@@ -1475,12 +1476,17 @@ class TestReviewerDeadline(unittest.TestCase):
 
 class TestFailClosed(unittest.TestCase):
     def test_no_keys_means_unavailable_not_pass(self):
-        env = dict(os.environ)
-        env.pop("OPENAI_API_KEY", None)
-        env.pop("OPENROUTER_API_KEY", None)
-        env.pop("ANTHROPIC_API_KEY", None)
-        r = subprocess.run([sys.executable, str(SCRIPT), "--list"],
-                           capture_output=True, text=True, env=env)
+        with tempfile.TemporaryDirectory() as empty_home:
+            env = dict(os.environ)
+            env.pop("OPENAI_API_KEY", None)
+            env.pop("OPENROUTER_API_KEY", None)
+            env.pop("ANTHROPIC_API_KEY", None)
+            env.pop("ANTHROPIC_AUTH_TOKEN", None)
+            env.pop("CODEX_HOME", None)
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            env["HOME"] = empty_home
+            r = subprocess.run([sys.executable, str(SCRIPT), "--list"],
+                               capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertIn("not a pass", r.stdout.lower())
 
@@ -2637,7 +2643,8 @@ class TestProtocolIsEnforcedNotRemembered(unittest.TestCase):
             script.parent.mkdir()
             for name in ("review.py", "plan_review.py", "review_panels.py",
                          "review_ledger.py", "review_schema.py",
-                         "review_cli.py", "committee.py"):
+                         "review_cli.py", "review_subscriptions.py",
+                         "committee.py"):
                 shutil.copyfile(SCRIPT.parent / name, script.parent / name)
             for first, second, refused in (
                     (("openai", "fixture-a"), ("openai", "fixture-b"), True),

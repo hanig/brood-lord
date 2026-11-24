@@ -195,7 +195,7 @@ class TestFamilyParser(unittest.TestCase):
     def test_terra_family_admits_only_same_variant_point_releases(self):
         seat = next(r for r in shipped()[0] if r["name"] == "terra")
         family = MF.check_family(seat["family"])
-        self.assertEqual(family, dict(SOL, suffix="-terra"))
+        self.assertEqual(family, dict(SOL, listing="paseo:codex", suffix="-terra"))
         self.assertEqual(seat["model"], "gpt-6.1-terra")
         self.assertEqual(MF.version_of(seat["model"], family), (6, 1))
         invalid = ["gpt-6.2-sol", "gpt-6.2-luna", "gpt-6.2-terra-preview",
@@ -212,17 +212,19 @@ class TestFamilyParser(unittest.TestCase):
     def test_native_sonnet_catalog_uses_exact_ids_and_preserves_the_seat(self):
         seat = next(r for r in shipped()[0] if r["name"] == "sonnet-5.5")
         self.assertEqual((seat["provider"], seat["model"]),
-                         ("anthropic", "claude-sonnet-5-5"))
+                         ("claude", "claude-sonnet-5-5"))
         self.assertIn("committee", seat["profiles"])
         self.assertEqual(seat["max_output_tokens"], 128000)
         self.assertEqual(seat["effort"], "high")
         family = MF.check_family(seat["family"])
-        self.assertEqual(family, {"listing": "anthropic", "vendor": "",
+        self.assertEqual(family, {"listing": "paseo:claude", "vendor": "",
                                  "prefix": "claude-sonnet-", "separator": "-",
                                  "suffix": "", "major": 5})
         accepted = seat["_max_output_tokens_accepted"]
         for field in ("provider", "model", "max_output_tokens", "effort"):
             self.assertEqual(accepted[field], seat[field])
+        self.assertTrue(any(r["provider"] == "anthropic"
+                            for r in seat["_max_output_tokens_history"]))
         self.assertTrue(any(r["provider"] == "openrouter"
                             for r in seat["_max_output_tokens_history"]))
         catalog = [seat["model"], "claude-sonnet-5-6", "claude-sonnet-5-10",
@@ -1078,8 +1080,8 @@ class TestResolveEndToEnd(StateHome):
                 "anthropic": ["claude-sonnet-5-5"],
                 "openrouter": ["moonshotai/kimi-k2.7-code",
                                "deepseek/deepseek-v4-pro"],
-                "paseo:codex": ["gpt-6-astra", "gpt-6-sol"],
-                "paseo:claude": ["claude-opus-5-5"]}
+                "paseo:codex": ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-terra"],
+                "paseo:claude": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]}
 
     def run_resolver(self, *flags, probe=None):
         def record(seat, candidate, timeout):
@@ -1147,9 +1149,10 @@ class TestResolveEndToEnd(StateHome):
         self.assertEqual((seat["name"], seat["model"]), ("astra-tiebreak", "gpt-6.2-astra"))
 
     def test_native_catalog_resolution_is_admitted_by_the_review_reader(self):
-        listings = dict(self.LISTINGS, anthropic=[
-            "claude-sonnet-5-5", "claude-sonnet-5-6", "claude-sonnet-6-0",
-            "anthropic/claude-sonnet-5-7", "claude-sonnet-5.7"])
+        listings = dict(self.LISTINGS, **{
+            "paseo:claude": [
+                "claude-sonnet-5-5", "claude-sonnet-5-6", "claude-sonnet-6-0",
+                "anthropic/claude-sonnet-5-7", "claude-sonnet-5.7"]})
         with mock.patch.object(self, "LISTINGS", listings):
             report, probe = self.run_resolver("--only", "sonnet-5.5")
         statuses = {(row["seat"], row["status"]) for row in report["seats"]}
@@ -1158,12 +1161,12 @@ class TestResolveEndToEnd(StateHome):
         self.assertEqual(probe.call_count, 1)
         seat, candidate, _timeout = probe.call_args.args
         self.assertEqual((seat["provider"], candidate),
-                         ("anthropic", "claude-sonnet-5-6"))
+                         ("claude", "claude-sonnet-5-6"))
         roster, diagnostics = MF.apply_to_reviewers(
             shipped()[0], self.digests, start=self.project)
         resolved = next(r for r in roster if r["name"] == "sonnet-5.5")
         self.assertEqual((resolved["provider"], resolved["model"]),
-                         ("anthropic", candidate))
+                         ("claude", candidate))
         self.assertEqual(resolved["_resolved_from"], "claude-sonnet-5-5")
         self.assertFalse(diagnostics)
 

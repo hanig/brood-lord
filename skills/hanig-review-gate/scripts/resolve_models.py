@@ -317,12 +317,23 @@ def validate_config(reviewers, agents):
     for seat in reviewers:
         if seat.get("enabled", True) and seat.get("family") is not None:
             _pin_in_family(seat.get("model"), seat["family"], seat.get("name"))
-            # A reviewer is probed through its own provider, so its catalog
-            # must be that provider's; a reviewer never lists from paseo.
-            if seat["family"].get("listing") != seat.get("provider"):
-                raise MF.FamilyError("%s: family.listing %r must equal its "
-                                     "provider %r" % (seat.get("name"),
+            # A reviewer is probed through its own provider: API seats list
+            # from their API catalog, while subscription CLI seats (claude,
+            # codex) list from their Paseo subscription catalog so upgrades
+            # never adopt API-only models unavailable to the subscription.
+            expected_listing = (MF.PASEO_PREFIX + seat["provider"]
+                                if seat.get("provider") in ("claude", "codex")
+                                else seat.get("provider"))
+            if seat["family"].get("listing") != expected_listing:
+                if expected_listing == seat.get("provider"):
+                    raise MF.FamilyError("%s: family.listing %r must equal its "
+                                         "provider %r" % (seat.get("name"),
+                                         seat["family"].get("listing"),
+                                         seat.get("provider")))
+                raise MF.FamilyError("%s: family.listing %r must equal %r "
+                                     "for provider %r" % (seat.get("name"),
                                      seat["family"].get("listing"),
+                                     expected_listing,
                                      seat.get("provider")))
     if agents is None:
         return

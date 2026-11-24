@@ -133,6 +133,7 @@ def _load_sibling(module_name, filename):
 _ledger = _load_sibling("_hanig_review_gate_ledger", "review_ledger.py")
 _schema = _load_sibling("_hanig_review_gate_schema", "review_schema.py")
 _cli = _load_sibling("_hanig_review_gate_cli", "review_cli.py")
+_subs = _load_sibling("_hanig_review_gate_subscriptions", "review_subscriptions.py")
 
 def change_identity(target="origin/main", plan_name=None, unit=None):
     return _ledger.change_identity(target, plan_name, unit, facade=_SELF)
@@ -1167,8 +1168,42 @@ def call_anthropic(rev, prompt, timeout, deadline=None):
                               SYSTEM, timeout, deadline=deadline)
 
 
+def _claude_messages(rev, messages, system, timeout, deadline=None):
+    return _subs.claude_messages(
+        rev, messages, system, timeout, deadline=deadline,
+        no_content_error=no_content_error,
+        default_max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS)
+
+
+@redact_provider_result
+def claude_messages(rev, messages, system, timeout, deadline=None):
+    return _claude_messages(rev, messages, system, timeout, deadline=deadline)
+
+
+def call_claude(rev, prompt, timeout, deadline=None):
+    return claude_messages(rev, [{"role": "user", "content": prompt}],
+                           SYSTEM, timeout, deadline=deadline)
+
+
+def _codex_messages(rev, messages, system, timeout, deadline=None):
+    return _subs.codex_messages(
+        rev, messages, system, timeout, deadline=deadline,
+        no_content_error=no_content_error)
+
+
+@redact_provider_result
+def codex_messages(rev, messages, system, timeout, deadline=None):
+    return _codex_messages(rev, messages, system, timeout, deadline=deadline)
+
+
+def call_codex(rev, prompt, timeout, deadline=None):
+    return codex_messages(rev, [{"role": "user", "content": prompt}],
+                          SYSTEM, timeout, deadline=deadline)
+
+
 PROVIDERS = {"openai": call_openai, "openrouter": call_openrouter,
-             "anthropic": call_anthropic}
+             "anthropic": call_anthropic, "claude": call_claude,
+             "codex": call_codex}
 
 
 # --- parsing ----------------------------------------------------------------
@@ -1588,10 +1623,15 @@ def load_reviewers():
             if not isinstance(val, str) or not val.strip():
                 config_error(f"reviewer '{field}' must be a non-empty string, "
                              f"got {val!r}")
-        if (r["provider"] == "anthropic" and r.get("effort") is not None
-                and r["effort"] not in ("low", "medium", "high", "max")):
-            config_error(f"anthropic reviewer {r['name']!r} has unsupported "
+        if (r["provider"] in ("anthropic", "claude") and r.get("effort") is not None
+                and r["effort"] not in _subs.CLAUDE_EFFORTS):
+            config_error(f"{r['provider']} reviewer {r['name']!r} has unsupported "
                          f"effort {r['effort']!r}; Pass low, medium, high, max "
+                         f"or omit effort")
+        if (r["provider"] == "codex" and r.get("effort") is not None
+                and r["effort"] not in _subs.CODEX_EFFORTS):
+            config_error(f"codex reviewer {r['name']!r} has unsupported "
+                         f"effort {r['effort']!r}; Pass low, medium, high, xhigh, max "
                          f"or omit effort")
         if r.get("effort") is not None and not isinstance(r["effort"], str):
             config_error(f"reviewer 'effort' must be a string or null, got "
@@ -1653,6 +1693,10 @@ def availability(rev):
     """Why a reviewer cannot run, or None if it can."""
     if not rev.get("enabled", True):
         return "disabled in reviewers.json"
+    if rev["provider"] == "claude":
+        return _subs.claude_availability()
+    if rev["provider"] == "codex":
+        return _subs.codex_availability()
     env = {"openai": "OPENAI_API_KEY", "openrouter": "OPENROUTER_API_KEY",
            "anthropic": "ANTHROPIC_API_KEY"}
     var = env.get(rev["provider"])

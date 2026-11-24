@@ -244,8 +244,12 @@ def _plan_panel_error(members):
             f"has {len(members)} ({names}). A third adds agreement, not "
             f"insight, and one is not a committee. Drop --only, or name "
             f"exactly two reviewers from different model makers.")
-    makers = {(r["model"].split("/", 1)[0] or r["provider"]) if "/" in r["model"]
-              else r["provider"] for r in members}
+    aliases = {"codex": "openai", "claude": "anthropic", "antigravity": "google"}
+    makers = {aliases.get((r["model"].split("/", 1)[0] or r["provider"])
+                          if "/" in r["model"] else r["provider"],
+                          (r["model"].split("/", 1)[0] or r["provider"])
+                          if "/" in r["model"] else r["provider"])
+              for r in members}
     if len(makers) != 2:
         return (
             f"the two plan reviewers ({names}) share a model maker, so they "

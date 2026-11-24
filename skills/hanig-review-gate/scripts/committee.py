@@ -194,6 +194,10 @@ def pick_members(explicit, authors=(), profile="committee", *, audit=None):
         die(f"every member uses provider {chosen[0]['provider']!r}, so they "
             f"can share a failure mode. Contrast is the point of a committee: "
             f"name members from at least two providers.")
+    if len(R._panels.panel_makers(chosen)) < 2:
+        die("every member shares one model maker, so they can share a failure "
+            "mode. Contrast is the point of a committee: name members from at "
+            "least two model makers.")
     return chosen
 
 
@@ -239,21 +243,30 @@ def _ask_member(member, history, prompt, timeout, *, system=None,
     exchange, so the member answers WITH its own earlier reasoning in view --
     the property a stateless gate cannot have."""
     msgs = list(history) + [{"role": "user", "content": prompt}]
-    if member["provider"] == "anthropic":
-        transport = (R._anthropic_messages if preserve_reply else R.anthropic_messages)
+    if member["provider"] in ("anthropic", "claude", "codex"):
+        if member["provider"] == "anthropic":
+            transport = (R._anthropic_messages if preserve_reply else R.anthropic_messages)
+            label = "Anthropic"
+        elif member["provider"] == "claude":
+            transport = (R._claude_messages if preserve_reply else R.claude_messages)
+            label = "Claude CLI"
+        else:
+            transport = (R._codex_messages if preserve_reply else R.codex_messages)
+            label = "Codex CLI"
         result, err = transport(
             member, msgs, system or SYSTEM_PLANNER, timeout)
         if err:
             return None, err, None
         usage = {"in_tokens": result["in_tokens"], "out_tokens": result["out_tokens"]}
         if require_complete and result["status"] != "completed":
-            return None, "incomplete/truncated Anthropic reply", usage
+            return None, f"incomplete/truncated {label} reply", usage
         return result["text"], None, usage
     key_var = {"openai": "OPENAI_API_KEY",
                "openrouter": "OPENROUTER_API_KEY"}.get(member["provider"])
     if not key_var:
         return None, (f"provider {member['provider']!r} is not supported here; "
-                      f"use openai, openrouter or anthropic, or add a call path"), None
+                      f"use openai, openrouter, anthropic, claude or codex, or "
+                      f"add a call path"), None
     key = os.environ.get(key_var)
     if not key:
         # Name the action. The keys live in ~/.zshrc, so a non-login shell has
