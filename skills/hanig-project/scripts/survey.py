@@ -243,7 +243,7 @@ _SERR = (OSError, ValueError, UnicodeError)
 _pt = lambda *xs: tuple(tuple(x.split("/")) for x in xs)
 _CONDA_ROOT_RE = re.compile(r"^(?:\.conda|micromamba|(?:miniconda|miniforge|anaconda|mambaforge)(?:\d+)?)$", re.I)
 _SHARED_ENV_NAMES = frozenset({"base", "workbook", "default", "shared", "personal", "common", "global", "root"})
-_SYSTEM_SHARED_PREFIXES = _pt("usr/bin", "usr/local/bin", "bin", "sbin", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew/bin",
+_SYSTEM_SHARED_PREFIXES = _pt("usr/bin", "usr/local/bin", "usr/libexec", "bin", "sbin", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew/bin",
                               "Library/Frameworks/Python.framework", "Library/Developer/CommandLineTools", "Applications/Xcode.app", "System/Library")
 _HB_PREFS = _pt("opt/homebrew/opt", "opt/homebrew/Cellar", "usr/local/opt", "usr/local/Cellar", "home/linuxbrew/.linuxbrew/opt", "home/linuxbrew/.linuxbrew/Cellar")
 _HOME_VENV_LAYOUTS = ((("home",), 2), (("Users",), 2), (("mnt", "weka", "home"), 4), (("root",), 1),
@@ -316,7 +316,7 @@ def _shared_python_env_reason(path, conda_name=None, home=None, is_env_root=Fals
         if len(ps) > d and lo[:len(h)] == hl and _is_user_local(d, ps[:len(h)] == h or _same_dir("/" + "/".join(ps[:d]), "/" + "/".join(h + ps[len(h):d]))):
             return "in shared user-site (~/.local)"
     if home and isinstance(home, str) and home.startswith("/") and "\0" not in home:
-        hcs, hvs = [home], []
+        hcs, hvs, hls = [home], [], []
         try:
             if _P.exists(home): hcs.append(_P.realpath(home))
         except _SERR: pass
@@ -326,9 +326,17 @@ def _shared_python_env_reason(path, conda_name=None, home=None, is_env_root=Fals
                 try:
                     if _P.lexists(hv): hvs.append((nm, _P.realpath(hv)))
                 except _SERR: pass
-            hp0 = tuple(p for p in hc.split("/") if p)
-            if _is_user_local(len(hp0), ps[:len(hp0)] == hp0 or (hp0 and _same_dir(hc, "/" + "/".join(ps[:len(hp0)])))):
-                return "in shared user-site (~/.local)"
+            hl_dir = _P.join(hc, ".local"); hls.append(hl_dir)
+            try:
+                if _P.lexists(hl_dir): hls.append(_P.realpath(hl_dir))
+            except _SERR: pass
+        for hl_dir in hls:
+            lp = tuple(p for p in hl_dir.split("/") if p)
+            if lp and len(ps) >= len(lp) and (ps[:len(lp)] == lp or _same_dir(hl_dir, "/" + "/".join(ps[:len(lp)]))):
+                if is_env_root and (len(ps) == len(lp) or (len(ps) == len(lp) + 1 and lo[len(lp)] in ("bin", "scripts", "lib"))):
+                    return "in shared user-site (~/.local)"
+                if not is_env_root and len(ps) == len(lp) + 2 and lo[len(lp)] in ("bin", "scripts"):
+                    return "in shared user-site (~/.local)"
         for nm, hv in hvs:
             hp = tuple(p for p in hv.split("/") if p)
             if hp and len(ps) >= len(hp) and (ps[:len(hp)] == hp or _same_dir(hv, "/" + "/".join(ps[:len(hp)]))): return f"in shared home venv ({nm!r})"
@@ -417,10 +425,13 @@ def detect_python_env(env=None, executable=None, prefix=None, base_prefix=None):
         sr = (_shared_python_env_reason(pr, name, hm, is_env_root=True)
               or (_shared_python_env_reason(pr, icn, hm, is_env_root=True) if icn and icn != name else None)
               or (_shared_python_env_reason(rpr, name, hm, is_env_root=True) if rpr and rpr != pr else None)
-              or (_shared_python_env_reason(ex, name, hm) if ex else None))
+              or (_shared_python_env_reason(rex or ex, name, hm) if (rex or ex) else None))
     else:
         kind, name = "system", None
-        sr = _shared_python_env_reason(ex, home=hm) or _shared_python_env_reason(pr, home=hm) or "no dedicated virtualenv is active (using system/default Python)"
+        sr = (_shared_python_env_reason(rex or ex, home=hm)
+              or _shared_python_env_reason(ex, home=hm)
+              or _shared_python_env_reason(pr, home=hm, is_env_root=True)
+              or "no dedicated virtualenv is active (using system/default Python)")
     return {"kind": kind, "name": name, "prefix": pr, "base_prefix": bp, "executable": ex, "resolved_executable": rex,
             "conda_default_env": cde, "conda_prefix": cpr, "virtual_env": ve, "shared_risk": bool(sr), "shared_reason": sr}
 

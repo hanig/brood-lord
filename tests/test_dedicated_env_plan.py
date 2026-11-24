@@ -379,31 +379,55 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         S.validate_plan(self._plan([_slurm("p1", uv09, kind="pipeline", environment=st, command="/opt/tools/bin/uv-0.9 run train.py")]))
         S.validate_plan(self._plan([_slurm("p2", "launcher", kind="pipeline", environment=st, command="/opt/tools/bin/uv-0.9 run train.py")], runtimes={"launcher": uv09}))
         for mm_ep in ("/srv/tools/bin/micromamba", "/usr/local/bin/micromamba"):
-            mm_rt = _rt("mm", mm_ep, probe=f"{mm_ep} run -p {STAGE_ROOT} python -V")
-            S.validate_plan(self._plan([_slurm("pm1", mm_rt, kind="pipeline", environment=st, command=f"{mm_ep} run -p {STAGE_ROOT} python train.py")]))
-            S.validate_plan(self._plan([_slurm("pm2", "mm", kind="pipeline", environment=st, command=f"{mm_ep} run -p {STAGE_ROOT} python train.py")], runtimes={"mm": mm_rt}))
-            self._fail(self._plan([_slurm("pm_none", mm_rt, environment="none", command=mm_ep)]))
-            self._fail(self._plan([_slurm("pm_sl", mm_rt, environment=st, command=mm_ep)]))
+            for mm_res in ("direct", "wrapper"):
+                mm_rt = _rt("mm", mm_ep, res=mm_res, probe=f"{mm_ep} run -p {STAGE_ROOT} python -V")
+                S.validate_plan(self._plan([_slurm("pm1", mm_rt, kind="pipeline", environment=st, command=f"{mm_ep} run -p {STAGE_ROOT} python train.py")]))
+                S.validate_plan(self._plan([_slurm("pm2", "mm", kind="pipeline", environment=st, command=f"{mm_ep} run -p {STAGE_ROOT} python train.py")], runtimes={"mm": mm_rt}))
+                self._fail(self._plan([_slurm("pm_none", mm_rt, environment="none", command=mm_ep)]))
+                self._fail(self._plan([_slurm("pm_sl", mm_rt, environment=st, command=mm_ep)]))
+            # Legacy standalone micromamba does not turn its host tools dir into a Python root against native sibling units or a second model line.
+            S.validate_plan(self._plan([
+                _slurm("ml1", _rt("m1", mm_ep, probe=f"{mm_ep} --version"), kind="pipeline", model_line=st, command=f"{mm_ep} --version"),
+                _slurm("ml2", _rt("m2", mm_ep, probe=f"{mm_ep} --version"), kind="pipeline", model_line=mk, command=f"{mm_ep} --version"),
+                self._u(mm_ep.rsplit("/", 1)[0] + "/gmake", "none", uid="n_gm", command="gmake --version"),
+            ], None))
+        # Explicitly bound wrapper inside declared env libexec (even named torchrun) passes; nested venv inside declared env or third conda/venv wrapper is refused.
+        S.validate_plan(self._plan([_slurm("w_tr", _rt("w_tr", f"{STAGE_ROOT}/libexec/torchrun", st, "wrapper"), command=f"{STAGE_ROOT}/libexec/torchrun --help")]))
+        self._fail(self._plan([self._u(f"{STAGE_ROOT}/tools/docs-venv/bin/python", st, res="wrapper")]), "outside")
         self._fail(self._plan([self._u(f"{STAGE_ROOT}/tools/docs-venv/bin/run-docs", res="wrapper")]), "does not belong directly")
         self._fail(self._plan([self._u("stage", res="conda")]), "requires explicit 'environment' binding")
-        # Undeclared venv-layout wrappers, uv launchers, and pipeline engines are refused; shared legacy venv console scripts are refused.
-        self._fail(self._plan([_slurm(x, _rt(x, "/srv/bench/.venv/bin/coverage", x, "wrapper"), model_line=x, command="/srv/bench/.venv/bin/coverage run") for x in (st, mk)]), "outside")
+        # Undeclared venv/conda-layout wrappers, uv launchers, and pipeline engines are refused; shared legacy venv console scripts are refused.
+        for third_ep in ("/srv/bench/.venv/bin/coverage", "/opt/miniforge3/envs/bench/bin/coverage"):
+            self._fail(self._plan([_slurm(x, _rt(x, third_ep, x, "wrapper"), model_line=x, command=third_ep + " run") for x in (st, mk)]), "outside")
         self._fail(self._plan([_slurm("p_venv", _rt("p_venv", "/srv/releases/native-venv/bin/make", st), kind="pipeline", command="/srv/releases/native-venv/bin/make")]), "does not belong directly")
         self._fail(self._plan([self._u("/srv/bench/.venv/bin/uv", st, res="uv")]), "does not belong directly")
         self._fail(self._plan([self._u("/srv/team/venvs/workbook/bin/coverage")], None), "workbook")
-        # Exact-case POSIX system prefixes preserve distinct /USR/bin/fit on case-sensitive hosts; platform-python3.6m and $HOME/.local user-site are refused.
+        # Native environment='none' unit under venvs/common validates identically inline and via runtimes catalogue.
+        ns_rt = _rt("ns", "/srv/releases/venvs/common/bin/sort", probe="/srv/releases/venvs/common/bin/sort --version")
+        S.validate_plan(self._plan([_slurm("u_ns1", ns_rt, environment="none", command="/srv/releases/venvs/common/bin/sort --version")]))
+        S.validate_plan(self._plan([_slurm("u_ns2", "ns", environment="none", command="/srv/releases/venvs/common/bin/sort --version")], runtimes={"ns": ns_rt}))
+        # Legacy nested inferred roots (fit/bin/python + fit/libexec/python) and non-bin uv interpreters (/srv/fit/python3) catch cross-model-line sharing.
+        self._fail(self._plan([self._u("/srv/fit/bin/python", uid="a", model_line=st), self._u("/srv/fit/libexec/python", uid="b", model_line=mk)], None), "share environment root")
+        self._fail(self._plan([self._u("/srv/fit/python3", res="uv", uid="a", model_line=st), self._u("/srv/fit/python3", res="uv", uid="b", model_line=mk)], None), "share environment root")
+        # Exact-case POSIX system prefixes preserve distinct /USR/bin/fit on case-sensitive hosts; /usr/libexec root, platform-python3.6m, and $HOME/.local user-site are refused.
         S.validate_plan(self._plan([self._u("/USR/bin/fit/bin/python", st)], self._e1("/USR/bin/fit")))
+        self._fail(self._plan([self._u(f"{STAGE_ROOT}/bin/python", st)], {"orchestration": _orch("/usr/libexec"), st: _env_spec(STAGE_ROOT, model_line=st)}), "shared system dir")
         self._fail(self._plan([self._u("/usr/libexec/platform-python3.6m", "none", command="/usr/libexec/platform-python3.6m -V")]))
         self._fail(self._plan([self._u("/home/alice/.local/bin/torchrun", st)], self._e1("/home/alice/.local")), "user-site")
         self._fail(self._plan([self._u("/home/alice/.local/bin/torchrun")], None), "user-site")
         S.validate_plan(self._plan([self._u("/home/alice/.local/bin/uv", st, res="uv")], self._e1("/home/alice/.local/state/stage/model-venv")))
-        # Explicitly bound unqualified conda names accept distinct basenames and non-conda sibling basenames; trailing-slash legacy conda dirs parse as prefixes.
+        # Explicitly bound unqualified conda names accept distinct basenames and non-conda sibling basenames, catch Caskroom base/envs collisions, and trailing-slash legacy conda dirs parse as prefixes (even under venvs/common/).
         S.validate_plan(self._plan([self._u(st, st, "conda", command="conda run -n stage python train.py")], self._e1("/srv/models/stage-2026")))
         S.validate_plan(self._plan(
             [self._u("fit", st, "conda", uid="a", command="conda run -n fit python train.py"), self._u("/srv/proj/.venvs/fit/bin/python", mk, uid="b")],
             {"orchestration": _orch(), st: _env_spec("/opt/miniforge3/envs/fit", model_line=st), mk: _env_spec("/srv/proj/.venvs/fit", model_line=mk)},
         ))
+        self._fail(self._plan(
+            [self._u("fit", st, "conda", command="conda run -n fit python train.py")],
+            {"orchestration": _orch("/opt/homebrew/Caskroom/miniforge/base/envs/fit"), st: _env_spec("/srv/models/stage", model_line=st)},
+        ), "ambiguous")
         S.validate_plan(self._plan([self._u("/srv/releases/bin/python3/", res="conda", command="conda run -p /srv/releases/bin/python3/ python train.py")], None))
+        S.validate_plan(self._plan([self._u("/srv/releases/venvs/common/bin/python3/", res="conda", command="conda run -p /srv/releases/venvs/common/bin/python3/ python train.py")], None))
         # Distinct legacy conda prefixes under /srv/common/bin/, /srv/envs/common/bin/, or /srv/releases/workbook/bin/ stay distinct.
         S.validate_plan(self._plan([
             self._u("/srv/common/bin/fit", res="conda", uid="a", model_line=st),
@@ -741,9 +765,27 @@ class TestSurveyPythonEnvDetection(unittest.TestCase):
             fit_alias.parent.mkdir(parents=True, exist_ok=True)
             fit_alias.symlink_to(wb_real)
             self.assertEqual(_key(_det(fit_alias, **{CP: str(fit_alias), CD: "fit"})), ("conda", "fit", True))
-            # On case-sensitive hosts, /USR/bin/fit is distinct from /usr/bin and not flagged.
+            # On case-sensitive hosts, /USR/bin/fit is distinct from /usr/bin and not flagged; /usr/libexec platform-python is flagged as shared system dir.
             with mock.patch.object(SURVEY._P, "samefile", return_value=False):
                 self.assertEqual(_key(_det("/USR/bin/fit", "/usr")), ("venv", "fit", False))
+            rp_rec = det(env={}, executable="/usr/libexec/platform-python3.6m", prefix="/usr", base_prefix="/usr")
+            self.assertTrue(rp_rec["shared_risk"])
+            self.assertIn("shared system dir", rp_rec["shared_reason"])
+            # Symlinked $HOME/.local -> storage/fit is flagged shared when invoked from real path; a symlink in $HOME/.local/bin pointing to a dedicated conda python is NOT flagged.
+            h_loc = T / "home-local"
+            h_loc.mkdir()
+            loc_target = T / "storage/fit"
+            (loc_target / "conda-meta").mkdir(parents=True)
+            (h_loc / ".local").symlink_to(loc_target)
+            self.assertEqual(_key(_det(loc_target, HOME=str(h_loc), **{CP: str(loc_target)})), ("conda", "fit", True))
+            h_bin = T / "home-bin"
+            (h_bin / ".local/bin").mkdir(parents=True)
+            ded_c = T / "models/stage"
+            (ded_c / "conda-meta").mkdir(parents=True)
+            (ded_c / "bin").mkdir(parents=True)
+            (ded_c / "bin/python").write_text("#!/bin/sh\n", encoding="utf-8")
+            (h_bin / ".local/bin/stage-py").symlink_to(ded_c / "bin/python")
+            self.assertEqual(_key(det(env={"HOME": str(h_bin), CP: str(ded_c)}, executable=str(h_bin / ".local/bin/stage-py"), prefix=str(ded_c), base_prefix=str(ded_c))), ("conda", "stage", False))
 
             sc = T / "miniforge3/envs/compiler"
             sc.mkdir(parents=True)
