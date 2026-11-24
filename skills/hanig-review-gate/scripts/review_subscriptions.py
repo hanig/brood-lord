@@ -112,7 +112,7 @@ _MAX_ARGV_SYSTEM_BYTES = 65536
 _CRED_STORE_RE = re.compile(
     r'^\s*(?:cli_auth_credentials_store|"cli_auth_credentials_store"'
     r"|'cli_auth_credentials_store')\s*=\s*"
-    r'(["\'])(keyring|auto|file)\1\s*(?:#.*)?$'
+    r'("""|\'\'\'|"|\')(keyring|auto|file)\1\s*(?:#.*)?$'
 )
 _TOML_SECTION_RE = re.compile(r'^\s*\[')
 
@@ -150,8 +150,13 @@ def build_child_env(stripped_env=STRIPPED_ENV, extra_env=None):
 
 def _resolve_cli_bin(name):
     """Locate CLI binary as an absolute path using sanitized PATH."""
-    clean_path = _sanitized_path()
-    found = shutil.which(name, path=clean_path) if clean_path else shutil.which(name)
+    if "PATH" in os.environ:
+        clean_path = _sanitized_path(os.environ["PATH"])
+        if not clean_path:
+            return None
+        found = shutil.which(name, path=clean_path)
+    else:
+        found = shutil.which(name)
     return os.path.abspath(found) if found else None
 
 
@@ -200,12 +205,22 @@ def claude_availability(timeout=15.0, deadline=None):
 
 def _parse_cred_store_regex(text):
     """Python 3.8-3.10 stdlib fallback for top-level cli_auth_credentials_store."""
+    in_triple = None
     for line in text.splitlines():
+        if in_triple is not None:
+            if in_triple in line:
+                in_triple = None
+            continue
         if _TOML_SECTION_RE.match(line):
             break
         m = _CRED_STORE_RE.match(line)
         if m:
             return m.group(2)
+        stripped = line.split("#", 1)[0]
+        for delim in ('"""', "'''"):
+            if stripped.count(delim) % 2 == 1:
+                in_triple = delim
+                break
     return None
 
 
@@ -426,19 +441,21 @@ def _verify_claude_subscription(claude_bin, extra_env, timeout, deadline=None):
 
 
 def _claude_served_model(data, requested):
-    """Extract canonical served model from Claude CLI modelUsage when present."""
+    """Extract canonical served model from Claude CLI modelUsage (fail closed)."""
     model_usage = data.get("modelUsage")
     if not isinstance(model_usage, dict) or not model_usage:
         return None
     entry = model_usage.get(requested)
     if isinstance(entry, dict):
-        return entry.get("canonicalModel") or requested
+        canon = entry.get("canonicalModel")
+        return canon.strip() if isinstance(canon, str) and canon.strip() else None
     if len(model_usage) == 1:
-        sole_key, sole_val = next(iter(model_usage.items()))
+        _sole_key, sole_val = next(iter(model_usage.items()))
         if isinstance(sole_val, dict):
-            return sole_val.get("canonicalModel") or sole_key
-        return sole_key
-    for key, val in model_usage.items():
+            canon = sole_val.get("canonicalModel")
+            return canon.strip() if isinstance(canon, str) and canon.strip() else None
+        return None
+    for _key, val in model_usage.items():
         if isinstance(val, dict) and val.get("canonicalModel") == requested:
             return requested
     return None

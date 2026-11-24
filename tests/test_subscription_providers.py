@@ -663,11 +663,25 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(out.strip(), "HELPER_OK")
 
+        # PATH containing only empty segments (e.g. ":") must NEVER resolve cwd binaries.
+        cwd_trap = self.root / "cwd_trap"
+        cwd_trap.mkdir()
+        cwd_bin = cwd_trap / "claude"
+        cwd_bin.write_text("#!/bin/sh\necho SHOULD_NOT_RUN\n", encoding="utf-8")
+        cwd_bin.chmod(0o755)
+        os.chdir(cwd_trap)
+        with mock.patch.dict(os.environ, {"PATH": ":"}):
+            self.assertIsNone(RS._resolve_cli_bin("claude"))
+            self.assertIn("not found", RS.claude_availability())
+
     def test_toml_store_parser_parity_and_keyring_precedence_over_stale_auth_json(self):
         cases = [
             ('cli_auth_credentials_store = "keyring"\n', "keyring"),
             ('"cli_auth_credentials_store" = "auto"\n', "auto"),
             ("'cli_auth_credentials_store' = 'file'\n", "file"),
+            ('cli_auth_credentials_store = """keyring"""\n', "keyring"),
+            ("cli_auth_credentials_store = '''auto'''\n", "auto"),
+            ('note = """\n[not_a_section]\n"""\ncli_auth_credentials_store = "keyring"\n', "keyring"),
             ('cli_auth_credentials_store = "keyring\'\n', None),  # mismatched quotes
             ('cli_auth_credentials_store = keyring\n', None),     # invalid bare value
             ('[profiles.x]\ncli_auth_credentials_store = "keyring"\n', None),
@@ -678,10 +692,11 @@ class TestSubscriptionTransports(unittest.TestCase):
                 self.assertEqual(RS._parse_cred_store_regex(text), expected)
                 (self.codex_dir / "config.toml").write_text(text, encoding="utf-8")
                 self.assertEqual(RS._codex_credential_store_mode(self.codex_dir), expected)
-        if sys.version_info >= (3, 11):
-            multiline = 'note = """\n[not_a_section]\n"""\ncli_auth_credentials_store = "keyring"\n'
-            (self.codex_dir / "config.toml").write_text(multiline, encoding="utf-8")
-            self.assertEqual(RS._codex_credential_store_mode(self.codex_dir), "keyring")
+
+        # _claude_served_model fails closed when canonicalModel is absent.
+        self.assertIsNone(RS._claude_served_model(
+            {"modelUsage": {"claude-sonnet-5-5": {"maxOutputTokens": 128000}}},
+            "claude-sonnet-5-5"))
 
         # Stale chatgpt auth.json MUST NOT mask an API-key login when store_mode is keyring/auto.
         (self.codex_dir / "auth.json").write_text(CODEX_AUTH_OK, encoding="utf-8")
