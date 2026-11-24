@@ -18,15 +18,15 @@ _PYTHON_EXE_RE = re.compile(
 _BAD_SHELL_CHARS = ("'", '"', "`", "$", ";", "|", "&", "<", ">", "\\", "*", "?", "[", "]", "{", "}", "(", ")", "\n", "\r", "\0")
 _CONDA_ROOT_RE = re.compile(r"^(?:\.conda|micromamba|(?:miniconda|miniforge|anaconda|mambaforge)(?:\d+)?)$", re.I)
 SHARED_ENV_NAMES = frozenset({"base", "workbook", "default", "shared", "personal", "common", "global", "root"})
-_pt = lambda *xs: tuple(tuple(x.split("/")) for x in xs)
-_SYS_PREFS = _pt("usr/bin", "usr/local/bin", "usr/sbin", "usr/libexec", "bin", "sbin", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew/bin",
-                 "Library/Frameworks/Python.framework", "Library/Developer/CommandLineTools", "Applications/Xcode.app", "System/Library")
-_ROOT_EXACT = frozenset(_pt("usr", "usr/local", "usr/bin", "usr/local/bin", "usr/sbin", "usr/libexec", "usr/lib", "usr/local/lib", "usr/share",
-                            "usr/local/share", "bin", "sbin", "opt/homebrew", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew", "home/linuxbrew/.linuxbrew/bin"))
+_pt = lambda xs: tuple(tuple(x.split("/")) for x in xs)
+_SYS_PREFS = _pt(("usr/bin", "usr/local/bin", "usr/sbin", "usr/libexec", "bin", "sbin", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew/bin",
+                  "Library/Frameworks/Python.framework", "Library/Developer/CommandLineTools", "Applications/Xcode.app", "System/Library"))
+_ROOT_EXACT = frozenset(_pt(("usr", "usr/local", "usr/bin", "usr/local/bin", "usr/sbin", "usr/libexec", "usr/lib", "usr/local/lib", "usr/share",
+                             "usr/local/share", "bin", "sbin", "opt/homebrew", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew", "home/linuxbrew/.linuxbrew/bin")))
 _ROOT_PREFS = _SYS_PREFS
 _HOME_LAYOUTS = ((("home",), 2), (("Users",), 2), (("mnt", "weka", "home"), 4), (("root",), 1),
                  (("System", "Volumes", "Data", "home"), 5), (("System", "Volumes", "Data", "Users"), 5))
-_HB = _pt("opt/homebrew/opt", "opt/homebrew/Cellar", "usr/local/opt", "usr/local/Cellar", "home/linuxbrew/.linuxbrew/opt", "home/linuxbrew/.linuxbrew/Cellar")
+_HB = _pt(("opt/homebrew/opt", "opt/homebrew/Cellar", "usr/local/opt", "usr/local/Cellar", "home/linuxbrew/.linuxbrew/opt", "home/linuxbrew/.linuxbrew/Cellar"))
 
 P = os.path
 def _same_dir(a, b):
