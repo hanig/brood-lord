@@ -1010,5 +1010,7 @@ def plan_digest(plan):
                "root": plan.get("root")}
     if "canary" in plan:
         content["canary"] = plan["canary"]
+    if "orchestrator" in plan:
+        content["orchestrator"] = plan["orchestrator"]
     payload = json.dumps(content, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()

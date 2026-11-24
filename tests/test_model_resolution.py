@@ -180,7 +180,11 @@ class TestFamilyParser(unittest.TestCase):
         default = agents["default"]
         declared.append(("agent-default", default["provider"].split("/", 1)[1],
                          default["family"]))
-        self.assertGreaterEqual(len(declared), 8)
+        for orch, seat in sorted((agents.get("default_by_orchestrator") or {}).items()):
+            declared.append(("agent-default:" + orch,
+                             seat["provider"].split("/", 1)[1],
+                             seat["family"]))
+        self.assertGreaterEqual(len(declared), 10)
         for name, model, family in declared:
             with self.subTest(seat=name):
                 MF.check_family(family)
@@ -1074,7 +1078,8 @@ class TestResolveEndToEnd(StateHome):
                 "anthropic": ["claude-sonnet-5-5"],
                 "openrouter": ["moonshotai/kimi-k2.7-code",
                                "deepseek/deepseek-v4-pro"],
-                "paseo:codex": ["gpt-6-astra", "gpt-6-sol"]}
+                "paseo:codex": ["gpt-6-astra", "gpt-6-sol"],
+                "paseo:claude": ["claude-opus-5-5"]}
 
     def run_resolver(self, *flags, probe=None):
         def record(seat, candidate, timeout):
@@ -1281,7 +1286,17 @@ class TestResolveEndToEnd(StateHome):
                  # A thinking id is an opaque token: slashes are not segments.
                  dict(good, thinking_by_model=dict(good["thinking_by_model"],
                                                    **{"codex/gpt-6.1-sol": "high//x"})),
-                 dict(good, default=dict(good["default"], thinking="a/b"))]
+                 dict(good, default=dict(good["default"], thinking="a/b")),
+                 dict(good, default_by_orchestrator={}),
+                 dict(good, default_by_orchestrator=[]),
+                 dict(good, default_by_orchestrator={"Bad": {"provider": "claude/m", "thinking": "high"}}),
+                 dict(good, default_by_orchestrator={"codex": {"provider": "claude", "thinking": "high"}}),
+                 dict(good, default_by_orchestrator={"codex": {"provider": "claude/m", "thinking": ""}}),
+                 dict(good, default_by_orchestrator={"claude": {"provider": "claude/claude-opus-5-5", "thinking": "high"}}),
+                 dict(good, forbid_when_orchestrator={}),
+                 dict(good, forbid_when_orchestrator={"claude": {"routes": [], "model_substrings": []}}),
+                 dict(good, forbid_when_orchestrator={"claude": {"routes": "claude", "model_substrings": ["opus"]}}),
+                 dict(good, forbid_when_orchestrator={"Bad": {"routes": ["claude"], "model_substrings": ["opus"]}})]
         path = Path(self.tmp.name) / "agents.json"
         for body in cases:
             with self.subTest(body=body):
@@ -1374,6 +1389,211 @@ class TestResolveEndToEnd(StateHome):
         report, _probe = self.run_resolver("--only", "sol")
         snapshot = json.loads(Path(report["snapshot"]).read_text())
         self.assertEqual(set(snapshot["reviewers"]), {"sol", "sol-tiebreak"})
+
+
+class TestOrchestratorHighestOpus(StateHome):
+    OPUS_FAMILY = {
+        "listing": "paseo:claude",
+        "vendor": "",
+        "prefix": "claude-opus-",
+        "separator": "-",
+        "suffix": "",
+        "major": 5,
+        "any_major": True,
+    }
+
+    def test_any_major_family_validation_and_selection(self):
+        self.assertEqual(MF.check_family(self.OPUS_FAMILY), self.OPUS_FAMILY)
+        for bad in (
+            dict(self.OPUS_FAMILY, any_major="true"),
+            dict(self.OPUS_FAMILY, any_major=1),
+            dict(self.OPUS_FAMILY, any_major=None),
+            dict(self.OPUS_FAMILY, major=0, named_version="argon", any_major=True),
+        ):
+            with self.subTest(bad=bad), self.assertRaises(MF.FamilyError):
+                MF.check_family(bad)
+        listed = [
+            "claude-opus-4-8",
+            "claude-opus-5",
+            "claude-opus-5-5",
+            "claude-opus-5-6",
+            "claude-opus-6",
+            "claude-opus-6-2",
+            "claude-opus-6[1m]",
+            "claude-fable-6-0",
+        ]
+        self.assertEqual(
+            MF.select(listed, self.OPUS_FAMILY, "claude-opus-5-5"),
+            ("claude-opus-6-2", []),
+        )
+        self.assertEqual(
+            MF.select(["claude-opus-5", "claude-opus-5-5"], self.OPUS_FAMILY, "claude-opus-5-5"),
+            (None, []),
+        )
+        seat = {"provider": "claude/claude-opus-5-5", "thinking": "high",
+                "family": self.OPUS_FAMILY}
+        good_entry = {"provider": "claude/claude-opus-6",
+                      "probe": {"Provider": "claude", "Model": "claude-opus-6",
+                                "Thinking": "high"}}
+        self.assertEqual(MF.agent_default_override(seat, {}, good_entry),
+                         "claude/claude-opus-6")
+        for bad_entry in (
+            dict(good_entry, provider="claude/claude-opus-5"),
+            dict(good_entry, provider="claude/claude-opus-5-5"),
+            dict(good_entry, probe=dict(good_entry["probe"], Model="claude-opus-5-5")),
+            dict(good_entry, probe=dict(good_entry["probe"], Thinking="medium")),
+        ):
+            with self.subTest(entry=bad_entry):
+                self.assertIsNone(MF.agent_default_override(seat, {}, bad_entry))
+
+    def test_resolve_models_probes_highest_opus_once_and_preserves_partial_runs(self):
+        listings = dict(
+            TestResolveEndToEnd.LISTINGS,
+            **{"paseo:claude": ["claude-opus-5", "claude-opus-5-5",
+                                "claude-opus-6", "claude-opus-6[1m]"]}
+        )
+        probe = mock.Mock(return_value=({"Provider": "claude", "Model": "claude-opus-6",
+                                         "Thinking": "high"}, None))
+        argv = ["resolve_models.py", "--project", str(self.project), "--json"]
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(RM.R, "load_reviewers", return_value=fixture_roster()), \
+                mock.patch.object(RM, "list_ids", side_effect=lambda l, t: listings[l]), \
+                mock.patch.object(RM, "probe_reviewer", return_value=(None, "skip")), \
+                mock.patch.object(RM, "probe_agent", probe), \
+                redirect_stdout(io.StringIO()) as out:
+            with self.assertRaises(SystemExit) as stopped:
+                RM.main()
+        self.assertEqual(stopped.exception.code, 0)
+        # Both codex and antigravity resolve to claude/claude-opus-6 with ONE probe.
+        self.assertEqual(probe.call_count, 1)
+        self.assertEqual(probe.call_args.args[:3], ("claude", "claude-opus-6", "high"))
+        report = json.loads(out.getvalue())
+        statuses = {(r["seat"], r["status"], r["detail"]) for r in report["seats"]}
+        self.assertIn(("agent-default:codex", "RESOLVED", "claude/claude-opus-6"), statuses)
+        self.assertIn(("agent-default:antigravity", "RESOLVED", "claude/claude-opus-6"), statuses)
+        self.assertTrue(any(r["seat"] == "agent-default:codex" and r["status"] == "CANDIDATE"
+                            and "claude-opus-6[1m]" in r["detail"] for r in report["seats"]))
+        snap = json.loads(Path(report["snapshot"]).read_text())
+        self.assertEqual(snap["agent_defaults_by_orchestrator"]["codex"]["provider"],
+                         "claude/claude-opus-6")
+        self.assertEqual(snap["agent_defaults_by_orchestrator"]["antigravity"]["provider"],
+                         "claude/claude-opus-6")
+        # Partial --only preserves other orchestrator seats.
+        argv2 = ["resolve_models.py", "--project", str(self.project), "--json",
+                 "--only", "agent-default:codex"]
+        with mock.patch.object(sys, "argv", argv2), \
+                mock.patch.object(RM.R, "load_reviewers", return_value=fixture_roster()), \
+                mock.patch.object(RM, "list_ids", side_effect=lambda l, t: listings[l]), \
+                mock.patch.object(RM, "probe_agent", probe), \
+                redirect_stdout(io.StringIO()) as out2:
+            with self.assertRaises(SystemExit) as stopped2:
+                RM.main()
+        self.assertEqual(stopped2.exception.code, 0)
+        snap2 = json.loads(Path(json.loads(out2.getvalue())["snapshot"]).read_text())
+        self.assertEqual(set(snap2["agent_defaults_by_orchestrator"]),
+                         {"codex", "antigravity"})
+
+    def test_swarm_applies_orchestrator_default_and_fails_closed(self):
+        import swarm as S
+        self.addCleanup(setattr, SR, "DEFAULT_AGENT_PROVIDER", S.PINNED_AGENT_PROVIDER)
+        self.addCleanup(setattr, SR, "DEFAULT_AGENT_THINKING", S.PINNED_AGENT_THINKING)
+        self.addCleanup(setattr, SR, "ACTIVE_ORCHESTRATOR", None)
+        self.addCleanup(SR.THINKING_BY_MODEL.update, S.PINNED_THINKING_BY_MODEL)
+        ag_plan = self.project / "plan-ag.json"
+        cd_plan = self.project / "plan-codex.json"
+        cl_plan = self.project / "plan-claude.json"
+        no_plan = self.project / "plan-none.json"
+        ag_plan.write_text(json.dumps({"orchestrator": "antigravity", "units": []}))
+        cd_plan.write_text(json.dumps({"orchestrator": "codex", "units": []}))
+        cl_plan.write_text(json.dumps({"orchestrator": "claude", "units": []}))
+        no_plan.write_text(json.dumps({"units": []}))
+        # Offline fallback without snapshot: non-Claude -> claude/claude-opus-5-5; Claude/absent -> default.
+        self.assertEqual(S.apply_agent_resolution(ag_plan), "claude/claude-opus-5-5")
+        self.assertEqual(S.default_thinking_for({}), "high")
+        self.assertEqual(S.apply_agent_resolution(cd_plan), "claude/claude-opus-5-5")
+        self.assertEqual(S.apply_agent_resolution(cl_plan), S.PINNED_AGENT_PROVIDER)
+        self.assertEqual(S.apply_agent_resolution(no_plan), S.PINNED_AGENT_PROVIDER)
+        # With probed Opus 6 snapshot: non-Claude adopts Opus 6; Claude/absent stay on Sol default.
+        snap = dict(self.snapshot(), agent_defaults_by_orchestrator={
+            "antigravity": {"provider": "claude/claude-opus-6",
+                            "probe": {"Provider": "claude", "Model": "claude-opus-6",
+                                      "Thinking": "high"}},
+            "codex": {"provider": "claude/claude-opus-6",
+                      "probe": {"Provider": "claude", "Model": "claude-opus-6",
+                                "Thinking": "high"}},
+        })
+        MF.write_snapshot(self.project, snap)
+        with redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(S.apply_agent_resolution(ag_plan), "claude/claude-opus-6")
+        self.assertIn("antigravity resolved", err.getvalue())
+        self.assertEqual(S.default_thinking_for({}), "high")
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(S.apply_agent_resolution(cd_plan), "claude/claude-opus-6")
+        # Switching to claude or omitted orchestrator resets state cleanly (no leakage).
+        self.assertEqual(S.apply_agent_resolution(cl_plan), S.PINNED_AGENT_PROVIDER)
+        self.assertEqual(S.apply_agent_resolution(no_plan), S.PINNED_AGENT_PROVIDER)
+        self.assertNotIn("claude/claude-opus-6", S.THINKING_BY_MODEL)
+
+    def test_validate_plan_orchestrator_rules_and_digest(self):
+        import swarm as S
+        import swarm_plan_rules as SPR
+        base_unit = {
+            "id": "u1", "kind": "code", "prompt": "implement fix",
+            "outputs": ["out.txt"], "repo": str(self.project),
+            "target_branch": "main", "mode": "full-access",
+        }
+        with mock.patch.object(S.shutil, "which", return_value="/usr/bin/paseo"):
+            # Invalid orchestrator values are refused.
+            for bad in ("CLAUDE", " claude", "unknown", "", None, 42):
+                with self.subTest(bad_orch=bad), self.assertRaises(S.PlanError):
+                    S.validate_plan({"orchestrator": bad, "units": [dict(base_unit)]})
+            # When orchestrator is claude, Opus spellings and bare claude are refused.
+            for bad_over in (
+                {"provider": "claude/claude-opus-5-5"},
+                {"provider": "claude/claude-opus-6"},
+                {"provider": "claude/opus"},
+                {"provider": "CLAUDE/Opus"},
+                {"provider": "claude", "model": "claude-opus-5-5"},
+                {"provider": "claude", "model": "opus"},
+                {"provider": "claude"},
+                {"provider": "claude", "model": ""},
+                {"provider": "claude/claude-opus-5-5", "model": "claude-sonnet-5-5"},
+                {"provider": "pi/anthropic/claude-opus-5-5"},
+                {"model": "claude-opus-5-5"},
+            ):
+                with self.subTest(bad_unit=bad_over), self.assertRaises(S.PlanError):
+                    S.validate_plan({"orchestrator": "claude",
+                                     "units": [dict(base_unit, **bad_over)]})
+            # Allowed when orchestrator is claude: omitted provider (defaults to Sol),
+            # explicit Sol, explicit Sonnet, and non-Opus words containing 'opus' inside another word.
+            for ok_over in (
+                {},
+                {"provider": "codex/gpt-6.2-sol"},
+                {"provider": "claude/claude-sonnet-5-5", "mode": "bypass"},
+                {"provider": "claude", "model": "claude-sonnet-5-5", "mode": "bypass"},
+                {"provider": "custom/octopus-1"},
+            ):
+                with self.subTest(ok_unit=ok_over):
+                    S.validate_plan({"orchestrator": "claude",
+                                     "units": [dict(base_unit, **ok_over)]})
+            # When orchestrator is antigravity/codex, Opus is allowed and missing-mode hint uses bypass.
+            for orch in ("antigravity", "codex"):
+                S.validate_plan({"orchestrator": orch,
+                                 "units": [dict(base_unit, mode="bypass")]})
+                S.validate_plan({"orchestrator": orch,
+                                 "units": [dict(base_unit, provider="claude/claude-opus-5-5",
+                                                mode="bypass")]})
+                no_mode = dict(base_unit)
+                del no_mode["mode"]
+                with self.assertRaises(S.PlanError) as raised:
+                    S.validate_plan({"orchestrator": orch, "units": [no_mode]})
+                self.assertIn('"bypass"', str(raised.exception))
+        # Digest stability: absent orchestrator unchanged; present orchestrator enters digest.
+        p_none = {"units": [dict(base_unit)]}
+        p_ag = {"orchestrator": "antigravity", "units": [dict(base_unit)]}
+        p_cl = {"orchestrator": "claude", "units": [dict(base_unit)]}
+        self.assertNotEqual(SPR.plan_digest(p_none), SPR.plan_digest(p_ag))
+        self.assertNotEqual(SPR.plan_digest(p_ag), SPR.plan_digest(p_cl))
 
 
 if __name__ == "__main__":

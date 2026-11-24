@@ -49,9 +49,14 @@ dates, beyond the six-digit version bound; Kimi K2.7 requires `-code` and
 uses a dot separator. The parser is shared by the resolver and the readers
 of the per-project resolution snapshot.
 
-`major` is the owner's ceiling, and it lives in merged `reviewers.json` or
+`major` is the owner's ceiling by default, and it lives in merged `reviewers.json` or
 `agents.json`, so only a reviewed change raises it. The shipped `model` must be
-in its family and carry that major; a test checks both.
+in its family and carry that major; a test checks both. A seat may explicitly
+set `"any_major": true` (boolean; incompatible with `named_version`) to adopt
+the greatest probed release in that family at or above `major` across major
+generations (used for non-Claude-orchestrator code-agent seats under
+`agents.json` `default_by_orchestrator`, recorded under
+`agent_defaults_by_orchestrator` in the project snapshot).
 
 To pin an adopted dated model exactly, omit the seat's `family`. The
 resolver skips seats without a family. Unknown family fields, including
@@ -59,11 +64,12 @@ resolver skips seats without a family. Unknown family fields, including
 
 ### Selection
 
-From the listing, keep ids in the family whose version has major equal to
-`major` and is greater than the shipped pin's version. Choose the greatest. A
-listed id with a greater major is reported `NEW_GENERATION` and never chosen;
-adopting it means raising `major` in a pull request. A seat with no candidate
-keeps its pin.
+From the listing, keep ids in the family whose version is greater than the
+shipped pin's version and whose major equals `major` (or is at least `major`
+when `"any_major": true`). Choose the greatest. When `"any_major"` is false or
+omitted, a listed id with a greater major is reported `NEW_GENERATION` and
+never chosen; adopting it means raising `major` in a pull request. A seat with
+no candidate keeps its pin.
 
 ### Candidates reported for a reviewed adoption
 

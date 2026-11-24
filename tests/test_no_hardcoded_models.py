@@ -82,6 +82,8 @@ def declared_model_ids():
     agents = json.loads((ROOT / "skills/hanig-swarm/agents.json")
                         .read_text(encoding="utf-8"))
     routes += [agents["default"]["provider"], *agents["thinking_by_model"]]
+    routes += [seat["provider"]
+               for seat in (agents.get("default_by_orchestrator") or {}).values()]
     registry = json.loads((ROOT / "models.json").read_text(encoding="utf-8"))
     routes += [model["id"] for model in registry["models"]]
     for route in routes:
