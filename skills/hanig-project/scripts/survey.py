@@ -262,7 +262,7 @@ def _is_std_conda_loc(ps, lo, i, home=None):
             pass
     for h in hs:
         hp = tuple(x for x in h.split("/") if x)
-        if hp and i == len(hp) and (ps[:len(hp)] == hp or _same_dir(h, "/" + "/".join(ps[:len(hp)]))):
+        if i == len(hp) and (ps[:len(hp)] == hp or (hp and _same_dir(h, "/" + "/".join(ps[:len(hp)])))):
             return True
     for h, d in _HOME_VENV_LAYOUTS:
         hl = tuple(x.lower() for x in h)
@@ -278,10 +278,11 @@ def _same_dir(a, b):
     try: return _P.exists(a) and _P.exists(b) and _P.samefile(a, b)
     except _SERR: return False
 
-def _shared_python_env_reason(path, conda_name=None, home=None):
+def _shared_python_env_reason(path, conda_name=None, home=None, is_env_root=False):
     if conda_name and conda_name.strip().lower() in _SHARED_ENV_NAMES: return f"active conda env {conda_name.strip()!r} is shared"
     if not isinstance(path, str) or not path.strip().startswith("/"): return None
     ps = tuple(p for p in path.strip().split("/") if p); lo = tuple(p.lower() for p in ps)
+    if is_env_root and ps and lo[-1] in _SHARED_ENV_NAMES: return f"env root name {ps[-1]!r} is shared"
     for hb in _HB_PREFS:
         if lo[:len(hb)] == hb and len(lo) > len(hb):
             fm = lo[len(hb)]
@@ -385,7 +386,7 @@ def detect_python_env(env=None, executable=None, prefix=None, base_prefix=None):
     is_venv = pv and (has_pyvenv or (not has_cmeta and not sc))
     if is_venv:
         kind, name = "venv", (Path(pr).name if pr else None)
-        sr = _shared_python_env_reason(pr, home=hm) or (_shared_python_env_reason(rpr, home=hm) if rpr and rpr != pr else None)
+        sr = _shared_python_env_reason(pr, home=hm, is_env_root=True) or (_shared_python_env_reason(rpr, home=hm, is_env_root=True) if rpr and rpr != pr else None)
     elif icn or sc:
         kind = "conda"
         name = cde if (sc and cde and "/" not in cde) else (icn or (Path(cde).name if cde else None) or (Path(rpr or pr).name if (rpr or pr) else None))

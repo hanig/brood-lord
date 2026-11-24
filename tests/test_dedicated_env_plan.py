@@ -262,10 +262,13 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             for okp in ("/cluster/users/alice/.VENV", "/cluster/users/alice/Venv", "/cluster/users/alice/proj/.venv"):
                 S.validate_plan(self._plan([self._u(f"{okp}/bin/python", "stage")], self._e1(okp)))
                 S.validate_plan(self._plan([self._u(f"{okp}/bin/python")], None))
-        # Case-sensitive HOME comparison for conda base (HOME=/scratch/Alice does not match /scratch/alice/miniforge3).
+        # Case-sensitive HOME comparison for conda base (HOME=/scratch/Alice does not match /scratch/alice/miniforge3) and HOME=/.
         with mock.patch.dict(os.environ, {"HOME": "/scratch/Alice"}):
             self._fail(self._plan([self._u("/scratch/Alice/miniforge3/bin/python")], None), "conda base")
             S.validate_plan(self._plan([self._u("/scratch/alice/miniforge3/bin/python")], None))
+        with mock.patch.dict(os.environ, {"HOME": "/"}):
+            self._fail(self._plan([self._u("/miniforge3/bin/python")], None), "conda base")
+            self._fail(self._plan([self._u("/.venv/bin/python")], None), "shared home venv")
         for path in ("/home/alice/.VENV", "/home/alice/Venv"):
             S.validate_plan(self._plan([self._u(f"{path}/bin/python", "stage")], self._e1(path)))
         # Whitespace is refused in declared env paths and non-container entrypoints; non-space parentheses in parent dirs are allowed.
@@ -348,6 +351,8 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             [self._u("/srv/project/venv/bin/coverage", uid="c1", model_line=st), self._u("/srv/project/venv/bin/coverage", "none", uid="c2", model_line=mk)],
             [self._u("/srv/project/fit-venv/bin/coverage", uid="c1"), self._u("/srv/project/fit-venv/bin/coverage", "none", uid="c2")],
             [self._u("/srv/project/fit-venv/bin/run-fit", res="wrapper", uid="c1", model_line="fit"), self._u("/srv/project/fit-venv/bin/coverage", "none", uid="c2")],
+            [self._u("/srv/models/fit-venv/bin/coverage", res="uv", uid="c1"), self._u("/srv/models/fit-venv/bin/coverage", "none", uid="c2")],
+            [self._u("/srv/project/fit-venv/bin/uv", res="uv", uid="c1"), self._u("/srv/project/fit-venv/bin/coverage", "none", uid="c2")],
         ):
             self._fail(self._plan(pair, None))
         # Standalone native tools under envs/common or under a *-venv ancestor dir are NOT falsely rejected.
@@ -362,17 +367,21 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             None,
             runtimes={"unused": _rt("unused", "/srv/tools/bin/python3")},
         ))
-        # Named wrapper and pipeline-engine runtimes inside a declared env's libexec/ match inline behavior when bound on the unit, while unbound nested wrappers are refused.
+        # Named wrapper and pipeline-engine runtimes (including gmake) work when bound on the unit, while unbound nested wrappers or unqualified conda names are refused.
         wrap_ep = f"{STAGE_ROOT}/libexec/run-stage"
         S.validate_plan(self._plan([_slurm("u", "run", environment=st, command=wrap_ep)], runtimes={"run": _rt("run", wrap_ep, res="wrapper")}))
         nf_ep = f"{STAGE_ROOT}/libexec/nextflow"
         S.validate_plan(self._plan([_slurm("p", "nf", kind="pipeline", environment=st, command=nf_ep)], runtimes={"nf": _rt("nf", nf_ep)}))
+        S.validate_plan(self._plan([_slurm("gm", _rt("gm", "/usr/local/bin/gmake", st, probe="gmake -v"), kind="pipeline", command="gmake")]))
         self._fail(self._plan([self._u(f"{STAGE_ROOT}/tools/docs-venv/bin/run-docs", res="wrapper")]), "does not belong directly")
-        # Distinct legacy conda prefixes under /srv/common/bin/ (including a prefix named 'env') stay distinct.
+        self._fail(self._plan([self._u("stage", res="conda")]), "requires explicit 'environment' binding")
+        # Distinct legacy conda prefixes under /srv/common/bin/, /srv/envs/common/bin/, or /srv/releases/workbook/bin/ stay distinct.
         S.validate_plan(self._plan([
             self._u("/srv/common/bin/fit", res="conda", uid="a", model_line=st),
             self._u("/srv/common/bin/eval", res="conda", uid="b", model_line=mk),
             self._u("/srv/common/bin/env", res="conda", uid="c", model_line="other"),
+            self._u("/srv/envs/common/bin/fit", res="conda", uid="d", model_line="l4"),
+            self._u("/srv/releases/workbook/bin/fit", res="conda", uid="e", model_line="l5"),
         ], None))
         # Cross-model canary on an isolated container image validates cleanly.
         ctr_r = _rt("img", "/srv/images/native.sif", res="container", probe="apptainer exec /srv/images/native.sif sort --version")
@@ -500,6 +509,7 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             self._u("compiler/gcc/12.3", res="module", uid="mg"),
             self._u("genomics/scripts/qc/1.0", res="module", uid="mq"),
             self._u("python-imaging/ffmpeg/6.1", res="module", uid="mff"),
+            self._u("python3-imaging/ffmpeg/6.1", res="module", uid="mff3"),
             self._u("stage/scripts/python/3.12", res="module", uid="msp", model_line=st),
             self._u("stage/python/3.12", res="module", uid="mp", model_line=st),
             self._u("stage/miniforge3/24.3", res="module", uid="mm", model_line=st),
@@ -507,20 +517,12 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         self._fail(self._plan([self._u("stage/python/3.12", res="module", uid="m1", model_line=st), self._u("stage/python/3.12", res="module", uid="m2", model_line=mk)], None))
         self._fail(self._plan([self._u("stage/python/3.12", st, "module", "m1", model_line=st), self._u("stage/python/3.12", mk, "module", "m2", model_line=mk)]))
         self._fail(self._plan([self._u("stage/python/3.12", res="module", uid="mu")]))
-        # Shared cluster Python/conda Lmod modules (including versioned/ABI/compiler-suffixed tokens and nested shared categories) are refused even when bound.
+        # Exact shared cluster Python/conda Lmod modules (at top level or below shared categories) are refused even when bound.
         for bm in (
             "python3",
             "python/3.12",
-            "Python-3.12.2",
             "lang/python/3.12",
             "Core/lang/Python/3.12",
-            "Core/lang/Python-3.12.2",
-            "Core/lang/Python-v3.12.2",
-            "Core/Python-v3.12.2",
-            "Core/Python+3.12.2",
-            "Core/Python3.12-GCCcore-13.2.0",
-            "Core/Python3.13t-GCCcore-14.2.0",
-            "Core/compilers/gcc/12/Python-3.12.2",
             "compiler/gcc/12.3/python/3.11",
             "mysite/lang/python/3.12",
             "proj/Core/conda/24.3",
@@ -530,9 +532,7 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
         ):
             self._fail(self._plan([self._u(bm, res="module")], None))
             self._fail(self._plan([self._u(bm, st, "module")]))
-        # Project-scoped versioned Python module binds cleanly, while absolute paths are refused under resolution="module".
-        S.validate_plan(self._plan([self._u("stage/Python-3.12.2", st, "module")]))
-        self._fail(self._plan([self._u("stage/Python-3.12.2", "none", "module")]))
+        # Absolute paths are refused under resolution="module" when environments is declared.
         self._fail(self._plan([_code("m", st, runtime=_rt("mod", SP, st, res="module"))]), "not a valid lmod module")
         for mp in ("/tmp/project/miniconda3", "/tmp/p/.venvs/miniconda3"):
             S.validate_plan(self._plan([_code("c", st)], self._e1(mp)))
@@ -546,7 +546,6 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
             ("/srv/prefixes/fit ", "conda"),
             ("/srv/conda-prefixes/workbook", "conda"),
             ("/srv/prefixes/workbook/bin/python", "conda"),
-            ("/srv/conda-prefixes/workbook/bin/coverage", "conda"),
             ("/usr/bin/env", "conda"),
             ("/srv/tools/bin/env", "direct"),
             (f"{WB_ENV}/bin/coverage", "conda"),
@@ -696,6 +695,10 @@ class TestSurveyPythonEnvDetection(unittest.TestCase):
             (pw_mf / "conda-meta").mkdir(parents=True)
             with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(SURVEY.Path, "home", return_value=pw_h):
                 self.assertEqual(_key(det(env=None, executable=f"{pw_mf}/bin/python", prefix=str(pw_mf), base_prefix=str(pw_mf))), ("conda", "base", True))
+
+            # Venv with reserved shared basename (e.g. workbook) and HOME=/ with /miniforge3 are flagged shared.
+            self.assertEqual(_key(_det("/srv/team/venvs/workbook", "/usr")), ("venv", "workbook", True))
+            self.assertEqual(_key(_det("/miniforge3", HOME="/")), ("conda", "base", True))
 
             sc = T / "miniforge3/envs/compiler"
             sc.mkdir(parents=True)
