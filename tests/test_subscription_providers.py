@@ -601,6 +601,11 @@ class TestSubscriptionTransports(unittest.TestCase):
         # Novel future vendor/billing vars are stripped while OS/proxy/keyring vars survive.
         hostile = {
             "ANTHROPIC_FUTURE_KEY": "secret-a",
+            "AWS_ACCESS_KEY_ID": "AKIAFAKE",
+            "AWS_SECRET_ACCESS_KEY": "aws-secret",
+            "AWS_SESSION_TOKEN": "aws-session",
+            "AZURE_CLIENT_SECRET": "azure-secret",
+            "GOOGLE_APPLICATION_CREDENTIALS": "/tmp/gcp.json",
             "CLAUDE_CODE_OAUTH_TOKEN": "tok-oauth",
             "CLAUDE_FUTURE_FLAG": "1",
             "CODEX_FUTURE_TOKEN": "secret-c",
@@ -616,7 +621,10 @@ class TestSubscriptionTransports(unittest.TestCase):
             env = RS.build_child_env(
                 extra_env={"CLAUDE_CONFIG_DIR": str(self.claude_dir),
                            "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "128000"})
-        for blocked in ("ANTHROPIC_FUTURE_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
+        for blocked in ("ANTHROPIC_FUTURE_KEY", "AWS_ACCESS_KEY_ID",
+                        "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                        "AZURE_CLIENT_SECRET", "GOOGLE_APPLICATION_CREDENTIALS",
+                        "CLAUDE_CODE_OAUTH_TOKEN",
                         "CLAUDE_FUTURE_FLAG", "CODEX_FUTURE_TOKEN",
                         "OPENAI_FUTURE_BASE", "CUSTOM_FOO_API_KEY",
                         "CUSTOM_BAR_AUTH_TOKEN", "CUSTOM_BAZ_BASE_URL"):
@@ -680,6 +688,8 @@ class TestSubscriptionTransports(unittest.TestCase):
             ('"cli_auth_credentials_store" = "auto"\n', "auto"),
             ("'cli_auth_credentials_store' = 'file'\n", "file"),
             ('cli_auth_credentials_store = """keyring"""\n', "keyring"),
+            ('cli_auth_credentials_store = """\nkeyring"""\n', "keyring"),
+            ("cli_auth_credentials_store = '''\nauto'''\n", "auto"),
             ("cli_auth_credentials_store = '''auto'''\n", "auto"),
             ('note = """\n[not_a_section]\n"""\ncli_auth_credentials_store = "keyring"\n', "keyring"),
             ('cli_auth_credentials_store = "keyring\'\n', None),  # mismatched quotes

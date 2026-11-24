@@ -2,11 +2,12 @@
 
 Routes review-gate and committee calls through local `claude` (claude.ai OAuth)
 and `codex` (ChatGPT account) CLIs via a single sanitized `build_child_env()`
-that strips provider/billing/session prefixes (`ANTHROPIC_*`, `CLAUDE_*`,
-`CLAUDECODE*`, `CODEX_*`, `OPENAI_*`, `OPENROUTER_*`, `GEMINI_*`,
-`GOOGLE_API_*`, `GOOGLE_GENAI_*`, `VERTEX_*`, `CLOUD_ML_*`, `AZURE_OPENAI_*`,
-`AWS_BEARER_TOKEN_BEDROCK`), credential/endpoint suffixes (`*_API_KEY`,
-`*_AUTH_TOKEN`, `*_BASE_URL`), and `STRIPPED_ENV` while re-injecting only
+that strips provider/billing/session prefixes (`ANTHROPIC_*`, `AWS_*`,
+`AZURE_*`, `CLAUDE_*`, `CLAUDECODE*`, `CODEX_*`, `OPENAI_*`, `OPENROUTER_*`,
+`GEMINI_*`, `GOOGLE_API_*`, `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_GENAI_*`,
+`VERTEX_*`, `CLOUD_ML_*`), credential/endpoint suffixes (`*_API_KEY`,
+`*_AUTH_TOKEN`, `*_BASE_URL`, `*_ACCESS_KEY_ID`, `*_SECRET_ACCESS_KEY`,
+`*_SESSION_TOKEN`, `*_CLIENT_SECRET`), and `STRIPPED_ENV` while re-injecting only
 explicitly managed overrides (`CLAUDE_CONFIG_DIR`,
 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, `CODEX_HOME`). Runs inside a fresh empty
 temporary directory with tools, user/project/local settings and hooks, and
@@ -77,6 +78,8 @@ STRIPPED_ENV = (
 )
 STRIPPED_ENV_PREFIXES = (
     "ANTHROPIC_",
+    "AWS_",
+    "AZURE_",
     "CLAUDE_",
     "CLAUDECODE",
     "CODEX_",
@@ -84,16 +87,19 @@ STRIPPED_ENV_PREFIXES = (
     "OPENROUTER_",
     "GEMINI_",
     "GOOGLE_API_",
+    "GOOGLE_APPLICATION_CREDENTIALS",
     "GOOGLE_GENAI_",
     "VERTEX_",
     "CLOUD_ML_",
-    "AZURE_OPENAI_",
-    "AWS_BEARER_TOKEN_BEDROCK",
 )
 STRIPPED_ENV_SUFFIXES = (
     "_API_KEY",
     "_AUTH_TOKEN",
     "_BASE_URL",
+    "_ACCESS_KEY_ID",
+    "_SECRET_ACCESS_KEY",
+    "_SESSION_TOKEN",
+    "_CLIENT_SECRET",
 )
 CLAUDE_STRIPPED_ENV = STRIPPED_ENV
 CODEX_STRIPPED_ENV = STRIPPED_ENV
@@ -109,10 +115,9 @@ CODEX_DISABLED_FEATURES = (
 )
 SUBSCRIPTION_PROVIDERS = ("claude", "codex")
 _MAX_ARGV_SYSTEM_BYTES = 65536
-_CRED_STORE_RE = re.compile(
+_CRED_STORE_KEY_RE = re.compile(
     r'^\s*(?:cli_auth_credentials_store|"cli_auth_credentials_store"'
-    r"|'cli_auth_credentials_store')\s*=\s*"
-    r'("""|\'\'\'|"|\')(keyring|auto|file)\1\s*(?:#.*)?$'
+    r"|'cli_auth_credentials_store')\s*=\s*(.*)$"
 )
 _TOML_SECTION_RE = re.compile(r'^\s*\[')
 
@@ -205,17 +210,61 @@ def claude_availability(timeout=15.0, deadline=None):
 
 def _parse_cred_store_regex(text):
     """Python 3.8-3.10 stdlib fallback for top-level cli_auth_credentials_store."""
+    valid = ("keyring", "auto", "file")
     in_triple = None
+    capturing_key = False
+    captured = []
     for line in text.splitlines():
         if in_triple is not None:
-            if in_triple in line:
-                in_triple = None
+            idx = line.find(in_triple)
+            if idx != -1:
+                if capturing_key:
+                    captured.append(line[:idx])
+                    tail = line[idx + 3:].strip()
+                    val = "\n".join(captured)
+                    if val.startswith("\n"):
+                        val = val[1:]
+                    capturing_key = False
+                    captured = []
+                    in_triple = None
+                    if (not tail or tail.startswith("#")) and val in valid:
+                        return val
+                else:
+                    in_triple = None
+            elif capturing_key:
+                captured.append(line)
             continue
         if _TOML_SECTION_RE.match(line):
             break
-        m = _CRED_STORE_RE.match(line)
+        m = _CRED_STORE_KEY_RE.match(line)
         if m:
-            return m.group(2)
+            rhs = m.group(1).lstrip()
+            for delim in ('"""', "'''"):
+                if rhs.startswith(delim):
+                    rest = rhs[3:]
+                    end = rest.find(delim)
+                    if end != -1:
+                        tail = rest[end + 3:].strip()
+                        val = rest[:end]
+                        if (not tail or tail.startswith("#")) and val in valid:
+                            return val
+                        break
+                    in_triple = delim
+                    capturing_key = True
+                    captured = [rest]
+                    break
+            else:
+                for q in ('"', "'"):
+                    if rhs.startswith(q):
+                        rest = rhs[1:]
+                        end = rest.find(q)
+                        if end != -1:
+                            tail = rest[end + 1:].strip()
+                            val = rest[:end]
+                            if (not tail or tail.startswith("#")) and val in valid:
+                                return val
+                        break
+            continue
         stripped = line.split("#", 1)[0]
         for delim in ('"""', "'''"):
             if stripped.count(delim) % 2 == 1:
