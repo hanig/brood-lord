@@ -1,9 +1,23 @@
 # Operating loop detail
 
+## Dedicated orchestration environment and startup check
+
+Set `ORCH_PYTHON` and `HANIG_ORCH_PYTHON` to the declared absolute orchestration interpreter (e.g. `/home/USER/.local/state/PROJECT/orch-venv/bin/python`) and invoke every orchestrator, coordinator, and tracker helper through `"$ORCH_PYTHON"`, never bare `python3` from PATH. <!-- declaration: env.dedicated -->
+
+Run the read-only startup check once when opening or taking over a session: <!-- declaration: env.dedicated -->
+
+```bash
+export ORCH_PYTHON="/home/USER/.local/state/PROJECT/orch-venv/bin/python"
+export HANIG_ORCH_PYTHON="$ORCH_PYTHON"
+"$ORCH_PYTHON" "$HANIG_ORCHESTRATE_DIR/scripts/orch_env.py" check --plan plan.json
+```
+
+`orch_env.py check` warns on stderr when session `python3` or the running interpreter resolves outside `environments.orchestration` or into a shared env (conda `base`/`workbook`); pass `--strict` to exit 1. Helper scripts (`hourly_facts.py`, `merge_unit.py`, `reconcile.py`, `wait_event.py`, `wait_report.py`) also warn on stderr on mismatch. <!-- declaration: env.dedicated -->
+
 ## Coordinator event wakeup
 
 ```bash
-python3 "$HANIG_ORCHESTRATE_DIR/scripts/wait_event.py" --state-dir "$STATE"
+"$ORCH_PYTHON" "$HANIG_ORCHESTRATE_DIR/scripts/wait_event.py" --state-dir "$STATE"
 ```
 
 Repeat `--state-dir DIR` for several runs; `--snapshot FILE` defaults to `wait-event-snapshot.json` in the first directory's parent. Snapshots live outside watched directories. The one-shot waiter emits TRANSITION and operator-needed STATE arrivals with local observation times. It observes coordinator state only: it does not detect a stalled or permission-blocked agent, take a coordinator lock, or make network, agent or scheduler calls. <!-- declaration: watch.proof -->
@@ -28,14 +42,19 @@ File sources allow omission of --state-root; agent scope then uses --repo
 and --agent-root. Reads use at most the last 1 MiB.
 Substitute operator paths in these direct-command scheduler examples.
 
-macOS launchd example: bootstrap the edited plist with
-launchctl bootstrap gui/$(id -u) FILE.
+macOS launchd example (`hourly_facts.py`): bootstrap the edited plist with
+launchctl bootstrap gui/$(id -u) FILE. Call the declared absolute orchestration
+interpreter, never bare `python3` from PATH. <!-- declaration: env.dedicated -->
 
 ```xml
 <plist version="1.0"><dict>
   <key>Label</key><string>local.orchestrator.hourly-facts</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>HANIG_ORCHESTRATE_DIR</key><string>/skills/hanig-orchestrate</string>
+    <key>HANIG_ORCH_PYTHON</key><string>/Users/USER/.local/state/PROJECT/orch-venv/bin/python</string>
+  </dict>
   <key>ProgramArguments</key><array>
-    <string>/python3</string>
+    <string>/Users/USER/.local/state/PROJECT/orch-venv/bin/python</string>
     <string>/skills/hanig-orchestrate/scripts/hourly_facts.py</string>
     <string>--state-root</string><string>/coordinator</string>
     <string>--output-dir</string><string>/reports</string>
@@ -49,10 +68,28 @@ launchctl bootstrap gui/$(id -u) FILE.
 </dict></plist>
 ```
 
-Linux cron:
+Linux cron (`advance` and `hourly_facts.py`, both calling the declared absolute
+orchestration interpreter): <!-- declaration: env.dedicated -->
 
 ```cron
-55 * * * * HANIG_ORCHESTRATE_DIR=/skills/hanig-orchestrate /python3 /skills/hanig-orchestrate/scripts/hourly_facts.py --state-root /coordinator --output-dir /reports --repo /checkout --binding /binding.json --audit /audit.json --paseo /bin/paseo --gh /bin/gh
+*/5 * * * * ORCH_PYTHON="/home/USER/.local/state/PROJECT/orch-venv/bin/python" HANIG_ORCH_PYTHON="/home/USER/.local/state/PROJECT/orch-venv/bin/python" "/skills/hanig-swarm/scripts/swarm-cron.sh" "/coordinator/PROJECT"
+55 * * * * HANIG_ORCHESTRATE_DIR="/skills/hanig-orchestrate" HANIG_ORCH_PYTHON="/home/USER/.local/state/PROJECT/orch-venv/bin/python" "/home/USER/.local/state/PROJECT/orch-venv/bin/python" "/skills/hanig-orchestrate/scripts/hourly_facts.py" --state-root "/coordinator" --output-dir "/reports" --repo "/checkout" --binding "/binding.json" --audit "/audit.json" --paseo "/bin/paseo" --gh "/bin/gh"
+```
+
+If any substituted path contains `%`, escape it as `\%` in crontab entries (cron treats unescaped `%` as a command/input split even inside quotes).
+
+macOS launchd (`advance` via `swarm-cron.sh`):
+
+```xml
+<plist version="1.0"><dict>
+  <key>Label</key><string>local.orchestrator.swarm-advance</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>ORCH_PYTHON</key><string>/Users/USER/.local/state/PROJECT/orch-venv/bin/python</string>
+    <key>HANIG_ORCH_PYTHON</key><string>/Users/USER/.local/state/PROJECT/orch-venv/bin/python</string>
+  </dict>
+  <key>ProgramArguments</key><array><string>/skills/hanig-swarm/scripts/swarm-cron.sh</string><string>/coordinator/PROJECT</string></array>
+  <key>StartInterval</key><integer>300</integer>
+</dict></plist>
 ```
 
 At :55, reports label the next hour and replace hourly files and latest.md atomically.
@@ -63,7 +100,7 @@ continued by their successor, without ATTENTION (amendment 1, 2026-11-09).
 SUBMITTED and RUNNING predecessors remain live, with bound-agent checks.
 
 ```bash
-python3 "$HANIG_ORCHESTRATE_DIR/scripts/wait_report.py" --output-dir /reports
+"$ORCH_PYTHON" "$HANIG_ORCHESTRATE_DIR/scripts/wait_report.py" --output-dir /reports
 ```
 
 The waiter polls each minute. Quiet reports are persisted in .seen.json; the first
@@ -110,7 +147,7 @@ Merge admission compares the full judged and pull-request heads, reads the diff,
 ## Guarded merge and reconciliation
 
 ```bash
-python3 "$HANIG_ORCHESTRATE_DIR/scripts/merge_unit.py" plan.json \
+"$ORCH_PYTHON" "$HANIG_ORCHESTRATE_DIR/scripts/merge_unit.py" plan.json \
   --state-dir "$STATE" --unit impl --pr 123 --approver "Operator" \
   --root "$RUNS" --dry-run
 ```
@@ -194,9 +231,9 @@ After receipt recording and successful advancement, `merge_unit.py` displays the
 Drain every relevant state directory before auditing; repeat `--state-dir` to cover several waves. <!-- declaration: tracker.drain -->
 
 ```bash
-python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" drain \
+"$ORCH_PYTHON" "$HANIG_PROJECT_DIR/scripts/linear_sync.py" drain \
   --binding .hanig/linear-binding.json --state-dir "$STATE"
-python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" audit \
+"$ORCH_PYTHON" "$HANIG_PROJECT_DIR/scripts/linear_sync.py" audit \
   --binding .hanig/linear-binding.json --out "$AUDIT"
 ```
 
@@ -222,7 +259,7 @@ The order and the dispatch action are part of the decision surface rather than a
 The hourly loop includes this comparison, with every coordinator state directory for the repository and a window overlapping the preceding successful observation:
 
 ```bash
-python3 "$HANIG_ORCHESTRATE_DIR/scripts/reconcile.py" \
+"$ORCH_PYTHON" "$HANIG_ORCHESTRATE_DIR/scripts/reconcile.py" \
   --state-dir "$STATE" --since 2026-09-26T00:00:00Z --json
 ```
 
@@ -231,3 +268,54 @@ The sweep examines every in-progress issue regardless of age and repeats after e
 Forge routing supports standard HTTP(S) and SSH remotes without explicit ports and keeps the observed HTTP(S) PR URL; ports are refused rather than silently discarded. Reconciliation requires a single-parent squash result; merge observations and the squash method remain attested. The actual merge parent's SHA supplies `--target-commit`, including when the target moved after the original observation. Head matching does not atomically freeze CI reruns or concurrent PR retargeting, and a one-parent result alone does not distinguish squash from a one-commit rebase by another operator. The same credential can bypass `merge_unit.py`. This detects bypass after the fact; it does not prevent it. Coverage is limited to supplied directories and the merged-PR window, so a direct push without a merged PR is outside the comparison. A pending request accounts for a lost response; cancelled or abandoned requests do not account for later merges. Historical reconciliation attests recording, not who executed the merge. A matching pending record cannot distinguish a lost response from a later direct merge of the same PR and head; this check establishes record presence, never execution attribution. The observation is not an atomic forge snapshot; a changed or unreadable page calls for a retry. <!-- declaration: limit.merge-command -->
 
 The hook resolves a supported `gh` locator through a bounded `gh repo view` read, then reports counts after exact anchor matching for a single literal `git [-C DIR] push origin ...` without push options, or explicit `gh ... --repo OWNER/REPO` (`-R` also works). Other routing, compound commands, malformed inputs, missing anchors and differing hostname spellings produce repository-specific uncertainty. Hostname spelling is preserved in the comparison, and action detection is unchanged.
+
+## Migrating a running project to a dedicated orchestration environment
+
+Follow these four steps in order without disturbing live jobs or state: <!-- declaration: env.dedicated -->
+
+1. Build the new dedicated orchestration env (stdlib-only `uv` venv): <!-- declaration: env.dedicated -->
+
+```bash
+PROJECT="my-project"
+ORCH_ENV="$HOME/.local/state/$PROJECT/orch-venv"
+uv venv --python 3.12 "$ORCH_ENV"
+ORCH_PYTHON="$ORCH_ENV/bin/python"
+"$ORCH_PYTHON" --version
+```
+
+2. Test read-only against a staged `plan.json` in a temp dir (`validate`, `status`, `orch_env.py check --strict`, and `hourly_facts.py` to temp dir): <!-- declaration: env.dedicated -->
+
+```bash
+set -eu
+TEST_OUT="$(mktemp -d)"
+cp "$PROJECT_DIR/plan.json" "$TEST_OUT/plan.json"
+# Update $TEST_OUT/plan.json: set environments.orchestration (path=$ORCH_ENV, python="3.12", lock_file="none", build="uv venv --python 3.12 $ORCH_ENV") and declare/bind model-line envs (or environment="none" on non-Python code units)
+HANIG_ORCH_PYTHON="$ORCH_PYTHON" "$ORCH_PYTHON" "$HANIG_SWARM_DIR/scripts/swarm.py" validate "$TEST_OUT/plan.json"
+HANIG_ORCH_PYTHON="$ORCH_PYTHON" "$ORCH_PYTHON" "$HANIG_SWARM_DIR/scripts/swarm.py" status "$PROJECT_DIR/plan.json" --state-dir "$STATE"
+HANIG_ORCH_PYTHON="$ORCH_PYTHON" "$ORCH_PYTHON" "$HANIG_ORCHESTRATE_DIR/scripts/orch_env.py" check --plan "$TEST_OUT/plan.json" --python "$ORCH_PYTHON" --strict
+HANIG_ORCH_PYTHON="$ORCH_PYTHON" "$ORCH_PYTHON" "$HANIG_ORCHESTRATE_DIR/scripts/hourly_facts.py" --state-root "$STATE_ROOT" --output-dir "$TEST_OUT" --repo "$REPO"
+ls -la "$TEST_OUT" && rm -rf "$TEST_OUT"
+```
+
+3. Switch `plan.json`, cron/launchd, and helper scripts with timestamped backups first: <!-- declaration: env.dedicated -->
+
+```bash
+set -eu
+BACKUP_DIR="$HOME/.local/state/$PROJECT/env-migration-backup-$(date +%Y%m%dT%H%M%S)"
+mkdir -p "$BACKUP_DIR"
+cp -a "$PROJECT_DIR/plan.json" "$BACKUP_DIR/plan.json.bak"
+if crontab -l > "$BACKUP_DIR/crontab.bak" 2>"$BACKUP_DIR/crontab.err"; then
+  rm -f "$BACKUP_DIR/crontab.err"
+elif grep -qi "no crontab for" "$BACKUP_DIR/crontab.err"; then
+  rm -f "$BACKUP_DIR/crontab.bak" "$BACKUP_DIR/crontab.err"
+else
+  cat "$BACKUP_DIR/crontab.err" >&2
+  exit 1
+fi
+[ ! -d "$HOME/Library/LaunchAgents" ] || cp -a "$HOME/Library/LaunchAgents" "$BACKUP_DIR/LaunchAgents.bak"
+[ ! -d "$PROJECT_DIR/scripts" ] || cp -a "$PROJECT_DIR/scripts" "$BACKUP_DIR/scripts.bak"
+```
+
+Update `plan.json`, cron lines, launchd plists, and helper wrappers to set `ORCH_PYTHON` and `HANIG_ORCH_PYTHON` and invoke `"$ORCH_PYTHON"` by absolute path (pass `--accept-plan-change` on the first `advance` because `environments` is in `plan_digest`). <!-- declaration: env.dedicated -->
+
+4. Confirm the next `advance` tick and `hourly_facts.py` run are clean in the cron log, `swarm.py status`, and `latest.md` before removing old backups. <!-- declaration: env.dedicated -->

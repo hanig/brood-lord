@@ -15,6 +15,7 @@ import tempfile
 import time
 
 sys.dont_write_bytecode = True
+import orch_env
 from skill_paths import sibling_skill_root
 
 TERMINAL = {"DONE", "ABANDONED", "SUPERSEDED"}
@@ -456,6 +457,20 @@ def main(argv=None):
     parser.error("--status-file refuses **")
   if (args.binding is None) != (args.audit is None):
     parser.error("--binding and --audit must be given together")
+  plan_candidates = [args.repo / "plan.json", Path.cwd() / "plan.json"]
+  if args.state_root is not None:
+    plan_candidates.append(args.state_root / "plan.json")
+    try:
+      children = sorted(args.state_root.iterdir()) if args.state_root.is_dir() else []
+    except OSError:
+      children = []
+    for child in children:
+      try:
+        if child.is_dir():
+          plan_candidates.append(child / "plan.json")
+      except OSError:
+        continue
+  orch_env.warn_if_declared_mismatch(candidate_plan_paths=plan_candidates)
   print(collect(args))
 
 

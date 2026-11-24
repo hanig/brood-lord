@@ -9,6 +9,7 @@ import re
 import time
 
 from hourly_facts import atomic_write, positive
+import orch_env
 
 REPORT_NAME = r"^\d{8}-\d{2}[+-]\d{4}\.md$"
 
@@ -63,6 +64,7 @@ def main(argv=None):
   parser.add_argument("--output-dir", required=True, type=Path)
   parser.add_argument("--poll-seconds", type=positive, default=60)
   args = parser.parse_args(argv)
+  orch_env.warn_if_declared_mismatch(candidate_plan_paths=[Path.cwd() / "plan.json"])
   while True:
     path = take_report(args.output_dir.absolute())
     if path is not None:
