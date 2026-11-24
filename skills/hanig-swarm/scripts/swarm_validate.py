@@ -96,6 +96,22 @@ def _validate_unit_fields(units):
                     f"execution_workspace, or repo")
 
 
+def _validate_orchestrator(plan, units):
+    """Validate optional plan-level orchestrator and forbid conflicting code writers."""
+    if "orchestrator" in plan:
+        orch = plan["orchestrator"]
+        if not isinstance(orch, str) or orch not in SR.VALID_ORCHESTRATORS:
+            allowed = ", ".join(sorted(SR.VALID_ORCHESTRATORS))
+            raise PlanError(
+                f"plan 'orchestrator' {orch!r} must be one of: {allowed}")
+    for u in units:
+        if not isinstance(u, dict) or u.get("kind") != "code":
+            continue
+        problem = SR.forbid_unit_provider_problem(plan, u)
+        if problem:
+            raise PlanError(problem)
+
+
 def _validate_canary(plan, units):
     """Validate optional plan-level canary and return effective unit list."""
     if "canary" not in plan:
@@ -536,7 +552,7 @@ def _validate_inputs_and_scheduler(units, survey=None, qos_caveat=None):
             f"in, or charge an account that partition takes. {caveat}")
 
 
-def _validate_commands_and_code_units(units):
+def _validate_commands_and_code_units(units, plan=None):
     """Validate slurm submission nesting, code prompt flags, completion protocol, and code fields."""
     for u in units:
         if not isinstance(u, dict) or u.get("kind") != "slurm":
@@ -606,7 +622,8 @@ def _validate_commands_and_code_units(units):
                 f"can never reach DONE. Declare the repository it changes, or "
                 f"make it kind=pipeline if it is not changing code.")
 
-        unattended = SP._unattended_mode_example(u.get("provider"))
+        default_provider = SR.effective_default_provider(plan)
+        unattended = SP._unattended_mode_example(u.get("provider") or default_provider)
         if "mode" in u and not str(u.get("mode") or "").strip():
             raise PlanError(
                 f"unit {uid!r} declares mode={u.get('mode')!r}, which is not a "
@@ -624,7 +641,7 @@ def _validate_commands_and_code_units(units):
                 f"nothing. The coordinator will not pick permissions on your "
                 f"behalf: say what this unit needs, e.g. "
                 f"\"mode\": \"{unattended}\" for unattended work on "
-                f"{u.get('provider') or SR.DEFAULT_AGENT_PROVIDER}, or "
+                f"{u.get('provider') or default_provider}, or "
                 f"\"mode\": \"default\" to accept the stall deliberately. "
                 f"Modes are provider-specific.")
 

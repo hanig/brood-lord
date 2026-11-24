@@ -1538,5 +1538,7 @@ def plan_digest(plan):
         content["canary"] = plan["canary"]
     if "environments" in plan:
         content["environments"] = plan["environments"]
+    if "orchestrator" in plan:
+        content["orchestrator"] = plan["orchestrator"]
     payload = json.dumps(content, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()

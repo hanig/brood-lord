@@ -3,8 +3,11 @@
 Python 3.8+, standard library only.
 """
 
+from collections import OrderedDict
+import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -30,7 +33,35 @@ def _routing_model(value):
             and all(value.split("/")))
 
 
-def load_agent_routing(path=AGENTS_FILE):
+VALID_ORCHESTRATORS = frozenset(("claude", "codex", "antigravity"))
+
+
+def _orchestrator_token(value):
+    """A supported orchestrator host identity (claude, codex, antigravity)."""
+    return isinstance(value, str) and value in VALID_ORCHESTRATORS
+
+
+def _model_matches_substrings(model, substrings):
+    if not isinstance(model, str) or not model:
+        return False
+    for sub in substrings:
+        if re.search(r"(?:^|[^a-z])" + re.escape(sub) + r"(?:$|[^a-z])",
+                     model, re.I):
+            return True
+    return False
+
+
+def _provider_forbidden_for_rule(provider, rule):
+    if not isinstance(rule, dict):
+        return False
+    route, _slash, model = provider.partition("/")
+    routes = {r.casefold() for r in rule.get("routes", ())}
+    if route.casefold() in routes and not model:
+        return True
+    return _model_matches_substrings(model, rule.get("model_substrings", ()))
+
+
+def _parse_agent_routing(path=AGENTS_FILE):
     """Read and check agents.json. Raises SystemExit naming the defect.
 
     Every value is checked the same way and returned exactly as written:
@@ -58,18 +89,170 @@ def load_agent_routing(path=AGENTS_FILE):
         raise SystemExit("swarm: %s thinking_by_model must be a non-empty map "
                          "of PROVIDER/MODEL strings to thinking ids, neither "
                          "with whitespace" % path)
-    return provider, thinking, dict(table)
+    forbid = {}
+    if "forbid_when_orchestrator" in data:
+        raw_forbid = data.get("forbid_when_orchestrator")
+        if not (isinstance(raw_forbid, dict) and raw_forbid):
+            raise SystemExit("swarm: %s forbid_when_orchestrator must be a "
+                             "non-empty object" % path)
+        for orch, rule in raw_forbid.items():
+            if not _orchestrator_token(orch) or not isinstance(rule, dict):
+                raise SystemExit("swarm: %s forbid_when_orchestrator[%r] must "
+                                 "map an orchestrator token to an object"
+                                 % (path, orch))
+            routes = rule.get("routes")
+            subs = rule.get("model_substrings")
+            if not (isinstance(routes, list)
+                    and all(_routing_token(r) and "/" not in r for r in routes)):
+                raise SystemExit("swarm: %s forbid_when_orchestrator[%r].routes "
+                                 "must be a list of tokens" % (path, orch))
+            if not (isinstance(subs, list)
+                    and all(_routing_token(s) for s in subs)):
+                raise SystemExit("swarm: %s forbid_when_orchestrator[%r]."
+                                 "model_substrings must be a list of tokens"
+                                 % (path, orch))
+            if not routes and not subs:
+                raise SystemExit("swarm: %s forbid_when_orchestrator[%r] must "
+                                 "declare routes or model_substrings"
+                                 % (path, orch))
+            forbid[orch] = {"routes": list(routes),
+                            "model_substrings": list(subs)}
+    by_orch = {}
+    if "default_by_orchestrator" in data:
+        raw_orch = data.get("default_by_orchestrator")
+        if not (isinstance(raw_orch, dict) and raw_orch):
+            raise SystemExit("swarm: %s default_by_orchestrator must be a "
+                             "non-empty object" % path)
+        for orch, seat in raw_orch.items():
+            if not _orchestrator_token(orch) or not isinstance(seat, dict):
+                raise SystemExit("swarm: %s default_by_orchestrator[%r] must "
+                                 "map an orchestrator token to an object"
+                                 % (path, orch))
+            op = seat.get("provider")
+            ot = seat.get("thinking")
+            if not _routing_model(op):
+                raise SystemExit("swarm: %s default_by_orchestrator[%r].provider "
+                                 "must be a PROVIDER/MODEL string without "
+                                 "whitespace or empty segments" % (path, orch))
+            if not _routing_token(ot):
+                raise SystemExit("swarm: %s default_by_orchestrator[%r].thinking "
+                                 "must be a non-empty thinking id without "
+                                 "whitespace" % (path, orch))
+            if _provider_forbidden_for_rule(op, forbid.get(orch)):
+                raise SystemExit("swarm: %s default_by_orchestrator[%r] provider "
+                                 "%r violates forbid_when_orchestrator"
+                                 % (path, orch, op))
+            by_orch[orch] = {"provider": op, "thinking": ot}
+    return provider, thinking, dict(table), by_orch, forbid
+
+
+def load_agent_routing(path=AGENTS_FILE):
+    """Read and check agents.json. Returns (provider, thinking, thinking_by_model)."""
+    provider, thinking, table, _by_orch, _forbid = _parse_agent_routing(path)
+    return provider, thinking, table
 
 
 # A unit overrides any of it with `provider`, `model` or `thinking`. Setting
 # `thinking` to null or "" turns the flag off entirely for a provider that has
 # no such option.
-DEFAULT_AGENT_PROVIDER, DEFAULT_AGENT_THINKING, THINKING_BY_MODEL = (
-    load_agent_routing())
+(DEFAULT_AGENT_PROVIDER, DEFAULT_AGENT_THINKING, THINKING_BY_MODEL,
+ ORCHESTRATOR_DEFAULTS, FORBID_WHEN_ORCHESTRATOR) = _parse_agent_routing()
 # The shipped pin. apply_agent_resolution starts from it every time, so a
 # resolution applied for one plan never outlives that plan in this process.
 PINNED_AGENT_PROVIDER = DEFAULT_AGENT_PROVIDER
+PINNED_AGENT_THINKING = DEFAULT_AGENT_THINKING
 PINNED_THINKING_BY_MODEL = dict(THINKING_BY_MODEL)
+ACTIVE_ORCHESTRATOR = None
+_PLAN_RESOLUTIONS = OrderedDict()
+_MAX_PLAN_RESOLUTIONS = 128
+
+
+def _plan_fingerprint(plan):
+    """Lightweight content digest of a plan dict; holds zero reference to plan."""
+    try:
+        raw = json.dumps(plan, sort_keys=True, default=repr)
+    except Exception:
+        raw = repr(plan)
+    return hashlib.sha256(raw.encode("utf-8", "surrogateescape")).hexdigest()
+
+
+def _plan_orchestrator(plan_path=None, plan=None):
+    """Exact declared orchestrator from plan dict or plan file, or None.
+
+    Never normalizes, strips, or reads ambient session env vars: an absent or
+    unrecognized orchestrator fails closed to the default seat, and plan
+    validation refuses invalid declarations loudly.
+    """
+    data = plan
+    if data is None and plan_path is not None:
+        try:
+            loaded = json.loads(Path(plan_path).read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, ValueError):
+            data = None
+    if not isinstance(data, dict):
+        return None
+    orch = data.get("orchestrator")
+    return orch if isinstance(orch, str) and orch in VALID_ORCHESTRATORS else None
+
+
+def _plan_routing_entry(plan):
+    """Return (provider, thinking, table) for plan without retaining plan."""
+    orch = _plan_orchestrator(plan=plan)
+    entry = _PLAN_RESOLUTIONS.get(_plan_fingerprint(plan))
+    if entry is not None and entry[0] == orch:
+        return entry[1], entry[2], entry[3]
+    if orch in ORCHESTRATOR_DEFAULTS:
+        seat = ORCHESTRATOR_DEFAULTS[orch]
+        return seat["provider"], seat["thinking"], PINNED_THINKING_BY_MODEL
+    return PINNED_AGENT_PROVIDER, PINNED_AGENT_THINKING, PINNED_THINKING_BY_MODEL
+
+
+def effective_default_provider(plan=None):
+    """Default code-agent provider for plan, without leaking another plan's state."""
+    if isinstance(plan, dict):
+        return _plan_routing_entry(plan)[0]
+    return DEFAULT_AGENT_PROVIDER
+
+
+def forbid_unit_provider_problem(plan, u, rules=None):
+    """Return refusal message when a code unit violates forbid_when_orchestrator."""
+    if not isinstance(plan, dict) or not isinstance(u, dict) or u.get("kind") != "code":
+        return None
+    orch = plan.get("orchestrator")
+    if not isinstance(orch, str):
+        return None
+    rule_map = FORBID_WHEN_ORCHESTRATOR if rules is None else rules
+    rule = rule_map.get(orch) if isinstance(rule_map, dict) else None
+    if not isinstance(rule, dict):
+        return None
+    raw_prov = u.get("provider")
+    raw_model = u.get("model")
+    if raw_prov is not None and str(raw_prov).strip():
+        prov_text = str(raw_prov).strip()
+        route, _slash, embedded = prov_text.partition("/")
+    else:
+        default_prov = effective_default_provider(plan)
+        route, _slash, embedded = default_prov.partition("/")
+    explicit_model = (str(raw_model).strip()
+                      if raw_model is not None and str(raw_model).strip()
+                      else "")
+    models = [m for m in (embedded.strip(), explicit_model) if m]
+    routes = {r.casefold() for r in rule.get("routes", ())}
+    subs = rule.get("model_substrings", ())
+    uid = u.get("id", "?")
+    if route.casefold() in routes and not models:
+        return (f"unit {uid!r} declares bare provider {raw_prov!r} without a "
+                f"non-forbidden model while plan orchestrator is {orch!r}; "
+                f"omit 'provider' to use the default or declare an explicit "
+                f"non-matching model")
+    for model in models:
+        if _model_matches_substrings(model, subs):
+            return (f"unit {uid!r} selects {route}/{model} while plan "
+                    f"orchestrator is {orch!r}; this model line may be used as "
+                    f"code writer only when {orch!r} is not the orchestrator")
+    return None
 
 
 def _model_family():
@@ -92,46 +275,96 @@ def _model_family():
     return module
 
 
-def apply_agent_resolution(plan_path):
+def apply_agent_resolution(plan_path, plan=None):
     """Adopt this project's resolved code-agent default, if its snapshot is valid.
 
     Called once when a command loads a plan, so the snapshot is looked up
-    from the plan's directory upward to its project. A unit's own provider,
-    model or thinking still wins. The resolved model inherits the pinned
-    model's thinking level unless agents.json names one for it.
+    from the plan's directory upward to its project. When the plan declares
+    an orchestrator listed in agents.json default_by_orchestrator, that seat's
+    pin and snapshot override apply; otherwise the default seat applies
+    (failing closed when orchestrator is absent or unknown). A unit's own
+    provider, model or thinking still wins. The resolved model inherits its
+    seat's pinned thinking level unless agents.json names one for it.
     """
-    global DEFAULT_AGENT_PROVIDER
+    global DEFAULT_AGENT_PROVIDER, DEFAULT_AGENT_THINKING, ACTIVE_ORCHESTRATOR
     DEFAULT_AGENT_PROVIDER = PINNED_AGENT_PROVIDER
+    DEFAULT_AGENT_THINKING = PINNED_AGENT_THINKING
+    ACTIVE_ORCHESTRATOR = None
     # In place, so every reference to the table sees the reset.
     THINKING_BY_MODEL.clear()
     THINKING_BY_MODEL.update(PINNED_THINKING_BY_MODEL)
+    plan_data = plan if isinstance(plan, dict) else None
+    if plan_data is None and plan_path is not None:
+        try:
+            loaded = json.loads(Path(plan_path).read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                plan_data = loaded
+        except (OSError, ValueError):
+            plan_data = None
+    orch = _plan_orchestrator(plan_path=plan_path, plan=plan_data)
+    ACTIVE_ORCHESTRATOR = orch
+    routing = None
+    try:
+        routing = json.loads(AGENTS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        routing = None
+    seat = None
+    if isinstance(routing, dict):
+        by_orch = routing.get("default_by_orchestrator")
+        if orch and isinstance(by_orch, dict) and isinstance(by_orch.get(orch), dict):
+            seat = by_orch[orch]
+        elif isinstance(routing.get("default"), dict):
+            seat = routing["default"]
+    elif orch in ORCHESTRATOR_DEFAULTS:
+        seat = ORCHESTRATOR_DEFAULTS[orch]
+    if isinstance(seat, dict) and _routing_model(seat.get("provider")):
+        DEFAULT_AGENT_PROVIDER = seat["provider"]
+    if isinstance(seat, dict) and _routing_token(seat.get("thinking")):
+        DEFAULT_AGENT_THINKING = seat["thinking"]
+    base_provider = DEFAULT_AGENT_PROVIDER
+
+    def _record_plan(resolved):
+        if isinstance(plan_data, dict):
+            key = _plan_fingerprint(plan_data)
+            _PLAN_RESOLUTIONS.pop(key, None)
+            _PLAN_RESOLUTIONS[key] = (
+                orch, resolved, DEFAULT_AGENT_THINKING, dict(THINKING_BY_MODEL))
+            while len(_PLAN_RESOLUTIONS) > _MAX_PLAN_RESOLUTIONS:
+                _PLAN_RESOLUTIONS.popitem(last=False)
+        return resolved
+
     try:
         family = _model_family()
-        if family is None:
-            return DEFAULT_AGENT_PROVIDER
-        routing = json.loads(AGENTS_FILE.read_text(encoding="utf-8"))
+        if family is None or not isinstance(routing, dict):
+            return _record_plan(DEFAULT_AGENT_PROVIDER)
         digests = family.config_digests(
             Path(family.__file__).resolve().parent.parent / "reviewers.json",
             AGENTS_FILE)
-        provider, note = family.resolved_agent_default(
-            routing.get("default") or {}, routing.get("thinking_by_model") or {},
-            digests, start=Path(plan_path).resolve().parent)
+        if hasattr(family, "resolved_orchestrator_agent"):
+            provider, note = family.resolved_orchestrator_agent(
+                orch, routing, digests, start=Path(plan_path).resolve().parent)
+        else:
+            provider, note = family.resolved_agent_default(
+                seat or (routing.get("default") or {}),
+                routing.get("thinking_by_model") or {},
+                digests, start=Path(plan_path).resolve().parent)
     except Exception as exc:
         # Resolution never stops validate or run: anything wrong here leaves
         # the shipped pin in force.
         print("swarm: routing: snapshot not applied, using the pin: %s: %s"
               % (type(exc).__name__, exc), file=sys.stderr)
-        return DEFAULT_AGENT_PROVIDER
-    if provider and note and provider != PINNED_AGENT_PROVIDER:
+        return _record_plan(DEFAULT_AGENT_PROVIDER)
+    if provider and note and provider != base_provider:
         THINKING_BY_MODEL[provider] = family.agent_thinking(
-            routing.get("default") or {}, routing.get("thinking_by_model") or {},
+            seat or (routing.get("default") or {}),
+            routing.get("thinking_by_model") or {},
             provider)
         DEFAULT_AGENT_PROVIDER = provider
         print("swarm: routing: " + note, file=sys.stderr)
-    return DEFAULT_AGENT_PROVIDER
+    return _record_plan(DEFAULT_AGENT_PROVIDER)
 
 
-def default_thinking_for(u):
+def default_thinking_for(u, plan=None):
     """The reasoning effort one unit gets when it declares none.
 
     Keyed on the model that will actually run, which is the provider string
@@ -139,9 +372,16 @@ def default_thinking_for(u):
     the same way, so both have to resolve here or the mapping would apply to
     one plan and not its equivalent. An unrecognised model falls back rather
     than refusing: a new model on the roster should dispatch at a sane effort,
-    and the fallback is the level the two strongest models use.
+    and the fallback is the level the two strongest models use. When ``plan``
+    is supplied, uses that plan's own resolved provider, default thinking, and
+    thinking table without cross-plan leakage.
     """
-    provider = str(u.get("provider") or DEFAULT_AGENT_PROVIDER)
+    if isinstance(plan, dict):
+        default_provider, default_thinking, table = _plan_routing_entry(plan)
+    else:
+        default_provider, default_thinking, table = (
+            DEFAULT_AGENT_PROVIDER, DEFAULT_AGENT_THINKING, THINKING_BY_MODEL)
+    provider = str(u.get("provider") or default_provider)
     model = u.get("model")
     key = "%s/%s" % (provider.split("/", 1)[0], model) if model else provider
-    return THINKING_BY_MODEL.get(key, DEFAULT_AGENT_THINKING)
+    return table.get(key, default_thinking)

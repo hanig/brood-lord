@@ -316,8 +316,12 @@ from swarm_state import (
     _LOCK_EPOCHS,
 )
 from swarm_routing import (
-    _routing_token, _routing_model, load_agent_routing, _model_family,
-    apply_agent_resolution, default_thinking_for,
+    _routing_token, _routing_model, _orchestrator_token,
+    _model_matches_substrings, _provider_forbidden_for_rule,
+    _parse_agent_routing, load_agent_routing, _plan_fingerprint,
+    _plan_orchestrator, _plan_routing_entry, effective_default_provider,
+    forbid_unit_provider_problem, _model_family, apply_agent_resolution,
+    default_thinking_for,
 )
 from swarm_types import (
     PlanError, OutboxError, DONE, RUNNING, FAILED, PREEMPTED, INCOMPLETE,
@@ -397,7 +401,10 @@ def __getattr__(name):
     # legacy swarm.<name> callers see the current plan's routing, not a copy.
     if name in {
         "AGENTS_FILE", "DEFAULT_AGENT_PROVIDER", "DEFAULT_AGENT_THINKING",
-        "THINKING_BY_MODEL", "PINNED_AGENT_PROVIDER", "PINNED_THINKING_BY_MODEL",
+        "THINKING_BY_MODEL", "PINNED_AGENT_PROVIDER", "PINNED_AGENT_THINKING",
+        "PINNED_THINKING_BY_MODEL", "ORCHESTRATOR_DEFAULTS",
+        "FORBID_WHEN_ORCHESTRATOR", "VALID_ORCHESTRATORS",
+        "ACTIVE_ORCHESTRATOR",
     }:
         return getattr(SR, name)
     raise AttributeError("module %r has no attribute %r" % (__name__, name))
@@ -466,6 +473,7 @@ def validate_plan(plan, survey=None, new_attempts=True):
         raise PlanError("the plan declares no units; add a 'units' list")
 
     SV._validate_unit_fields(units)
+    SV._validate_orchestrator(plan, units)
     units = SV._validate_canary(plan, units)
     SV._validate_convergence_paseo_promote(units, which=shutil.which)
     SV._validate_retry_exposure(
@@ -482,7 +490,7 @@ def validate_plan(plan, survey=None, new_attempts=True):
     SV._validate_inputs_and_scheduler(
         units, survey=survey, qos_caveat=QOS_CAVEAT)
     SV._validate_ids_and_dag(units, kinds=KINDS)
-    SV._validate_commands_and_code_units(units)
+    SV._validate_commands_and_code_units(units, plan=plan)
     SV._validate_command_paths(plan, units)
     SV._validate_slurm_arrays(units)
 
@@ -1349,7 +1357,7 @@ def cmd_continue(args):
 def cmd_validate(args, plan=None):
     if getattr(args, "check_seeds", False):
         _d5_refuse('cmd_validate', getattr(args, "state_dir", None), plan=getattr(args, "plan", None))
-    SR.apply_agent_resolution(args.plan)
+    SR.apply_agent_resolution(args.plan, plan=plan)
     if plan is None:
         plan, err = U.read_json(args.plan)
         if err:
@@ -1923,6 +1931,13 @@ SCHEMA_PLAN_FIELDS = [
      "'orchestration', where lock_file may be 'none' for stdlib-only scripts). "
      "Shared personal/system envs (conda base, workbook, /usr/bin, etc.) and "
      "two model lines sharing one env are refused."),
+    ("orchestrator", "all", "optional",
+     "orchestrator host identity (claude | codex | antigravity). When present "
+     "and mapped in agents.json default_by_orchestrator, code units omitting "
+     "provider default to that orchestrator's seat (and its resolved project "
+     "snapshot). When absent, fails closed to agents.json default.provider and "
+     "preserves legacy plan digests. Refuses code units violating "
+     "agents.json forbid_when_orchestrator."),
 ]
 
 SCHEMA_FIELDS = [
@@ -1967,7 +1982,8 @@ SCHEMA_FIELDS = [
      "no default on purpose. Absent or empty means default permissions, so "
      "the agent stalls at its first write"),
     ("provider", "code", "optional",
-     "default is agents.json default.provider"),
+     "default is agents.json default_by_orchestrator[orchestrator] when plan "
+     "declares orchestrator, else agents.json default.provider"),
     ("model", "code", "optional", "overrides the provider's default"),
     ("author_history", "code", "optional",
      "JSON list of objects with exactly unit, attempt (non-empty strings), "
@@ -3137,7 +3153,11 @@ def main():
 # Build this after every definition to retain the original public namespace.
 __all__ = [name for name in globals() if not name.startswith("_")] + [
     "AGENTS_FILE", "DEFAULT_AGENT_PROVIDER", "DEFAULT_AGENT_THINKING",
-    "THINKING_BY_MODEL", "PINNED_AGENT_PROVIDER", "PINNED_THINKING_BY_MODEL",
+    "THINKING_BY_MODEL", "PINNED_AGENT_PROVIDER", "PINNED_AGENT_THINKING",
+    "PINNED_THINKING_BY_MODEL", "ORCHESTRATOR_DEFAULTS",
+    "FORBID_WHEN_ORCHESTRATOR", "VALID_ORCHESTRATORS",
+    "ACTIVE_ORCHESTRATOR", "effective_default_provider",
+    "forbid_unit_provider_problem",
     "acquire_lease", "bump_lease_epoch", "renew_lease", "release_lease", "load_state",
     "save_state",
     "trusted_launch_facts",

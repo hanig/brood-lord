@@ -13,8 +13,12 @@ import swarm_routing as SR
 import swarm_types as ST
 
 ROUTING_FUNCTIONS = (
-    "_routing_token", "_routing_model", "load_agent_routing", "_model_family",
-    "apply_agent_resolution", "default_thinking_for",
+    "_routing_token", "_routing_model", "_orchestrator_token",
+    "_model_matches_substrings", "_provider_forbidden_for_rule",
+    "_parse_agent_routing", "load_agent_routing", "_plan_fingerprint",
+    "_plan_orchestrator", "_plan_routing_entry", "effective_default_provider",
+    "forbid_unit_provider_problem", "_model_family", "apply_agent_resolution",
+    "default_thinking_for",
 )
 ROUTING_DATA = (
     "AGENTS_FILE", "DEFAULT_AGENT_PROVIDER", "DEFAULT_AGENT_THINKING",

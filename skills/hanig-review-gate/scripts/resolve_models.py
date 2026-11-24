@@ -24,6 +24,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -352,6 +353,81 @@ def validate_config(reviewers, agents):
             raise MF.FamilyError("agent-default: family.listing %r must be %r"
                                  % (default["family"].get("listing"),
                                     MF.PASEO_PREFIX + route))
+    forbid = agents.get("forbid_when_orchestrator")
+    if "forbid_when_orchestrator" in agents:
+        if not (isinstance(forbid, dict) and forbid):
+            raise MF.FamilyError("agents.json forbid_when_orchestrator must "
+                                 "be a non-empty object")
+        for orch, rule in forbid.items():
+            if not _orchestrator_token(orch) or not isinstance(rule, dict):
+                raise MF.FamilyError("agents.json forbid_when_orchestrator[%r] "
+                                     "must map an orchestrator token to an object"
+                                     % (orch,))
+            routes = rule.get("routes")
+            subs = rule.get("model_substrings")
+            if not (isinstance(routes, list)
+                    and all(_routing_token(r) and "/" not in r for r in routes)):
+                raise MF.FamilyError("agents.json forbid_when_orchestrator[%r]."
+                                     "routes must be a list of tokens" % (orch,))
+            if not (isinstance(subs, list) and all(_routing_token(s) for s in subs)):
+                raise MF.FamilyError("agents.json forbid_when_orchestrator[%r]."
+                                     "model_substrings must be a list of tokens"
+                                     % (orch,))
+            if not routes and not subs:
+                raise MF.FamilyError("agents.json forbid_when_orchestrator[%r] "
+                                     "must declare routes or model_substrings"
+                                     % (orch,))
+    if "default_by_orchestrator" in agents:
+        by_orch = agents.get("default_by_orchestrator")
+        if not (isinstance(by_orch, dict) and by_orch):
+            raise MF.FamilyError("agents.json default_by_orchestrator must be "
+                                 "a non-empty object")
+        for orch, seat in by_orch.items():
+            if not _orchestrator_token(orch) or not isinstance(seat, dict):
+                raise MF.FamilyError("agents.json default_by_orchestrator[%r] "
+                                     "must map an orchestrator token to an object"
+                                     % (orch,))
+            if not _routing_model(seat.get("provider")):
+                raise MF.FamilyError("agents.json default_by_orchestrator[%r]."
+                                     "provider must be a PROVIDER/MODEL string "
+                                     "without whitespace" % (orch,))
+            if not _routing_token(seat.get("thinking")):
+                raise MF.FamilyError("agents.json default_by_orchestrator[%r]."
+                                     "thinking must be a non-empty thinking id "
+                                     "without whitespace" % (orch,))
+            if _provider_forbidden_for_rule(seat["provider"], (forbid or {}).get(orch)):
+                raise MF.FamilyError("agents.json default_by_orchestrator[%r] "
+                                     "provider %r violates forbid_when_orchestrator"
+                                     % (orch, seat["provider"]))
+            if seat.get("family") is not None:
+                route, _slash, model = seat["provider"].partition("/")
+                _pin_in_family(model, seat["family"], "agent-default:" + orch)
+                if seat["family"].get("listing") != MF.PASEO_PREFIX + route:
+                    raise MF.FamilyError("agent-default:%s: family.listing %r "
+                                         "must be %r"
+                                         % (orch, seat["family"].get("listing"),
+                                            MF.PASEO_PREFIX + route))
+
+
+VALID_ORCHESTRATORS = frozenset(("claude", "codex", "antigravity"))
+
+
+def _orchestrator_token(value):
+    return isinstance(value, str) and value in VALID_ORCHESTRATORS
+
+
+def _provider_forbidden_for_rule(provider, rule):
+    if not isinstance(rule, dict):
+        return False
+    route, _slash, model = provider.partition("/")
+    routes = {r.casefold() for r in rule.get("routes", ())}
+    if route.casefold() in routes and not model:
+        return True
+    for sub in rule.get("model_substrings", ()):
+        if re.search(r"(?:^|[^a-z])" + re.escape(sub) + r"(?:$|[^a-z])",
+                     model, re.I):
+            return True
+    return False
 
 
 def _routing_token(value):
@@ -376,12 +452,14 @@ def resolve(args):
         if not isinstance(agents, dict):
             raise MF.FamilyError("%s must be a JSON object" % R.AGENTS_CONFIG)
     validate_config(reviewers, agents)
-    listings, lines = {}, []
+    listings, agent_probes, lines = {}, {}, []
     snapshot = {"schema": MF.SCHEMA,
                 "project": os.path.realpath(args.project),
                 "project_key": MF.project_key(args.project),
                 "config_sha256": MF.config_digests(R.CONFIG, R.AGENTS_CONFIG),
-                "resolved_at": utc_now(), "reviewers": {}, "agent_default": None}
+                "resolved_at": utc_now(), "reviewers": {},
+                "agent_default": None,
+                "agent_defaults_by_orchestrator": {}}
 
     def listed(listing):
         if listing not in listings:
@@ -391,6 +469,12 @@ def resolve(args):
                 listings[listing] = (None, R.redact(
                     "%s: %s" % (type(exc).__name__, exc))[:200])
         return listings[listing]
+
+    def probed_agent(route, chosen, thinking):
+        key = (route, chosen, thinking)
+        if key not in agent_probes:
+            agent_probes[key] = probe_agent(route, chosen, thinking, args.timeout)
+        return agent_probes[key]
 
     def report(status, seat, pin, detail):
         lines.append({"status": status, "seat": seat, "pinned": pin,
@@ -406,8 +490,15 @@ def resolve(args):
     default = (agents or {}).get("default") or {}
     if default.get("family") and (not args.only or "agent-default" in args.only):
         _isolated(report, "agent-default", default["provider"],
-                  _resolve_agent_default, default, agents, listed, report,
-                  snapshot, args)
+                  _resolve_agent_seat, "agent-default", None, default, agents,
+                  listed, probed_agent, report, snapshot, args)
+    by_orch = (agents or {}).get("default_by_orchestrator") or {}
+    for orch, seat in sorted(by_orch.items()):
+        seat_name = "agent-default:" + orch
+        if seat.get("family") and (not args.only or seat_name in args.only):
+            _isolated(report, seat_name, seat["provider"],
+                      _resolve_agent_seat, seat_name, orch, seat, agents,
+                      listed, probed_agent, report, snapshot, args)
     return _finish(args, snapshot, lines)
 
 
@@ -461,37 +552,49 @@ def _report_candidates(ids, family, pinned, name, display_pin, report):
                    "%s, not adopted: %s" % (label, ", ".join(models)))
 
 
-def _resolve_agent_default(default, agents, listed, report, snapshot, args):
+def _resolve_agent_seat(seat_name, orchestrator, default, agents, listed,
+                        probed_agent, report, snapshot, args):
     family = default["family"]
     route, _slash, pin_model = default["provider"].partition("/")
     table = (agents or {}).get("thinking_by_model") or {}
     ids, error = listed(family["listing"])
     if error:
-        report("LISTING_FAILED", "agent-default", default["provider"], error)
+        report("LISTING_FAILED", seat_name, default["provider"], error)
     else:
-        chosen, newer = MF.select(ids, family, pin_model)
+        forbid_map = (agents or {}).get("forbid_when_orchestrator")
+        rule = (forbid_map.get(orchestrator)
+                if isinstance(orchestrator, str) and isinstance(forbid_map, dict)
+                else None)
+        eligible_ids = [
+            model_id for model_id in ids
+            if not _provider_forbidden_for_rule(route + "/" + model_id, rule)
+        ] if rule else ids
+        chosen, newer = MF.select(eligible_ids, family, pin_model)
         if newer:
-            report("NEW_GENERATION", "agent-default", default["provider"],
+            report("NEW_GENERATION", seat_name, default["provider"],
                    "listed above major %d, not adopted: %s" % (
                        family["major"], ", ".join(newer)))
         if chosen is None:
-            report("PINNED", "agent-default", default["provider"],
-                   "no newer point release")
+            report("PINNED", seat_name, default["provider"],
+                   "no newer release" if family.get("any_major") else "no newer point release")
         elif args.dry_run:
-            report("WOULD_PROBE", "agent-default", default["provider"],
+            report("WOULD_PROBE", seat_name, default["provider"],
                    route + "/" + chosen)
         else:
             thinking = MF.agent_thinking(default, table, route + "/" + chosen)
-            probe, why = probe_agent(route, chosen, thinking, args.timeout)
+            probe, why = probed_agent(route, chosen, thinking)
             if probe is None:
-                report("PROBE_FAILED", "agent-default", default["provider"],
+                report("PROBE_FAILED", seat_name, default["provider"],
                        "%s/%s: %s" % (route, chosen, why))
             else:
-                snapshot["agent_default"] = {"provider": route + "/" + chosen,
-                                             "probe": probe}
-                report("RESOLVED", "agent-default", default["provider"],
+                entry = {"provider": route + "/" + chosen, "probe": dict(probe)}
+                if orchestrator is None:
+                    snapshot["agent_default"] = entry
+                else:
+                    snapshot["agent_defaults_by_orchestrator"][orchestrator] = entry
+                report("RESOLVED", seat_name, default["provider"],
                        route + "/" + chosen)
-        _report_candidates(ids, family, pin_model, "agent-default",
+        _report_candidates(ids, family, pin_model, seat_name,
                            default["provider"], report)
 
 
@@ -509,6 +612,10 @@ def _finish(args, snapshot, lines):
                     snapshot["reviewers"].setdefault(name, entry)
             if "agent-default" not in args.only and previous.get("agent_default"):
                 snapshot["agent_default"] = previous["agent_default"]
+            kept_orch = previous.get("agent_defaults_by_orchestrator")
+            for orch, entry in (kept_orch if isinstance(kept_orch, dict) else {}).items():
+                if ("agent-default:" + orch) not in args.only:
+                    snapshot["agent_defaults_by_orchestrator"].setdefault(orch, entry)
         try:
             path = MF.write_snapshot(args.project, snapshot)
         except OSError:

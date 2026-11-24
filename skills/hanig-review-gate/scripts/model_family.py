@@ -27,7 +27,7 @@ STATE_DIR = ("hanig-review-gate", "routing")
 LISTINGS = ("openai", "openrouter", "anthropic")
 PASEO_PREFIX = "paseo:"
 FAMILY_FIELDS = ("listing", "vendor", "prefix", "separator", "suffix", "major",
-                 "named_version")
+                 "named_version", "any_major")
 
 
 class FamilyError(ValueError):
@@ -69,6 +69,12 @@ def check_family(family):
                 or re.fullmatch(r"[a-z][a-z0-9-]*", named) is None or major != 0):
             raise FamilyError("family.named_version must be a lowercase name "
                               "with family.major 0 (exact pin only)")
+    if "any_major" in family:
+        if not isinstance(family["any_major"], bool):
+            raise FamilyError("family.any_major must be a boolean")
+        if "named_version" in family:
+            raise FamilyError("family.any_major cannot be combined with "
+                              "family.named_version")
     return family
 
 
@@ -108,21 +114,27 @@ def version_of(model_id, family):
 def select(listed_ids, family, pinned):
     """Choose from a catalog. Returns (chosen or None, newer-generation ids).
 
-    Candidates are listed ids in the family whose major equals family.major
-    and whose version is above the pin's. The greatest is chosen. An id with a
-    greater major is reported, never chosen: raising the ceiling is a reviewed
-    config change.
+    Candidates are listed ids in the family whose version is above the pin's
+    and whose major equals family.major (or is at least family.major when
+    family.any_major is true). The greatest is chosen. When any_major is false
+    (the default), an id with a greater major is reported, never chosen:
+    raising the ceiling is a reviewed config change.
     """
+    check_family(family)
     floor = version_of(pinned, family)
     if floor is None:
         raise FamilyError("pinned model %r is not in its own family" % pinned)
     major = family["major"]
+    any_major = bool(family.get("any_major", False))
     same, newer = [], []
     for model_id in listed_ids:
         version = version_of(model_id, family)
         if version is None:
             continue
-        if version[0] == major and version > floor:
+        if any_major:
+            if version[0] >= major and version > floor:
+                same.append((version, model_id))
+        elif version[0] == major and version > floor:
             same.append((version, model_id))
         elif version[0] > major:
             newer.append(model_id)
@@ -336,9 +348,10 @@ def reviewer_override(seat, entry):
     model, record = entry.get("model"), entry.get("record")
     version = version_of(model, family)
     floor = version_of(seat.get("model"), family)
-    if version is None or floor is None:
+    if version is None or floor is None or floor[0] != family["major"]:
         return None
-    if version[0] != family["major"] or version <= floor:
+    any_major = bool(family.get("any_major", False))
+    if (version[0] < family["major"] if any_major else version[0] != family["major"]) or version <= floor:
         return None
     if not isinstance(record, dict):
         return None
@@ -412,9 +425,10 @@ def agent_default_override(default, thinking_table, entry):
     model = provider[len(route) + 1:]
     version = version_of(model, family)
     floor = version_of(pinned_model, family)
-    if version is None or floor is None:
+    if version is None or floor is None or floor[0] != family["major"]:
         return None
-    if version[0] != family["major"] or version <= floor:
+    any_major = bool(family.get("any_major", False))
+    if (version[0] < family["major"] if any_major else version[0] != family["major"]) or version <= floor:
         return None
     probe = entry.get("probe")
     thinking = agent_thinking(default, thinking_table, provider)
@@ -434,3 +448,53 @@ def resolved_agent_default(default, thinking_table, digests, start=None):
     if provider is None:
         return pinned, None
     return provider, "code-agent default resolved %s -> %s" % (pinned, provider)
+
+
+def _provider_forbidden_for_rule(provider, rule):
+    if not isinstance(provider, str) or not isinstance(rule, dict):
+        return False
+    route, _slash, model = provider.partition("/")
+    routes = {r.casefold() for r in rule.get("routes", ()) if isinstance(r, str)}
+    if route.casefold() in routes and not model:
+        return True
+    for sub in rule.get("model_substrings", ()):
+        if isinstance(sub, str) and sub and re.search(
+                r"(?:^|[^a-z])" + re.escape(sub) + r"(?:$|[^a-z])", model, re.I):
+            return True
+    return False
+
+
+def resolved_orchestrator_agent(orchestrator, routing, digests, start=None):
+    """(provider string, note) for this orchestrator's code-agent seat.
+
+    When orchestrator names an entry in routing['default_by_orchestrator'],
+    reads snapshot['agent_defaults_by_orchestrator'][orchestrator] against
+    that seat's family and pin; otherwise falls back to resolved_agent_default.
+    Refuses any snapshot candidate disallowed by forbid_when_orchestrator.
+    """
+    table = routing.get("thinking_by_model") or {}
+    forbid = routing.get("forbid_when_orchestrator")
+    rule = (forbid.get(orchestrator)
+            if isinstance(orchestrator, str) and isinstance(forbid, dict)
+            else None)
+    by_orch = routing.get("default_by_orchestrator")
+    seat = (by_orch.get(orchestrator)
+            if isinstance(orchestrator, str) and isinstance(by_orch, dict)
+            else None)
+    if not isinstance(seat, dict):
+        provider, note = resolved_agent_default(
+            routing.get("default") or {}, table, digests, start=start)
+        if note and _provider_forbidden_for_rule(provider, rule):
+            return (routing.get("default") or {}).get("provider"), None
+        return provider, note
+    pinned = seat.get("provider")
+    path, data, project = find_snapshot(start)
+    if data is None or not _snapshot_matches(data, project, digests):
+        return pinned, None
+    overrides = data.get("agent_defaults_by_orchestrator")
+    entry = overrides.get(orchestrator) if isinstance(overrides, dict) else None
+    provider = agent_default_override(seat, table, entry)
+    if provider is None or _provider_forbidden_for_rule(provider, rule):
+        return pinned, None
+    return provider, ("code-agent default for orchestrator %s resolved %s -> %s"
+                      % (orchestrator, pinned, provider))

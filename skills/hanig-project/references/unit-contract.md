@@ -29,8 +29,8 @@ A provider flag placed there is a sentence for the agent to read, not runner
 configuration. Provider, mode, model, thinking, and environment must remain <!-- declaration: code.prompt-boundary -->
 unit fields. <!-- declaration: code.prompt-boundary -->
 
-The default agent is the `default` entry in `hanig-swarm/agents.json`. <!-- declaration: code.default-agent -->
-That file records the owner's choice and the live-agent check behind it. <!-- declaration: code.default-agent -->
+The default agent comes from `hanig-swarm/agents.json` (`default_by_orchestrator[orchestrator]` when top-level `orchestrator` is declared, otherwise failing closed to `default`, with any valid project snapshot applied). <!-- declaration: code.default-agent -->
+That file records the owner's choice, the live-agent check behind it, and any `forbid_when_orchestrator` constraints. <!-- declaration: code.default-agent -->
 An explicit mode <!-- declaration: code.configuration -->
 is still required because provider vocabularies differ and default permissions <!-- declaration: code.configuration -->
 can stop unattended work at its first write. The owner chooses unattended <!-- declaration: code.configuration -->
