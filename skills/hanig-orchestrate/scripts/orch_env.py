@@ -45,6 +45,12 @@ def _is_caskroom(ps, lo, i):
     if ps[i - 1] == "Caskroom": return True
     return lo[i - 1] == "caskroom" and _same_dir("/" + "/".join(ps[:i]), "/" + "/".join(ps[:i - 1] + ("Caskroom",)))
 
+def _case_probe_same(st, swp):
+    try: sw_st = os.lstat(swp)
+    except FileNotFoundError: return False
+    return (not stat.S_ISLNK(sw_st.st_mode)
+            and (sw_st.st_dev, sw_st.st_ino) == (st.st_dev, st.st_ino))
+
 def _dir_case_insensitive(d):
     if not d or "\0" in d: return False
     try:
@@ -57,24 +63,29 @@ def _dir_case_insensitive(d):
             except _ERR: pass
         dev = os.lstat(cur).st_dev
         try:
+            seen, deferred = set(), []
             with os.scandir(cur) as it:
-                for idx, e in enumerate(it):
-                    if idx >= 64: break
-                    if e.is_symlink(): continue
+                for e in it:
                     sw = e.name.swapcase()
                     if sw == e.name: continue
-                    swp = P.join(cur, sw)
-                    if not P.lexists(swp): return False
-                    if not P.islink(swp) and _same_dir(e.path, swp): return True
+                    seen.add(e.name)
+                    if e.is_symlink(): continue
+                    try: st = e.stat(follow_symlinks=False)
+                    except _ERR: continue
+                    if stat.S_ISDIR(st.st_mode) or st.st_nlink == 1:
+                        return _case_probe_same(st, P.join(cur, sw))
+                    if len(deferred) < 8:
+                        deferred.append((sw, st))
+            for sw, st in deferred:
+                if sw in seen: return False
+                return _case_probe_same(st, P.join(cur, sw))
         except _ERR: pass
         while cur and cur != P.dirname(cur):
             par, nm = P.split(cur)
             if os.lstat(par).st_dev != dev: break
             sw = nm.swapcase()
             if sw != nm and not P.islink(cur):
-                swp = P.join(par, sw)
-                if not P.lexists(swp): return False
-                if not P.islink(swp) and _same_dir(cur, swp): return True
+                return _case_probe_same(os.lstat(cur), P.join(par, sw))
             cur = par
     except _ERR: pass
     return False
@@ -93,9 +104,7 @@ def _looks_unresolved(s):
 
 def _is_conda_base(d):
     if not d or "\0" in d: return False
-    try:
-        if not (P.isdir(P.join(d, "conda-meta")) and P.isdir(P.join(d, "condabin"))): return False
-        return not any(len(ps) >= 2 and ps[-2] == "envs" and ps[-1] != "base" for ps in ([x.lower() for x in P.normpath(c).split("/") if x] for c in (d, P.realpath(d))))
+    try: return P.isdir(P.join(d, "conda-meta")) and P.isdir(P.join(d, "condabin"))
     except _ERR: return False
 
 def _shared_conda_dir(d):
@@ -364,12 +373,28 @@ def _overlap(a, b):
     try: return (not ma and any(x.exists() and _same_dir(str(x), ea) for x in Path(eb).parents)) or (not mb and any(x.exists() and _same_dir(str(x), eb) for x in Path(ea).parents))
     except _ERR: return False
 
+def _raw_interp(p):
+    if not isinstance(p, str) or not p.strip(): return None
+    r = _safe_expand(p.strip())
+    if "\0" in r: return r
+    try: return P.abspath(r) if (not P.isabs(r) and os.sep in r) else r
+    except _ERR: return r
+
+def _interp_conda_reason(p):
+    if not isinstance(p, str) or not p.startswith("/") or "\0" in p: return None
+    try:
+        par = P.dirname(p)
+        if P.basename(par).lower() in ("bin", "scripts"):
+            return _shared_conda_dir(P.dirname(par))
+    except _ERR: pass
+    return None
+
 def _conflicts(d, em, env_was_none=False):
     hm, w = _resolve_home(em, env_was_none), list(d.get("other_env_errors") or ())
     roots = list(d.get("other_env_roots") or ())
     if d["plan_env_path"]: roots.insert(0, (d["env_id"] or "orchestration", d["raw_plan_env_path"], d["plan_env_path"]))
     for i, (ea, raw_a, ra) in enumerate(roots):
-        sr = shared_env_reason(raw_a, True, hm) or shared_env_reason(ra, True, hm) or _shared_conda_dir(ra)
+        sr = shared_env_reason(raw_a, True, hm) or shared_env_reason(ra, True, hm) or _shared_conda_dir(raw_a) or _shared_conda_dir(ra)
         if sr: w.append(f"env {ea!r} in shared env: {sr}")
         for eb, _, rb in roots[i + 1:]:
             if _overlap(ra, rb): w.append(f"envs {ea!r} ({ra}) and {eb!r} ({rb}) alias/overlap")
@@ -377,7 +402,8 @@ def _conflicts(d, em, env_was_none=False):
         for v in (d["raw_plan_env_path"], d["plan_env_path"] or d["env_path"]):
             r = shared_env_reason(v, True, hm) or _shared_conda_dir(v)
             if r: w.append(f"orchestration env not dedicated: {r}"); break
-        er, ev = shared_env_reason(em.get("HANIG_ORCH_PYTHON"), False, hm), d["env_var_python"]
+        raw_ev, ev = _raw_interp(em.get("HANIG_ORCH_PYTHON")), d["env_var_python"]
+        er = (shared_env_reason(raw_ev, False, hm) if raw_ev else None) or (shared_env_reason(ev, False, hm) if ev else None) or _interp_conda_reason(raw_ev) or _interp_conda_reason(ev)
         if er: w.append(f"HANIG_ORCH_PYTHON not dedicated: {er}")
         if d["plan_env_path"] and ev and not _belongs(d["plan_env_path"], ev): w.append(f"HANIG_ORCH_PYTHON ({ev}) outside {d['plan_env_path']}")
         if ev and not _is_exec(ev): w.append(f"HANIG_ORCH_PYTHON ({ev}) missing/non-executable")
@@ -407,10 +433,14 @@ def _live_mismatch(d, running_python):
     except _ERR: pass
     return None
 
-def _check_interp(d, em, py, lb, hm, live_py=None, req_exec=False, skip_dup=None):
+def _check_interp(d, em, py, lb, hm, live_py=None, req_exec=False, skip_dup=None, raw_py=None, raw_skip_dup=None):
     w, dl, el = [], d["plan_env_path"] or d["env_path"] or d["expected_python"], d["expected_python"] or d["env_path"]
-    r = shared_env_reason(py, home=hm)
-    if r and py != skip_dup: w.append(f"{lb} in shared env ({r}); use {el}" if not req_exec else f"{lb} in shared env: {r}")
+    raw_c = _raw_interp(raw_py)
+    raw_r = (shared_env_reason(raw_c, home=hm) or _interp_conda_reason(raw_c)) if raw_c else None
+    can_r = shared_env_reason(py, home=hm) or _interp_conda_reason(py)
+    r = raw_r or can_r
+    is_dup = (py == skip_dup) and (raw_r is None or raw_c == raw_skip_dup)
+    if r and not is_dup: w.append(f"{lb} in shared env ({r}); use {el}" if not req_exec else f"{lb} in shared env: {r}")
     if d["declared"] and not _matches(d, py): w.append(f"{lb} ({py}) outside {dl} (use {el})")
     elif live_py is not _NO_LIVE:
         pm = _live_mismatch(d, live_py)
@@ -419,16 +449,20 @@ def _check_interp(d, em, py, lb, hm, live_py=None, req_exec=False, skip_dup=None
     return w
 _NO_LIVE = object()
 
-def check_session_python(plan_path=None, plan=None, python_path=None, running_python=None, env=None):
+def check_session_python(plan_path=None, plan=None, python_path=None, running_python=None, env=None, extra_python=None):
     env_was_none = env is None
     em = os.environ if env_was_none else env
     hm, d = _resolve_home(em, env_was_none), declared_orchestration_env(plan_path=plan_path, plan=plan, env=em)
     w = ([d["plan_error"]] if d["plan_error"] else []) + _conflicts(d, em, env_was_none)
     rs = shutil.which("python3", path=em.get("PATH")) if python_path is None else python_path
+    raw_s, raw_r = _raw_interp(rs), _raw_interp(running_python or sys.executable)
     spy, rpy = (_canon_interp(rs) if rs else None), _canon_interp(running_python or sys.executable)
     if not d["declared"]: w.append(f"session python3 ({spy or 'missing'}) in undeclared env")
-    w += ["session PATH has no python3"] if spy is None else _check_interp(d, em, spy, "session python3", hm, _NO_LIVE, True)
-    if rpy: w += _check_interp(d, em, rpy, "running interpreter", hm, running_python, True, spy)
+    w += ["session PATH has no python3"] if spy is None else _check_interp(d, em, spy, "session python3", hm, _NO_LIVE, True, raw_py=rs)
+    if rpy: w += _check_interp(d, em, rpy, "running interpreter", hm, running_python, True, spy, raw_py=(running_python or sys.executable), raw_skip_dup=raw_s)
+    if extra_python:
+        epy = _canon_interp(extra_python)
+        if epy: w += _check_interp(d, em, epy, "--python", hm, _NO_LIVE, True, spy, raw_py=extra_python, raw_skip_dup=raw_s)
     cw = _conda_warn(d, em, rpy, spy, True, env_was_none)
     if cw: w.append(cw)
     gv = lambda k: (em.get(k) or "").strip() or None
@@ -473,7 +507,7 @@ def warn_if_declared_mismatch(plan=None, plan_path=None, env=None, running_pytho
     for e in errs: emit(e)
     for d in decls:
         if not d["declared"] and not d["plan_error"] and not d["other_env_errors"]: continue
-        rw = ([d["plan_error"]] if d["plan_error"] else []) + _conflicts(d, em, env_was_none) + _check_interp(d, em, rpy, "running interpreter", hm, running_python)
+        rw = ([d["plan_error"]] if d["plan_error"] else []) + _conflicts(d, em, env_was_none) + _check_interp(d, em, rpy, "running interpreter", hm, running_python, raw_py=(running_python or sys.executable))
         cw = _conda_warn(d, em, rpy, env_was_none=env_was_none)
         if cw: rw.append(cw)
         for m in rw: emit(m)
@@ -482,7 +516,7 @@ def warn_if_declared_mismatch(plan=None, plan_path=None, env=None, running_pytho
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__); c = p.add_subparsers(dest="cmd", required=True).add_parser("check")
     c.add_argument("--plan"); c.add_argument("--python"); c.add_argument("--strict", action="store_true"); c.add_argument("--json", action="store_true")
-    a = p.parse_args(argv); r = check_session_python(plan_path=a.plan, python_path=a.python)
+    a = p.parse_args(argv); r = check_session_python(plan_path=a.plan, extra_python=a.python)
     for w in r["warnings"]: print(_safe("WARNING: " + w), file=sys.stderr)
     print(json.dumps(r, indent=2, sort_keys=True) if a.json else f"orch_env {'OK' if r['ok'] else 'WARN'}: running={r['running_python'] or 'unknown'} session_python3={r['session_python3'] or 'missing'} declared={r['declared_env_path'] or r['declared_python'] or 'undeclared'}")
     if a.plan and any("could not read plan" in w or "is not a JSON object" in w for w in r["warnings"]): return 2

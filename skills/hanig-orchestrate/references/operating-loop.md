@@ -292,7 +292,7 @@ cp "$PROJECT_DIR/plan.json" "$TEST_OUT/plan.json"
 # Update $TEST_OUT/plan.json: set environments.orchestration (path=$ORCH_ENV, python="3.12", lock_file="none", build="uv venv --python 3.12 $ORCH_ENV") and declare/bind model-line envs (or environment="none" on non-Python code units)
 HANIG_ORCH_PYTHON="$ORCH_PYTHON" "$ORCH_PYTHON" "$HANIG_SWARM_DIR/scripts/swarm.py" validate "$TEST_OUT/plan.json"
 HANIG_ORCH_PYTHON="$ORCH_PYTHON" "$ORCH_PYTHON" "$HANIG_SWARM_DIR/scripts/swarm.py" status "$PROJECT_DIR/plan.json" --state-dir "$STATE"
-HANIG_ORCH_PYTHON="$ORCH_PYTHON" "$ORCH_PYTHON" "$HANIG_ORCHESTRATE_DIR/scripts/orch_env.py" check --plan "$TEST_OUT/plan.json" --python "$ORCH_PYTHON" --strict
+PATH="$ORCH_ENV/bin:$PATH" HANIG_ORCH_PYTHON="$ORCH_PYTHON" "$ORCH_PYTHON" "$HANIG_ORCHESTRATE_DIR/scripts/orch_env.py" check --plan "$TEST_OUT/plan.json" --strict
 HANIG_ORCH_PYTHON="$ORCH_PYTHON" "$ORCH_PYTHON" "$HANIG_ORCHESTRATE_DIR/scripts/hourly_facts.py" --state-root "$STATE_ROOT" --output-dir "$TEST_OUT" --repo "$REPO"
 ls -la "$TEST_OUT" && rm -rf "$TEST_OUT"
 ```

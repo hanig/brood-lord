@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -39,8 +40,8 @@ def _w(p, s):
     p.write_text(s, encoding="utf-8")
 
 
-def _run(cmd, env=None):
-    return subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=30)
+def _run(cmd, env=None, cwd=None):
+    return subprocess.run(cmd, env=env, cwd=cwd, capture_output=True, text=True, timeout=30)
 
 
 def _e(path, lock="requirements.lock", model_line=None, kind=None, py="3.12"):
@@ -157,6 +158,50 @@ class TestOrchestrationEnvCheckAndHelpers(unittest.TestCase):
             with mock.patch.object(OE.sys, "platform", "linux"), mock.patch.object(OE.P, "islink", return_value=True):
                 af(OE._dir_case_insensitive(str(td_cs)))
                 af(OE._overlap(str(td_cs / "NewFit"), str(td_cs / "newfit")))
+            # Case-variant hard links (Probe & pROBE) on a case-sensitive FS are not mistaken for case-insensitivity.
+            hl_dir = T / "hl_cs"
+            hl_dir.mkdir()
+            hl_st = os.stat_result((stat.S_IFREG | 0o644, 9991, 42, 2, 0, 0, 0, 0, 0, 0))
+            class _DE:
+                def __init__(self, nm): self.name, self.path = nm, str(hl_dir / nm)
+                def is_symlink(self): return False
+                def stat(self, follow_symlinks=True): return hl_st
+            class _SC:
+                def __init__(self, es): self._es = es
+                def __enter__(self): return iter(self._es)
+                def __exit__(self, *a): return False
+            hl_real = str(hl_dir.resolve())
+            with mock.patch.object(OE.sys, "platform", "linux"), \
+                 mock.patch.object(OE.os, "scandir", return_value=_SC([_DE("Probe"), _DE("pROBE")])), \
+                 mock.patch.object(OE.os, "lstat", side_effect=lambda p: os.stat_result((stat.S_IFDIR | 0o755, 1, 42, 2, 0, 0, 0, 0, 0, 0)) if p == hl_real else hl_st):
+                af(OE._dir_case_insensitive(str(hl_dir)))
+                af(OE._overlap(str(hl_dir / "NewFit"), str(hl_dir / "newfit")))
+            # >64 numeric entries followed by an alpha entry are still probed on non-Darwin case-insensitive mounts.
+            many_dir = T / "many_ci"
+            many_dir.mkdir()
+            for idx in range(70):
+                (many_dir / f"{idx:03d}").mkdir()
+            (many_dir / "Example").mkdir()
+            if (many_dir / "eXAMPLE").exists() and os.path.samefile(str(many_dir / "Example"), str(many_dir / "eXAMPLE")):
+                with mock.patch.object(OE.sys, "platform", "linux"):
+                    at(OE._dir_case_insensitive(str(many_dir)))
+                    at(OE._overlap(str(many_dir / "NewFit"), str(many_dir / "newfit")))
+            # CLI --python checks the supplied candidate IN ADDITION to session PATH python3, never suppressing PATH.
+            if os.path.exists("/usr/bin/python3"):
+                p_cli = _run([str(py), str(OS / "orch_env.py"), "check", "--strict", "--plan", str(pp), "--python", str(py)], env={"PATH": "/usr/bin:/bin"})
+                ae((p_cli.returncode, "/usr/bin/python3" in p_cli.stderr), (1, True))
+            # Symlinked reserved env basename on PATH (workbook -> orch-venv) is caught via its raw path before canonicalization.
+            wb_link = T / "workbook"
+            wb_link.symlink_to(v)
+            p_wb = _run([str(py), str(OS / "orch_env.py"), "check", "--strict", "--plan", str(pp)], env={"PATH": f"{wb_link / 'bin'}:/usr/bin:/bin"})
+            ae((p_wb.returncode, "workbook" in p_wb.stderr), (1, True))
+            # Conda base installed under envs/<name> (containing both conda-meta and condabin) is rejected as conda base.
+            eb_base = T / "envs/ops-base"
+            (eb_base / "conda-meta").mkdir(parents=True)
+            (eb_base / "condabin").mkdir()
+            eb_py = self._mkx(eb_base / "bin/python")
+            at(OE._is_conda_base(str(eb_base)))
+            af(ok(eb_py, plan=oe(eb_base)))
             # Non-orchestration shared symlink (miniforge3/envs/workbook -> wb-store) is caught via its raw declared path.
             wbs = T / "wb-store"
             (wbs / "conda-meta").mkdir(parents=True)
@@ -250,6 +295,19 @@ class TestOrchestrationEnvCheckAndHelpers(unittest.TestCase):
             er.mkdir()
             ph = _run([str(pya), str(OS / "hourly_facts.py"), "--state-root", str(coord), "--output-dir", str(od), "--repo", str(er)], env=clean)
             ae((ph.returncode, W in ph.stderr, "could not read plan" in ph.stderr, "invalid/missing" in ph.stderr, "not an object" in ph.stderr), (0, True, True, True, True))
+            # wait_report.py discovers plan.json via --plan or output_dir.parent even from another working directory.
+            wr_proj = T / "wr-proj"
+            wr_rep = wr_proj / "reports"
+            wr_rep.mkdir(parents=True)
+            _w(wr_proj / PJ, json.dumps({E: {O: _orch(va)}}))
+            _w(wr_rep / "20261101-01-0800.md", "Status: ATTENTION count: 1; live work: no.\n")
+            wr_other = T / "wr-other-cwd"
+            wr_other.mkdir()
+            p_wr = _run([str(pyb), str(OS / "wait_report.py"), "--output-dir", str(wr_rep)], env=clean, cwd=str(wr_other))
+            ae((p_wr.returncode, W in p_wr.stderr), (0, True))
+            _w(wr_rep / "20261101-02-0800.md", "Status: ATTENTION count: 1; live work: no.\n")
+            p_wr2 = _run([str(pyb), str(OS / "wait_report.py"), "--output-dir", str(wr_rep), "--plan", str(wr_proj / PJ)], env=clean, cwd=str(wr_other))
+            ae((p_wr2.returncode, W in p_wr2.stderr), (0, True))
             locked, dang = T / "locked", T / "dang-plan.json"
             locked.mkdir()
             _w(locked / PJ, "{}")
@@ -380,6 +438,16 @@ class TestOrchestrationEnvCheckAndHelpers(unittest.TestCase):
             self.assertIsNone(OE._shared_conda_dir(str(ec)))
             self._wplan(proj / PJ, {O: _orch(ec)})
             ok2(rc(epy))
+            # Conda base installed directly under envs/<name> with condabin is refused by swarm-cron.sh too.
+            ecb, ecb_py, _ = self._venv(T / "envs", "ops-cb")
+            (ecb / "conda-meta").mkdir()
+            (ecb / "condabin").mkdir()
+            self._wplan(proj / PJ, {O: _orch(ecb)})
+            c2(rc(ecb_py), "shared conda")
+            # Missing plan.json fails closed in swarm-cron.sh before execing swarm.py advance.
+            no_plan_proj = T / "no-plan-proj"
+            no_plan_proj.mkdir()
+            c2(rc(pyd, pr=no_plan_proj), "missing plan")
             br = T / "broken-venv"
             (br / "bin").mkdir(parents=True)
             (br / "bin/python").symlink_to(sys.executable)

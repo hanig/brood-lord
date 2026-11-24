@@ -63,8 +63,12 @@ def main(argv=None):
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--output-dir", required=True, type=Path)
   parser.add_argument("--poll-seconds", type=positive, default=60)
+  parser.add_argument("--plan", type=Path, default=None)
   args = parser.parse_args(argv)
-  orch_env.warn_if_declared_mismatch(candidate_plan_paths=[Path.cwd() / "plan.json"])
+  if args.plan is not None:
+    orch_env.warn_if_declared_mismatch(plan_path=args.plan)
+  else:
+    orch_env.warn_if_declared_mismatch(candidate_plan_paths=[Path.cwd() / "plan.json", args.output_dir.absolute().parent / "plan.json"])
   while True:
     path = take_report(args.output_dir.absolute())
     if path is not None:
