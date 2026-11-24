@@ -52,15 +52,17 @@ def dir_case_insensitive(d):
             except ERR: pass
         dev = os.lstat(cur).st_dev
         try:
-            seen, deferred = set(), []
+            seen, deferred, sym_def = set(), [], []
             with os.scandir(cur) as it:
                 for e in it:
                     sw = e.name.swapcase()
                     if sw == e.name: continue
                     seen.add(e.name)
-                    if e.is_symlink(): continue
                     try: st = e.stat(follow_symlinks=False)
                     except ERR: continue
+                    if e.is_symlink():
+                        if len(sym_def) < 8: sym_def.append((sw, st))
+                        continue
                     if stat.S_ISDIR(st.st_mode) or st.st_nlink == 1:
                         return case_probe_same(st, P.join(cur, sw))
                     if len(deferred) < 8:
@@ -68,6 +70,11 @@ def dir_case_insensitive(d):
             for sw, st in deferred:
                 if sw in seen: return False
                 return case_probe_same(st, P.join(cur, sw))
+            for sw, st in sym_def:
+                if sw in seen: return False
+                try: sw_st = os.lstat(P.join(cur, sw))
+                except FileNotFoundError: return False
+                return (sw_st.st_dev, sw_st.st_ino) == (st.st_dev, st.st_ino)
         except ERR: pass
         while cur and cur != P.dirname(cur):
             par, nm = P.split(cur)
@@ -132,7 +139,7 @@ def overlap(a, b):
     (ea, ma), (eb, mb) = split_ex(a), split_ex(b)
     if same_dir(ea, eb):
         if not ma or not mb: return True
-        if dir_case_insensitive(ea): ma, mb = tuple(x.lower() for x in ma), tuple(x.lower() for x in mb)
+        if dir_case_insensitive(ea): ma, mb = tuple(x.casefold() for x in ma), tuple(x.casefold() for x in mb)
         return ma[:len(mb)] == mb or mb[:len(ma)] == ma
     try: return (not ma and any(x.exists() and same_dir(str(x), ea) for x in Path(eb).parents)) or (not mb and any(x.exists() and same_dir(str(x), eb) for x in Path(ea).parents))
     except ERR: return False
@@ -141,7 +148,7 @@ if not ((P.isfile(P.join(cp, "pyvenv.cfg")) and not same_dir(cp, P.realpath(sys.
 cn, cf = (os.environ.get("CONDA_DEFAULT_ENV") or "").strip().lower(), (os.environ.get("CONDA_PREFIX") or "").strip()
 if cn in SPR.SHARED_ENV_NAMES:
     if cf and same_dir(P.realpath(cf) if P.exists(cf) else P.normpath(cf), cp): fail(f"ORCH_PYTHON in shared conda env {cn!r}")
-    if not cf and not P.isfile(P.join(cp, "pyvenv.cfg")): fail(f"shared conda env {cn!r} active")
+    if not cf and not P.isfile(P.join(cp, "pyvenv.cfg")) and not (P.isdir(P.join(cp, "conda-meta")) and not is_sh_conda(cp)): fail(f"shared conda env {cn!r} active")
 if not P.isfile(plan_path): fail(f"missing plan {plan_path}")
 try: plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
 except (OSError, ValueError, RecursionError) as exc: fail(f"unreadable plan {plan_path}: {exc}")

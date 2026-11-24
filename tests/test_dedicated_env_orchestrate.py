@@ -122,6 +122,8 @@ class TestOrchestrationEnvCheckAndHelpers(unittest.TestCase):
             (po / "conda-meta").mkdir(parents=True)
             self._mkx(po / "bin/conda")
             at(ok(self._mkx(po / "bin/python"), env={CD: "base", CP: str(mf)}, plan=oe(po)))
+            # Stale CONDA_DEFAULT_ENV=base with CONDA_PREFIX unset does not reject a dedicated named conda env.
+            at(ok(po / "bin/python", env={CD: "base"}, plan=oe(po)))
             for bh in (v / "bin/pythno", v / "Scripts/python3"):
                 af(ok(py3, py, {H: str(bh)}, plan_path=pp))
                 af(ok(bh, py, plan_path=pp))
@@ -186,6 +188,15 @@ class TestOrchestrationEnvCheckAndHelpers(unittest.TestCase):
                 with mock.patch.object(OE.sys, "platform", "linux"):
                     at(OE._dir_case_insensitive(str(many_dir)))
                     at(OE._overlap(str(many_dir / "NewFit"), str(many_dir / "newfit")))
+                    at(OE._overlap(str(many_dir / "Stra\u00dfe"), str(many_dir / "STRASSE")))
+            # Symlink-only case-insensitive mount root detects case-insensitivity via lstat without following symlink.
+            sym_ci = T / "sym_ci"
+            sym_ci.mkdir()
+            (sym_ci / "Probe").symlink_to("/nonexistent")
+            if (sym_ci / "pROBE").is_symlink():
+                with mock.patch.object(OE.sys, "platform", "linux"):
+                    at(OE._dir_case_insensitive(str(sym_ci)))
+                    at(OE._overlap(str(sym_ci / "NewFit"), str(sym_ci / "newfit")))
             # CLI --python checks the supplied candidate IN ADDITION to session PATH python3, never suppressing PATH.
             if os.path.exists("/usr/bin/python3"):
                 p_cli = _run([str(py), str(OS / "orch_env.py"), "check", "--strict", "--plan", str(pp), "--python", str(py)], env={"PATH": "/usr/bin:/bin"})
@@ -438,6 +449,9 @@ class TestOrchestrationEnvCheckAndHelpers(unittest.TestCase):
             self.assertIsNone(OE._shared_conda_dir(str(ec)))
             self._wplan(proj / PJ, {O: _orch(ec)})
             ok2(rc(epy))
+            # Stale CONDA_DEFAULT_ENV=base without CONDA_PREFIX does not reject dedicated named conda env in swarm-cron.sh.
+            clean_no_cp = {k: v for k, v in clean.items() if k not in ("CONDA_PREFIX", "CONDA_DEFAULT_ENV")}
+            ok2(self._cron(cron, proj, dict(clean_no_cp, ORCH_PYTHON=str(epy), CONDA_DEFAULT_ENV="base")))
             # Conda base installed directly under envs/<name> with condabin is refused by swarm-cron.sh too.
             ecb, ecb_py, _ = self._venv(T / "envs", "ops-cb")
             (ecb / "conda-meta").mkdir()

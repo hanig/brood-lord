@@ -63,15 +63,17 @@ def _dir_case_insensitive(d):
             except _ERR: pass
         dev = os.lstat(cur).st_dev
         try:
-            seen, deferred = set(), []
+            seen, deferred, sym_def = set(), [], []
             with os.scandir(cur) as it:
                 for e in it:
                     sw = e.name.swapcase()
                     if sw == e.name: continue
                     seen.add(e.name)
-                    if e.is_symlink(): continue
                     try: st = e.stat(follow_symlinks=False)
                     except _ERR: continue
+                    if e.is_symlink():
+                        if len(sym_def) < 8: sym_def.append((sw, st))
+                        continue
                     if stat.S_ISDIR(st.st_mode) or st.st_nlink == 1:
                         return _case_probe_same(st, P.join(cur, sw))
                     if len(deferred) < 8:
@@ -79,6 +81,11 @@ def _dir_case_insensitive(d):
             for sw, st in deferred:
                 if sw in seen: return False
                 return _case_probe_same(st, P.join(cur, sw))
+            for sw, st in sym_def:
+                if sw in seen: return False
+                try: sw_st = os.lstat(P.join(cur, sw))
+                except FileNotFoundError: return False
+                return (sw_st.st_dev, sw_st.st_ino) == (st.st_dev, st.st_ino)
         except _ERR: pass
         while cur and cur != P.dirname(cur):
             par, nm = P.split(cur)
@@ -368,7 +375,7 @@ def _overlap(a, b):
     (ea, ma), (eb, mb) = _split_ex(a), _split_ex(b)
     if _same_dir(ea, eb):
         if not ma or not mb: return True
-        if _dir_case_insensitive(ea): ma, mb = tuple(x.lower() for x in ma), tuple(x.lower() for x in mb)
+        if _dir_case_insensitive(ea): ma, mb = tuple(x.casefold() for x in ma), tuple(x.casefold() for x in mb)
         return ma[:len(mb)] == mb or mb[:len(ma)] == ma
     try: return (not ma and any(x.exists() and _same_dir(str(x), ea) for x in Path(eb).parents)) or (not mb and any(x.exists() and _same_dir(str(x), eb) for x in Path(ea).parents))
     except _ERR: return False
@@ -413,7 +420,7 @@ def _conda_warn(d, em, rpy, spy=None, req_s=False, env_was_none=False):
     cd, cp = (em.get("CONDA_DEFAULT_ENV") or "").strip() or None, (em.get("CONDA_PREFIX") or "").strip() or None
     if not (cd and cd.lower() in SHARED_ENV_NAMES): return None
     hm, dr, cc = _resolve_home(em, env_was_none), _canon_root(d["plan_env_path"] or d["env_path"]), (_canon_root(cp) if cp else None)
-    try: hc = bool(dr and "\0" not in dr and P.isfile(P.join(dr, "pyvenv.cfg")))
+    try: hc = bool(dr and "\0" not in dr and (P.isfile(P.join(dr, "pyvenv.cfg")) or (P.isdir(P.join(dr, "conda-meta")) and not _shared_conda_dir(dr))))
     except _ERR: hc = False
     inc = (_same_dir(dr, cc) or _belongs(cc, rpy) or (spy is not None and _belongs(cc, spy))) if cc else not hc
     rok = d["declared"] and _matches(d, rpy) and not shared_env_reason(rpy, home=hm)

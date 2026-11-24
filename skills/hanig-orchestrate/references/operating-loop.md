@@ -303,7 +303,7 @@ ls -la "$TEST_OUT" && rm -rf "$TEST_OUT"
 set -eu
 BACKUP_DIR="$HOME/.local/state/$PROJECT/env-migration-backup-$(date +%Y%m%dT%H%M%S)"
 mkdir -p "$BACKUP_DIR"
-cp -a "$PROJECT_DIR/plan.json" "$BACKUP_DIR/plan.json.bak"
+cp -L "$PROJECT_DIR/plan.json" "$BACKUP_DIR/plan.json.bak"
 if crontab -l > "$BACKUP_DIR/crontab.bak" 2>"$BACKUP_DIR/crontab.err"; then
   rm -f "$BACKUP_DIR/crontab.err"
 elif grep -qi "no crontab for" "$BACKUP_DIR/crontab.err"; then
