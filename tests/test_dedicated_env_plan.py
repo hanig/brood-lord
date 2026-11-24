@@ -391,24 +391,41 @@ class TestDedicatedEnvironmentsValidation(unittest.TestCase):
                 _slurm("ml2", _rt("m2", mm_ep, probe=f"{mm_ep} --version"), kind="pipeline", model_line=mk, command=f"{mm_ep} --version"),
                 self._u(mm_ep.rsplit("/", 1)[0] + "/gmake", "none", uid="n_gm", command="gmake --version"),
             ], None))
-        # Explicitly bound wrapper inside declared env libexec (even named torchrun) passes; nested venv inside declared env or third conda/venv wrapper is refused.
-        S.validate_plan(self._plan([_slurm("w_tr", _rt("w_tr", f"{STAGE_ROOT}/libexec/torchrun", st, "wrapper"), command=f"{STAGE_ROOT}/libexec/torchrun --help")]))
+        # Explicitly bound wrapper inside declared env libexec (even named torchrun, inline or via catalogue) passes; nested venv inside declared env (bin or libexec) or third conda/venv wrapper is refused.
+        tr_rt = _rt("w_tr", f"{STAGE_ROOT}/libexec/torchrun", res="wrapper", probe=f"{STAGE_ROOT}/libexec/torchrun --help")
+        S.validate_plan(self._plan([_slurm("w_tr", dict(tr_rt, environment=st), command=f"{STAGE_ROOT}/libexec/torchrun --help")]))
+        S.validate_plan(self._plan([_slurm("w_tr2", "w_tr", environment=st, command=f"{STAGE_ROOT}/libexec/torchrun --help")], runtimes={"w_tr": tr_rt}))
         self._fail(self._plan([self._u(f"{STAGE_ROOT}/tools/docs-venv/bin/python", st, res="wrapper")]), "outside")
+        self._fail(self._plan([self._u(f"{STAGE_ROOT}/tools/bench-venv/libexec/python", st, res="wrapper")]), "outside")
         self._fail(self._plan([self._u(f"{STAGE_ROOT}/tools/docs-venv/bin/run-docs", res="wrapper")]), "does not belong directly")
         self._fail(self._plan([self._u("stage", res="conda")]), "requires explicit 'environment' binding")
+        # Standalone micromamba in /srv/tools/common/bin passes for a bound pipeline; legacy conda prefix named micromamba/ still registers its root.
+        cm_rt = _rt("cm", "/srv/tools/common/bin/micromamba", probe="/srv/tools/common/bin/micromamba --version")
+        S.validate_plan(self._plan([_slurm("p_cm", cm_rt, kind="pipeline", environment=st, command="/srv/tools/common/bin/micromamba run -p /srv/proj/.venvs/stage python train.py")]))
+        self._fail(self._plan([self._u("/srv/models/micromamba/", res="conda", uid="a"), self._u("/srv/models/micromamba/bin/rg", "none", uid="b")], None), "conflicts with python environment root")
+        # Legacy uv directly inside a shared root (/usr/local/python3) is refused.
+        self._fail(self._plan([self._u("/usr/local/python3", res="uv")], None), "shared system dir")
         # Undeclared venv/conda-layout wrappers, uv launchers, and pipeline engines are refused; shared legacy venv console scripts are refused.
         for third_ep in ("/srv/bench/.venv/bin/coverage", "/opt/miniforge3/envs/bench/bin/coverage"):
             self._fail(self._plan([_slurm(x, _rt(x, third_ep, x, "wrapper"), model_line=x, command=third_ep + " run") for x in (st, mk)]), "outside")
         self._fail(self._plan([_slurm("p_venv", _rt("p_venv", "/srv/releases/native-venv/bin/make", st), kind="pipeline", command="/srv/releases/native-venv/bin/make")]), "does not belong directly")
         self._fail(self._plan([self._u("/srv/bench/.venv/bin/uv", st, res="uv")]), "does not belong directly")
         self._fail(self._plan([self._u("/srv/team/venvs/workbook/bin/coverage")], None), "workbook")
-        # Native environment='none' unit under venvs/common validates identically inline and via runtimes catalogue.
-        ns_rt = _rt("ns", "/srv/releases/venvs/common/bin/sort", probe="/srv/releases/venvs/common/bin/sort --version")
-        S.validate_plan(self._plan([_slurm("u_ns1", ns_rt, environment="none", command="/srv/releases/venvs/common/bin/sort --version")]))
-        S.validate_plan(self._plan([_slurm("u_ns2", "ns", environment="none", command="/srv/releases/venvs/common/bin/sort --version")], runtimes={"ns": ns_rt}))
-        # Legacy nested inferred roots (fit/bin/python + fit/libexec/python) and non-bin uv interpreters (/srv/fit/python3) catch cross-model-line sharing.
+        # Native environment='none' units under venvs/common or virtualenvs/common or catalogue profiles with model_line validate identically inline and via catalogue.
+        for native_ep in ("/srv/releases/venvs/common/bin/sort", "/srv/releases/virtualenvs/common/bin/sort"):
+            ns_rt = _rt("ns", native_ep, probe=native_ep + " --version")
+            S.validate_plan(self._plan([_slurm("u_ns1", ns_rt, environment="none", command=native_ep + " --version")]))
+            S.validate_plan(self._plan([_slurm("u_ns2", "ns", environment="none", command=native_ep + " --version")], runtimes={"ns": ns_rt}))
+        S.validate_plan(self._plan(
+            [_slurm("n1", "a", environment="none", command="tool1"), _slurm("n2", "b", environment="none", command="tool2")],
+            runtimes={"a": _rt("a", "/srv/releases/native-venv/bin/tool1", model_line=st), "b": _rt("b", "/srv/releases/native-venv/bin/tool2", model_line=mk)},
+        ))
+        # Legacy nested inferred roots (fit/bin/python + fit/libexec/python) and non-bin uv interpreters catch sharing, while distinct nested legacy envs (stage/bin/python + stage/.venv/bin/python, and nested conda prefixes) remain distinct.
         self._fail(self._plan([self._u("/srv/fit/bin/python", uid="a", model_line=st), self._u("/srv/fit/libexec/python", uid="b", model_line=mk)], None), "share environment root")
         self._fail(self._plan([self._u("/srv/fit/python3", res="uv", uid="a", model_line=st), self._u("/srv/fit/python3", res="uv", uid="b", model_line=mk)], None), "share environment root")
+        S.validate_plan(self._plan([self._u("/srv/stage/bin/python", uid="a", model_line=st), self._u("/srv/stage/.venv/bin/python", uid="b", model_line=mk)], None))
+        S.validate_plan(self._plan([self._u("/srv/models/stage", res="conda", uid="a", model_line=st), self._u("/srv/models/stage/experiments/eval", res="conda", uid="b", model_line=mk)], None))
+        S.validate_plan(self._plan([self._u("/opt/miniforge3/envs/common/bin/fit", res="conda", uid="a", model_line=st)], None))
         # Exact-case POSIX system prefixes preserve distinct /USR/bin/fit on case-sensitive hosts; /usr/libexec root, platform-python3.6m, and $HOME/.local user-site are refused.
         S.validate_plan(self._plan([self._u("/USR/bin/fit/bin/python", st)], self._e1("/USR/bin/fit")))
         self._fail(self._plan([self._u(f"{STAGE_ROOT}/bin/python", st)], {"orchestration": _orch("/usr/libexec"), st: _env_spec(STAGE_ROOT, model_line=st)}), "shared system dir")
@@ -765,12 +782,23 @@ class TestSurveyPythonEnvDetection(unittest.TestCase):
             fit_alias.parent.mkdir(parents=True, exist_ok=True)
             fit_alias.symlink_to(wb_real)
             self.assertEqual(_key(_det(fit_alias, **{CP: str(fit_alias), CD: "fit"})), ("conda", "fit", True))
-            # On case-sensitive hosts, /USR/bin/fit is distinct from /usr/bin and not flagged; /usr/libexec platform-python is flagged as shared system dir.
+            # On case-sensitive hosts, /USR/bin/fit is distinct from /usr/bin and not flagged; /usr/sbin and /usr/libexec platform-python are flagged as shared system dir.
             with mock.patch.object(SURVEY._P, "samefile", return_value=False):
                 self.assertEqual(_key(_det("/USR/bin/fit", "/usr")), ("venv", "fit", False))
+            self.assertEqual(_key(_det("/usr/sbin/fit", "/usr")), ("venv", "fit", True))
             rp_rec = det(env={}, executable="/usr/libexec/platform-python3.6m", prefix="/usr", base_prefix="/usr")
             self.assertTrue(rp_rec["shared_risk"])
             self.assertIn("shared system dir", rp_rec["shared_reason"])
+            # Verified CONDA_PREFIX alias named workbook pointing to storage/fit is flagged shared; miniforge3/envs/common/bin/fit is NOT flagged on ancestor envs/common.
+            fit_real = T / "storage/fit-real"
+            (fit_real / "conda-meta").mkdir(parents=True)
+            wb_alias = T / "alias-prefixes/workbook"
+            wb_alias.parent.mkdir(parents=True, exist_ok=True)
+            wb_alias.symlink_to(fit_real)
+            self.assertEqual(_key(_det(fit_real, **{CP: str(wb_alias), CD: str(wb_alias)})), ("conda", "fit-real", True))
+            mf_ec = T / "mf-common/miniforge3/envs/common/bin/fit"
+            (mf_ec / "conda-meta").mkdir(parents=True)
+            self.assertEqual(_key(_det(mf_ec)), ("conda", "fit", False))
             # Symlinked $HOME/.local -> storage/fit is flagged shared when invoked from real path; a symlink in $HOME/.local/bin pointing to a dedicated conda python is NOT flagged.
             h_loc = T / "home-local"
             h_loc.mkdir()

@@ -243,7 +243,7 @@ _SERR = (OSError, ValueError, UnicodeError)
 _pt = lambda *xs: tuple(tuple(x.split("/")) for x in xs)
 _CONDA_ROOT_RE = re.compile(r"^(?:\.conda|micromamba|(?:miniconda|miniforge|anaconda|mambaforge)(?:\d+)?)$", re.I)
 _SHARED_ENV_NAMES = frozenset({"base", "workbook", "default", "shared", "personal", "common", "global", "root"})
-_SYSTEM_SHARED_PREFIXES = _pt("usr/bin", "usr/local/bin", "usr/libexec", "bin", "sbin", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew/bin",
+_SYSTEM_SHARED_PREFIXES = _pt("usr/bin", "usr/local/bin", "usr/sbin", "usr/libexec", "bin", "sbin", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew/bin",
                               "Library/Frameworks/Python.framework", "Library/Developer/CommandLineTools", "Applications/Xcode.app", "System/Library")
 _HB_PREFS = _pt("opt/homebrew/opt", "opt/homebrew/Cellar", "usr/local/opt", "usr/local/Cellar", "home/linuxbrew/.linuxbrew/opt", "home/linuxbrew/.linuxbrew/Cellar")
 _HOME_VENV_LAYOUTS = ((("home",), 2), (("Users",), 2), (("mnt", "weka", "home"), 4), (("root",), 1),
@@ -351,7 +351,8 @@ def _shared_python_env_reason(path, conda_name=None, home=None, is_env_root=Fals
             r = r[bo:]
             if not r or r[0] in ("bin", "scripts", "condabin"): return f"in conda base ({ps[i]!r})"
             if r[0] == "envs" and len(r) >= 2:
-                if r[1] in _SHARED_ENV_NAMES: return f"in shared conda env {ps[i + 2 + bo]!r}"
+                if r[1] in _SHARED_ENV_NAMES and (len(r) == 2 or (not is_env_root and len(r) == 4 and r[2] in ("bin", "scripts"))):
+                    return f"in shared conda env {ps[i + 2 + bo]!r}"
                 if len(r) == 2 or r[2] in ("bin", "scripts"): break
     for i, s in enumerate(lo):
         if s in ("envs", "virtualenvs", ".virtualenvs") and i + 1 < len(lo) and lo[i + 1] in _SHARED_ENV_NAMES:
@@ -425,6 +426,7 @@ def detect_python_env(env=None, executable=None, prefix=None, base_prefix=None):
         sr = (_shared_python_env_reason(pr, name, hm, is_env_root=True)
               or (_shared_python_env_reason(pr, icn, hm, is_env_root=True) if icn and icn != name else None)
               or (_shared_python_env_reason(rpr, name, hm, is_env_root=True) if rpr and rpr != pr else None)
+              or (_shared_python_env_reason(cpr, name, hm, is_env_root=True) if sc and cpr and cpr not in (pr, rpr) else None)
               or (_shared_python_env_reason(rex or ex, name, hm) if (rex or ex) else None))
     else:
         kind, name = "system", None

@@ -519,7 +519,7 @@ def shared_env_reason(path, is_env_root=False, allow_bare=False, home=None):
         if lo[-1] in SHARED_ENV_NAMES: return f"{t!r} in shared personal env {ps[-1]!r}"
     elif py:
         if not is_mm and any(ps[:len(pr)] == pr for pr in _SYSTEM_BIN_PREFIXES): return f"{t!r} in shared system Python"
-        if len(lo) >= 3 and lo[-2] in ("bin", "scripts") and lo[-3] in SHARED_ENV_NAMES: return f"{t!r} in shared personal env {ps[-3]!r}"
+        if not is_mm and len(lo) >= 3 and lo[-2] in ("bin", "scripts") and lo[-3] in SHARED_ENV_NAMES: return f"{t!r} in shared personal env {ps[-3]!r}"
     for i, s in enumerate(lo):
         if s in (".pyenv", "pyenv") and i + 1 < len(lo) and lo[i + 1] in ("shims", "versions"): return f"{t!r} in shared pyenv"
     def _is_user_local(hl_len):
@@ -556,11 +556,12 @@ def shared_env_reason(path, is_env_root=False, allow_bare=False, home=None):
             r = r[bo:]
             if not r or r[0] in ("bin", "scripts", "condabin"): return f"{t!r} in conda base ({ps[i]!r})"
             if r[0] == "envs" and len(r) >= 2:
-                if r[1] in SHARED_ENV_NAMES: return f"{t!r} in shared conda env {ps[i + 2 + bo]!r}"
+                if r[1] in SHARED_ENV_NAMES and (len(r) == 2 or (len(r) == 4 and r[2] in ("bin", "scripts") and (not is_env_root or r[1] in ("workbook", "base")))):
+                    return f"{t!r} in shared conda env {ps[i + 2 + bo]!r}"
                 if len(r) == 2 or r[2] in ("bin", "scripts"): break
     for i, s in enumerate(lo):
         if s in ("envs", "virtualenvs", ".virtualenvs") and i + 1 < len(lo) and lo[i + 1] in SHARED_ENV_NAMES:
-            if s != "envs" or i + 1 == len(lo) - 1 or (not is_env_root and len(lo) == i + 4 and lo[i + 2] in ("bin", "scripts") and (py or lo[i + 1] in ("workbook", "base"))):
+            if (is_env_root and i + 1 == len(lo) - 1) or (not is_env_root and (py or lo[i + 1] in ("workbook", "base")) and (s != "envs" or (len(lo) == i + 4 and lo[i + 2] in ("bin", "scripts")))):
                 return f"{t!r} in shared personal env {ps[i + 1]!r}"
     return None
 
@@ -596,6 +597,7 @@ def _conda_dist_env_info(ps, is_exe=False):
 
 
 def _is_native_env_launcher(e):
+    if not isinstance(e, str) or e.endswith("/"): return False
     p, err = _clean_abs_parts(e)
     return bool(not err and p and p[-1].lower() in ("micromamba", "micromamba.exe"))
 
@@ -1028,6 +1030,17 @@ def _validate_environments(plan, units):
         p, err = _clean_abs_parts(e)
         return bool(not err and p and _UV_LAUNCHER_RE.fullmatch(p[-1]))
 
+    def _has_nested_env_dir(exp, entry):
+        ep, eerr = _clean_abs_parts(exp)
+        tp, terr = _clean_abs_parts(entry)
+        if eerr or terr or len(tp) <= len(ep) + 1 or tp[:len(ep)] != ep: return False
+        sub = [x.lower() for x in tp[len(ep):-1]]
+        for idx, seg in enumerate(sub):
+            if seg in ("venv", ".venv") or seg.startswith(".venv") or seg.endswith(("-venv", "_venv")): return True
+            if seg in (".venvs", "venvs", "virtualenvs", ".virtualenvs") and idx + 1 < len(sub): return True
+            if seg == "envs" and idx > 0 and idx + 1 < len(sub) and (_CONDA_ROOT_RE.fullmatch(sub[idx - 1]) or sub[idx - 1] == "conda"): return True
+        return False
+
     def _is_pipeline_engine(e, kind, allow_u=False):
         return bool((kind == "pipeline" or allow_u) and e and (not _entrypoint_is_python_exe(e) or _is_native_env_launcher(e)) and not _looks_py_env_root(e))
 
@@ -1062,6 +1075,11 @@ def _validate_environments(plan, units):
                     psv, _ = _clean_abs_parts(entry)
                     vr_sh = shared_env_reason("/" + "/".join(psv[:-2]), is_env_root=True)
                     if vr_sh: _ref(lb, vr_sh)
+                if not ac and er != "none" and res not in ("conda", "module") and _entrypoint_is_python_exe(entry, res) and not _is_native_env_launcher(entry):
+                    inf_r = _inferred_env_root(entry, res)
+                    if inf_r and inf_r != "/":
+                        ir_sh = shared_env_reason(inf_r, is_env_root=True)
+                        if ir_sh: _ref(lb, ir_sh)
         if entry and res != "container" and any(_env_path_contains(env_paths[oid], entry) for oid in orch_ids): raise PlanError(f"{lb} {entry!r} targets orchestration env")
         if entry and res not in ("conda", "container"):
             eps, eerr = _clean_abs_parts(entry)
@@ -1087,7 +1105,7 @@ def _validate_environments(plan, units):
                 elif res == "wrapper":
                     for eid, ep in env_paths.items():
                         if eid != er and _env_path_contains(ep, entry): raise PlanError(f"{lb} wrapper {entry!r} in {eid!r}, not {er!r}")
-                    if _looks_py_env_root(entry) and not _interpreter_belongs_to_env(exp, entry): raise PlanError(f"{lb} wrapper {entry!r} outside {er!r}")
+                    if (_looks_py_env_root(entry) and not _interpreter_belongs_to_env(exp, entry)) or _has_nested_env_dir(exp, entry): raise PlanError(f"{lb} wrapper {entry!r} outside {er!r}")
                     if _entrypoint_is_python_exe(entry, res) and not (_env_path_contains(exp, entry, strict=True) or ((kind == "pipeline" or allow_u) and _is_native_env_launcher(entry))): raise PlanError(f"{lb} wrapper {entry!r} outside {er!r}")
                 elif _is_pipeline_engine(entry, kind, allow_u) and not any(eid != er and _env_path_contains(ep, entry) for eid, ep in env_paths.items()):
                     pass
@@ -1108,7 +1126,10 @@ def _validate_environments(plan, units):
                     m = next((eid for eid, ep in env_paths.items() if ep == "/" + "/".join(ps)), None)
                 else: m = next((eid for eid, ep in env_paths.items() if _interpreter_belongs_to_env(ep, entry)), None)
                 if m is None:
-                    if allow_u and (lm or (_is_uv_launcher(entry, res) and not _looks_py_env_root(entry)) or _is_pipeline_engine(entry, kind, allow_u)): return None, nc, pt
+                    wrap_in_env = (res == "wrapper" and not _looks_py_env_root(entry)
+                                   and any(_env_path_contains(ep, entry, strict=True) and not _has_nested_env_dir(ep, entry) and envs[eid]["_kind"] != "orchestration"
+                                           for eid, ep in env_paths.items()))
+                    if allow_u and (lm or wrap_in_env or (_is_uv_launcher(entry, res) and not _looks_py_env_root(entry)) or _is_pipeline_engine(entry, kind, allow_u)): return None, nc, pt
                     raise PlanError(f"{lb} {entry!r} in undeclared env")
                 if envs[m]["_kind"] == "orchestration": raise PlanError(f"{lb} {entry!r} targets orchestration env {m!r}")
         else:
@@ -1150,12 +1171,13 @@ def _validate_environments(plan, units):
 
     def _registers_py_root(entry, res, mid=None, er=None):
         if mid in env_paths or not entry or not entry.startswith("/") or res == "container": return False
-        if er != "none" and not (res == "conda" and entry.endswith("/")) and _looks_py_env_root(entry): return True
+        if res == "conda": return True
+        if er != "none" and _looks_py_env_root(entry): return True
         if _is_uv_launcher(entry, res) or _is_native_env_launcher(entry): return False
         if res == "wrapper": return _entrypoint_is_python_exe(entry, res)
-        return res == "conda" or _entrypoint_is_python_exe(entry, res)
+        return _entrypoint_is_python_exe(entry, res)
 
-    records = []
+    cat_records, unit_records, used_rids = [], [], set()
     known_py_roots = {ep for eid, ep in env_paths.items() if envs[eid]["_kind"] == "model_line"}
 
     for rid, rt in (plan.get("runtimes") if isinstance(plan.get("runtimes"), dict) else {}).items():
@@ -1166,7 +1188,7 @@ def _validate_environments(plan, units):
         if not isinstance(raw_ep, str) or not raw_ep.strip(): raise PlanError(f"{lb}.entrypoint must be a non-empty string")
         entry, res = raw_ep, rt.get("resolution")
         mr, nc, pt = _check_rt(entry, res, re_, lb, True)
-        records.append(((rm.strip() if rm else None), mr, entry, res, nc, pt, re_, lb))
+        cat_records.append((rid, ((rm.strip() if rm else None), mr, entry, res, nc, pt, re_, lb)))
 
     unit_envs = {}
     for u in units:
@@ -1175,6 +1197,7 @@ def _validate_environments(plan, units):
         lb = f"unit {uid!r}"
         if u_env is not None and (not isinstance(u_env, str) or not u_env.strip()): raise PlanError(f"{lb} invalid environment={u_env!r}")
         rt, rt_ref = resolve_runtime(plan, u)
+        if isinstance(u.get("runtime"), str) and isinstance(rt, dict) and rt_ref: used_rids.add(rt_ref)
         if kind == "code" and isinstance(u.get("runtime"), str) and u.get("runtime") != "none" and not isinstance(rt, dict): raise PlanError(f"{lb} undefined runtime {rt_ref!r}")
         rt_env = rt.get("environment") if isinstance(rt, dict) else None
         if rt_env is not None and (not isinstance(rt_env, str) or not rt_env.strip()): raise PlanError(f"{lb} runtime invalid environment={rt_env!r}")
@@ -1198,8 +1221,9 @@ def _validate_environments(plan, units):
             if v is not None and (not isinstance(v, str) or not v.strip()): raise PlanError(f"{lb} invalid model_line={v!r}")
         if isinstance(u_ml, str) and u_ml.strip() and isinstance(rt_ml, str) and rt_ml.strip() and u_ml.strip() != rt_ml.strip(): raise PlanError(f"{lb} model_line mismatch")
         eml = (u_ml.strip() if isinstance(u_ml, str) and u_ml.strip() else rt_ml.strip() if isinstance(rt_ml, str) and rt_ml.strip() else envs[mid]["_model_line"] if mid in envs else None)
-        records.append((eml, mid, entry, res, nc, pt, er, lb))
+        unit_records.append((eml, mid, entry, res, nc, pt, er, lb))
 
+    records = [rec for rid, rec in cat_records if rid not in used_rids or rec[6] is not None] + unit_records
     for ml, mid, entry, res, nc, pt, er, lb in records:
         if nc and mid: _claim_cn(entry, mid, lb)
         inferred = _inferred_env_root(entry, res) if entry else None
@@ -1208,7 +1232,10 @@ def _validate_environments(plan, units):
         if er == "none" and in_known and res != "container":
             raise PlanError(f"{lb} environment='none' conflicts with Python environment root {(contained or inferred)!r}")
         if ml and ((mid in env_paths) or (pt and er != "none") or (res != "container" and (in_known or (er != "none" and _looks_py_env_root(entry))))):
-            _claim_ml(ml, mid, (env_paths[mid] if mid in env_paths else (contained or inferred)), lb)
+            ps_e, err_e = _clean_abs_parts(entry) if (entry and entry.startswith("/")) else (None, True)
+            own_root = (inferred if (inferred and inferred in known_py_roots and (res == "conda" or (not err_e and ps_e and len(ps_e) >= 3 and ps_e[-2].lower() in ("bin", "scripts"))))
+                        else (contained or inferred))
+            _claim_ml(ml, mid, (env_paths[mid] if mid in env_paths else own_root), lb)
             if nc: _claim_ml(ml, None, "conda:" + entry, lb)
             if res == "module" and _entrypoint_is_python_exe(entry, res): _claim_ml(ml, None, "module:" + entry, lb)
     return unit_envs
