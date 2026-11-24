@@ -48,12 +48,33 @@ def _is_caskroom(ps, lo, i):
 def _dir_case_insensitive(d):
     if not d or "\0" in d: return False
     try:
-        if not P.exists(d): return False
+        if not P.isdir(d): return False
         cur = P.realpath(d)
+        if sys.platform == "darwin":
+            try:
+                v = os.pathconf(cur, 11)
+                if v in (0, 1): return v == 0
+            except _ERR: pass
+        dev = os.lstat(cur).st_dev
+        try:
+            with os.scandir(cur) as it:
+                for idx, e in enumerate(it):
+                    if idx >= 64: break
+                    if e.is_symlink(): continue
+                    sw = e.name.swapcase()
+                    if sw == e.name: continue
+                    swp = P.join(cur, sw)
+                    if not P.lexists(swp): return False
+                    if not P.islink(swp) and _same_dir(e.path, swp): return True
+        except _ERR: pass
         while cur and cur != P.dirname(cur):
             par, nm = P.split(cur)
+            if os.lstat(par).st_dev != dev: break
             sw = nm.swapcase()
-            if sw != nm: return _same_dir(cur, P.join(par, sw))
+            if sw != nm and not P.islink(cur):
+                swp = P.join(par, sw)
+                if not P.lexists(swp): return False
+                if not P.islink(swp) and _same_dir(cur, swp): return True
             cur = par
     except _ERR: pass
     return False
@@ -297,7 +318,8 @@ def declared_orchestration_env(plan_path=None, plan=None, env=None):
             sid = orch_ids[0] if len(orch_ids) == 1 else None
             for eid, (k, sp) in sorted(specs.items()):
                 if eid == sid: continue
-                o["other_env_roots"].append((eid, _canon_root(sp["path"])))
+                raw_o = _safe_expand(sp["path"])
+                o["other_env_roots"].append((eid, raw_o, _canon_root(raw_o)))
             if sid is not None and sid in specs:
                 raw = _safe_expand(specs[sid][1]["path"]); norm = _canon_root(raw)
                 o.update(declared=True, source="plan", env_id=sid, env_path=norm, raw_plan_env_path=raw, plan_env_path=norm, expected_python=P.join(norm, "bin", "python"))
@@ -343,12 +365,13 @@ def _overlap(a, b):
     except _ERR: return False
 
 def _conflicts(d, em, env_was_none=False):
-    hm, w, roots = _resolve_home(em, env_was_none), list(d.get("other_env_errors") or ()), list(d.get("other_env_roots") or ())
-    if d["plan_env_path"]: roots.insert(0, (d["env_id"] or "orchestration", d["plan_env_path"]))
-    for i, (ea, ra) in enumerate(roots):
-        sr = shared_env_reason(ra, True, hm) or _shared_conda_dir(ra)
+    hm, w = _resolve_home(em, env_was_none), list(d.get("other_env_errors") or ())
+    roots = list(d.get("other_env_roots") or ())
+    if d["plan_env_path"]: roots.insert(0, (d["env_id"] or "orchestration", d["raw_plan_env_path"], d["plan_env_path"]))
+    for i, (ea, raw_a, ra) in enumerate(roots):
+        sr = shared_env_reason(raw_a, True, hm) or shared_env_reason(ra, True, hm) or _shared_conda_dir(ra)
         if sr: w.append(f"env {ea!r} in shared env: {sr}")
-        for eb, rb in roots[i + 1:]:
+        for eb, _, rb in roots[i + 1:]:
             if _overlap(ra, rb): w.append(f"envs {ea!r} ({ra}) and {eb!r} ({rb}) alias/overlap")
     if d["declared"]:
         for v in (d["raw_plan_env_path"], d["plan_env_path"] or d["env_path"]):

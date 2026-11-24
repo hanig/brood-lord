@@ -149,6 +149,21 @@ class TestOrchestrationEnvCheckAndHelpers(unittest.TestCase):
                 es = T / "EnvStore"
                 es.mkdir()
                 at(ok(py3, py, plan=oe(v, a=es / "NewFit", b=es / "newfit")))
+            # Case-variant symlink (tEST -> Test) on a case-sensitive filesystem does NOT trick _dir_case_insensitive into false overlap.
+            td_cs = T / "Test"
+            td_cs.mkdir()
+            if not (T / "tEST").exists():
+                (T / "tEST").symlink_to(td_cs)
+            with mock.patch.object(OE.sys, "platform", "linux"), mock.patch.object(OE.P, "islink", return_value=True):
+                af(OE._dir_case_insensitive(str(td_cs)))
+                af(OE._overlap(str(td_cs / "NewFit"), str(td_cs / "newfit")))
+            # Non-orchestration shared symlink (miniforge3/envs/workbook -> wb-store) is caught via its raw declared path.
+            wbs = T / "wb-store"
+            (wbs / "conda-meta").mkdir(parents=True)
+            mfw = T / "miniforge3/envs/workbook"
+            mfw.parent.mkdir(parents=True)
+            mfw.symlink_to(wbs)
+            af(ok(py3, py, plan=oe(v, stage=mfw)))
             pc = self._mkx(v / "bin/python-copy")
             eb = T / "ext-tools"
             eb.mkdir()

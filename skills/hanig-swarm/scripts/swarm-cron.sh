@@ -38,12 +38,33 @@ def same_dir(a, b):
 def dir_case_insensitive(d):
     if not d or "\0" in d: return False
     try:
-        if not P.exists(d): return False
+        if not P.isdir(d): return False
         cur = P.realpath(d)
+        if sys.platform == "darwin":
+            try:
+                v = os.pathconf(cur, 11)
+                if v in (0, 1): return v == 0
+            except ERR: pass
+        dev = os.lstat(cur).st_dev
+        try:
+            with os.scandir(cur) as it:
+                for idx, e in enumerate(it):
+                    if idx >= 64: break
+                    if e.is_symlink(): continue
+                    sw = e.name.swapcase()
+                    if sw == e.name: continue
+                    swp = P.join(cur, sw)
+                    if not P.lexists(swp): return False
+                    if not P.islink(swp) and same_dir(e.path, swp): return True
+        except ERR: pass
         while cur and cur != P.dirname(cur):
             par, nm = P.split(cur)
+            if os.lstat(par).st_dev != dev: break
             sw = nm.swapcase()
-            if sw != nm: return same_dir(cur, P.join(par, sw))
+            if sw != nm and not P.islink(cur):
+                swp = P.join(par, sw)
+                if not P.lexists(swp): return False
+                if not P.islink(swp) and same_dir(cur, swp): return True
             cur = par
     except ERR: pass
     return False
