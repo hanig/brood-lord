@@ -442,6 +442,16 @@ def _run_cli(cmd, stdin_text, stripped_env, timeout, deadline=None,
     return proc.returncode, stdout, stderr, None
 
 
+def _is_claude_result_dict(obj):
+    """True for a Claude CLI result payload, rejecting non-result event dicts."""
+    if not isinstance(obj, dict):
+        return False
+    otype = obj.get("type")
+    if otype is not None:
+        return otype == "result"
+    return "result" in obj or "is_error" in obj or "api_error" in obj
+
+
 def _extract_result_event(parsed):
     """Return the final `type == 'result'` dict from a Claude CLI event array."""
     for item in reversed(parsed):
@@ -451,13 +461,14 @@ def _extract_result_event(parsed):
 
 
 def _parse_json_object(stdout, *, allow_event_list=False):
-    """Parse a JSON object (or Claude CLI event array when allowed) from stdout."""
+    """Parse a JSON object (or Claude CLI result payload when allow_event_list=True)."""
     text = (stdout or "").strip()
     if not text:
         return None
+    accept = _is_claude_result_dict if allow_event_list else (lambda x: isinstance(x, dict))
     try:
         parsed = json.loads(text)
-        if isinstance(parsed, dict):
+        if accept(parsed):
             return parsed
         if allow_event_list and isinstance(parsed, list):
             return _extract_result_event(parsed)
@@ -469,7 +480,7 @@ def _parse_json_object(stdout, *, allow_event_list=False):
         if s.startswith("{"):
             try:
                 parsed = json.loads(s)
-                if isinstance(parsed, dict):
+                if accept(parsed):
                     return parsed
             except ValueError:
                 continue
@@ -477,7 +488,9 @@ def _parse_json_object(stdout, *, allow_event_list=False):
             try:
                 parsed = json.loads(s)
                 if isinstance(parsed, list):
-                    return _extract_result_event(parsed)
+                    found = _extract_result_event(parsed)
+                    if found is not None:
+                        return found
             except ValueError:
                 continue
     return None

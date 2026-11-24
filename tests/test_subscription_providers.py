@@ -389,9 +389,17 @@ class TestSubscriptionTransports(unittest.TestCase):
             res2, err2 = R.PROVIDERS["claude"](self.CLAUDE_SEAT, "p", 10)
         self.assertIsNone(res2)
         self.assertIn("missing-result", err2)
-        # Line-by-line fallback must stop on an event array without a result event.
+        # Line-by-line fallback rejects non-result events (single-line or multiline)
+        # while still recovering an earlier valid result object.
         self.assertIsNone(RS._parse_json_object(
             '{"type":"assistant"}\n[{"type":"system"}]', allow_event_list=True))
+        self.assertIsNone(RS._parse_json_object(
+            'log\n[\n{"type":"assistant"}\n]', allow_event_list=True))
+        self.assertEqual(
+            RS._parse_json_object(
+                '{"type":"result","result":"OK"}\n[{"type":"system"}]',
+                allow_event_list=True),
+            {"type": "result", "result": "OK"})
         # claude auth status must still require a top-level JSON object, not a list.
         self.assertIsNone(RS._parse_json_object(json.dumps(events)))
 
