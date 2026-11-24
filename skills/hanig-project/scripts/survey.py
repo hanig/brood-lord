@@ -239,6 +239,205 @@ def run(argv, cwd=None, timeout=RUN_TIMEOUT):
     return rc, out, err
 
 
+_SERR = (OSError, ValueError, UnicodeError)
+_pt = lambda xs: tuple(tuple(x.split("/")) for x in xs)
+_CONDA_ROOT_RE = re.compile(r"^(?:\.conda|micromamba|(?:miniconda|miniforge|anaconda|mambaforge)(?:\d+)?)$", re.I)
+_SHARED_ENV_NAMES = frozenset({"base", "workbook", "default", "shared", "personal", "common", "global", "root"})
+_SYSTEM_SHARED_PREFIXES = _pt(("usr/bin", "usr/local/bin", "usr/sbin", "usr/libexec", "bin", "sbin", "opt/homebrew/bin", "home/linuxbrew/.linuxbrew/bin",
+                               "Library/Frameworks/Python.framework", "Library/Developer/CommandLineTools", "Applications/Xcode.app", "System/Library"))
+_HB_PREFS = _pt(("opt/homebrew/opt", "opt/homebrew/Cellar", "usr/local/opt", "usr/local/Cellar", "home/linuxbrew/.linuxbrew/opt", "home/linuxbrew/.linuxbrew/Cellar"))
+_HOME_VENV_LAYOUTS = ((("home",), 2), (("Users",), 2), (("mnt", "weka", "home"), 4), (("root",), 1),
+                      (("System", "Volumes", "Data", "home"), 5), (("System", "Volumes", "Data", "Users"), 5))
+
+def _has_prefix(ps, lo, pr):
+    if len(ps) < len(pr): return False
+    if ps[:len(pr)] == pr: return True
+    return lo[:len(pr)] == tuple(x.lower() for x in pr) and _same_dir("/" + "/".join(ps[:len(pr)]), "/" + "/".join(pr))
+
+def _is_caskroom(ps, lo, i):
+    if i <= 0: return False
+    if ps[i - 1] == "Caskroom": return True
+    return lo[i - 1] == "caskroom" and _same_dir("/" + "/".join(ps[:i]), "/" + "/".join(ps[:i - 1] + ("Caskroom",)))
+
+def _is_std_conda_loc(ps, lo, i, home=None):
+    hs = []
+    if isinstance(home, str) and home.strip().startswith("/") and "\0" not in home:
+        h0 = home.strip()
+        hs.append(h0)
+        try:
+            if _P.exists(h0):
+                rp = _P.realpath(h0)
+                if rp and rp.startswith("/") and rp != h0: hs.append(rp)
+        except _SERR:
+            pass
+    for h in hs:
+        hp = tuple(x for x in h.split("/") if x)
+        if i == len(hp) and (ps[:len(hp)] == hp or (hp and _same_dir(h, "/" + "/".join(ps[:len(hp)])))):
+            return True
+    for h, d in _HOME_VENV_LAYOUTS:
+        hl = tuple(x.lower() for x in h)
+        if i == d and lo[:len(h)] == hl and (ps[:len(h)] == h or _same_dir("/" + "/".join(ps[:d]), "/" + "/".join(h + ps[len(h):d]))):
+            return True
+    return ((i == 1 and (_has_prefix(ps, lo, ("opt",)) or _has_prefix(ps, lo, ("usr",))))
+            or (i == 2 and _has_prefix(ps, lo, ("usr", "local")))
+            or _is_caskroom(ps, lo, i))
+
+_P = os.path
+def _same_dir(a, b):
+    if not a or not b: return False
+    if a == b: return True
+    try: return _P.exists(a) and _P.exists(b) and _P.samefile(a, b)
+    except _SERR: return False
+
+def _shared_python_env_reason(path, conda_name=None, home=None, is_env_root=False):
+    if conda_name and conda_name.strip().lower() in _SHARED_ENV_NAMES: return f"active conda env {conda_name.strip()!r} is shared"
+    if not isinstance(path, str) or not path.strip().startswith("/"): return None
+    ps = tuple(p for p in path.strip().split("/") if p); lo = tuple(p.lower() for p in ps)
+    if is_env_root and ps and lo[-1] in _SHARED_ENV_NAMES: return f"env root name {ps[-1]!r} is shared"
+    for hb in _HB_PREFS:
+        if _has_prefix(ps, lo, hb) and len(lo) > len(hb):
+            fm = lo[len(hb)]
+            if fm in ("python", "pypy", "pypy3", "graalpy", "micropython") or fm.startswith(("python@", "python3", "pypy@", "pypy3", "graalpy@", "micropython@")):
+                return "in shared Homebrew Python"
+    if any(_has_prefix(ps, lo, pr) for pr in _SYSTEM_SHARED_PREFIXES): return "in shared system dir"
+    for i, s in enumerate(lo):
+        if s in (".pyenv", "pyenv") and i + 1 < len(lo) and lo[i + 1] in ("shims", "versions"): return "in shared pyenv tree"
+    def _is_user_local(hl_len, p_match):
+        if not p_match or len(ps) <= hl_len or lo[hl_len] != ".local": return False
+        if ps[hl_len] != ".local" and not _same_dir("/" + "/".join(ps[:hl_len + 1]), "/" + "/".join(ps[:hl_len] + (".local",))): return False
+        if is_env_root:
+            return len(ps) == hl_len + 1 or (len(ps) == hl_len + 2 and lo[hl_len + 1] in ("bin", "scripts", "lib"))
+        return len(ps) == hl_len + 3 and lo[hl_len + 1] in ("bin", "scripts")
+    for h, d in _HOME_VENV_LAYOUTS:
+        hl = tuple(x.lower() for x in h)
+        if len(ps) > d and lo[:len(h)] == hl and lo[d] in (".venv", "venv"):
+            if (ps[:len(h)] == h and ps[d] in (".venv", "venv")) or _same_dir("/" + "/".join(ps[:d + 1]), "/" + "/".join(h + ps[len(h):d] + (lo[d],))):
+                return f"in shared home venv ({ps[d]!r})"
+        if len(ps) > d and lo[:len(h)] == hl and _is_user_local(d, ps[:len(h)] == h or _same_dir("/" + "/".join(ps[:d]), "/" + "/".join(h + ps[len(h):d]))):
+            return "in shared user-site (~/.local)"
+    if home and isinstance(home, str) and home.startswith("/") and "\0" not in home:
+        hcs, hvs, hls = [home], [], []
+        try:
+            if _P.exists(home): hcs.append(_P.realpath(home))
+        except _SERR: pass
+        for hc in hcs:
+            for nm in (".venv", "venv"):
+                hv = _P.join(hc, nm); hvs.append((nm, hv))
+                try:
+                    if _P.lexists(hv): hvs.append((nm, _P.realpath(hv)))
+                except _SERR: pass
+            hl_dir = _P.join(hc, ".local"); hls.append(hl_dir)
+            try:
+                if _P.lexists(hl_dir): hls.append(_P.realpath(hl_dir))
+            except _SERR: pass
+        for hl_dir in hls:
+            lp = tuple(p for p in hl_dir.split("/") if p)
+            if lp and len(ps) >= len(lp) and (ps[:len(lp)] == lp or _same_dir(hl_dir, "/" + "/".join(ps[:len(lp)]))):
+                if is_env_root and (len(ps) == len(lp) or (len(ps) == len(lp) + 1 and lo[len(lp)] in ("bin", "scripts", "lib"))):
+                    return "in shared user-site (~/.local)"
+                if not is_env_root and len(ps) == len(lp) + 2 and lo[len(lp)] in ("bin", "scripts"):
+                    return "in shared user-site (~/.local)"
+        for nm, hv in hvs:
+            hp = tuple(p for p in hv.split("/") if p)
+            if hp and len(ps) >= len(hp) and (ps[:len(hp)] == hp or _same_dir(hv, "/" + "/".join(ps[:len(hp)]))): return f"in shared home venv ({nm!r})"
+    if any(lo[i] == "condabin" and (i == len(lo) - 1 or lo[i + 1] in ("conda", "mamba", "micromamba")) for i in range(len(lo))):
+        return "in conda base condabin"
+    for i in range(len(lo) - 1 if (len(lo) >= 2 and lo[-2] in ("bin", "scripts", "condabin")) else len(lo)):
+        if i > 0 and lo[i - 1] == "envs": continue
+        s = lo[i]
+        if (_CONDA_ROOT_RE.fullmatch(s) or s == "conda") and (_is_std_conda_loc(ps, lo, i, home=home) or (i + 1 < len(lo) and lo[i + 1] in ("base", "envs", "condabin"))):
+            r = lo[i + 1:]
+            bo = 1 if (r and (r[0] == "base" or (_is_caskroom(ps, lo, i) and r[0] not in ("bin", "scripts", "condabin", "envs")))) else 0
+            r = r[bo:]
+            if not r or r[0] in ("bin", "scripts", "condabin"): return f"in conda base ({ps[i]!r})"
+            if r[0] == "envs" and len(r) >= 2:
+                if r[1] in _SHARED_ENV_NAMES and (len(r) == 2 or (not is_env_root and len(r) == 4 and r[2] in ("bin", "scripts"))):
+                    return f"in shared conda env {ps[i + 2 + bo]!r}"
+                if len(r) == 2 or r[2] in ("bin", "scripts"): break
+    for i, s in enumerate(lo):
+        if s in ("envs", "virtualenvs", ".virtualenvs") and i + 1 < len(lo) and lo[i + 1] in _SHARED_ENV_NAMES:
+            if s != "envs" or i + 1 == len(lo) - 1 or (not is_env_root and len(lo) == i + 4 and lo[i + 2] in ("bin", "scripts")):
+                return f"in shared personal env {ps[i + 1]!r}"
+    return None
+
+def _conda_name_from_prefix(prefix, home=None):
+    if not isinstance(prefix, str) or not prefix.startswith("/") or "\0" in prefix: return None
+    cs = []
+    try:
+        rp = _P.realpath(prefix)
+        if rp and rp.startswith("/") and rp != prefix: cs.append(rp)
+    except _SERR: pass
+    cs.append(prefix)
+    try:
+        hm = _P.isdir(_P.join(prefix, "conda-meta"))
+        if _P.isdir(prefix) and not hm: return None
+    except _SERR: hm = False
+    for c in cs:
+        ps = tuple(p for p in c.split("/") if p); lo = tuple(p.lower() for p in ps)
+        for i in range(len(lo)):
+            if i > 0 and lo[i - 1] == "envs": continue
+            s = lo[i]
+            if (_CONDA_ROOT_RE.fullmatch(s) or s == "conda") and (_is_std_conda_loc(ps, lo, i, home=home) or (i + 1 < len(lo) and lo[i + 1] in ("base", "envs"))):
+                r = ps[i + 1:]
+                if r and (r[0].lower() == "base" or (_is_caskroom(ps, lo, i) and r[0].lower() not in ("bin", "scripts", "envs"))): r = r[1:]
+                if not r: return "base"
+                if r[0].lower() == "envs" and len(r) == 2: return r[1]
+    if hm:
+        ps = tuple(p for p in cs[0].split("/") if p); lo = tuple(p.lower() for p in ps)
+        if ps: return "base" if (lo[-1] == "base" or (_CONDA_ROOT_RE.fullmatch(lo[-1]) and _is_std_conda_loc(ps, lo, len(lo) - 1, home=home))) else ps[-1]
+    return None
+
+def detect_python_env(env=None, executable=None, prefix=None, base_prefix=None):
+    """Detect active conda, venv, or system Python and shared-env risk (read-only).
+
+    Limit: an unactivated custom-named conda prefix (neither active CONDA_DEFAULT_ENV=base
+    nor a standard conda distribution path) shares directory markers with `conda create -p ... python conda`
+    and is reported under its directory basename rather than guessed to be base.
+    """
+    em = os.environ if env is None else env
+    hm = (em.get("HOME") or "").strip() or None
+    if hm is None and env is None:
+        try: hm = str(Path.home())
+        except _SERR: hm = None
+    ex, pr, bp = (sys.executable if executable is None else executable), (sys.prefix if prefix is None else prefix), (sys.base_prefix if base_prefix is None else base_prefix)
+    def _rp(x):
+        try: return os.path.realpath(x) if x else None
+        except _SERR: return x
+    rex, rpr, rcpr = _rp(ex), _rp(pr), _rp((em.get("CONDA_PREFIX") or "").strip() or None)
+    cde, cpr, ve = (em.get("CONDA_DEFAULT_ENV") or "").strip() or None, (em.get("CONDA_PREFIX") or "").strip() or None, (em.get("VIRTUAL_ENV") or "").strip() or None
+    icn, pv = _conda_name_from_prefix(pr, home=hm), bool(pr and bp and pr != bp)
+    has_pyvenv, has_cmeta, is_dir_pr = False, False, False
+    try:
+        if pr and "\0" not in pr and _P.isdir(pr):
+            is_dir_pr = True
+            has_pyvenv = _P.isfile(_P.join(pr, "pyvenv.cfg"))
+            has_cmeta = _P.isdir(_P.join(pr, "conda-meta"))
+    except _SERR:
+        pass
+    no_meta = is_dir_pr and not has_cmeta
+    sc = _same_dir(rpr, rcpr) and not no_meta and not has_pyvenv
+    is_venv = pv and (has_pyvenv or (not has_cmeta and not sc))
+    if is_venv:
+        kind, name = "venv", (Path(pr).name if pr else None)
+        sr = _shared_python_env_reason(pr, home=hm, is_env_root=True) or (_shared_python_env_reason(rpr, home=hm, is_env_root=True) if rpr and rpr != pr else None)
+    elif icn or sc:
+        kind = "conda"
+        name = cde if (sc and cde and "/" not in cde) else (icn or (Path(cde).name if cde else None) or (Path(rpr or pr).name if (rpr or pr) else None))
+        sr = (_shared_python_env_reason(pr, name, hm, is_env_root=True)
+              or (_shared_python_env_reason(pr, icn, hm, is_env_root=True) if icn and icn != name else None)
+              or (_shared_python_env_reason(rpr, name, hm, is_env_root=True) if rpr and rpr != pr else None)
+              or (_shared_python_env_reason(cpr, name, hm, is_env_root=True) if sc and cpr and cpr not in (pr, rpr) else None)
+              or (_shared_python_env_reason(rex or ex, name, hm) if (rex or ex) else None))
+    else:
+        kind, name = "system", None
+        sr = (_shared_python_env_reason(rex or ex, home=hm)
+              or _shared_python_env_reason(ex, home=hm)
+              or _shared_python_env_reason(pr, home=hm, is_env_root=True)
+              or "no dedicated virtualenv is active (using system/default Python)")
+    return {"kind": kind, "name": name, "prefix": pr, "base_prefix": bp, "executable": ex, "resolved_executable": rex,
+            "conda_default_env": cde, "conda_prefix": cpr, "virtual_env": ve, "shared_risk": bool(sr), "shared_reason": sr}
+
+
 def machine():
     """Which box is this, and what can it run."""
     u = os.uname()
@@ -247,6 +446,7 @@ def machine():
         "user": os.environ.get("USER"),
         "home": str(Path.home()),
         "python": sys.version.split()[0],
+        "python_env": detect_python_env(),
         "cpus": os.cpu_count(),
     }
     tools = ("sbatch", "squeue", "sacct", "sinfo", "nextflow", "snakemake",
@@ -672,7 +872,7 @@ def _tally_walk(root, deadline, report=None):
     caller that has to KILL this walk still learns where it stopped and what
     it had counted by the time it did.
     """
-    exts, files, total_bytes = {}, 0, 0
+    exts, files, total_bytes, locks = {}, 0, 0, []
     state, why = WALK_OK, None
     skip = {".git", "node_modules", "__pycache__", ".venv", "venv",
             ".mypy_cache", ".cache", "site-packages", ".conda", ".micromamba",
@@ -691,7 +891,7 @@ def _tally_walk(root, deadline, report=None):
 
     def counts():
         return {"files": files, "bytes": total_bytes, "dirs": dirs_seen,
-                "exts": exts}
+                "exts": exts, "locks": sorted(locks, key=lambda d: d["path"])}
 
     def emit(kind, **extra):
         """Report progress the walk may not survive to report again.
@@ -767,10 +967,14 @@ def _tally_walk(root, deadline, report=None):
                     files += 1
                     ext = Path(entry.name).suffix.lower() or "(none)"
                     exts[ext] = exts.get(ext, 0) + 1
+                    st_size = 0
                     try:
-                        total_bytes += entry.stat(follow_symlinks=False).st_size
+                        st_size = entry.stat(follow_symlinks=False).st_size
+                        total_bytes += st_size
                     except OSError:
                         pass
+                    if len(locks) < 200 and (entry.name == "uv.lock" or (entry.name.startswith("requirements") and entry.name.endswith(".lock"))):
+                        locks.append({"path": os.path.relpath(entry.path, str(root)).replace(os.sep, "/"), "bytes": st_size})
         except OSError:
             continue
         if dirs_seen % WALK_TALLY_DIRS == 0:
@@ -900,6 +1104,8 @@ def _walk(root):
             counts[key] = max(counts[key], rec.get(key) or 0)
         if rec.get("exts") is not None and (rec.get("files") or 0) >= ext_at:
             counts["exts"], ext_at = rec["exts"], rec.get("files") or 0
+        if rec.get("locks") is not None:
+            counts["locks"] = rec["locks"]
 
     if killed:
         where = (enter or {}).get("p") or str(root)
@@ -993,9 +1199,11 @@ def repo(root):
                     except OSError:
                         continue
                     docs.append({"path": str(f.relative_to(root)), "bytes": size})
+        seen_docs = {d["path"] for d in docs}
+        docs = docs[:40] + [d for d in (counts.get("locks") or []) if d.get("path") not in seen_docs]
     else:
         out["documents_note"] = "not enumerated: the bounded repository walk did not finish"
-    out["documents"] = docs[:40]
+    out["documents"] = docs
 
     # DO NOT OVERWRITE THESE. The skill is told to write PLAN.md and MEMORY.md,
     # and on the adopt path a repo may already have them. This repo's own
@@ -1115,6 +1323,10 @@ def main():
     m, s, r = data["machine"], data["scheduler"], data["repo"]
     print(f"  host      {m['hostname']}  ({m['system']}, python {m['python']}, "
           f"{m['cpus']} cpus)")
+    pe = m.get("python_env") or {}
+    if pe:
+        ed = pe.get("kind", "unknown") + (f" ({pe['name']})" if pe.get("name") else "") + (f" at {pe['prefix']}" if pe.get("prefix") else "") + (f" [SHARED RISK: {pe.get('shared_reason')}]" if pe.get("shared_risk") else "")
+        print(f"  env       {ed}")
     print(f"  tools     {', '.join(sorted(m['tools'])) or 'none found'}")
     for name, agent in data["agent_diagnostics"]["agents"].items():
         print(f"  agent     {name}: present={agent['agent_present']['state']}, "
