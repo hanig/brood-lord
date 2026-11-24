@@ -1,0 +1,28 @@
+# Changelog
+
+## Unreleased — 2026-11-22
+
+### Added — Dedicated environments per model line and for orchestration
+
+Field evidence: STAGE ran coordinator cron, hourly facts, merge helpers, and probes from
+shared `workbook` conda until 2026-11-22 while STAGE and MaxToki had separate venvs; moving
+orchestration to `~/.local/state/<project>/orch-venv` (`uv`, Python 3.12; stdlib-only scripts)
+decoupled orchestration from personal conda state.
+
+- **Planning & validation (`hanig-project`, `hanig-swarm`):** Top-level `environments`
+  (`path`, `python`, `lock_file`, `build`, optional `model_line`, `kind`), unit/runtime
+  `environment` and `model_line` in `swarm.py schema`, `swarm_plan_rules.py`, and `plan_digest()`.
+  `swarm.py validate` lexically refuses shared/system Python envs, undeclared envs, missing
+  `orchestration`/code bindings when `environments` is declared, workloads targeting
+  `orchestration`, cross-env canaries, and cross-model-line sharing without shell parsing or statting.
+- **Survey & interview (`hanig-project`):** `survey.py` records `machine.python_env`
+  (`schema_version: 4`) and discovers root/subproject lock files inside its bounded walk;
+  interview asks once for orchestration's env and recommends `~/.local/state/<project>/orch-venv`.
+- **Orchestration loop, cron & startup check (`hanig-orchestrate`, `hanig-swarm`):**
+  Added `orch_env.py` (`check` CLI and mismatch warnings in `hourly_facts.py`, `merge_unit.py`,
+  `reconcile.py`, `wait_event.py`, `wait_report.py`). Updated `swarm-cron.sh` (requiring explicit
+  absolute `ORCH_PYTHON`, never bare `python3`), `protocol-details.md`, and `operating-loop.md`
+  (`advance` and `hourly_facts` cron/launchd templates).
+- **Delegation, migration & declarations:** Updated `dispatch-preamble.md` (unit env
+  placeholders, `environment: "none"`, new-model-line venvs), added the 4-step migration
+  runbook in `operating-loop.md`, and updated `declarations.json` + regenerated `SKILL.md`.

@@ -10,6 +10,8 @@ import sys
 import tempfile
 import time
 
+import orch_env
+
 QUIET = {"UNALLOCATED", "SUBMITTED", "RUNNING", "DONE", "ABANDONED", "SUPERSEDED"}
 
 
@@ -137,6 +139,8 @@ def main(argv=None):
          path == source_path(directory / "swarm-state.json") or
          samefile(path, directory / "swarm-state.json") for directory in directories):
     parser.error("snapshot must be outside every state directory")
+  plan_candidates = [d.parent / "plan.json" for d in directories] + [Path.cwd() / "plan.json"]
+  orch_env.warn_if_declared_mismatch(candidate_plan_paths=plan_candidates)
   deadline = None if args.timeout is None else time.monotonic() + args.timeout
   warned = set()
   try:

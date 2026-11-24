@@ -23,6 +23,7 @@ import sys
 # Reading state must not create cache files, even in an installed copy there.
 sys.dont_write_bytecode = True
 import merge_unit as M
+import orch_env
 
 S = M.S
 
@@ -304,6 +305,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.since is None and args.limit is None:
         parser.error("supply --since and/or --limit")
+    plan_candidates = [Path(d).parent / "plan.json" for d in args.state_dir] + [Path.cwd() / "plan.json"]
+    orch_env.warn_if_declared_mismatch(candidate_plan_paths=plan_candidates)
     report = reconcile(args)
     code = 2 if report["errors"] else 1 if report["findings"] else 0
     report["status"] = "UNREADABLE" if code == 2 else "FLAGGED" if code == 1 else "CLEAN"

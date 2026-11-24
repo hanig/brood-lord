@@ -26,6 +26,7 @@ import threading
 import time
 from urllib.parse import quote, urlsplit
 
+import orch_env
 import skill_paths
 
 _ORCHESTRATE_DIR = os.environ.get("HANIG_ORCHESTRATE_DIR") or Path(__file__).parents[1]
@@ -1392,10 +1393,12 @@ def main(argv=None):
         if D5.d5_active(Path(args.state_dir).absolute()):
             with _active_entry_lease(args):
                 plan = read_object(args.plan)
+                orch_env.warn_if_declared_mismatch(plan=plan)
                 reconcile(args, plan)
                 return 2 if args.dry_run else 0
         _d5_merge_entry(args)
         plan = read_object(args.plan)
+        orch_env.warn_if_declared_mismatch(plan=plan)
         # Validate external paths BEFORE even opening a coordinator lock.
         authority(args, plan)
         if args.dry_run:
