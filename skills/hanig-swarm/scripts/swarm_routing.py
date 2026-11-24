@@ -293,7 +293,15 @@ def apply_agent_resolution(plan_path, plan=None):
     # In place, so every reference to the table sees the reset.
     THINKING_BY_MODEL.clear()
     THINKING_BY_MODEL.update(PINNED_THINKING_BY_MODEL)
-    orch = _plan_orchestrator(plan_path=plan_path, plan=plan)
+    plan_data = plan if isinstance(plan, dict) else None
+    if plan_data is None and plan_path is not None:
+        try:
+            loaded = json.loads(Path(plan_path).read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                plan_data = loaded
+        except (OSError, ValueError):
+            plan_data = None
+    orch = _plan_orchestrator(plan_path=plan_path, plan=plan_data)
     ACTIVE_ORCHESTRATOR = orch
     routing = None
     try:
@@ -316,8 +324,8 @@ def apply_agent_resolution(plan_path, plan=None):
     base_provider = DEFAULT_AGENT_PROVIDER
 
     def _record_plan(resolved):
-        if isinstance(plan, dict):
-            key = _plan_fingerprint(plan)
+        if isinstance(plan_data, dict):
+            key = _plan_fingerprint(plan_data)
             _PLAN_RESOLUTIONS.pop(key, None)
             _PLAN_RESOLUTIONS[key] = (
                 orch, resolved, DEFAULT_AGENT_THINKING, dict(THINKING_BY_MODEL))
@@ -332,8 +340,14 @@ def apply_agent_resolution(plan_path, plan=None):
         digests = family.config_digests(
             Path(family.__file__).resolve().parent.parent / "reviewers.json",
             AGENTS_FILE)
-        provider, note = family.resolved_orchestrator_agent(
-            orch, routing, digests, start=Path(plan_path).resolve().parent)
+        if hasattr(family, "resolved_orchestrator_agent"):
+            provider, note = family.resolved_orchestrator_agent(
+                orch, routing, digests, start=Path(plan_path).resolve().parent)
+        else:
+            provider, note = family.resolved_agent_default(
+                seat or (routing.get("default") or {}),
+                routing.get("thinking_by_model") or {},
+                digests, start=Path(plan_path).resolve().parent)
     except Exception as exc:
         # Resolution never stops validate or run: anything wrong here leaves
         # the shipped pin in force.

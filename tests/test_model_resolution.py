@@ -1529,11 +1529,15 @@ class TestOrchestratorHighestOpus(StateHome):
             self.assertEqual(S.apply_agent_resolution(ag_plan), "claude/claude-opus-6")
         self.assertIn("antigravity resolved", err.getvalue())
         self.assertEqual(S.default_thinking_for({}), "high")
+        # Path-only resolution records per-plan entry without requiring plan= arg.
+        ag_dict = json.loads(ag_plan.read_text())
+        self.assertEqual(SR.effective_default_provider(ag_dict), "claude/claude-opus-6")
         with redirect_stderr(io.StringIO()):
             self.assertEqual(S.apply_agent_resolution(cd_plan), "claude/claude-opus-6")
         # Switching to claude or omitted orchestrator resets state cleanly (no leakage).
         self.assertEqual(S.apply_agent_resolution(cl_plan), S.PINNED_AGENT_PROVIDER)
         self.assertEqual(S.apply_agent_resolution(no_plan), S.PINNED_AGENT_PROVIDER)
+        self.assertEqual(SR.effective_default_provider(ag_dict), "claude/claude-opus-6")
         self.assertNotIn("claude/claude-opus-6", S.THINKING_BY_MODEL)
         # Project A's resolved snapshot for codex never leaks into direct validation
         # of a separate project B dict sharing the same orchestrator.

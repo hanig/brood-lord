@@ -302,8 +302,12 @@ from swarm_state import (
     _LOCK_EPOCHS,
 )
 from swarm_routing import (
-    _routing_token, _routing_model, load_agent_routing, _model_family,
-    apply_agent_resolution, default_thinking_for,
+    _routing_token, _routing_model, _orchestrator_token,
+    _model_matches_substrings, _provider_forbidden_for_rule,
+    _parse_agent_routing, load_agent_routing, _plan_fingerprint,
+    _plan_orchestrator, _plan_routing_entry, effective_default_provider,
+    forbid_unit_provider_problem, _model_family, apply_agent_resolution,
+    default_thinking_for,
 )
 from swarm_types import (
     PlanError, OutboxError, DONE, RUNNING, FAILED, PREEMPTED, INCOMPLETE,
@@ -943,7 +947,6 @@ def _load_plan(path):
     plan, err = U.read_json(path)
     if err:
         sys.exit(f"error: no readable plan at {path}: {err}")
-    SR.apply_agent_resolution(path, plan=plan)
     # Dispatch validates against the survey too, not just `validate`. A
     # refusal that only fires when someone runs the optional command is a
     # refusal that fires after the DAG is live.
@@ -1340,11 +1343,11 @@ def cmd_continue(args):
 def cmd_validate(args, plan=None):
     if getattr(args, "check_seeds", False):
         _d5_refuse('cmd_validate', getattr(args, "state_dir", None), plan=getattr(args, "plan", None))
+    SR.apply_agent_resolution(args.plan, plan=plan)
     if plan is None:
         plan, err = U.read_json(args.plan)
         if err:
             sys.exit(f"error: no readable plan at {args.plan}: {err}")
-    SR.apply_agent_resolution(args.plan, plan=plan)
     explicit = getattr(args, "survey", None)
     if explicit:
         # NAMED, so unreadable is an error rather than a shrug. Degrading a
@@ -1422,6 +1425,7 @@ def cmd_run(args):
     """Dispatch what is ready, then EXIT. Does not babysit."""
     _d5_bytecode_advisory(getattr(args, "state_dir", None), plan=getattr(args, "plan", None))
     _d5_refuse('cmd_run', getattr(args, "state_dir", None), plan=getattr(args, "plan", None))
+    SR.apply_agent_resolution(args.plan)
     plan = _load_plan(args.plan)
     _prepare_command_paths(args, plan=plan, need_root=True)
     # ONE WRITER. Two schedulers firing at once, or a human running `advance`
@@ -3120,7 +3124,8 @@ __all__ = [name for name in globals() if not name.startswith("_")] + [
     "THINKING_BY_MODEL", "PINNED_AGENT_PROVIDER", "PINNED_AGENT_THINKING",
     "PINNED_THINKING_BY_MODEL", "ORCHESTRATOR_DEFAULTS",
     "FORBID_WHEN_ORCHESTRATOR", "VALID_ORCHESTRATORS",
-    "ACTIVE_ORCHESTRATOR",
+    "ACTIVE_ORCHESTRATOR", "effective_default_provider",
+    "forbid_unit_provider_problem",
     "acquire_lease", "bump_lease_epoch", "renew_lease", "release_lease", "load_state",
     "save_state",
     "trusted_launch_facts",
