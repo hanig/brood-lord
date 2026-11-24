@@ -18,7 +18,7 @@ import committee as C
 import model_family as MF
 import resolve_models as RM
 import review as R
-import review_subscriptions as RS
+RS = R._subs
 
 
 class _FakeProc:
@@ -48,8 +48,11 @@ class _FakeProc:
         return self.returncode
 
 
+CLAUDE_AUTH_OK = json.dumps({"loggedIn": True, "authMethod": "claude.ai"})
+
+
 class TestSubscriptionAvailability(unittest.TestCase):
-    def test_claude_availability_requires_binary_and_config_dir(self):
+    def test_claude_availability_requires_binary_config_dir_and_claude_ai_oauth(self):
         with tempfile.TemporaryDirectory() as tmp:
             missing = Path(tmp) / "no-claude"
             present = Path(tmp) / "claude-cfg"
@@ -61,18 +64,58 @@ class TestSubscriptionAvailability(unittest.TestCase):
                 self.assertIn("claude auth login", RS.claude_availability())
             with mock.patch.object(RS.shutil, "which", return_value="/usr/bin/claude"), \
                     mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(present)}):
-                self.assertIsNone(RS.claude_availability())
-                self.assertIsNone(R.availability(
-                    {"name": "s", "provider": "claude", "model": "m", "enabled": True}))
+                with mock.patch.object(
+                        RS, "_run_cli",
+                        return_value=(0, json.dumps({"loggedIn": True, "authMethod": "console"}), "", None)):
+                    self.assertIn("not an active 'claude.ai' subscription", RS.claude_availability())
+                with mock.patch.object(
+                        RS, "_run_cli",
+                        return_value=(0, json.dumps({"loggedIn": True, "authMethod": "claude.ai",
+                                                     "apiProvider": "bedrock"}), "", None)):
+                    self.assertIn("not an active 'claude.ai' subscription", RS.claude_availability())
+                with mock.patch.object(
+                        RS, "_run_cli",
+                        return_value=(0, CLAUDE_AUTH_OK, "", None)):
+                    self.assertIsNone(RS.claude_availability())
+                    self.assertIsNone(R.availability(
+                        {"name": "s", "provider": "claude", "model": "m", "enabled": True}))
 
-    def test_codex_availability_refuses_missing_and_apikey_auth_modes(self):
+    def test_codex_availability_refuses_missing_and_apikey_and_accepts_keyring_chatgpt(self):
         with tempfile.TemporaryDirectory() as tmp:
-            home = Path(tmp)
+            missing = Path(tmp) / "no-codex"
+            home = Path(tmp) / "codex"
+            home.mkdir()
             with mock.patch.object(RS.shutil, "which", return_value=None):
                 self.assertIn("not found", RS.codex_availability())
             with mock.patch.object(RS.shutil, "which", return_value="/usr/bin/codex"), \
-                    mock.patch.dict(os.environ, {"CODEX_HOME": str(home)}):
+                    mock.patch.dict(os.environ, {"CODEX_HOME": str(missing)}):
                 self.assertIn("codex login", RS.codex_availability())
+            with mock.patch.object(RS.shutil, "which", return_value="/usr/bin/codex"), \
+                    mock.patch.dict(os.environ, {"CODEX_HOME": str(home)}):
+                # Existing dir without auth.json falls back to `codex login status`.
+                with mock.patch.object(
+                        RS, "_run_cli", return_value=(1, "", "Not logged in\n", None)):
+                    self.assertIn("codex login", RS.codex_availability())
+                # Keyring credential store (even if stale apikey auth.json exists):
+                # accepts ChatGPT, refuses API key, ignores section-scoped keys.
+                (home / "auth.json").write_text(
+                    json.dumps({"auth_mode": "apikey"}), encoding="utf-8")
+                (home / "config.toml").write_text(
+                    '[profiles.x]\ncli_auth_credentials_store = "keyring"\n',
+                    encoding="utf-8")
+                self.assertIsNone(RS._codex_credential_store_mode(home))
+                self.assertIn("not 'chatgpt'", RS.codex_availability())
+                (home / "config.toml").write_text(
+                    'cli_auth_credentials_store = "keyring"\n', encoding="utf-8")
+                with mock.patch.object(
+                        RS, "_run_cli",
+                        return_value=(0, "Logged in using ChatGPT\n", "", None)):
+                    self.assertIsNone(RS.codex_availability())
+                with mock.patch.object(
+                        RS, "_run_cli",
+                        return_value=(0, "Logged in using an API key\n", "", None)):
+                    self.assertIn("not an active ChatGPT", RS.codex_availability())
+                (home / "config.toml").unlink()
                 for bad in ("{", "[]", json.dumps({"auth_mode": "apikey"}),
                             json.dumps({"auth_mode": None}), json.dumps({})):
                     (home / "auth.json").write_text(bad, encoding="utf-8")
@@ -110,6 +153,8 @@ class TestSubscriptionTransports(unittest.TestCase):
             "ANTHROPIC_AUTH_TOKEN": "tok-ant-secret-2",
             "ANTHROPIC_BASE_URL": "https://proxy.invalid",
             "CLAUDE_CODE_USE_BEDROCK": "1",
+            "CLAUDECODE": "1",
+            "CLAUDE_CODE_SESSION_ID": "parent-sess",
             "OPENAI_API_KEY": 'sk-openai-secret-"quoted\\3',
             "OPENAI_BASE_URL": "https://openai-proxy.invalid",
             "OPENROUTER_API_KEY": "sk-or-secret-4",
@@ -142,6 +187,22 @@ class TestSubscriptionTransports(unittest.TestCase):
         data.update(extra)
         return json.dumps(data)
 
+    def _claude_popen_router(self, reply_proc, auth_stdout=CLAUDE_AUTH_OK,
+                             auth_rc=0, captured=None):
+        """Route `claude auth status` separately from `claude -p` in Popen mocks."""
+        def fake_popen(cmd, **kwargs):
+            if len(cmd) >= 3 and cmd[1:3] == ["auth", "status"]:
+                if captured is not None:
+                    captured["auth_cmd"] = cmd
+                    captured["auth_kwargs"] = kwargs
+                return _FakeProc(stdout=auth_stdout, returncode=auth_rc)
+            if captured is not None:
+                captured["cmd"] = cmd
+                captured["kwargs"] = kwargs
+                captured["cwd_entries"] = list(Path(kwargs["cwd"]).iterdir())
+            return reply_proc
+        return fake_popen
+
     def _codex_jsonl(self, text="OK", *, thread_id="thr-codex-1",
                      in_tokens=20, out_tokens=7, reasoning=4,
                      before_complete=(), model=None):
@@ -161,18 +222,13 @@ class TestSubscriptionTransports(unittest.TestCase):
         events.append(done)
         return "\n".join(json.dumps(e) for e in events) + "\n"
 
-    def test_claude_strips_all_api_keys_disables_settings_and_applies_max_output(self):
+    def test_claude_strips_keys_and_claudecode_disables_settings_and_applies_max_output(self):
         captured = {}
         proc = _FakeProc(stdout=self._claude_json("verdict body"))
 
-        def fake_popen(cmd, **kwargs):
-            captured["cmd"] = cmd
-            captured["kwargs"] = kwargs
-            captured["cwd_entries"] = list(Path(kwargs["cwd"]).iterdir())
-            return proc
-
         with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
-                mock.patch.object(RS.subprocess, "Popen", side_effect=fake_popen):
+                mock.patch.object(RS.subprocess, "Popen",
+                                  side_effect=self._claude_popen_router(proc, captured=captured)):
             res, err = R.PROVIDERS["claude"](self.CLAUDE_SEAT, "review diff", 30)
 
         self.assertIsNone(err)
@@ -186,7 +242,6 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--tools") + 1], "")
         self.assertIn("--strict-mcp-config", cmd)
         self.assertIn("--no-session-persistence", cmd)
-        # Empty --setting-sources skips user/project/local settings.json (hooks & apiKeyHelper).
         self.assertEqual(cmd[cmd.index("--setting-sources") + 1], "")
         self.assertEqual(cmd[cmd.index("--effort") + 1], "high")
         self.assertEqual(cmd[cmd.index("--output-format") + 1], "json")
@@ -199,6 +254,80 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertEqual(captured["cwd_entries"], [])
         self.assertFalse(Path(captured["kwargs"]["cwd"]).exists())
 
+    def test_claude_refuses_console_or_api_key_login_before_review_request(self):
+        for auth_payload in (
+                {"loggedIn": True, "authMethod": "console"},
+                {"loggedIn": True, "authMethod": "api_key"},
+                {"loggedIn": False, "authMethod": "none"}):
+            with self.subTest(auth=auth_payload):
+                captured = {}
+                reply = _FakeProc(stdout=self._claude_json("should never run"))
+                with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
+                        mock.patch.object(
+                            RS.subprocess, "Popen",
+                            side_effect=self._claude_popen_router(
+                                reply, auth_stdout=json.dumps(auth_payload),
+                                captured=captured)):
+                    res, err = R.PROVIDERS["claude"](self.CLAUDE_SEAT, "p", 10)
+                self.assertIsNone(res)
+                self.assertIn("not an active 'claude.ai' subscription", err)
+                self.assertNotIn("cmd", captured)
+
+    def test_claude_stop_sequence_with_completed_terminal_reason_and_large_system_prompt(self):
+        captured = {}
+        proc = _FakeProc(stdout=self._claude_json(
+            "OK", stop_reason="stop_sequence", terminal_reason="completed"))
+        big_system = "S" * (RS._MAX_ARGV_SYSTEM_BYTES + 100)
+        with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
+                mock.patch.object(RS.subprocess, "Popen",
+                                  side_effect=self._claude_popen_router(proc, captured=captured)):
+            res, err = R.claude_messages(
+                self.CLAUDE_SEAT, [{"role": "user", "content": "ping"}],
+                big_system, 10)
+        self.assertIsNone(err)
+        self.assertEqual(res["status"], "completed")
+        cmd = captured["cmd"]
+        self.assertLess(len(cmd[cmd.index("--system-prompt") + 1]), 200)
+        self.assertIn("<system_instructions>", proc.stdin_received)
+        self.assertIn(big_system, proc.stdin_received)
+
+    def test_relative_config_dirs_are_resolved_before_empty_tmpdir_cwd(self):
+        rel_claude = "rel-claude"
+        rel_codex = "rel-codex"
+        (self.root / rel_claude).mkdir()
+        (self.root / rel_codex).mkdir()
+        (self.root / rel_codex / "auth.json").write_text(
+            json.dumps({"auth_mode": "chatgpt"}), encoding="utf-8")
+        old_cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, old_cwd)
+        captured_cl, captured_cx = {}, {}
+        proc_cl = _FakeProc(stdout=self._claude_json("OK"))
+        proc_cx = _FakeProc(stdout=self._codex_jsonl("OK"))
+        with mock.patch.dict(os.environ, {
+                "CLAUDE_CONFIG_DIR": rel_claude, "CODEX_HOME": rel_codex}), \
+                mock.patch.object(RS.shutil, "which", return_value="/bin/cli"):
+            with mock.patch.object(
+                    RS.subprocess, "Popen",
+                    side_effect=self._claude_popen_router(proc_cl, captured=captured_cl)):
+                res, err = R.PROVIDERS["claude"](self.CLAUDE_SEAT, "p", 10)
+            self.assertIsNone(err)
+            self.assertEqual(
+                Path(captured_cl["kwargs"]["env"]["CLAUDE_CONFIG_DIR"]).resolve(),
+                (self.root / rel_claude).resolve())
+            self.assertEqual(
+                Path(captured_cl["auth_kwargs"]["env"]["CLAUDE_CONFIG_DIR"]).resolve(),
+                (self.root / rel_claude).resolve())
+            def fake_cx(cmd, **kwargs):
+                captured_cx["kwargs"] = kwargs
+                return proc_cx
+            with mock.patch.object(RS.subprocess, "Popen", side_effect=fake_cx):
+                res, err = R.PROVIDERS["codex"](self.CODEX_SEAT, "p", 10)
+            self.assertIsNone(err)
+            self.assertEqual(
+                Path(captured_cx["kwargs"]["env"]["CODEX_HOME"]).resolve(),
+                (self.root / rel_codex).resolve())
+
     def test_claude_max_output_tokens_api_error_uses_no_content_classifier(self):
         proc = _FakeProc(
             stdout=self._claude_json(
@@ -206,7 +335,8 @@ class TestSubscriptionTransports(unittest.TestCase):
                 result="API Error: exceeded output token maximum"),
             returncode=1)
         with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
-                mock.patch.object(RS.subprocess, "Popen", return_value=proc):
+                mock.patch.object(RS.subprocess, "Popen",
+                                  side_effect=self._claude_popen_router(proc)):
             res, err = R.PROVIDERS["claude"](self.CLAUDE_SEAT, "p", 10)
         self.assertIsNone(res)
         self.assertIn("whole output budget", err)
@@ -242,7 +372,11 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertIn("--skip-git-repo-check", cmd)
         self.assertEqual(cmd[cmd.index("-C") + 1], captured["kwargs"]["cwd"])
         self.assertEqual(cmd[cmd.index("-m") + 1], "gpt-6.1-terra")
-        self.assertEqual(cmd[cmd.index("-c") + 1], 'model_reasoning_effort="xhigh"')
+        c_args = [cmd[i + 1] for i, tok in enumerate(cmd[:-1]) if tok == "-c"]
+        self.assertEqual(c_args, [
+            'model_reasoning_effort="xhigh"',
+            'cli_auth_credentials_store="file"',
+        ])
         self.assertEqual(cmd[-1], "-")
         self.assertIn("review diff", proc.stdin_received)
         self.assertIn(R.SYSTEM, proc.stdin_received)
@@ -253,7 +387,31 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertEqual(captured["cwd_entries"], [])
         self.assertFalse(Path(captured["kwargs"]["cwd"]).exists())
 
-        # When Codex JSONL omits model, exact-model resolution probe fails closed.
+        # Keyring store forwards cli_auth_credentials_store alongside --ignore-user-config.
+        (self.codex_dir / "auth.json").unlink()
+        (self.codex_dir / "config.toml").write_text(
+            'cli_auth_credentials_store = "keyring"\n', encoding="utf-8")
+        kr_cmds = []
+        proc_kr = _FakeProc(stdout=self._codex_jsonl("keyring reply"))
+
+        def fake_kr_popen(cmd, **kwargs):
+            kr_cmds.append(cmd)
+            if len(cmd) >= 3 and cmd[1:3] == ["login", "status"]:
+                return _FakeProc(stdout="Logged in using ChatGPT\n", returncode=0)
+            return proc_kr
+
+        with mock.patch.object(RS.shutil, "which", return_value="/bin/codex"), \
+                mock.patch.object(RS.subprocess, "Popen", side_effect=fake_kr_popen):
+            res_kr, err_kr = R.PROVIDERS["codex"](self.CODEX_SEAT, "p", 10)
+        self.assertIsNone(err_kr)
+        self.assertEqual(res_kr["text"], "keyring reply")
+        exec_cmd = kr_cmds[-1]
+        kr_c = [exec_cmd[i + 1] for i, tok in enumerate(exec_cmd[:-1]) if tok == "-c"]
+        self.assertIn('cli_auth_credentials_store="keyring"', kr_c)
+        (self.codex_dir / "config.toml").unlink()
+        (self.codex_dir / "auth.json").write_text(
+            json.dumps({"auth_mode": "chatgpt"}), encoding="utf-8")
+
         verdict = json.dumps({"verdict": "upheld", "findings": [], "claims": [
             {"claim_index": 0, "claim": "c", "status": "supported", "why": "ok ok ok"}]})
         proc_v = _FakeProc(stdout=self._codex_jsonl(verdict))
@@ -263,7 +421,6 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertIsNone(rec)
         self.assertIn("served None", why)
 
-        # If a Codex event explicitly reports a model, served_model carries it.
         proc_m = _FakeProc(stdout=self._codex_jsonl(verdict, model="gpt-6.1-terra"))
         with mock.patch.object(RS.shutil, "which", return_value="/bin/codex"), \
                 mock.patch.object(RS.subprocess, "Popen", return_value=proc_m):
@@ -272,7 +429,6 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertEqual(rec["model"], "gpt-6.1-terra")
 
     def test_codex_transient_error_recovers_on_turn_completed_and_empty_reply_cleanly_errors(self):
-        # Transient reconnect notice before turn.completed must not discard a valid reply.
         proc_rec = _FakeProc(stdout=self._codex_jsonl(
             "OK", before_complete=({"type": "error", "message": "Reconnecting... 1/5"},)))
         with mock.patch.object(RS.shutil, "which", return_value="/bin/codex"), \
@@ -282,7 +438,6 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertEqual(res["text"], "OK")
         self.assertEqual(res["status"], "completed")
 
-        # Empty completed reply invokes review.no_content_error(..., status='completed') cleanly.
         proc_empty = _FakeProc(stdout=self._codex_jsonl(None))
         with mock.patch.object(RS.shutil, "which", return_value="/bin/codex"), \
                 mock.patch.object(RS.subprocess, "Popen", return_value=proc_empty):
@@ -313,17 +468,18 @@ class TestSubscriptionTransports(unittest.TestCase):
         proc_cl = _FakeProc(stdout=self._claude_json(result="leak " + secret,
                                                       uuid=secret))
         with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
-                mock.patch.object(RS.subprocess, "Popen", return_value=proc_cl):
+                mock.patch.object(RS.subprocess, "Popen",
+                                  side_effect=self._claude_popen_router(proc_cl)):
             res, err = R.PROVIDERS["claude"](self.CLAUDE_SEAT, "p", 10)
         self.assertIsNone(err)
         self.assertNotIn(secret, json.dumps(res))
         self.assertIn("OPENAI_API_KEY redacted", res["text"])
         self.assertIn("OPENAI_API_KEY redacted", res["response_id"])
 
-        # committee.ask_member with preserve_reply=True still redacts before returning.
         proc_cl2 = _FakeProc(stdout=self._claude_json(result="leak " + secret))
         with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
-                mock.patch.object(RS.subprocess, "Popen", return_value=proc_cl2):
+                mock.patch.object(RS.subprocess, "Popen",
+                                  side_effect=self._claude_popen_router(proc_cl2)):
             text, err, _usage = C.ask_member(
                 self.CLAUDE_SEAT, [], "p", 10, preserve_reply=True)
         self.assertIsNone(err)
@@ -334,7 +490,8 @@ class TestSubscriptionTransports(unittest.TestCase):
             stdout=self._claude_json(is_error=True, result="auth failed " + secret),
             returncode=1)
         with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
-                mock.patch.object(RS.subprocess, "Popen", return_value=proc_cl_err):
+                mock.patch.object(RS.subprocess, "Popen",
+                                  side_effect=self._claude_popen_router(proc_cl_err)):
             res, err = R.PROVIDERS["claude"](self.CLAUDE_SEAT, "p", 10)
         self.assertIsNone(res)
         self.assertNotIn(secret, err)
@@ -355,7 +512,8 @@ class TestSubscriptionTransports(unittest.TestCase):
         proc_empty = _FakeProc(stdout=self._claude_json(
             result="", stop_reason="max_tokens"))
         with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
-                mock.patch.object(RS.subprocess, "Popen", return_value=proc_empty):
+                mock.patch.object(RS.subprocess, "Popen",
+                                  side_effect=self._claude_popen_router(proc_empty)):
             res, err = R.PROVIDERS["claude"](self.CLAUDE_SEAT, "p", 10)
         self.assertIsNone(res)
         self.assertIn("whole output budget", err)
@@ -365,7 +523,8 @@ class TestSubscriptionTransports(unittest.TestCase):
                    {"role": "assistant", "content": "turn 1 a"}]
         proc_cl = _FakeProc(stdout=self._claude_json("turn 2 claude"))
         with mock.patch.object(RS.shutil, "which", return_value="/bin/claude"), \
-                mock.patch.object(RS.subprocess, "Popen", return_value=proc_cl):
+                mock.patch.object(RS.subprocess, "Popen",
+                                  side_effect=self._claude_popen_router(proc_cl)):
             text, err, usage = C.ask_member(
                 self.CLAUDE_SEAT, history, "turn 2 q", 10, require_complete=True)
         self.assertEqual((text, err, usage),

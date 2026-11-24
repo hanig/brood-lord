@@ -1,19 +1,25 @@
 """Fail-closed CLI subscription transports for Claude and Codex reviewers.
 
 Routes review-gate and committee calls through local `claude` (claude.ai OAuth)
-and `codex` (ChatGPT account) CLIs with all provider/billing API keys stripped
-from the child environment so a subscription seat never silently falls back to
-billed API credits or leaks sibling credentials. Runs inside a fresh empty
-temporary directory with tools, user/project settings/hooks, and session
-persistence disabled.
+and `codex` (ChatGPT account) CLIs with all provider/billing API keys and
+nested-session markers stripped from the child environment so a subscription
+seat never silently falls back to billed API credits or leaks sibling
+credentials. Runs inside a fresh empty temporary directory with tools, user/
+project/local settings and hooks, and session persistence disabled.
 
 Declared limits:
-- Claude CLI enforces `max_output_tokens` via `CLAUDE_CODE_MAX_OUTPUT_TOKENS`
-  and reports `canonicalModel` in `modelUsage`.
-- Codex CLI (`codex exec --json`) does not expose a client-side
-  `max_output_tokens` cap and currently omits the served model id from JSONL
-  events, so `codex_messages` reports `served_model: None` unless an event
-  explicitly carries a `model` string (fail-closed for exact-model resolution).
+- Claude CLI `--setting-sources ""` disables user, project, and local settings
+  and hooks; host-administrator managed policies (e.g.
+  `/etc/claude-code/managed-settings.json`) remain governed by the host.
+- Claude CLI enforces `max_output_tokens` via `CLAUDE_CODE_MAX_OUTPUT_TOKENS`,
+  verifies `authMethod == "claude.ai"` via `claude auth status` before every
+  call (refusing Console / API-key logins), and reports `canonicalModel` in
+  `modelUsage`.
+- Codex CLI (`codex exec --json`) disables interactive/shell/exec/app/browser/
+  sleep tools via `--disable`, exposes no client-side `max_output_tokens` cap,
+  and currently omits the served model id from JSONL events, so
+  `codex_messages` reports `served_model: None` unless an event explicitly
+  carries a `model` string (fail-closed for exact-model resolution).
 
 Python 3.8+, standard library only. Must never import review.py.
 """
@@ -21,6 +27,7 @@ Python 3.8+, standard library only. Must never import review.py.
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -34,6 +41,9 @@ STRIPPED_ENV = (
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_FOUNDRY",
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SESSION_ID",
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
     "OPENROUTER_API_KEY",
@@ -57,59 +67,117 @@ CODEX_DISABLED_FEATURES = (
     "sleep_tool",
 )
 SUBSCRIPTION_PROVIDERS = ("claude", "codex")
+_MAX_ARGV_SYSTEM_BYTES = 65536
+_CRED_STORE_RE = re.compile(
+    r'^\s*cli_auth_credentials_store\s*=\s*["\'](keyring|auto|file)["\']\s*(?:#.*)?$'
+)
+_TOML_SECTION_RE = re.compile(r'^\s*\[')
 
 
 def claude_config_dir():
-    """Directory holding Claude Code local state/login metadata."""
+    """Absolute directory holding Claude Code local state/login metadata."""
     explicit = (os.environ.get("CLAUDE_CONFIG_DIR") or "").strip()
     if explicit:
-        return Path(os.path.expanduser(explicit))
+        return Path(os.path.abspath(os.path.expanduser(explicit)))
     return Path.home() / ".claude"
 
 
 def codex_home_dir():
-    """Directory holding Codex CLI auth.json."""
+    """Absolute directory holding Codex CLI auth.json / config.toml."""
     explicit = (os.environ.get("CODEX_HOME") or "").strip()
     if explicit:
-        return Path(os.path.expanduser(explicit))
+        return Path(os.path.abspath(os.path.expanduser(explicit)))
     return Path.home() / ".codex"
 
 
-def claude_availability():
-    """Offline check for Claude CLI subscription transport, or None if ready.
+def _abs_env_override(var_name):
+    """If var_name is set and non-empty, return {var_name: abspath(expanduser)}."""
+    raw = (os.environ.get(var_name) or "").strip()
+    if not raw:
+        return {}
+    return {var_name: os.path.abspath(os.path.expanduser(raw))}
 
-    Live OAuth validity is verified at call time with `--setting-sources ""`
-    and all API/cloud credentials stripped, so user settings (`apiKeyHelper`,
-    hooks) and API keys can never satisfy authentication.
+
+def claude_availability(timeout=15.0, deadline=None):
+    """Check Claude CLI subscription transport (`claude.ai` OAuth only).
+
+    Verifies binary presence, config directory existence, and an active
+    `authMethod == "claude.ai"` login via `claude auth status` with all API
+    and cloud billing env vars stripped (refusing Console / API-key logins).
     """
-    if not shutil.which("claude"):
+    claude_bin = shutil.which("claude")
+    if not claude_bin:
         return "claude CLI not found on PATH"
     cfg = claude_config_dir()
     if not cfg.is_dir():
         return (f"claude subscription config dir not found at {cfg}; "
                 f"run 'claude auth login'")
-    return None
+    return _verify_claude_subscription(
+        claude_bin, _abs_env_override("CLAUDE_CONFIG_DIR"),
+        timeout, deadline=deadline)
 
 
-def codex_availability():
-    """Offline check for Codex CLI ChatGPT subscription transport, or None."""
-    if not shutil.which("codex"):
-        return "codex CLI not found on PATH"
-    auth_path = codex_home_dir() / "auth.json"
-    if not auth_path.is_file():
-        return (f"codex subscription auth not found at {auth_path}; "
-                f"run 'codex login'")
+def _codex_credential_store_mode(home_dir):
+    """Read top-level `cli_auth_credentials_store` from Codex config.toml."""
+    cfg = home_dir / "config.toml"
+    if not cfg.is_file():
+        return None
     try:
-        data = json.loads(auth_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return f"codex auth unreadable at {auth_path}: {type(exc).__name__}"
-    if not isinstance(data, dict):
-        return f"codex auth at {auth_path} is not a JSON object"
-    mode = data.get("auth_mode")
-    if mode != "chatgpt":
-        return (f"codex auth_mode is {mode!r}, not 'chatgpt' subscription; "
-                f"run 'codex login' with a ChatGPT account (refusing API-key fallback)")
+        text = cfg.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if _TOML_SECTION_RE.match(line):
+            break
+        m = _CRED_STORE_RE.match(line)
+        if m:
+            return m.group(1)
     return None
+
+
+def _verify_codex_keyring_login(codex_bin, home_dir, timeout=10.0, deadline=None):
+    """Check `codex login status` for a ChatGPT keyring login (fail closed)."""
+    rc, stdout, stderr, run_err = _run_cli(
+        [codex_bin, "login", "status"], "", STRIPPED_ENV, timeout,
+        deadline=deadline, extra_env={"CODEX_HOME": str(home_dir)})
+    if run_err:
+        return f"codex keyring auth check failed: {run_err}"
+    combined = (stdout or "") + "\n" + (stderr or "")
+    if rc == 0 and "Logged in using ChatGPT" in combined:
+        return None
+    detail = combined.strip()[:200] or f"exit {rc}"
+    return (f"codex keyring login is not an active ChatGPT subscription "
+            f"({detail}); run 'codex login' with a ChatGPT account")
+
+
+def codex_availability(timeout=10.0, deadline=None):
+    """Check Codex CLI ChatGPT subscription auth (`auth.json` or keyring)."""
+    codex_bin = shutil.which("codex")
+    if not codex_bin:
+        return "codex CLI not found on PATH"
+    home_dir = codex_home_dir()
+    auth_path = home_dir / "auth.json"
+    store_mode = _codex_credential_store_mode(home_dir)
+    if store_mode in ("keyring", "auto"):
+        return _verify_codex_keyring_login(
+            codex_bin, home_dir, timeout=timeout, deadline=deadline)
+    if auth_path.is_file():
+        try:
+            data = json.loads(auth_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            return f"codex auth unreadable at {auth_path}: {type(exc).__name__}"
+        if not isinstance(data, dict):
+            return f"codex auth at {auth_path} is not a JSON object"
+        mode = data.get("auth_mode")
+        if mode != "chatgpt":
+            return (f"codex auth_mode is {mode!r}, not 'chatgpt' subscription; "
+                    f"run 'codex login' with a ChatGPT account (refusing API-key fallback)")
+        return None
+    if home_dir.is_dir() and store_mode != "file":
+        return _verify_codex_keyring_login(
+            codex_bin, home_dir, timeout=timeout, deadline=deadline)
+    return (f"codex subscription auth not found at {auth_path}; "
+            f"run 'codex login'")
 
 
 def format_messages(messages):
@@ -223,6 +291,29 @@ def _parse_json_object(stdout):
     return None
 
 
+def _verify_claude_subscription(claude_bin, extra_env, timeout, deadline=None):
+    """Require an active claude.ai subscription login (refuse Console/API key)."""
+    check_timeout = min(float(timeout), 15.0)
+    rc, stdout, stderr, run_err = _run_cli(
+        [claude_bin, "auth", "status"], "", STRIPPED_ENV, check_timeout,
+        deadline=deadline, extra_env=extra_env)
+    if run_err:
+        return f"claude auth status failed: {run_err}"
+    data = _parse_json_object(stdout)
+    if data is None:
+        detail = (stderr or stdout or f"exit {rc}").strip()[:200]
+        return f"claude auth status returned non-JSON output (exit {rc}): {detail}"
+    if (data.get("loggedIn") is not True
+            or data.get("authMethod") != "claude.ai"
+            or data.get("apiProvider") not in (None, "firstParty")):
+        method = data.get("authMethod")
+        provider = data.get("apiProvider")
+        return (f"claude authMethod is {method!r} (loggedIn={data.get('loggedIn')!r}, "
+                f"apiProvider={provider!r}), not an active 'claude.ai' subscription; "
+                f"run 'claude auth login' (refusing Console/API-key billing)")
+    return None
+
+
 def _claude_served_model(data, requested):
     """Extract canonical served model from Claude CLI modelUsage when present."""
     model_usage = data.get("modelUsage")
@@ -245,10 +336,19 @@ def _claude_served_model(data, requested):
 def claude_messages(rev, messages, system, timeout, deadline=None,
                     *, no_content_error=None, default_max_output_tokens=64000):
     """Run one review or committee turn via Claude Code OAuth subscription."""
-    why = claude_availability()
+    why = claude_availability(timeout=min(float(timeout), 15.0), deadline=deadline)
     if why:
         return None, why
     claude_bin = shutil.which("claude")
+    extra_env = _abs_env_override("CLAUDE_CONFIG_DIR")
+    sys_text = str(system or "")
+    body = format_messages(messages)
+    if len(sys_text.encode("utf-8")) > _MAX_ARGV_SYSTEM_BYTES:
+        cli_system = "Follow the <system_instructions> block in the user input."
+        body = (f"<system_instructions>\n{sys_text}\n</system_instructions>\n\n"
+                f"{body}")
+    else:
+        cli_system = sys_text
     cmd = [
         claude_bin, "-p",
         "--model", rev["model"],
@@ -256,18 +356,17 @@ def claude_messages(rev, messages, system, timeout, deadline=None,
         "--strict-mcp-config",
         "--setting-sources", "",
         "--no-session-persistence",
-        "--system-prompt", system,
+        "--system-prompt", cli_system,
         "--output-format", "json",
     ]
     if rev.get("effort"):
         cmd.extend(["--effort", rev["effort"]])
     budget = rev.get("max_output_tokens", default_max_output_tokens)
-    extra_env = {}
     if isinstance(budget, int) and not isinstance(budget, bool) and budget > 0:
         extra_env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(budget)
     rc, stdout, stderr, run_err = _run_cli(
-        cmd, format_messages(messages), STRIPPED_ENV, timeout,
-        deadline=deadline, extra_env=extra_env)
+        cmd, body, STRIPPED_ENV, timeout, deadline=deadline,
+        extra_env=extra_env)
     if run_err:
         return None, run_err
     data = _parse_json_object(stdout)
@@ -295,7 +394,7 @@ def claude_messages(rev, messages, system, timeout, deadline=None,
         return None, f"claude CLI unexpected result type: {type(text).__name__}"
     stop = data.get("stop_reason")
     terminal = data.get("terminal_reason")
-    if stop == "end_turn" or (stop is None and terminal == "completed"):
+    if stop == "end_turn" or (terminal == "completed" and stop in (None, "stop_sequence")):
         status = "completed"
     else:
         status = stop or terminal
@@ -320,10 +419,13 @@ def claude_messages(rev, messages, system, timeout, deadline=None,
 def codex_messages(rev, messages, system, timeout, deadline=None,
                    *, no_content_error=None):
     """Run one review or committee turn via Codex CLI ChatGPT subscription."""
-    why = codex_availability()
+    why = codex_availability(timeout=min(float(timeout), 10.0), deadline=deadline)
     if why:
         return None, why
     codex_bin = shutil.which("codex")
+    home_dir = codex_home_dir()
+    extra_env = _abs_env_override("CODEX_HOME")
+    store_mode = _codex_credential_store_mode(home_dir)
     cmd = [
         codex_bin, "exec",
         "--ephemeral",
@@ -341,13 +443,18 @@ def codex_messages(rev, messages, system, timeout, deadline=None,
     ])
     if rev.get("effort"):
         cmd.extend(["-c", f"model_reasoning_effort={json.dumps(rev['effort'])}"])
+    if store_mode in ("keyring", "auto"):
+        cmd.extend(["-c", f"cli_auth_credentials_store={json.dumps(store_mode)}"])
+    elif (home_dir / "auth.json").is_file():
+        cmd.extend(["-c", 'cli_auth_credentials_store="file"'])
     cmd.append("-")
     body = (f"{system}\n\n"
             f"(Analysis only: do not run shell commands or tools; answer "
             f"directly from the provided text.)\n\n---\n\n"
             f"{format_messages(messages)}")
     rc, stdout, stderr, run_err = _run_cli(
-        cmd, body, STRIPPED_ENV, timeout, deadline=deadline)
+        cmd, body, STRIPPED_ENV, timeout, deadline=deadline,
+        extra_env=extra_env)
     if run_err:
         return None, run_err
     thread_id = None
