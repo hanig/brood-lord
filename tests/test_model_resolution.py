@@ -1290,6 +1290,7 @@ class TestResolveEndToEnd(StateHome):
                  dict(good, default_by_orchestrator={}),
                  dict(good, default_by_orchestrator=[]),
                  dict(good, default_by_orchestrator={"Bad": {"provider": "claude/m", "thinking": "high"}}),
+                 dict(good, default_by_orchestrator={"openai": {"provider": "openai/gpt-5", "thinking": "high"}}),
                  dict(good, default_by_orchestrator={"codex": {"provider": "claude", "thinking": "high"}}),
                  dict(good, default_by_orchestrator={"codex": {"provider": "claude/m", "thinking": ""}}),
                  dict(good, default_by_orchestrator={"claude": {"provider": "claude/claude-opus-5-5", "thinking": "high"}}),
@@ -1409,6 +1410,7 @@ class TestOrchestratorHighestOpus(StateHome):
             dict(self.OPUS_FAMILY, any_major=1),
             dict(self.OPUS_FAMILY, any_major=None),
             dict(self.OPUS_FAMILY, major=0, named_version="argon", any_major=True),
+            dict(self.OPUS_FAMILY, major=0, named_version="argon", any_major=False),
         ):
             with self.subTest(bad=bad), self.assertRaises(MF.FamilyError):
                 MF.check_family(bad)
@@ -1539,7 +1541,7 @@ class TestOrchestratorHighestOpus(StateHome):
         with redirect_stderr(io.StringIO()):
             self.assertEqual(S.apply_agent_resolution(cd_plan, plan=plan_a),
                              "claude/claude-opus-6")
-        self.addCleanup(setattr, SR, "ACTIVE_PLAN", None)
+        self.addCleanup(SR._PLAN_RESOLUTIONS.clear)
         plan_b = {"orchestrator": "codex", "root": str(self.project / "other")}
         self.assertEqual(SR.effective_default_provider(plan_a), "claude/claude-opus-6")
         self.assertEqual(SR.effective_default_provider(plan_b), "claude/claude-opus-5-5")
@@ -1552,6 +1554,11 @@ class TestOrchestratorHighestOpus(StateHome):
             SV._validate_orchestrator(plan_b, [u_b])
             with self.assertRaises(S.PlanError):
                 SV._validate_orchestrator(plan_a, [u_b])
+        # Resolving another plan B afterward preserves plan A's own bound resolution.
+        plan_c = {"orchestrator": "claude", "units": []}
+        S.apply_agent_resolution(cl_plan, plan=plan_c)
+        self.assertEqual(SR.effective_default_provider(plan_a), "claude/claude-opus-6")
+        self.assertEqual(SR.effective_default_provider(plan_c), S.PINNED_AGENT_PROVIDER)
 
     def test_validate_plan_orchestrator_rules_and_digest(self):
         import swarm as S

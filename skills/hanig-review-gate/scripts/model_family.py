@@ -72,7 +72,7 @@ def check_family(family):
     if "any_major" in family:
         if not isinstance(family["any_major"], bool):
             raise FamilyError("family.any_major must be a boolean")
-        if family["any_major"] and "named_version" in family:
+        if "named_version" in family:
             raise FamilyError("family.any_major cannot be combined with "
                               "family.named_version")
     return family

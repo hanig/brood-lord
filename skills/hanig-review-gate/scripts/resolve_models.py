@@ -409,9 +409,11 @@ def validate_config(reviewers, agents):
                                             MF.PASEO_PREFIX + route))
 
 
+VALID_ORCHESTRATORS = frozenset(("claude", "codex", "antigravity"))
+
+
 def _orchestrator_token(value):
-    return (isinstance(value, str)
-            and re.fullmatch(r"[a-z][a-z0-9_-]*", value) is not None)
+    return isinstance(value, str) and value in VALID_ORCHESTRATORS
 
 
 def _provider_forbidden_for_rule(provider, rule):

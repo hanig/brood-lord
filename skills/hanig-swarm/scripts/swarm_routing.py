@@ -31,10 +31,12 @@ def _routing_model(value):
             and all(value.split("/")))
 
 
+VALID_ORCHESTRATORS = frozenset(("claude", "codex", "antigravity"))
+
+
 def _orchestrator_token(value):
-    """A lowercase host token for orchestrator keys (no whitespace, / or :)."""
-    return (isinstance(value, str)
-            and re.fullmatch(r"[a-z][a-z0-9_-]*", value) is not None)
+    """A supported orchestrator host identity (claude, codex, antigravity)."""
+    return isinstance(value, str) and value in VALID_ORCHESTRATORS
 
 
 def _model_matches_substrings(model, substrings):
@@ -158,13 +160,8 @@ def load_agent_routing(path=AGENTS_FILE):
 PINNED_AGENT_PROVIDER = DEFAULT_AGENT_PROVIDER
 PINNED_AGENT_THINKING = DEFAULT_AGENT_THINKING
 PINNED_THINKING_BY_MODEL = dict(THINKING_BY_MODEL)
-VALID_ORCHESTRATORS = frozenset(
-    {"claude", "codex", "antigravity"}
-    | set(ORCHESTRATOR_DEFAULTS)
-    | set(FORBID_WHEN_ORCHESTRATOR)
-)
 ACTIVE_ORCHESTRATOR = None
-ACTIVE_PLAN = None
+_PLAN_RESOLUTIONS = {}
 
 
 def _plan_orchestrator(plan_path=None, plan=None):
@@ -192,8 +189,9 @@ def effective_default_provider(plan=None):
     """Default code-agent provider for plan, without leaking another plan's state."""
     if isinstance(plan, dict):
         orch = _plan_orchestrator(plan=plan)
-        if plan is ACTIVE_PLAN and orch == ACTIVE_ORCHESTRATOR:
-            return DEFAULT_AGENT_PROVIDER
+        entry = _PLAN_RESOLUTIONS.get(id(plan))
+        if entry is not None and entry[0] is plan and entry[1] == orch:
+            return entry[2]
         if orch in ORCHESTRATOR_DEFAULTS:
             return ORCHESTRATOR_DEFAULTS[orch]["provider"]
         return PINNED_AGENT_PROVIDER
@@ -270,11 +268,10 @@ def apply_agent_resolution(plan_path, plan=None):
     provider, model or thinking still wins. The resolved model inherits its
     seat's pinned thinking level unless agents.json names one for it.
     """
-    global DEFAULT_AGENT_PROVIDER, DEFAULT_AGENT_THINKING, ACTIVE_ORCHESTRATOR, ACTIVE_PLAN
+    global DEFAULT_AGENT_PROVIDER, DEFAULT_AGENT_THINKING, ACTIVE_ORCHESTRATOR
     DEFAULT_AGENT_PROVIDER = PINNED_AGENT_PROVIDER
     DEFAULT_AGENT_THINKING = PINNED_AGENT_THINKING
     ACTIVE_ORCHESTRATOR = None
-    ACTIVE_PLAN = plan if isinstance(plan, dict) else None
     # In place, so every reference to the table sees the reset.
     THINKING_BY_MODEL.clear()
     THINKING_BY_MODEL.update(PINNED_THINKING_BY_MODEL)
@@ -299,10 +296,16 @@ def apply_agent_resolution(plan_path, plan=None):
     if isinstance(seat, dict) and _routing_token(seat.get("thinking")):
         DEFAULT_AGENT_THINKING = seat["thinking"]
     base_provider = DEFAULT_AGENT_PROVIDER
+
+    def _record_plan(resolved):
+        if isinstance(plan, dict):
+            _PLAN_RESOLUTIONS[id(plan)] = (plan, orch, resolved)
+        return resolved
+
     try:
         family = _model_family()
         if family is None or not isinstance(routing, dict):
-            return DEFAULT_AGENT_PROVIDER
+            return _record_plan(DEFAULT_AGENT_PROVIDER)
         digests = family.config_digests(
             Path(family.__file__).resolve().parent.parent / "reviewers.json",
             AGENTS_FILE)
@@ -313,7 +316,7 @@ def apply_agent_resolution(plan_path, plan=None):
         # the shipped pin in force.
         print("swarm: routing: snapshot not applied, using the pin: %s: %s"
               % (type(exc).__name__, exc), file=sys.stderr)
-        return DEFAULT_AGENT_PROVIDER
+        return _record_plan(DEFAULT_AGENT_PROVIDER)
     if provider and note and provider != base_provider:
         THINKING_BY_MODEL[provider] = family.agent_thinking(
             seat or (routing.get("default") or {}),
@@ -321,7 +324,7 @@ def apply_agent_resolution(plan_path, plan=None):
             provider)
         DEFAULT_AGENT_PROVIDER = provider
         print("swarm: routing: " + note, file=sys.stderr)
-    return DEFAULT_AGENT_PROVIDER
+    return _record_plan(DEFAULT_AGENT_PROVIDER)
 
 
 def default_thinking_for(u):
