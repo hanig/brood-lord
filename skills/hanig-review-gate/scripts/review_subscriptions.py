@@ -1,11 +1,16 @@
 """Fail-closed CLI subscription transports for Claude and Codex reviewers.
 
 Routes review-gate and committee calls through local `claude` (claude.ai OAuth)
-and `codex` (ChatGPT account) CLIs with all provider/billing API keys and
-nested-session markers stripped from the child environment so a subscription
-seat never silently falls back to billed API credits or leaks sibling
-credentials. Runs inside a fresh empty temporary directory with tools, user/
-project/local settings and hooks, and session persistence disabled.
+and `codex` (ChatGPT account) CLIs via a single sanitized `build_child_env()`
+that strips provider/billing/session prefixes (`ANTHROPIC_*`, `CLAUDE_*`,
+`CLAUDECODE*`, `CODEX_*`, `OPENAI_*`, `OPENROUTER_*`, `GEMINI_*`,
+`GOOGLE_API_*`, `GOOGLE_GENAI_*`, `VERTEX_*`, `CLOUD_ML_*`, `AZURE_OPENAI_*`,
+`AWS_BEARER_TOKEN_BEDROCK`), credential/endpoint suffixes (`*_API_KEY`,
+`*_AUTH_TOKEN`, `*_BASE_URL`), and `STRIPPED_ENV` while re-injecting only
+explicitly managed overrides (`CLAUDE_CONFIG_DIR`,
+`CLAUDE_CODE_MAX_OUTPUT_TOKENS`, `CODEX_HOME`). Runs inside a fresh empty
+temporary directory with tools, user/project/local settings and hooks, and
+session persistence disabled.
 
 Declared limits:
 - Claude CLI `--setting-sources ""` disables user, project, and local settings
@@ -13,24 +18,29 @@ Declared limits:
   `/etc/claude-code/managed-settings.json`) remain governed by the host.
 - Claude CLI enforces `max_output_tokens` via `CLAUDE_CODE_MAX_OUTPUT_TOKENS`,
   verifies `authMethod == "claude.ai"` via `claude auth status` before every
-  call (refusing Console / API-key logins), and reports `canonicalModel` in
-  `modelUsage`.
+  call (refusing Console / API-key / cloud logins), and reports `canonicalModel`
+  in `modelUsage`.
 - Codex CLI (`codex exec --json`) disables interactive/shell/exec/app/browser/
-  sleep tools via `--disable`, exposes no client-side `max_output_tokens` cap,
-  and currently omits the served model id from JSONL events, so
-  `codex_messages` reports `served_model: None` unless an event explicitly
-  carries a `model` string (fail-closed for exact-model resolution).
+  sleep tools via `--disable`, enforces `-c forced_login_method="chatgpt"` and
+  `-c cli_auth_credentials_store=...` alongside `--ignore-user-config`, exposes
+  no client-side `max_output_tokens` cap, and currently omits the served model
+  id from JSONL events, so `codex_messages` reports `served_model: None` unless
+  an event explicitly carries a `model` string (fail-closed for exact-model
+  resolution).
 
 Python 3.8+, standard library only. Must never import review.py.
 """
 
+import importlib
 import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -43,6 +53,7 @@ STRIPPED_ENV = (
     "ANTHROPIC_FOUNDRY_AUTH_TOKEN",
     "CLAUDE_CODE_API_BASE_URL",
     "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+    "CLAUDE_CODE_OAUTH_TOKEN",
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_FOUNDRY",
@@ -64,6 +75,26 @@ STRIPPED_ENV = (
     "GITHUB_TOKEN",
     "WANDB_API_KEY",
 )
+STRIPPED_ENV_PREFIXES = (
+    "ANTHROPIC_",
+    "CLAUDE_",
+    "CLAUDECODE",
+    "CODEX_",
+    "OPENAI_",
+    "OPENROUTER_",
+    "GEMINI_",
+    "GOOGLE_API_",
+    "GOOGLE_GENAI_",
+    "VERTEX_",
+    "CLOUD_ML_",
+    "AZURE_OPENAI_",
+    "AWS_BEARER_TOKEN_BEDROCK",
+)
+STRIPPED_ENV_SUFFIXES = (
+    "_API_KEY",
+    "_AUTH_TOKEN",
+    "_BASE_URL",
+)
 CLAUDE_STRIPPED_ENV = STRIPPED_ENV
 CODEX_STRIPPED_ENV = STRIPPED_ENV
 CLAUDE_EFFORTS = ("low", "medium", "high", "max")
@@ -81,14 +112,46 @@ _MAX_ARGV_SYSTEM_BYTES = 65536
 _CRED_STORE_RE = re.compile(
     r'^\s*(?:cli_auth_credentials_store|"cli_auth_credentials_store"'
     r"|'cli_auth_credentials_store')\s*=\s*"
-    r'["\'](keyring|auto|file)["\']\s*(?:#.*)?$'
+    r'(["\'])(keyring|auto|file)\1\s*(?:#.*)?$'
 )
 _TOML_SECTION_RE = re.compile(r'^\s*\[')
 
 
+def _sanitized_path(raw_path=None):
+    """Drop empty PATH segments and absolutize relative entries before tmpdir chdir."""
+    value = os.environ.get("PATH", "") if raw_path is None else raw_path
+    parts = []
+    for entry in value.split(os.pathsep):
+        if not entry:
+            continue
+        parts.append(os.path.abspath(os.path.expanduser(entry)))
+    return os.pathsep.join(parts)
+
+
+def _should_strip_env_key(key, explicit_names):
+    if key in explicit_names:
+        return True
+    upper = key.upper()
+    return (any(upper.startswith(p) for p in STRIPPED_ENV_PREFIXES)
+            or any(upper.endswith(s) for s in STRIPPED_ENV_SUFFIXES))
+
+
+def build_child_env(stripped_env=STRIPPED_ENV, extra_env=None):
+    """Build sanitized child env shared by availability probes and CLI calls."""
+    explicit = set(stripped_env)
+    env = {k: v for k, v in os.environ.items()
+           if not _should_strip_env_key(k, explicit)}
+    if "PATH" in env:
+        env["PATH"] = _sanitized_path(env["PATH"])
+    if extra_env:
+        env.update(extra_env)
+    return env
+
+
 def _resolve_cli_bin(name):
-    """Locate CLI binary as an absolute path before chdir to empty tmpdir."""
-    found = shutil.which(name)
+    """Locate CLI binary as an absolute path using sanitized PATH."""
+    clean_path = _sanitized_path()
+    found = shutil.which(name, path=clean_path) if clean_path else shutil.which(name)
     return os.path.abspath(found) if found else None
 
 
@@ -135,6 +198,17 @@ def claude_availability(timeout=15.0, deadline=None):
         timeout, deadline=deadline)
 
 
+def _parse_cred_store_regex(text):
+    """Python 3.8-3.10 stdlib fallback for top-level cli_auth_credentials_store."""
+    for line in text.splitlines():
+        if _TOML_SECTION_RE.match(line):
+            break
+        m = _CRED_STORE_RE.match(line)
+        if m:
+            return m.group(2)
+    return None
+
+
 def _codex_credential_store_mode(home_dir):
     """Read top-level `cli_auth_credentials_store` from Codex config.toml."""
     cfg = home_dir / "config.toml"
@@ -144,13 +218,15 @@ def _codex_credential_store_mode(home_dir):
         text = cfg.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
-    for line in text.splitlines():
-        if _TOML_SECTION_RE.match(line):
-            break
-        m = _CRED_STORE_RE.match(line)
-        if m:
-            return m.group(1)
-    return None
+    if sys.version_info >= (3, 11):
+        try:
+            tomllib = importlib.import_module("tomllib")
+            parsed = tomllib.loads(text)
+            val = parsed.get("cli_auth_credentials_store") if isinstance(parsed, dict) else None
+            return val if val in ("keyring", "auto", "file") else None
+        except Exception:
+            return None
+    return _parse_cred_store_regex(text)
 
 
 def _verify_codex_keyring_login(codex_bin, home_dir, timeout=10.0, deadline=None):
@@ -205,18 +281,33 @@ def codex_availability(timeout=10.0, deadline=None):
 
 
 def format_messages(messages):
-    """Serialize one or more chat turns for stdin delivery without ARG_MAX limits."""
+    """Serialize one or more chat turns for stdin delivery without ARG_MAX limits.
+
+    Single-turn user prompts pass through raw text unchanged. Multi-turn
+    conversation histories use a per-call random nonce tag so literal `</turn>`
+    content in diffs or replies cannot close a turn boundary without escaping
+    or mutating code bytes.
+    """
     if (len(messages) == 1 and isinstance(messages[0], dict)
             and messages[0].get("role") == "user"):
         return str(messages[0].get("content", ""))
-    parts = ["<conversation_history>"]
+    all_text = "\n".join(str(m.get("content", "")) for m in messages if isinstance(m, dict))
+    nonce = secrets.token_hex(4)
+    while nonce in all_text:
+        nonce = secrets.token_hex(4)
+    tag = f"turn_{nonce}"
+    parts = [f"<conversation_history_{nonce}>"]
     for msg in messages[:-1]:
         role = str(msg.get("role", "user"))
         content = str(msg.get("content", ""))
-        parts.append(f'<turn role="{role}">\n{content}\n</turn>')
-    parts.append("</conversation_history>")
+        parts.append(f'<{tag} role="{role}">\n{content}\n</{tag}>')
+    parts.append(f"</conversation_history_{nonce}>")
     last = messages[-1] if messages else {"role": "user", "content": ""}
-    parts.append(f"<current_user_message>\n{last.get('content', '')}\n</current_user_message>")
+    parts.append(
+        f"<current_user_message_{nonce}>\n"
+        f"{last.get('content', '')}\n"
+        f"</current_user_message_{nonce}>"
+    )
     return "\n\n".join(parts)
 
 
@@ -246,15 +337,11 @@ def _kill_process_group(proc):
 
 def _run_cli(cmd, stdin_text, stripped_env, timeout, deadline=None,
              *, extra_env=None):
-    """Run CLI in a fresh empty directory with stripped API keys and group kill."""
+    """Run CLI in a fresh empty directory with sanitized env and group kill."""
     rem, err = _remaining_seconds(timeout, deadline)
     if err:
         return None, None, None, err
-    env = dict(os.environ)
-    for var in stripped_env:
-        env.pop(var, None)
-    if extra_env:
-        env.update(extra_env)
+    env = build_child_env(stripped_env, extra_env=extra_env)
     with tempfile.TemporaryDirectory(prefix="hanig-review-cli-") as tmp_dir:
         resolved_cmd = [tmp_dir if arg == "__HANIG_EMPTY_CWD__" else arg for arg in cmd]
         try:
@@ -467,6 +554,7 @@ def codex_messages(rev, messages, system, timeout, deadline=None,
     ])
     if rev.get("effort"):
         cmd.extend(["-c", f"model_reasoning_effort={json.dumps(rev['effort'])}"])
+    cmd.extend(["-c", 'forced_login_method="chatgpt"'])
     if store_mode in ("keyring", "auto"):
         cmd.extend(["-c", f"cli_auth_credentials_store={json.dumps(store_mode)}"])
     elif (home_dir / "auth.json").is_file():
