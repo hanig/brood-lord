@@ -98,8 +98,9 @@ every issue title for approval, files them in Linear, and dispatches.
 | `hanig-portable-handoff` | Capture and resume run state across machines. |
 | `hanig-wandb-logging` | Make W&B runs readable; caller supplies W&B, contracts judge outcomes. |
 | `hanig-debrief` | Collect project lessons into a private dossier, draft an owner-approved scrubbed packet, and triage/file learnings. |
+| `hanig-hillclimb` | Pre-registered hill climbing on a frozen harness, kept or reverted by a paired A/B noise screen. |
 
-All eight are prefixed `hanig-` so they can never collide with an Arc
+All nine are prefixed `hanig-` so they can never collide with an Arc
 org-managed skill name. That prefix is now load-bearing rather than tidy:
 `install.sh` reads it as the authorship namespace, and anything under
 `skills/` outside it is treated as vendored -- installed by us, written
@@ -1542,6 +1543,7 @@ skills/hanig-verified-workflow/  contract.py
 skills/hanig-portable-handoff/   handoff.py
 skills/hanig-wandb-logging/      wbkit.py, audit_project.py
 skills/hanig-debrief/            debrief.py, debrief_extract.py, debrief_packet.py, debrief_triage.py, debrief_file.py
+skills/hanig-hillclimb/          hillclimb.py
 tests/                      stdlib unittest
 examples/                   reference config to copy elsewhere; nothing reads it here
 docs/probes/                measured environment data per cluster

@@ -24,11 +24,11 @@ spec.loader.exec_module(installer)
 
 
 class TestSelectionBeforeWrites(unittest.TestCase):
-    def test_eight_authored_bundles_include_standalone_logging(self):
+    def test_nine_authored_bundles_include_standalone_logging(self):
         authored = {name for name, _path, origin in installer.selected_sources(ROOT, ())
                     if origin == "authored"}
         self.assertEqual(authored, {
-            "hanig-wandb-logging", "hanig-debrief", "hanig-orchestrate", "hanig-project", "hanig-swarm",
+            "hanig-wandb-logging", "hanig-debrief", "hanig-hillclimb", "hanig-orchestrate", "hanig-project", "hanig-swarm",
             "hanig-review-gate", "hanig-verified-workflow", "hanig-portable-handoff",
         })
         self.assertEqual(installer.selected_sources(ROOT, ("hanig-debrief",)), [

@@ -23,6 +23,7 @@ COMPATIBILITY = ROOT / "docs" / "agent-compatibility.md"
 AUTHORED = {
     "hanig-wandb-logging",
     "hanig-debrief",
+    "hanig-hillclimb",
     "hanig-orchestrate",
     "hanig-project",
     "hanig-swarm",
@@ -223,6 +224,7 @@ class TestSkillCapabilities(unittest.TestCase):
                 "Drafting is offline; only debrief_file.py reaches the network, "
                 "after one named approval of the exact packet."
             ),
+            "hanig-hillclimb": "Host capability boundary",
             "hanig-orchestrate": "Host capability boundary",
             "hanig-project": (
                 "Use linear_sync.py with the current session's authorized tracker access; "

@@ -22,9 +22,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 # The single authoritative list of authored skills that must not be invoked
-# implicitly.  Unit h1-hillclimb-skill appends "hanig-hillclimb".
+# implicitly.
 EXPLICIT_ONLY_SKILLS = (
     "hanig-debrief",
+    "hanig-hillclimb",
     "hanig-orchestrate",
     "hanig-portable-handoff",
     "hanig-project",
