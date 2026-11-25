@@ -615,6 +615,39 @@ def _frontmatter(skill: Path) -> dict[str, Any]:
     return fields
 
 
+def agent_policy_errors(path: Path) -> list[str]:
+    """Explicit-invocation policy faults in one source, staged or installed skill.
+
+    Applies lib/skill_agent_policy.py's per-skill rules to a single directory:
+    ``disable-model-invocation: true`` requires the byte-exact
+    ``agents/openai.yaml``, no other skill may carry that file, and a name in
+    EXPLICIT_ONLY_SKILLS must carry the flag.  Only ``hanig-`` names are read.
+    """
+    from lib import skill_agent_policy as policy
+    name = path.name
+    if not name.startswith(policy.AUTHORED_PREFIX):
+        return []
+    # The one-skill readers are reused so the rules cannot drift from --check.
+    flag = policy._read_flag(path)
+    state = policy._yaml_state(path)
+    errors = []
+    if flag["state"] in (policy.FLAG_MALFORMED, policy.FLAG_NONCANONICAL):
+        errors.append(f"{name}: {flag['detail']}")
+    elif flag["state"] == policy.FLAG_ABSENT and name in policy.EXPLICIT_ONLY_SKILLS:
+        errors.append(f"{name}: explicit-only skill lacks '{policy.FLAG_KEY}: true'")
+    if state["state"] == "unsafe":
+        errors.append(f"{name}: {state['detail']}")
+    elif flag["state"] == policy.FLAG_TRUE:
+        if state["state"] == "absent":
+            errors.append(f"{name}: agents/openai.yaml is missing")
+        elif state["state"] == "drift":
+            errors.append(f"{name}: {state['detail']}")
+    elif state["state"] != "absent":
+        errors.append(f"{name}: agents/openai.yaml exists without "
+                      f"'{policy.FLAG_KEY}: true'")
+    return errors
+
+
 def validate_payload(path: Path) -> None:
     """Validate without py_compile, so --dry-run cannot create bytecode caches."""
     skill = path / "SKILL.md"
@@ -635,6 +668,9 @@ def validate_payload(path: Path) -> None:
     description = fields.get("description", "")
     if not isinstance(description, str) or not description:
         raise ValueError("SKILL.md has no non-empty description field")
+    policy_errors = agent_policy_errors(path)
+    if policy_errors:
+        raise ValueError("; ".join(policy_errors))
     for script in path.glob("scripts/*.py"):
         try:
             compile(script.read_text(encoding="utf-8"), str(script), "exec")

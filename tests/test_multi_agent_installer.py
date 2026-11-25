@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -107,6 +108,28 @@ class TestSelectionBeforeWrites(unittest.TestCase):
             if path.is_dir():
                 with self.subTest(skill=path.name):
                     installer.validate_payload(path)
+
+    def test_payload_validation_rejects_invocation_policy_drift(self):
+        yaml = b"policy:\n  allow_implicit_invocation: false\n"
+        cases = (
+            ("hanig-swarm", "missing", "agents/openai.yaml is missing"),
+            ("hanig-swarm", yaml + b"#\n", "differs from the canonical bytes"),
+            ("hanig-review-gate", yaml, "exists without"),
+        )
+        for name, change, message in cases:
+            with self.subTest(name=name, change=change), \
+                    tempfile.TemporaryDirectory() as raw:
+                payload = Path(raw) / name
+                shutil.copytree(str(ROOT / "skills" / name), str(payload))
+                installer.validate_payload(payload)
+                target = payload / "agents" / "openai.yaml"
+                if change == "missing":
+                    target.unlink()
+                else:
+                    target.parent.mkdir(exist_ok=True)
+                    target.write_bytes(change)
+                with self.assertRaisesRegex(ValueError, message):
+                    installer.validate_payload(payload)
 
     def test_frontmatter_rejects_malformed_or_wrong_identity(self):
         cases = {
@@ -483,6 +506,38 @@ class TestPublicCli(unittest.TestCase):
         self.assertTrue((installed / ".installed-by-multi-agent-skills").is_file())
         self.assertEqual(before, {path for root in source_roots
                                   for path in root.rglob("__pycache__")})
+
+    def test_install_copies_policy_file_and_installed_drift_is_detected(self):
+        yaml = (ROOT / "skills" / "hanig-swarm" / "agents" / "openai.yaml").read_bytes()
+        for mode in ("copy", "link"):
+            with self.subTest(mode=mode):
+                result, home = self._run("--agent", "claude", "--mode", mode,
+                                         "--only", "hanig-swarm",
+                                         "--only", "hanig-review-gate",
+                                         "--json", agents=("claude",))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                root = home / ".claude" / "skills"
+                installed = root / "hanig-swarm"
+                self.assertEqual(installed.is_symlink(), mode == "link")
+                self.assertEqual((installed / "agents" / "openai.yaml").read_bytes(), yaml)
+                self.assertFalse(os.path.lexists(
+                    str(root / "hanig-review-gate" / "agents")))
+                for name in ("hanig-swarm", "hanig-review-gate"):
+                    self.assertEqual(installer.agent_policy_errors(root / name), [])
+                if mode == "copy":
+                    target = installed
+        # Mutate only the copy: the link install points into this checkout.
+        self.assertFalse(target.is_symlink())
+        shutil.rmtree(str(target / "agents"))
+        self.assertTrue((ROOT / "skills" / "hanig-swarm" / "agents").is_dir())
+        self.assertEqual(installer.agent_policy_errors(target),
+                         ["hanig-swarm: agents/openai.yaml is missing"])
+        shutil.copytree(str(ROOT / "skills" / "hanig-swarm" / "agents"),
+                        str(target / "agents"))
+        (target / "agents" / "openai.yaml").write_bytes(
+            yaml.replace(b"false", b"true"))
+        self.assertEqual(installer.agent_policy_errors(target), [
+            "hanig-swarm: agents/openai.yaml differs from the canonical bytes"])
 
     def test_all_collisions_are_reported_before_any_destination_is_written(self):
         with tempfile.TemporaryDirectory() as raw:

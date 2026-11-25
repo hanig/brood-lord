@@ -933,6 +933,40 @@ for d in "$PREFIX"/*; do
 done
 [ "$bad" -eq 0 ] && printf '  (no problems)\n'
 
+printf '\n=== INVOCATION POLICY ===\n'
+# Explicit-only holds only while the copy agents load keeps agents/openai.yaml
+# byte for byte; lib/skill_agent_policy.py --check covers the checkout alone.
+POLICY_PY='
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from lib.skill_installer import agent_policy_errors
+errors = agent_policy_errors(Path(sys.argv[2]))
+print("; ".join(errors) if errors else "ok")
+sys.exit(1 if errors else 0)
+'
+policy_bad=0
+for d in "$PREFIX"/"$OWN_PREFIX"*; do
+  [ -d "$d" ] || continue
+  name=${d##*/}
+  [ -d "$REPO/skills/$name" ] || continue
+  if ! command -v python3 >/dev/null 2>&1; then
+    printf '  UNKNOWN  %s — python3 is ABSENT\n' "$name"
+    policy_bad=$((policy_bad + 1))
+    continue
+  fi
+  bounded "$PROBE_RUN_SECONDS" python3 -B -c "$POLICY_PY" "$REPO" "$d"
+  case "$PROBE_STATE:$PROBE_RC" in
+    answered:0) printf '  ok    %s\n' "$name" ;;
+    answered:1) printf '  DRIFT %s\n' "$PROBE_OUT"; policy_bad=$((policy_bad + 1)) ;;
+    timeout:*)  printf '  TIMEOUT  %s — policy check timed out\n' "$name"
+                policy_bad=$((policy_bad + 1)) ;;
+    *)          printf '  UNKNOWN  %s — policy check failed\n' "$name"
+                policy_bad=$((policy_bad + 1)) ;;
+  esac
+done
+[ "$policy_bad" -eq 0 ] && printf '  (no problems)\n'
+
 printf '\n=== AGENT READINESS ===\n'
 DIAGNOSTICS="$REPO/skills/hanig-project/scripts/agent_diagnostics.py"
 if [ ! -f "$DIAGNOSTICS" ]; then
@@ -996,5 +1030,5 @@ if command -v git >/dev/null 2>&1; then
 fi
 
 printf '\n'
-[ "$bad" -eq 0 ] || exit 1
+[ "$bad" -eq 0 ] && [ "$policy_bad" -eq 0 ] || exit 1
 exit 0

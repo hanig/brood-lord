@@ -9,6 +9,7 @@ description: >-
   (it records pointers, never copies), not for credential transfer, and not for
   deciding whether a run succeeded (use hanig-verified-workflow or
   hanig-verified-training, whose verdicts this records).
+disable-model-invocation: true
 ---
 
 # hanig-portable-handoff

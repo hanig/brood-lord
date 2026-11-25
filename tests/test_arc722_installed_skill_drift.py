@@ -659,5 +659,58 @@ class TestInstalledSkillDrift(unittest.TestCase):
                 self.assertEqual(head, git(workspace, "rev-parse", "HEAD"))
 
 
+
+class TestInstalledInvocationPolicyDrift(unittest.TestCase):
+    """bin/doctor checks the installed copy, not only the checkout."""
+
+    def doctor(self, prefix, home):
+        env = {"HOME": str(home), "LANG": "C", "LC_ALL": "C",
+               "PATH": os.pathsep.join((str(Path(sys.executable).parent),
+                                        "/usr/bin", "/bin"))}
+        result = subprocess.run(
+            ["sh", str(ROOT / "bin" / "doctor"), "--prefix", str(prefix)],
+            cwd=str(ROOT), env=env, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, universal_newlines=True, timeout=300)
+        section = result.stdout.partition("=== INVOCATION POLICY ===")[2]
+        return result.returncode, section.split("===", 1)[0], result.stdout
+
+    def test_doctor_reports_missing_or_altered_installed_policy_file(self):
+        with tempfile.TemporaryDirectory() as raw:
+            prefix, home = Path(raw) / "skills", Path(raw) / "home"
+            home.mkdir()
+            command = ["sh", str(ROOT / "install.sh"), "--prefix", str(prefix)]
+            for name in ("hanig-swarm", "hanig-project", "hanig-review-gate"):
+                command += ["--only", name]
+            installed = subprocess.run(
+                command, cwd=str(ROOT), stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, universal_newlines=True, timeout=300,
+                env={**os.environ, "HOME": str(home)})
+            self.assertEqual(installed.returncode, 0, installed.stdout)
+            canonical = (ROOT / "skills" / "hanig-swarm" / "agents" /
+                         "openai.yaml").read_bytes()
+            for name in ("hanig-swarm", "hanig-project"):
+                policy = prefix / name / "agents" / "openai.yaml"
+                self.assertFalse((prefix / name).is_symlink())
+                self.assertEqual(policy.read_bytes(), canonical)
+            code, section, output = self.doctor(prefix, home)
+            self.assertEqual(code, 0, output)
+            self.assertEqual(section.split(), [
+                "ok", "hanig-project", "ok", "hanig-review-gate", "ok",
+                "hanig-swarm", "(no", "problems)"], output)
+
+            (prefix / "hanig-swarm" / "agents" / "openai.yaml").unlink()
+            (prefix / "hanig-project" / "agents" / "openai.yaml").write_bytes(
+                canonical + b"extra: true\n")
+            code, section, output = self.doctor(prefix, home)
+            self.assertEqual(code, 1, output)
+            self.assertIn("DRIFT hanig-swarm: agents/openai.yaml is missing", section)
+            self.assertIn("DRIFT hanig-project: agents/openai.yaml differs from the "
+                          "canonical bytes", section)
+            self.assertIn("ok    hanig-review-gate", section)
+            self.assertNotIn("(no problems)", section)
+            self.assertEqual((ROOT / "skills" / "hanig-swarm" / "agents" /
+                              "openai.yaml").read_bytes(), canonical)
+
+
 if __name__ == "__main__":
     unittest.main()
