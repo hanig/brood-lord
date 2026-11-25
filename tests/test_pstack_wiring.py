@@ -27,7 +27,7 @@ RULES = ((OD, "never executes reviewer text"), (OD, "downgrades REVIEW_FAIL"),
               "after one named approval of the exact packet."),
          (DB, "never globs unrelated projects"), (DB, "never prints raw transcript text"),
          (DB, "imports no network module"), (DB, "beats prose"), (RG, "(L1):**"),
-         (RG, "(L2):**"), (HO, "decisions_log.py"), (HO, "debrief_audit.py"),
+         (RG, "never changes a verdict"), (RG, "struck in rounds N-2 and N-1"), (HO, "decisions_log.py"), (HO, "debrief_audit.py"),
          (RM, "| `hanig-hillclimb` |"), (RM, "All nine are"), (RM, "skills/hanig-hillclimb/"),
          (RM, "lib/skill_agent_policy.py   --check"))
 UNSHIPPED = tuple((doc, flag) for doc in (OD, DB, RG, RM) for flag in (
@@ -54,7 +54,9 @@ def wiring_problems(root):
             where = "%s %s: " % (skill, key)
             if key not in data["known_declarations"] or key not in texts:
                 problems.append(where + "not registered")
-            elif len(body) != 3 or "- **`%s`:** %s" % (key, texts[key]) not in body[1]:
+            elif len(body) != 3 or not any(  # exact line: a stale longer bullet is not a match
+                    line.split(" (Elaboration: ")[0] == "- **`%s`:** %s" % (key, texts[key])
+                    for line in body[1].splitlines()):
                 problems.append(where + "not rendered")
     problems += ["%s: missing %r" % r for r in RULES if r[1] not in _read(root, r[0])]
     return problems + ["%s: unshipped %r" % r for r in UNSHIPPED if r[1] in _read(root, r[0])]
@@ -69,8 +71,8 @@ def invocations(text, name):
     for snippet in snippets:
         match = re.search(r"(?:^|[\s/\"])%s\"?\s+(.*)" % re.escape(name), snippet, re.S)
         if match:
-            rest = match.group(1).split("#")[0]
-            sub = rest.split()[0] if rest.split() and rest[0] not in "-[" else None
+            rest = re.split(r"\s(?:\||&&|;|>)\s|#", match.group(1))[0]  # first command only
+            sub = rest.split()[0].strip("'\"") if rest.split() and rest[0] not in "-[" else None
             found.append((sub, set(re.findall(r"--[a-z][a-z0-9-]*", rest))))
     return found
 
@@ -115,12 +117,16 @@ class TestPstackWiring(unittest.TestCase):
                                       self.mutated(relative, edit))
 
     def test_documented_flags_exist_in_shipped_parsers(self):
-        self.assertEqual(invocations("`x/a.py --b\n--c`\n```\na.py s|t --d \\\n --e\n```\n", "a.py"),
-                         [(None, {"--b", "--c"}), ("s|t", {"--d", "--e"})])
-        flags = REVIEW_FLAGS.split()
-        self.assertEqual([f for d in (RG, RM) for f in flags if "`" + f not in _read(ROOT, d)], [])
+        self.assertEqual(invocations("`x/a.py --b\n--c`\n```\na.py 's|t' --d \\\n --e | b --f\n```",
+                                     "a.py"), [(None, {"--b", "--c"}), ("s|t", {"--d", "--e"})])
+        review = _run(ROOT / CLIS["review.py"] / "review.py", "--help").stdout
+        for doc in (RG, RM):  # every flag spelled in the L1/L2 paragraphs, not a hard-coded list
+            found = set(re.findall(r"`(--[a-z][a-z0-9-]*)", "".join(
+                p for p in _read(ROOT, doc).split("\n\n") if "(L1" in p or "(L2" in p)))
+            self.assertEqual((set(REVIEW_FLAGS.split()) - found, {f for f in found if not re.search(
+                r"(?<![\w-])%s(?![\w-])" % f, review)}), (set(), set()), doc)
         for name in sorted(CLIS):
-            found = invocations(_read(ROOT, RM) + "`review.py %s`" % REVIEW_FLAGS, name)
+            found = invocations(_read(ROOT, RM), name)
             self.assertTrue(found, name)
             for sub, flags in ((s, f) for subs, f in found for s in (subs or "").split("|")):
                 out = _run(ROOT / CLIS[name] / name, *([sub] if sub else []), "--help")
