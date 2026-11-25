@@ -4,7 +4,6 @@ Python 3.8+, stdlib only, no process or network import. Advisory; only the
 opt-in --require-premise-ack refuses.
 """
 
-import hashlib
 import importlib.util
 import json
 import os
@@ -101,21 +100,15 @@ def journal_history(records, identity, cycle):
         and not problems(r)]
 
 
-def _read(path, cap):
-    with os.fdopen(os.open(str(path), os.O_RDONLY | os.O_NONBLOCK), "rb") as stream:
-        raw = stream.read(cap + 1) if stat.S_ISREG(os.fstat(stream.fileno()).st_mode) else b""
-    if not 0 < len(raw) <= cap:
-        raise ValueError("not a non-empty regular file within {} bytes".format(cap))
-    return raw
-
-
 def read_journal(directory, identity):
     """Records naming identity; read-only. Undecodable records are skipped."""
     records = []
     for name in sorted(os.listdir(directory)) if os.path.isdir(directory) else []:
-        path = os.path.join(directory, name, "record.jsonl")
         try:
-            text = _read(path, 16 << 20).decode("utf-8") if os.path.lexists(path) else ""
+            fd = os.open(os.path.join(directory, name, "record.jsonl"), os.O_RDONLY | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as stream:
+                regular = stat.S_ISREG(os.fstat(fd).st_mode)
+                text = stream.read(16 << 20).decode("utf-8") if regular else ""
             record = json.loads(text) if json.dumps(identity) in text else None
         except (OSError, ValueError, RecursionError):
             continue
@@ -124,34 +117,7 @@ def read_journal(directory, identity):
     return records
 
 
-def preflight(args, dispositions, facade):
-    """Validate acknowledgments; digest dispositions before sanitizing."""
-    memo, reason = args.premise_memo, args.continue_patching
-    if (args.require_premise_ack or memo is not None or reason is not None) \
-            and args.kind != "implementation":
-        facade.config_error("premise flags apply to --kind implementation only.")
-    args.premise_ack = args.premise_history = None
-    if memo is not None:
-        try:
-            raw = _read(memo, 1 << 20)
-            if not raw.decode("utf-8").strip():
-                raise ValueError("blank")
-        except (OSError, ValueError) as exc:
-            facade.config_error("--premise-memo needs a non-empty UTF-8 file: {}".format(exc))
-        args.premise_ack = {"mode": "premise_memo", "path": os.path.abspath(memo),
-                            "sha256": hashlib.sha256(raw).hexdigest()}
-    elif reason is not None:
-        if not reason.strip() or reason.splitlines() != [reason]:
-            facade.config_error("--continue-patching needs a non-empty one-line reason.")
-        args.premise_ack = {"mode": "continue_patching", "reason": reason}
-    args.premise_dispositions = [dict(
-        finding_digest=facade.finding_digest(e["location"], e["summary"]),
-        disposition=e["disposition"], **{k: e[k] for k in ("defect_class",) if k in e})
-        for e in dispositions]
-
-
 def _load_history(args, facade, identity, cycle):
-    """Store (identity, cycle, records, tree); return an error name or None."""
     try:
         records = json.loads(facade._run_journal_append(
             args.file, {"read": "premise", "identity": identity}))
@@ -166,7 +132,7 @@ def _load_history(args, facade, identity, cycle):
 
 def gate(args, facade):
     """Opt-in, before reservation and reviewers; otherwise reads nothing."""
-    if args.round < 2 or not args.require_premise_ack or args.premise_ack is not None:
+    if args.premise_ack is not None:
         return
     try:
         identity = facade.change_identity(
@@ -202,7 +168,7 @@ def _prior(args, current=None):
 
 
 def final(args, completed, facade):
-    """Advisory premise_check for the report; never raises or gates."""
+    """Advisory premise_check; never raises or gates."""
     try:
         owned = (getattr(args, "round_reservation", None) or (None, None))[1]
         if args.round >= 2 and args.premise_history is None and isinstance(owned, dict) \
@@ -223,11 +189,3 @@ def final(args, completed, facade):
                             "again.".format(", ".join(check["defect_classes"]), check["rounds"])),
               file=facade.sys.stderr)
     return check
-
-
-def journal_fields(args):
-    """Premise fields for an implementation review_round record."""
-    owned = (getattr(args, "round_reservation", None) or (None, {}))[1]
-    fields = {k: owned[k] for k in ("identity", "cycle") if isinstance(owned, dict) and k in owned}
-    return dict(fields, dispositions=getattr(args, "premise_dispositions", None) or [],
-                premise_ack=getattr(args, "premise_ack", None))

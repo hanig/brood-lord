@@ -135,7 +135,6 @@ _schema = _load_sibling("_hanig_review_gate_schema", "review_schema.py")
 _cli = _load_sibling("_hanig_review_gate_cli", "review_cli.py")
 _subs = _load_sibling("_hanig_review_gate_subscriptions", "review_subscriptions.py")
 _evidence = None
-_premise = _load_sibling("_hanig_review_gate_premise", "review_premise.py")
 
 
 def _evidence_module():
@@ -143,6 +142,10 @@ def _evidence_module():
     if _evidence is None:
         _evidence = _load_sibling("_hanig_review_gate_evidence", "review_evidence.py")
     return _evidence
+
+
+def _premise_module():  # lazy: plan reviews and copied fixtures never load it
+    return _load_sibling("_hanig_review_gate_premise", "review_premise.py")
 
 
 def change_identity(target="origin/main", plan_name=None, unit=None):
@@ -659,7 +662,7 @@ def _journal_child(payload):
         return {"ok": True, "path": json.dumps([
             r for _p, r in read_review_journal(path) if r.get("type") == "evidence"])}
     if isinstance(payload["record_line"], dict) and "identity" in payload["record_line"]:
-        return {"ok": True, "path": json.dumps(_premise.read_journal(
+        return {"ok": True, "path": json.dumps(_premise_module().read_journal(
             str(path), payload["record_line"]["identity"]))}
     record_path = _write_review_journal(path, payload["record_line"])
     return {"ok": True, "path": str(record_path)}
@@ -675,8 +678,8 @@ def _run_journal_child(args, completed, verdict):
         results=completed, reviewed_head=getattr(args, "reviewed_head", None),
         input_redactions=getattr(args, "input_redactions", ()),
         plan_exchange=getattr(args, "plan_exchange", None))
-    if args.kind == "implementation":  # premise fields are program-built, then redacted
-        line = json.dumps(dict(record, **redact_ledger(_premise.journal_fields(args))),
+    if args.kind == "implementation":
+        line = json.dumps(dict(record, **redact_ledger(_cli.premise_journal_fields(args))),
                           sort_keys=True) + "\n"
     return _run_journal_append(args.file, line)
 
@@ -2191,7 +2194,7 @@ def _main():
     reviewers = load_effective_reviewers()
     roster = reviewers
     _cli._validate_protocol_flags(args, _SELF)
-    _premise.preflight(args, dispositions, _SELF)
+    _cli.premise_preflight(args, dispositions, _SELF)
     profile, profile_reason = select_profile(args)
     args.selected_profile = profile
     tier_text = f"tier: {profile} ({profile_reason})"
@@ -2245,7 +2248,8 @@ def _main():
                           args.threat_model, dispositions, args.input_redactions)
 
     if args.kind == "implementation":
-        _premise.gate(args, _SELF)
+        if args.require_premise_ack and args.round >= 2:
+            _premise_module().gate(args, _SELF)
         reserve_review_round(args)
         evidence = prior_evidence(args)
         if evidence:

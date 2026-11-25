@@ -13,7 +13,7 @@ from unittest.mock import patch
 import tests.test_review_rounds as round_tests
 
 review, SCRIPT = round_tests.review, round_tests.SCRIPT
-P, TREE = review._premise, "a" * 40
+P, TREE = review._premise_module(), "a" * 40
 
 
 def F(n, cls=None, file="code.py", summary="cache key omits tenant scope"):
@@ -87,12 +87,12 @@ class TestStrikeRules(unittest.TestCase):
         tree = ast.parse(SCRIPT.with_name("review_premise.py").read_text(), feature_version=(3, 8))
         names = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
         self.assertLessEqual(names | {n.module for n in ast.walk(tree) if isinstance(
-            n, ast.ImportFrom)}, {"hashlib", "importlib.util", "json", "os", "re", "stat", "pathlib"})
+            n, ast.ImportFrom)}, {"importlib.util", "json", "os", "re", "stat", "pathlib"})
 
 
 class TestCliGate(unittest.TestCase):
-    """Real parser, ledger, journal child and history read; offline reviewers."""
-    git = round_tests.TestRoundReservations.git
+    """Real parser, ledger and journal child; offline reviewers."""
+    git, markers = round_tests.TestRoundReservations.git, round_tests.TestRoundReservations.markers
 
     def setUp(self):
         round_tests.TestRoundReservations.setUp(self)
@@ -103,12 +103,9 @@ class TestCliGate(unittest.TestCase):
     def history(self, *findings):
         for number, finding in enumerate(findings, 1):
             review.reserve_round(self.identity, number, "standard")
-            (self.journal / ("%020d" % number)).mkdir(parents=True)
-            (self.journal / ("%020d" % number) / "record.jsonl").write_text(
-                json.dumps(R(number, [finding], identity=self.identity)) + "\n")
-
-    def markers(self):
-        return sorted((self.state / "hanig-review-gate/rounds").glob("*/*.json"))
+            event = self.journal / ("%020d" % number)
+            event.mkdir(parents=True)
+            (event / "record.jsonl").write_text(json.dumps(R(number, [finding], self.identity)))
 
     def invoke(self, number, *extra, findings=()):
         calls, out, err = [], io.StringIO(), io.StringIO()
@@ -117,8 +114,8 @@ class TestCliGate(unittest.TestCase):
         answer = lambda rev, *_a: calls.append(rev["name"]) or {
             "ok": True, "name": rev["name"], "findings": list(findings), "claims": [],
             "verdict": "refuted" if findings else "upheld", "elapsed_s": 0}
-        argv = [str(SCRIPT), "--kind", "implementation", "--round", str(number), "--author",
-                "codex/gpt-6-astra", "--file", "code.py", "--profile", "standard", "--json",
+        argv = [str(SCRIPT), "--kind", "implementation", "--round", str(number),
+                "--file", "code.py", "--profile", "standard", "--json",
                 "--dispositions", str(self.dispositions), "--claim", review.HONEST_RUN_CLAIM]
         with ExitStack() as stack:
             for context in (patch.multiple(review, load_effective_reviewers=lambda: roster,
