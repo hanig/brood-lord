@@ -1571,7 +1571,7 @@ skills/hanig-portable-handoff/   handoff.py
 skills/hanig-wandb-logging/      wbkit.py, audit_project.py
 skills/hanig-debrief/            debrief.py, debrief_extract.py, debrief_packet.py, debrief_triage.py, debrief_file.py, decisions_log.py, debrief_audit.py, debrief_attention.py
 skills/hanig-hillclimb/          hillclimb.py
-lib/skill_agent_policy.py   --check|--write [--json] [--skills-root DIR]: explicit-only skills' agents/openai.yaml
+lib/skill_agent_policy.py   --check|--write [--json] [--skills-root DIR]: agents/openai.yaml of explicit-only skills
 tests/                      stdlib unittest
 examples/                   reference config to copy elsewhere; nothing reads it here
 docs/probes/                measured environment data per cluster
