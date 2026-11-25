@@ -115,6 +115,14 @@ Deterministic given its inputs — HEAD, the recorded sha, the receipts on disk.
 Not "no diff on an unchanged repo": the first run has no marker, so it
 bootstraps with recent history and legitimately differs from the run after it.
 
+## Audited decision trails
+
+A handoff records pointers, not why decisions were made. For an audited
+decision trail, use `hanig-debrief`: `scripts/decisions_log.py` keeps an
+append-only, hash-chained `decisions.tsv` outside the worktree, and
+`scripts/debrief_audit.py` checks its claims against this workspace's own
+transcripts. Record the log's path in the handoff; never copy it.
+
 ## Design record
 
 `docs/plan-portable-handoff.md` carries the plan and the thirteen acceptance

@@ -3,13 +3,17 @@
   "known_declarations": [
     "purpose.scope",
     "capability.programs",
+    "capability.decisions-log",
+    "capability.audit",
+    "capability.attention",
     "paths.skill-directory",
     "approval.packet",
     "workflow.draft",
     "workflow.classify",
     "workflow.packet",
     "workflow.approve",
-    "workflow.triage"
+    "workflow.triage",
+    "workflow.durability"
   ],
   "retired_declarations": [],
   "replacement_declarations": [],
@@ -24,6 +28,18 @@
     {
       "id": "capability.programs",
       "normative_text": "scripts/debrief.py provides offline collect, review, reproduce, classify, compile, show and recount. Every command requires --workdir outside Git worktrees (0700 directory, 0600 dossier); no default state path. Recollection requires a fresh directory. Drafting is offline; only debrief_file.py reaches the network, after one named approval of the exact packet."
+    },
+    {
+      "id": "capability.decisions-log",
+      "normative_text": "scripts/decisions_log.py keeps an append-only, SHA-256 hash-chained decisions.tsv at a --log path outside every Git worktree: append --log LOG --run-id ID --kind KIND --claim CLAIM [--evidence-ref REF] [--supersedes SEQ], verify --log LOG [--expect-head ROW_SHA256], and show --log LOG, each with optional --json. The chain detects accidental or partial-row edits and deleted or reordered rows inside the chain; deleted trailing rows need --expect-head. It is not tamper-proofing against a same-UID writer."
+    },
+    {
+      "id": "capability.audit",
+      "normative_text": "scripts/debrief_audit.py --decisions LOG --workspace DIR is a read-only, workspace-verified audit of decisions.tsv claims (command:, file:, commit:, test:) as supported, contradicted or unverifiable. It reads Claude transcripts only from that workspace's own project folder and Codex rollouts only after their header cwd equals realpath(--workspace), opening other rollouts for the header alone; it never globs unrelated projects. Output carries row seqs, statuses, session ids and line numbers, never raw transcript text. unverifiable proves nothing either way."
+    },
+    {
+      "id": "capability.attention",
+      "normative_text": "scripts/debrief_attention.py is offline: pack --decisions LOG --audit AUDIT_JSON [--out FILE] writes a hash-sealed cross-vendor Attention prompt pack that fences the trail as untrusted data, and validate --report FILE [--pack PACK] checks a reviewer's reply (a reviewed-by line plus JSON reviewer_model/status/flags, with flag row_seq values bound to the pack). It imports no network module and calls no model or subprocess; send the pack to a reviewer of a different model maker only through the host's own approved channel."
     },
     {
       "id": "paths.skill-directory",
@@ -55,6 +71,10 @@
       "references": [
         "references/contract.md"
       ]
+    },
+    {
+      "id": "workflow.durability",
+      "normative_text": "During triage, a disposition may carry durability metadata {form, holds_6mo}: structure (a lint, test or script at a repository-relative artifact_path) is preferred over prose. debrief_triage.py validate then needs --repo-root and rejects an accepted learning whose structure artifact is missing or outside the root, or whose prose will not hold 6 months; prose that holds 6 months needs a conversion_proposal and is demoted. holds_6mo is self-attested, never verified."
     }
   ]
 }
