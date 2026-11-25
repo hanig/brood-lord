@@ -850,9 +850,9 @@ def premise_preflight(args, dispositions, facade):
         try:
             with os.fdopen(os.open(memo, os.O_RDONLY | os.O_NONBLOCK), "rb") as stream:
                 regular = facade.stat.S_ISREG(os.fstat(stream.fileno()).st_mode)
-                raw = stream.read(1 << 20) if regular else b""
-            if not raw.decode("utf-8").strip():
-                raise ValueError("blank or not a regular file")
+                raw = stream.read(facade.MAX_FILE_READ_BYTES + 1) if regular else b""
+            if len(raw) > facade.MAX_FILE_READ_BYTES or not raw.decode("utf-8").strip():
+                raise ValueError("blank, oversized or not a regular file")
         except (OSError, ValueError) as exc:
             facade.config_error("--premise-memo must be a non-empty UTF-8 file: {}".format(exc))
         args.premise_ack = {"mode": "premise_memo", "path": os.path.abspath(memo),

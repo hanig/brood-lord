@@ -33,7 +33,6 @@ def _round(r):
 
 
 def l1_contested(evidence, tree):
-    """Digests whose latest evidence on exactly tree is not_reproduced."""
     latest = {}
     for index, r in enumerate(evidence):
         key, digest = (str(r.get("recorded_at")), index), r.get("finding_digest")
@@ -101,19 +100,21 @@ def journal_history(records, identity, cycle):
 
 
 def read_journal(directory, identity):
-    """Records naming identity; read-only. Undecodable records are skipped."""
+    """Records naming identity, read-only; a record that cannot be read raises."""
     records = []
     for name in sorted(os.listdir(directory)) if os.path.isdir(directory) else []:
         try:
             fd = os.open(os.path.join(directory, name, "record.jsonl"), os.O_RDONLY | os.O_NONBLOCK)
-            with os.fdopen(fd, "rb") as stream:
-                regular = stat.S_ISREG(os.fstat(fd).st_mode)
-                text = stream.read(16 << 20).decode("utf-8") if regular else ""
-            record = json.loads(text) if json.dumps(identity) in text else None
-        except (OSError, ValueError, RecursionError):
+        except (FileNotFoundError, NotADirectoryError):
             continue
-        if isinstance(record, dict) and record.get("identity") == identity:
-            records.append(record)
+        with os.fdopen(fd, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise ValueError(name)
+            raw = stream.read()
+        if json.dumps(identity).encode() in raw:
+            record = json.loads(raw.decode("utf-8"))
+            if isinstance(record, dict) and record.get("identity") == identity:
+                records.append(record)
     return records
 
 

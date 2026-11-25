@@ -47,12 +47,12 @@ CASES = [  # name, rounds, dispositions, evidence, expected status
     ("moved file", {1: [F(1, "x", "a.py")], 2: [F(2, "x", "b.py")]}, (), (), "triggered"),
     ("disposition class", {1: [F(1)], 2: [F(2, "x")]}, (D(1, "reproduced", "x"),), (), "triggered"),
     ("not-reproduced disposition", X2, (D(2, "not-reproduced"),), (), "not_triggered"),
-    ("L1 not_reproduced on current tree", X2, (), (E("not_reproduced"),), "not_triggered"),
+    ("L1 current tree", X2, (), (E("not_reproduced"),), "not_triggered"),
     ("stale L1 not_reproduced", X2, (), (E("not_reproduced", "b" * 40),), "triggered"),
-    ("latest current-tree L1 wins", X2, (),
+    ("latest L1 wins", X2, (),
      (E("not_reproduced"), E("reproduced", at="2026-11-24T01:00:00Z")), "triggered"),
     ("missing class", {1: [F(1)], 2: [F(2)]}, (), (), "unavailable"),
-    ("uppercase is no class", {1: [F(1, "X")], 2: [F(2, "X")]}, (), (), "unavailable"),
+    ("uppercase", {1: [F(1, "X")], 2: [F(2, "X")]}, (), (), "unavailable"),
 ]
 
 
@@ -152,8 +152,11 @@ class TestCliGate(unittest.TestCase):
         code, _report, err, calls = self.invoke(3, "--require-premise-ack")
         self.assertEqual((code, calls, self.markers()), (4, [], before))
         self.assertIn("struck in consecutive rounds 1 and 2", err)
+        record = sorted(self.journal.glob("*/record.jsonl"))[1]
+        record.chmod(0)
+        self.assertIn("cannot read premise", self.invoke(3, "--require-premise-ack")[2])
         memo = self.root / "memo.md"
-        memo.write_bytes("Premise: the cache key is wrong.\r\né\n".encode("utf-8"))
+        memo.write_bytes(b"x" * ((1 << 20) - 1) + "\u00e9\r\n".encode())  # split at 1 MiB
         for flags, ack in ((("--premise-memo", str(memo)), {"mode": "premise_memo", "path": str(
                 memo), "sha256": hashlib.sha256(memo.read_bytes()).hexdigest()}),
                 (("--continue-patching", "one more guard"),
