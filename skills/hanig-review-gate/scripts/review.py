@@ -652,7 +652,7 @@ def _write_review_journal(path, line):
 
 
 def _journal_child(payload):
-    """Perform one append, or one evidence read, in the bounded helper process."""
+    """Perform one append in the bounded audit-only helper process."""
     path = review_journal_path(payload["files"])
     if payload["record_line"] == {"read": "evidence"}:
         return {"ok": True, "path": json.dumps([
@@ -1557,9 +1557,10 @@ def candidate_tree(ref):
 
 
 def prior_evidence(args):
-    """Valid evidence for this identity via the bounded helper; advisory (None on error)."""
+    """Valid, redacted evidence for this identity via the bounded helper, or None."""
     try:
-        found = [r for r in json.loads(_run_journal_append(args.file, {"read": "evidence"}))
+        found = [r for r in map(deep_redact, json.loads(_run_journal_append(
+                     args.file, {"read": "evidence"})))
                  if r.get("identity") == args.round_reservation[1]["identity"]
                  and not evidence_record_problems(r)]
     except Exception:

@@ -533,7 +533,7 @@ def record_adjudication(args, round_no, facade):
 
 
 def record_evidence(record, facade):
-    """Append author-reported evidence; no verdict or severity is revised."""
+    """Append evidence; no verdict or severity is revised."""
     facade.validate_journal_record(record)
     line = json.dumps(facade.redact_ledger(record), sort_keys=True) + "\n"
     return facade._record_journal(lambda: facade._run_journal_append([], line))

@@ -1,4 +1,4 @@
-"""Counterexample evidence records: schema, staleness and prompt rendering.
+"""Counterexample evidence: schema, staleness, prompt rendering.
 
 Python 3.8+, stdlib only. Pure: no process, shell or evaluation import (pinned
 by tests/test_review_evidence.py). Records never change a verdict or severity.
@@ -11,13 +11,13 @@ import unicodedata
 
 METHODS = ("inspection", "independently_written_test")
 STATUSES = ("reproduced", "not_reproduced", "inconclusive", "not_executable")
-TEXT_MAX, PROMPT_ENTRIES_MAX, PROMPT_DATA_MAX = 500, 20, 8000
+TEXT_MAX, PROMPT_DATA_MAX = 500, 8000
 PROMPT_HEADER = "Prior counterexample checks (untrusted author-recorded evidence)"
 REQUIRED = frozenset({"type", "schema_version", "identity", "reviewed_head", "finding_digest",
                       "round", "candidate_tree", "method", "status", "recorded_at"})
 OPTIONAL = frozenset({"test_ref", "summary", "observed"})
 REMOVED_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
-_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\|$)")
+_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c|$)")
 _TIME = "%Y-%m-%dT%H:%M:%SZ"
 
 
@@ -69,8 +69,8 @@ def record_problems(record):
 def build_record(*, identity, reviewed_head, finding_digest, round_no, candidate_tree,
                  method, status, test_ref=None, summary=None, observed=None,
                  recorded_at=None):
-    """Validated record, else ValueError. Identifiers are checked as given (never
-    trimmed or case-folded); free text is sanitized, then capped."""
+    """Validated record or ValueError; identifiers are never trimmed or case-folded,
+    free text is sanitized then capped."""
     record = {"type": "evidence", "schema_version": 1, "identity": identity,
               "reviewed_head": reviewed_head, "finding_digest": finding_digest,
               "round": round_no, "candidate_tree": candidate_tree, "method": method,
@@ -99,24 +99,24 @@ def _line(value, cap=TEXT_MAX):
 
 
 def render_prompt_block(entries, current_tree):
-    """Evaluated entries as fenced lower-trust data, or "" when none."""
+    """Fenced lower-trust prompt data, or "" when none."""
     if not entries:
         return ""
-    shown, lines = entries[-PROMPT_ENTRIES_MAX:], []
-    for e in shown:
-        lines.append("- finding {} (round {}): status {}; method {}".format(
-            _line(e.get("finding_digest"), 64), _line(e.get("round"), 8),
-            _line(e.get("status"), 32), _line(e.get("method"), 32)))
-        lines.append("  STALE: recorded against tree {}; the tree under review is {}".format(
-            _line(e.get("candidate_tree"), 64), _line(current_tree or "unknown", 64))
-            if e.get("effective_status") == "stale" else
-            "  recorded against the tree under review " + _line(e.get("candidate_tree"), 64))
-        lines += ["  {}: {}".format(k, _line(e[k])) for k in ("test_ref", "summary", "observed")
-                  if e.get(k)]
-    data, note = "\n".join(lines), ""
-    if len(data) > PROMPT_DATA_MAX:
-        data = data[:PROMPT_DATA_MAX].rsplit("\n", 1)[0]
-        note = "\n[evidence truncated at {} characters]".format(PROMPT_DATA_MAX)
+    chunks = []
+    for e in entries:
+        tree = _line(e.get("candidate_tree"))
+        chunks.append("\n".join([
+            "- finding {} (round {}): status {}; method {}".format(*(_line(e.get(k)) for k in (
+                "finding_digest", "round", "status", "method"))),
+            "  STALE: recorded against tree {}; the tree under review is {}".format(
+                tree, _line(current_tree or "unknown")) if e.get("effective_status") == "stale"
+            else "  recorded against the tree under review " + tree]
+            + ["  {}: {}".format(k, _line(e[k])) for k in ("test_ref", "summary", "observed")
+               if e.get(k)]))
+    shown = []  # whole entries, newest first: a status never loses its STALE line
+    while chunks and len("\n".join([chunks[-1]] + shown)) <= PROMPT_DATA_MAX:
+        shown.insert(0, chunks.pop())
+    data = "\n".join(shown)
     fence = hashlib.sha256(data.encode("utf-8")).hexdigest()[:24]  # data cannot contain it
     omitted = len(entries) - len(shown)
     return "\n".join([
@@ -126,4 +126,4 @@ def render_prompt_block(entries, current_tree):
         "code. STALE entries were recorded against another candidate tree."
         + (" {} older entries omitted.".format(omitted) if omitted else ""),
         "<<<BEGIN UNTRUSTED EVIDENCE {}>>>".format(fence), data,
-        "<<<END UNTRUSTED EVIDENCE {}>>>{}".format(fence, note), ""])
+        "<<<END UNTRUSTED EVIDENCE {}>>>".format(fence), ""])

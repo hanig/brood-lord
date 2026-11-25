@@ -73,10 +73,9 @@ def cmd_ledger(args, facade):
 
 def cmd_record_evidence(args, facade):
     """Audit-only evidence bound to identity, head and tree; never a verdict change."""
-    tree = (facade.candidate_tree(args.tree or "HEAD")
-            if args.tree is None or facade.valid_head(args.tree) else None)
+    tree = facade.candidate_tree("HEAD")  # --tree can only confirm it
     if tree is None or args.tree not in (None, tree):
-        facade.config_error("Pass --tree as the exact output of git rev-parse HEAD^{tree}.")
+        facade.config_error("Pass --tree only as the exact output of git rev-parse HEAD^{tree}.")
     try:
         record = facade._evidence_module().build_record(
             identity=facade.change_identity(
@@ -88,8 +87,8 @@ def cmd_record_evidence(args, facade):
             summary=None if args.note is None else facade.redact(args.note))
     except (OSError, ValueError, RuntimeError) as exc:
         facade.config_error(facade.redact(
-            f"evidence refused: {exc}. Pass valid --head/--finding/--round and the "
-            "review's --target/--plan-name/--unit."))
+            f"evidence refused: {exc}. Pass valid fields and the review's "
+            "--target/--plan-name/--unit."))
     journal = facade._ledger.record_evidence(record, facade)
     print(facade.json.dumps(facade.redact_ledger({
         "state": "EVIDENCE_RECORDED" if journal["written"] else "EVIDENCE_UNCONFIRMED",
