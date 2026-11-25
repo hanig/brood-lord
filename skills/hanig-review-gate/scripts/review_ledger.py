@@ -415,6 +415,8 @@ def adjudicator_is_author(accepted_by, authors, facade):
 
 def journal_identity_problems(record, allow_unbound, facade):
     """Check every persisted identity without inferring or repairing it."""
+    if record.get("type") == "evidence":
+        return facade.evidence_record_problems(record)
     problems = []
 
     def check(field):
@@ -495,6 +497,8 @@ def journal_findings(records, head, facade):
             else:
                 unreadable.append(damaged)
             continue
+        if record["type"] == "evidence":
+            continue
         round_no = record["round"]
         if record["type"] == "adjudication":
             adjudicated.add((round_no, record["finding_digest"]))
@@ -526,3 +530,11 @@ def record_adjudication(args, round_no, facade):
         line = json.dumps(facade.redact_ledger(record), sort_keys=True) + "\n"
         return facade._run_journal_append(args.file, line)
     return facade._record_journal(write)
+
+
+def record_evidence(record, facade):
+    """Append evidence; no verdict or severity is revised."""
+    facade.validate_journal_record(record)
+    line = json.dumps(facade.redact_ledger(record), sort_keys=True) + "\n"
+    return facade._record_journal(lambda: facade._run_journal_append([], line))
+

@@ -134,6 +134,15 @@ _ledger = _load_sibling("_hanig_review_gate_ledger", "review_ledger.py")
 _schema = _load_sibling("_hanig_review_gate_schema", "review_schema.py")
 _cli = _load_sibling("_hanig_review_gate_cli", "review_cli.py")
 _subs = _load_sibling("_hanig_review_gate_subscriptions", "review_subscriptions.py")
+_evidence = None
+
+
+def _evidence_module():
+    global _evidence
+    if _evidence is None:
+        _evidence = _load_sibling("_hanig_review_gate_evidence", "review_evidence.py")
+    return _evidence
+
 
 def change_identity(target="origin/main", plan_name=None, unit=None):
     return _ledger.change_identity(target, plan_name, unit, facade=_SELF)
@@ -645,6 +654,9 @@ def _write_review_journal(path, line):
 def _journal_child(payload):
     """Perform one append in the bounded audit-only helper process."""
     path = review_journal_path(payload["files"])
+    if payload["record_line"] == {"read": "evidence"}:
+        return {"ok": True, "path": json.dumps([
+            r for _p, r in read_review_journal(path) if r.get("type") == "evidence"])}
     record_path = _write_review_journal(path, payload["record_line"])
     return {"ok": True, "path": str(record_path)}
 
@@ -1533,6 +1545,31 @@ def cmd_ledger(args):
     return _cli.cmd_ledger(args, _SELF)
 
 
+def evidence_record_problems(record):
+    return _evidence_module().record_problems(record)
+
+
+def candidate_tree(ref):
+    """Exact tree SHA of a commit, or None."""
+    out = git_out("rev-parse", "--verify", "--quiet", ref + "^{tree}")
+    value = out[:-1] if out.endswith("\n") else None
+    return value if valid_head(value) else None
+
+
+def prior_evidence(args):
+    """Redacted valid evidence for this identity, or None."""
+    try:
+        found = [r for r in map(deep_redact, json.loads(_run_journal_append(
+                     args.file, {"read": "evidence"})))
+                 if r.get("identity") == args.round_reservation[1]["identity"]
+                 and not evidence_record_problems(r)]
+    except Exception:
+        return None
+    head = getattr(args, "reviewed_head", None)
+    tree = candidate_tree(head) if valid_head(head) else None
+    return (_evidence_module().evaluate(found, tree), tree) if found else None
+
+
 reject_duplicate_keys = _schema.reject_duplicate_keys
 
 
@@ -1545,7 +1582,7 @@ def has_honest_run_claim(claims):
 
 
 def build_prompt(body, claims, truncated, context, threat_model=None,
-                 dispositions=None, input_redactions=()):
+                 dispositions=None, input_redactions=(), prior_evidence=None):
     out = []
     if input_redactions:
         out.append(redaction_notice(input_redactions) + "\n")
@@ -1571,6 +1608,8 @@ def build_prompt(body, claims, truncated, context, threat_model=None,
             for field in ("setup", "command", "expected", "observed", "revision"):
                 out.append(f"    {field}: {entry['reproduction'][field]}")
         out.append("")
+    if prior_evidence:
+        out.append(_evidence_module().render_prompt_block(*prior_evidence))
     if claims:
         out.append("CLAIMS ASSERTED ABOUT THIS WORK — assess each one:")
         for c in claims:
@@ -2110,6 +2149,10 @@ def build_parser():
                         help="record an independent external decision; never a review pass")
     ledger.add_argument("--open-findings", action="store_true",
                         help="query unadjudicated confirmed findings as JSON; exit 1 if any")
+    ledger.add_argument("--record-evidence", action="store_true",
+                        help="append audit-only counterexample evidence")
+    for flag in ("--finding", "--method", "--status", "--tree", "--test-ref", "--note"):
+        ap.add_argument(flag, help="evidence field (--tree: HEAD^{tree})")
     ap.add_argument("--head", metavar="SHA", help="exact reviewed head for ledger commands")
     ap.add_argument("--accepted-by", metavar="NAME", help="independent acceptor's declared identity")
     ap.add_argument("--reason", help="reason for the external adjudication")
@@ -2189,6 +2232,10 @@ def _main():
 
     if args.kind == "implementation":
         reserve_review_round(args)
+        evidence = prior_evidence(args)
+        if evidence:
+            prompt = build_prompt(body, args.claim, truncated, args.context, args.threat_model,
+                                  dispositions, args.input_redactions, evidence)
 
     if args.kind == "plan":
         arm_watchdog(args.watchdog if args.watchdog is not None
