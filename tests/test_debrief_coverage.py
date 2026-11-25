@@ -349,13 +349,12 @@ class TestGroupingSelection(unittest.TestCase):
               calls.append((path.name, function.name, node))
           if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and node.value.value == 'reproduced':
             writes.append((path.name, function.name))
-    self.assertEqual([(p, f) for p, f, _ in calls], [('debrief_coverage.py', 'classify')])
-    call = calls[0][2]
-    self.assertIsInstance(call.args[0], ast.List)
-    self.assertEqual(call.args[0].elts[0].value, 'git')
-    self.assertEqual(call.args[0].elts[3].value, 'merge-base')
-    self.assertEqual(call.args[0].elts[4].value, '--is-ancestor')
-    self.assertNotIn('shell', [k.arg for k in call.keywords])
+    calls.sort(key=lambda c: c[:2])
+    self.assertEqual([c[:2] for c in calls], [('debrief_audit.py', 'cat_file_e'), ('debrief_coverage.py', 'classify')])
+    for (_, _, call), pin in zip(calls, [('cat-file', '-e'), ('merge-base', '--is-ancestor')]):
+      self.assertIsInstance(call.args[0], ast.List)
+      self.assertEqual(tuple(call.args[0].elts[i].value for i in (0, 1, 3, 4)), ('git', '-C') + pin)
+      self.assertFalse({'shell', None} & {k.arg for k in call.keywords})
     self.assertEqual(writes, [('debrief_coverage.py', 'record_reproduction')])
 
 
