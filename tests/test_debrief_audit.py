@@ -20,7 +20,7 @@ import debrief_attention as T
 import debrief_audit as A
 import decisions_log as D
 
-SEED, CASES = 20261124, 300  # seeded sanitize property: 300 strings of <= 16 code points
+SEED, CASES = 20261124, 300  # sanitize: 300 strings, <= 16 code points
 CANARY = "CANARY-7f3a"
 
 
@@ -76,7 +76,7 @@ class Base(unittest.TestCase):
                     "commit:%s; test:unittest failing" % ("0" * 40), "",
                     "by eye; command:ab; command:only-in-b; command:hidden-in-other;"
                     " file:src/b.py; commit:deadbeef; test:codex-ran-this",
-                    "command:codex-ran-this; file:lib/patched.py"):
+                    "command:codex-ran-this; file:lib/patched.py; file:src/bad.py"):
             D.append(self.log, "r", "adopt", "decision", evidence_ref=ref)
         projects = self.home / ".claude/projects" / A.slug(str(self.ws_a))
         self.claude_b = projects / "sess-b.jsonl"
@@ -84,7 +84,8 @@ class Base(unittest.TestCase):
             {"type": "summary"}, {"cwd": str(self.ws_a), "message": {"content": CANARY}},
             use("t1", "Bash", command="make lint-all " + CANARY), result("t1", False),
             use("t2", "Edit", file_path=str(self.ws_a / "src/app.py"), new_string=CANARY),
-            use("t3", "Bash", command="pytest -q"), result("t3", False)])
+            use("t3", "Bash", command="pytest -q"), result("t3", False),
+            use("t4", "Edit", file_path="src/bad.py"), result("t4", True)])
         jsonl(self.claude_b, [{"cwd": str(self.ws_b)}, use("b1", "Bash", command="only-in-b"),
                               result("b1", False), use("b2", "Write", file_path="src/b.py")],
               pad=200000)
@@ -120,11 +121,11 @@ class TestAudit(Base):
         self.assertEqual((code, self.log.read_bytes()), (0, before), err)
         report = json.loads(out)
         got = ["".join(c["status"][0] for c in row["claims"]) for row in report["rows"]]
-        # s/c/u = supported/contradicted/unverifiable; row 4 is B-only or ambiguous
-        self.assertEqual(got, ["ssss", "cc", "u", "uuuuuuu", "ss"])
+        # supported/contradicted/unverifiable
+        self.assertEqual(got, ["ssss", "cc", "u", "uuuuuuu", "ssu"])
         self.assertEqual(report["sessions"], ["claude:sess-a", "codex:rollout-a"])
         self.assertEqual(report["rejected_candidates"], 2)
-        late = self.root / "late.jsonl"  # a cwd past the 32-line header is not a header
+        late = self.root / "late.jsonl"  # cwd on line 33
         jsonl(late, [{}] * 32 + [{"cwd": str(self.ws_a)}])
         self.assertFalse(A.claude_verified(late, str(self.ws_a), {}))
         self.assertEqual(report["rows"][0]["claims"][0]["matches"],

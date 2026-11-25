@@ -127,7 +127,7 @@ def _claude_events(obj, ws, cache):
         if kind == "tool_use" and name in EXEC_TOOLS:
             yield "exec", item.get("id"), args.get("command")
         elif kind == "tool_use" and name in EDIT_TOOLS:
-            yield "edit", None, args.get("file_path") or args.get("notebook_path")
+            yield "edit", item.get("id"), args.get("file_path") or args.get("notebook_path")
         elif kind == "tool_result" and isinstance(item.get("is_error"), bool):
             yield "result", item.get("tool_use_id"), not item["is_error"]
 
@@ -162,7 +162,7 @@ def _codex_events(obj):
         code = _exit_code(p if kind == "exec_command_end" else p.get("output"))
         yield "result", cid, None if code is None else code == 0
     for path in PATCH_RE.findall(patch) if isinstance(patch, str) else ():
-        yield "edit", None, path.strip()
+        yield "edit", cid, path.strip()
 
 
 def _norm(path, ws):
@@ -170,7 +170,7 @@ def _norm(path, ws):
 
 
 def scan(kind, path, ws, cache):
-    calls, execs, edits, fd = {}, [], [], _open_regular(path)
+    calls, execs, edits, bad, fd = {}, [], [], set(), _open_regular(path)
     with os.fdopen(fd, "rb") if fd is not None else open(os.devnull, "rb") as handle:
         for line, raw in enumerate(handle, 1):
             obj = _json(raw)
@@ -183,10 +183,12 @@ def scan(kind, path, ws, cache):
                     if isinstance(cid, str):
                         calls[cid] = execs[-1]
                 elif event == "edit" and isinstance(value, str) and value:
-                    edits.append((_norm(value, ws), line))
-                elif event == "result" and value is not None and cid in calls:
+                    edits.append((_norm(value, ws), line, cid))
+                elif event == "result" and value is False and isinstance(cid, str):
+                    bad.add(cid)
+                if event == "result" and value is not None and cid in calls:
                     calls[cid]["ok"].append(value)
-    return execs, edits
+    return execs, [(p, n) for p, n, c in edits if c not in bad]
 
 
 def cat_file_e(ws, obj):
@@ -221,11 +223,11 @@ def verify(kind, value, sessions, ws):
         if lines:
             return "supported", lines
         if kind == "test_ran" and hits and all(r["ok"] for _, r in hits):
-            return "contradicted", [(s, r["line"]) for s, r in hits]  # every exit known, nonzero
+            return "contradicted", [(s, r["line"]) for s, r in hits]
     if kind == "commit_exists" and re.fullmatch(r"[0-9a-f]{7,64}", value):
         if cat_file_e(ws, value + "^{commit}") == 0:
             return "supported", []
-        if len(value) in (40, 64) and cat_file_e(ws, value) in (0, 1):  # 1: absent; 0: not a commit
+        if len(value) in (40, 64) and cat_file_e(ws, value) in (0, 1):  # absent, not a commit
             return "contradicted", []
     return "unverifiable", []
 

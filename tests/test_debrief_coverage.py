@@ -354,7 +354,7 @@ class TestGroupingSelection(unittest.TestCase):
     for (_, _, call), pin in zip(calls, [('cat-file', '-e'), ('merge-base', '--is-ancestor')]):
       self.assertIsInstance(call.args[0], ast.List)
       self.assertEqual(tuple(call.args[0].elts[i].value for i in (0, 1, 3, 4)), ('git', '-C') + pin)
-      self.assertNotIn('shell', [k.arg for k in call.keywords])
+      self.assertFalse({'shell', None} & {k.arg for k in call.keywords})
     self.assertEqual(writes, [('debrief_coverage.py', 'record_reproduction')])
 
 
