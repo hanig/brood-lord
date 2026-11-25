@@ -145,6 +145,14 @@ def unassessed_claims(returned, asserted):
     return missing
 
 
+DEFECT_CLASS = re.compile(r"[a-z][a-z0-9_-]{0,63}")
+
+
+def valid_defect_class(value):
+    """Optional premise strike key: an exact lowercase slug, never normalized."""
+    return isinstance(value, str) and DEFECT_CLASS.fullmatch(value) is not None
+
+
 def empty_evidence_value(value):
     """Recognize only null and blank strings, without changing stored bytes."""
     return value is None or (isinstance(value, str) and not value.strip())
@@ -305,6 +313,10 @@ def load_dispositions(path, facade):
         except UnicodeEncodeError:
             facade.config_error(f"disposition {digest!r} has a reason that is not "
                                 f"valid UTF-8 text. Pass text without lone surrogates.")
+        if "defect_class" in entry and not valid_defect_class(entry["defect_class"]):
+            facade.config_error(f"disposition {digest} defect_class must be a lowercase "
+                                "slug matching [a-z][a-z0-9_-]{0,63}. Pass the token "
+                                "exactly, or omit the field.")
         if disposition in ("reproduced", "not-reproduced"):
             reproduction = entry.get("reproduction")
             if not isinstance(reproduction, dict):

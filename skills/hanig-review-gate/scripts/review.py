@@ -135,6 +135,7 @@ _schema = _load_sibling("_hanig_review_gate_schema", "review_schema.py")
 _cli = _load_sibling("_hanig_review_gate_cli", "review_cli.py")
 _subs = _load_sibling("_hanig_review_gate_subscriptions", "review_subscriptions.py")
 _evidence = None
+_premise = _load_sibling("_hanig_review_gate_premise", "review_premise.py")
 
 
 def _evidence_module():
@@ -523,7 +524,7 @@ def review_journal_details(results):
 
 def prepare_review_journal(kind, round_no, effective_panel, verdict, claims,
                            *, panel_policy=None, results=(), reviewed_head=None,
-                           input_redactions=(), plan_exchange=None):
+                           input_redactions=(), plan_exchange=None, premise=None):
     """Finish record semantics, redaction and serialization before I/O."""
     record = {
         "type": "review_round",
@@ -546,6 +547,8 @@ def prepare_review_journal(kind, round_no, effective_panel, verdict, claims,
         record["input_redactions"] = list(input_redactions)
     if plan_exchange is not None:
         record["plan_exchange"] = plan_exchange
+    if premise:
+        record.update(premise)
     validate_journal_record(record, allow_unbound=True)
     record = redact_ledger(record)
     return record, json.dumps(record, sort_keys=True) + "\n"
@@ -657,6 +660,10 @@ def _journal_child(payload):
     if payload["record_line"] == {"read": "evidence"}:
         return {"ok": True, "path": json.dumps([
             r for _p, r in read_review_journal(path) if r.get("type") == "evidence"])}
+    line = payload["record_line"]
+    if isinstance(line, dict) and line.get("read") == "premise":
+        records, _unreadable = _premise.read_journal(str(path), line["identity"])
+        return {"ok": True, "path": json.dumps(records)}
     record_path = _write_review_journal(path, payload["record_line"])
     return {"ok": True, "path": str(record_path)}
 
@@ -670,7 +677,8 @@ def _run_journal_child(args, completed, verdict):
         verdict, args.claim, panel_policy=getattr(args, "panel_policy", None),
         results=completed, reviewed_head=getattr(args, "reviewed_head", None),
         input_redactions=getattr(args, "input_redactions", ()),
-        plan_exchange=getattr(args, "plan_exchange", None))
+        plan_exchange=getattr(args, "plan_exchange", None),
+        premise=_premise.journal_fields(args))
     return _run_journal_append(args.file, line)
 
 
@@ -1577,6 +1585,18 @@ def load_dispositions(path):
     return _schema.load_dispositions(path, _SELF)
 
 
+def premise_preflight(args, dispositions):
+    return _premise.preflight(args, dispositions, _SELF)
+
+
+def premise_gate(args):
+    return _premise.gate(args, _SELF)
+
+
+def premise_final(args, completed):
+    return _premise.final(args, completed, _SELF)
+
+
 def has_honest_run_claim(claims):
     return _schema.has_honest_run_claim(claims, HONEST_RUN_CLAIM)
 
@@ -2142,6 +2162,16 @@ def build_parser():
                     help="round 2 and later: digest-keyed JSON mapping every "
                          "prior confirmed finding to reproduced, "
                          "not-reproduced, or deferred with a one-line reason")
+    ap.add_argument("--require-premise-ack", action="store_true",
+                    help="opt-in: on round 2 and later, refuse before any reviewer "
+                         "runs when one defect_class struck in the prior two "
+                         "consecutive rounds, unless acknowledged below")
+    ack = ap.add_mutually_exclusive_group()
+    ack.add_argument("--premise-memo", metavar="FILE",
+                     help="premise memo; its SHA-256 and path are journaled "
+                          "(existence, not soundness)")
+    ack.add_argument("--continue-patching", metavar="REASON",
+                     help="one-line reason to keep patching; journaled")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--list", action="store_true", help="show reviewers and availability")
     ledger = ap.add_mutually_exclusive_group()
@@ -2178,6 +2208,7 @@ def _main():
     reviewers = load_effective_reviewers()
     roster = reviewers
     _cli._validate_protocol_flags(args, _SELF)
+    premise_preflight(args, dispositions)
     profile, profile_reason = select_profile(args)
     args.selected_profile = profile
     tier_text = f"tier: {profile} ({profile_reason})"
@@ -2231,6 +2262,7 @@ def _main():
                           args.threat_model, dispositions, args.input_redactions)
 
     if args.kind == "implementation":
+        premise_gate(args)
         reserve_review_round(args)
         evidence = prior_evidence(args)
         if evidence:
