@@ -9,7 +9,11 @@
     "workflow.classify",
     "workflow.packet",
     "workflow.approve",
-    "workflow.triage"
+    "workflow.triage",
+    "capability.decisions-log",
+    "capability.audit",
+    "capability.attention",
+    "workflow.durability"
   ],
   "retired_declarations": [],
   "replacement_declarations": [],
@@ -55,6 +59,22 @@
       "references": [
         "references/contract.md"
       ]
+    },
+    {
+      "id": "capability.decisions-log",
+      "normative_text": "scripts/decisions_log.py append|verify|show --log LOG keeps an append-only, hash-chained decisions.tsv outside Git worktrees; it detects edited, deleted or reordered rows (trailing ones via --expect-head), not a same-UID writer."
+    },
+    {
+      "id": "capability.audit",
+      "normative_text": "scripts/debrief_audit.py --decisions LOG --workspace DIR audits command:, file:, commit: and test: claims read-only against that workspace's transcripts; it never globs unrelated projects and never prints raw transcript text."
+    },
+    {
+      "id": "capability.attention",
+      "normative_text": "scripts/debrief_attention.py is offline: pack --decisions LOG --audit AUDIT writes a sealed cross-vendor prompt pack; validate --report FILE [--pack PACK] checks the reply. It imports no network module."
+    },
+    {
+      "id": "workflow.durability",
+      "normative_text": "Triage may tag a learning {form, holds_6mo}; structure (lint, test or script at artifact_path) beats prose. debrief_triage.py validate --repo-root DIR rejects accepting a missing artifact or prose that will not hold 6 months."
     }
   ]
 }

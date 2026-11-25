@@ -47,6 +47,8 @@ Both `review.py` and `committee.py` accept repeatable `--author PROVIDER/MODEL` 
 
 - **Counterexamples:** Reviewers are asked for a `counterexample` (`setup`, `input`, `expected`, `observed`) or `non_executable_reason` on critical/major findings (either, both, or neither is valid; partially filled objects refuse; placeholders render as absent / `"no counterexample"`). The gate validates and displays them verbatim and never executes them.
 - **Reproduce before acting** and never silently drop non-reproducing findings. Round 2+ requires `--dispositions FILE` mapping each prior confirmed finding's digest (`location`, `summary`, `disposition` in `reproduced|not-reproduced|deferred`, one-line `reason`). Both `reproduced` and `not-reproduced` require a `reproduction` object (`setup`, `command`, `expected`, `observed`, full lowercase 40-/64-hex `revision`); `deferred` needs none. Missing/malformed fields exit 4 before network calls. Reviewers receive reproduction text verbatim (with recognized prior-decision text stripped) so they can refute it; the gate never executes `command` or auto-downgrades severity.
+- **Counterexample evidence (L1):** `--record-evidence` with `--head`, `--finding`, `--round`, `--method`, `--status` and optional `--tree`, `--test-ref`, `--note` appends an offline record (`scripts/review_evidence.py`) bound to identity, head and tree; later rounds see it as untrusted. It never changes a verdict.
+- **Premise check (L2):** `scripts/review_premise.py` flags a `defect_class` recurring in consecutive rounds. With `--require-premise-ack`, round N >= 2 exits 4 when a class struck in rounds N-2 and N-1, unless `--premise-memo FILE` or `--continue-patching REASON` acknowledges it.
 
 ## External adjudication ledger
 

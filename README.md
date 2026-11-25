@@ -86,7 +86,7 @@ every issue title for approval, files them in Linear, and dispatches.
 
 ---
 
-## The eight skills we wrote
+## The nine skills we wrote
 
 | Skill | One line |
 |---|---|
@@ -98,8 +98,9 @@ every issue title for approval, files them in Linear, and dispatches.
 | `hanig-portable-handoff` | Capture and resume run state across machines. |
 | `hanig-wandb-logging` | Make W&B runs readable; caller supplies W&B, contracts judge outcomes. |
 | `hanig-debrief` | Collect project lessons into a private dossier, draft an owner-approved scrubbed packet, and triage/file learnings. |
+| `hanig-hillclimb` | Hill-climb a metric by pre-registered hypotheses and a paired A/B noise screen. |
 
-All eight are prefixed `hanig-` so they can never collide with an Arc
+All nine are prefixed `hanig-` so they can never collide with an Arc
 org-managed skill name. That prefix is now load-bearing rather than tidy:
 `install.sh` reads it as the authorship namespace, and anything under
 `skills/` outside it is treated as vendored -- installed by us, written
@@ -373,6 +374,11 @@ Defaults: five runs/side, 60 seconds/run; repeat `--test` for more ids.
 Prints outcomes, touched files, class, issue draft and quoted command.
 Scratch repositories are removed on failure/interrupt. No CI rerun or recorded
 pass; merge still requires a complete green run.
+
+`watch_pr.py --repo OWNER/REPO --pr 123 [--once] [--json] [--patch-id]
+[--interval S] [--max-polls N]` is the read-only PR-status oracle: exit 0
+ready, 10 pending, 11 conflicts, 12 threads, 13 CI failed, 14 cancelled
+zero-step flake, 15 unknown, 16 fork, 2 error. It mutates nothing.
 
 The connected `merge_unit.py` operator requires passing `integration-tests`
 and, when declared by the target policy, `changed-tests-stable` evidence
@@ -858,6 +864,13 @@ It supports `--diff` (the default), `--staged`, `--range` and repeatable `--file
 plus `--json`, without provider configuration or network calls. Size results are
 not review verdicts. Plan code units to keep the complete PR below the budget.
 
+`review.py`'s `--record-evidence` (L1; `review_evidence.py` is a module, no CLI) appends audit-only counterexample
+evidence (`--head`, `--finding`, `--round`, `--method`, `--status`, optional
+`--tree`, `--test-ref`, `--note`) bound to identity, head and candidate tree; it
+never changes a verdict. `--require-premise-ack` (L2; module `review_premise.py`)
+refuses round N >= 2 when one `defect_class` struck in rounds N-2 and N-1,
+unless `--premise-memo FILE` or `--continue-patching REASON` acknowledges it.
+
 Panel snapshot measured 2026-10-30 at `c2556ad4`. Current routing comes from
 the `enabled`, `profiles`, `effort` and `reserves` fields in
 [`reviewers.json`](skills/hanig-review-gate/reviewers.json), not this table:
@@ -984,6 +997,21 @@ decides anything a verifier already decided.
 | 1 | `HANDOFF_DRIFTED` | code, input identity, or an artifact size differs |
 | 2 | `HANDOFF_ELSEWHERE` | code matches; an artifact is unreachable from here |
 | 3 | `HANDOFF_MALFORMED` | the handoff file is unusable; re-capture |
+
+### hanig-debrief and hanig-hillclimb
+
+```sh
+python3 scripts/decisions_log.py append --log L --run-id R --kind K --claim C [--evidence-ref E]
+python3 scripts/decisions_log.py verify --log L [--expect-head SHA256]
+python3 scripts/debrief_audit.py --decisions L --workspace DIR
+python3 scripts/debrief_attention.py pack --decisions L --audit A [--out F]
+python3 scripts/debrief_attention.py validate --report F [--pack P]
+python3 scripts/hillclimb.py init --state-dir S --harness F --metric M --min-effect X --direction lower
+python3 scripts/hillclimb.py record --state-dir S --id H --runs-json R --checklist-json C
+```
+
+Also `decisions_log.py show --log L --json` and
+`hillclimb.py hypothesize|summary|verify-log --state-dir S`. Nothing here calls a model.
 
 ---
 
@@ -1541,7 +1569,9 @@ skills/hanig-review-gate/   review.py, committee.py, reviewers.json, PROTOCOL.md
 skills/hanig-verified-workflow/  contract.py
 skills/hanig-portable-handoff/   handoff.py
 skills/hanig-wandb-logging/      wbkit.py, audit_project.py
-skills/hanig-debrief/            debrief.py, debrief_extract.py, debrief_packet.py, debrief_triage.py, debrief_file.py
+skills/hanig-debrief/            debrief.py, debrief_extract.py, debrief_packet.py, debrief_triage.py, debrief_file.py, decisions_log.py, debrief_audit.py, debrief_attention.py
+skills/hanig-hillclimb/          hillclimb.py
+lib/skill_agent_policy.py   --check|--write [--json] [--skills-root DIR]: agents/openai.yaml of explicit-only skills
 tests/                      stdlib unittest
 examples/                   reference config to copy elsewhere; nothing reads it here
 docs/probes/                measured environment data per cluster
