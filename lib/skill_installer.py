@@ -631,9 +631,11 @@ def agent_policy_errors(path: Path) -> list[str]:
     flag = policy._read_flag(path)
     state = policy._yaml_state(path)
     errors = []
+    missing_flag = (flag["state"] == policy.FLAG_ABSENT
+                    and name in policy.EXPLICIT_ONLY_SKILLS)
     if flag["state"] in (policy.FLAG_MALFORMED, policy.FLAG_NONCANONICAL):
         errors.append(f"{name}: {flag['detail']}")
-    elif flag["state"] == policy.FLAG_ABSENT and name in policy.EXPLICIT_ONLY_SKILLS:
+    elif missing_flag:
         errors.append(f"{name}: explicit-only skill lacks '{policy.FLAG_KEY}: true'")
     if state["state"] == "unsafe":
         errors.append(f"{name}: {state['detail']}")
@@ -642,7 +644,8 @@ def agent_policy_errors(path: Path) -> list[str]:
             errors.append(f"{name}: agents/openai.yaml is missing")
         elif state["state"] == "drift":
             errors.append(f"{name}: {state['detail']}")
-    elif state["state"] != "absent":
+    elif state["state"] != "absent" and not missing_flag:
+        # An explicit-only skill missing its flag is one fault, reported above.
         errors.append(f"{name}: agents/openai.yaml exists without "
                       f"'{policy.FLAG_KEY}: true'")
     return errors

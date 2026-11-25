@@ -958,7 +958,9 @@ for d in "$PREFIX"/"$OWN_PREFIX"*; do
   bounded "$PROBE_RUN_SECONDS" python3 -B -c "$POLICY_PY" "$REPO" "$d"
   case "$PROBE_STATE:$PROBE_RC" in
     answered:0) printf '  ok    %s\n' "$name" ;;
-    answered:1) printf '  DRIFT %s\n' "$PROBE_OUT"; policy_bad=$((policy_bad + 1)) ;;
+    answered:1) printf '  DRIFT %s\n' "$PROBE_OUT"
+                printf '      reinstall it with install.sh to restore the policy files\n'
+                policy_bad=$((policy_bad + 1)) ;;
     timeout:*)  printf '  TIMEOUT  %s — policy check timed out\n' "$name"
                 policy_bad=$((policy_bad + 1)) ;;
     *)          printf '  UNKNOWN  %s — policy check failed\n' "$name"

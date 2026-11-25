@@ -131,6 +131,17 @@ class TestSelectionBeforeWrites(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     installer.validate_payload(payload)
 
+    def test_explicit_only_skill_without_flag_is_one_fault(self):
+        with tempfile.TemporaryDirectory() as raw:
+            payload = Path(raw) / "hanig-swarm"
+            shutil.copytree(str(ROOT / "skills" / "hanig-swarm"), str(payload))
+            skill = payload / "SKILL.md"
+            text = skill.read_text()
+            skill.write_text(text.replace("disable-model-invocation: true\n", "", 1))
+            self.assertEqual(installer.agent_policy_errors(payload), [
+                "hanig-swarm: explicit-only skill lacks "
+                "'disable-model-invocation: true'"])
+
     def test_frontmatter_rejects_malformed_or_wrong_identity(self):
         cases = {
             "unterminated": "---\nname: alpha\ndescription: present\n",

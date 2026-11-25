@@ -707,6 +707,7 @@ class TestInstalledInvocationPolicyDrift(unittest.TestCase):
             self.assertIn("DRIFT hanig-project: agents/openai.yaml differs from the "
                           "canonical bytes", section)
             self.assertIn("ok    hanig-review-gate", section)
+            self.assertEqual(section.count("reinstall it with install.sh"), 2, section)
             self.assertNotIn("(no problems)", section)
             self.assertEqual((ROOT / "skills" / "hanig-swarm" / "agents" /
                               "openai.yaml").read_bytes(), canonical)
