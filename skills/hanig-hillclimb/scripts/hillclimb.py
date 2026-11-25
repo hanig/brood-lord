@@ -19,7 +19,7 @@ HEADER = ('# schema="%s"\tchain=sha256 accidental-edit evidence, not cryptograph
           'seq\tkind\trecord\tchain\n' % SCHEMA).encode()
 BENCHMARK_QUESTIONS = ("Why not double?", "Was it tuned?", "Did it break limits?", "Did it error?",
                        "Does it reproduce?", "Does it matter?", "Did it even happen?")
-MIN_RUNS, ALPHA, EXACT_MAX_N = 5, Fraction(1, 20), 60  # exact rank-sum bound: n_A + n_B <= 60
+MIN_RUNS, ALPHA, EXACT_MAX_N = 5, Fraction(1, 20), 60  # n_A + n_B bound for exact rank-sum
 OPS = {"<=": operator.le, ">=": operator.ge, "<": operator.lt, ">": operator.gt}
 J = os.path.join
 
@@ -79,9 +79,9 @@ def read_log(state):
 def append_row(state, kind, record):
     bad, chain, rows = read_log(state)
     if bad:
-        raise Refusal("log failed verification: " + "; ".join(bad))
+        raise Refusal("log damaged: " + "; ".join(bad))
     body = "%d\t%s\t%s" % (len(rows) + 1, kind, json.dumps(record, sort_keys=True))
-    with open(J(state, "decision.tsv"), "ab") as handle:  # O_APPEND
+    with open(J(state, "decision.tsv"), "ab") as handle:
         handle.write(("%s\t%s\n" % (body, sha((chain + "\t" + body).encode()))).encode())
     save(J(state, "state.json"), [os.path.getsize(J(state, "decision.tsv")), digest(J(state, "decision.tsv"))])
 
@@ -115,16 +115,16 @@ def screen(runs, direction, min_effect, guardrails, seen, errors):
     arms = [r["arm"] for r in runs]
     a, b = ([r["value"] for r in runs if r["arm"] == x] for x in "AB")
     why = (["needs >= %d runs per arm" % MIN_RUNS] * (min(len(a), len(b)) < MIN_RUNS)
-           + ["runs do not strictly alternate A/B"] * any(x == y for x, y in zip(arms, arms[1:]))
+           + ["runs do not alternate A/B"] * any(x == y for x, y in zip(arms, arms[1:]))
            + ["over the exact rank-sum bound of %d runs" % EXACT_MAX_N] * (len(runs) > EXACT_MAX_N)
-           + ["checklist lacks an integer 'errors' count"] * (errors is None)
+           + ["no integer 'errors' count"] * (errors is None)
            + ["missing guardrail " + g["name"] for g in guardrails if g["name"] not in seen])
     if why:
         return "inconclusive", why, {}
-    gain = (statistics.median(b) - statistics.median(a)) * (1 if direction == "higher" else -1)
+    gain = (statistics.median([v / 2 for v in b]) - statistics.median([v / 2 for v in a])) * (2 if direction == "higher" else -2)
     spread, p = max(a) - min(a), rank_sum_p(a, b)
     why = (["improvement %g below min_effect %g" % (gain, min_effect)] * (not gain >= min_effect)
-           + ["improvement %g not above baseline range %g" % (gain, spread)] * (not gain > spread)
+           + ["improvement %g <= baseline range %g" % (gain, spread)] * (not gain > spread)
            + ["rank-sum p %.4g not below 0.05" % p] * (not p < ALPHA)
            + ["guardrail regression: " + g["name"] for g in guardrails if not OPS[g["op"]](seen[g["name"]], g["threshold"])]
            + ["%d errors reported" % errors] * bool(errors))
@@ -149,7 +149,7 @@ def cmd_init(args, state, _lock):
     with open(J(state, "decision.tsv"), "xb") as handle:
         handle.write(HEADER)
     save(J(state, "state.json"), [len(HEADER), sha(HEADER)])
-    save(J(state, "harness.lock.json"), {"schema": SCHEMA, "files": files, "metric": args.metric, "direction":
+    save(J(state, "harness.lock.json"), {"files": files, "metric": args.metric, "direction":
                                          args.direction, "min_effect": args.min_effect, "guardrails": args.guardrail})
 
 def cmd_hypothesize(args, state, lock):
@@ -221,7 +221,7 @@ def main(argv=None):
             if bad:
                 raise Refusal("harness drifted: " + "; ".join(bad))
             return args.func(args, state, lock) or 0
-    except (Refusal, OSError) as exc:
+    except (Refusal, OSError, ValueError, OverflowError) as exc:
         print("refused: %s" % exc, file=sys.stderr)
         return 2
 

@@ -1,4 +1,4 @@
-"""hanig-hillclimb. Property: rank_sum_p == brute force, random.Random(20261124), 300 cases, n 1..6."""
+"""Seeded property check: random.Random(20261124), 300 cases, n 1..6."""
 import contextlib
 import importlib.util
 import io
@@ -17,30 +17,31 @@ spec.loader.exec_module(hc)
 QS = ("Why not double?", "Was it tuned?", "Did it break limits?", "Did it error?",
       "Does it reproduce?", "Does it matter?", "Did it even happen?")
 A, B = [10, 10.4, 10.1, 10.3, 10.2], [20, 21, 20.5, 22, 20.7]
-WIDE = ([10, 10.5, 11, 11.5, 12], [1, 14, 2, 14.5, 15])  # p = 0.69
+WIDE = ([10, 10.5, 11, 11.5, 12], [1, 14, 2, 14.5, 15])
 
 def alt(a, b, arms="AB"):
     return [{"arm": arm, "value": v} for pair in zip(a, b) for arm, v in zip(arms, pair)]
 
-def ok(errors=0, **override):
-    return dict({q: "evidence" for q in QS}, errors=errors, **override)
+def ok(errors=0, **kw):
+    return dict({q: "e" for q in QS}, errors=errors, **kw)
 
 class TestHillclimb(unittest.TestCase):
-    CASES = (  # name, runs, verdict, sole reason, options
+    CASES = (
         ("keep", alt(A, B), "keep", "", {}),
         ("B first", alt(B, A, "BA"), "keep", "", {}),
+        ("1e308", alt([1e308] * 6, [1.1e308] * 6), "keep", "", {}),
         ("n=4", alt(A[:4], B[:4]), "inconclusive", "runs per arm", {}),
         ("non-alternating", alt(A, B)[::2] + alt(A, B)[1::2], "inconclusive", "alternate", {}),
         ("min_effect", alt(A, B), "revert", "below min_effect", {"effect": "50"}),
         ("median <= range", alt([0, 1, 2, 3, 10], [11, 11.5, 12, 12.2, 12.4]), "revert", "range", {}),
         ("p >= 0.05", alt(*WIDE), "revert", "rank-sum p", {}),
         ("guardrail", alt(A, B), "revert", "guardrail regression", {"guard": {"p99": 51}}),
-        ("no guardrail value", alt(A, B), "inconclusive", "missing guardrail", {"guard": {}}),
-        ("checklist errors", alt(A, B), "revert", "errors reported", {"check": ok(1)}),
+        ("no guard", alt(A, B), "inconclusive", "missing guardrail", {"guard": {}}),
+        ("check errors", alt(A, B), "revert", "errors reported", {"check": ok(1)}),
         ("run errors", [dict(r, errors=int(i == 3)) for i, r in enumerate(alt(A, B))], "revert", "errors", {}),
         ("no error count", alt(A, B), "inconclusive", "'errors'", {"check": ok(None)}),
-        ("over exact bound", alt([10 + i / 99 for i in range(31)], [20 + i / 99 for i in range(31)]),
-         "inconclusive", "exact rank-sum bound", {}),
+        ("n > 60", alt([10 + i / 99 for i in range(31)], [20 + i / 99 for i in range(31)]),
+         "inconclusive", "exact", {}),
     )
 
     def setUp(self):
@@ -106,7 +107,8 @@ class TestHillclimb(unittest.TestCase):
         self.assertEqual(self.record(alt(A, B), ident="h2"), 2)
         for q in QS:
             self.assertEqual((self.record(alt(A, B), ok(**{q: " "})), q in self.out[-1]), (2, True))
-        self.assertEqual((self.record(alt(A, B), {q: "y" for q in QS[1:]}), self.record([{"arm": "AB", "value": 1}])), (2, 2))
+        self.assertEqual((self.record(alt(A, B), {q: "y" for q in QS[1:]}), self.record([{"arm": "AB", "value": 1}]),
+                          self.record([{"arm": "A", "value": 10 ** 400}])), (2, 2, 2))
         self.harness.unlink()
         self.assertEqual((self.record(alt(A, B)), "unreadable" in self.out[-1], self.cli("verify-harness-frozen")), (2, True, 1))
         self.harness.write_text("v1")
@@ -119,7 +121,7 @@ class TestHillclimb(unittest.TestCase):
     def test_state_inside_a_worktree_is_refused(self):
         (self.tmp / "repo" / ".git").mkdir(parents=True)
         (self.tmp / "repo" / "a").mkdir()
-        (self.tmp / "link").symlink_to(self.tmp / "repo" / "a")  # only the resolved path shows .git
+        (self.tmp / "link").symlink_to(self.tmp / "repo" / "a")
         for self.state in (str(self.tmp / "repo" / "a" / "s"), str(self.tmp / "link")):
             self.assertEqual((self.init(), "inside the Git worktree" in self.out[-1]), (2, True))
         self.assertEqual(list((self.tmp / "repo" / "a").iterdir()), [])
@@ -137,6 +139,8 @@ class TestHillclimb(unittest.TestCase):
         for edited in (snaps[-1].replace(b'"h1"', b'"h9"', 1), snaps[-2], snaps[-1].replace(b"v1", b"v2", 1)):
             path.write_bytes(edited)
             self.assertEqual([self.cli("verify-log"), self.cli("summary"), self.hyp("h4")], [1, 1, 2])
+        (Path(self.state) / "state.json").write_text("{")
+        self.assertEqual(self.cli("verify-log"), 2)
         for sub in ([], ["record"]):
             self.assertRaises(SystemExit, self.cli, *sub, "--help")
         self.assertIn("noise screen", self.out[-2] + self.out[-1])

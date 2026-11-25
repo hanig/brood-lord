@@ -1,8 +1,8 @@
 ---
 name: hanig-hillclimb
 description: >-
-  Hill-climb a metric on a frozen harness: pre-register each hypothesis, answer
-  seven benchmark questions, keep or revert by a paired A/B noise screen.
+  Hill-climb a metric on a frozen harness: pre-register each hypothesis and
+  keep or revert it by a paired A/B noise screen.
 disable-model-invocation: true
 ---
 
@@ -11,7 +11,7 @@ disable-model-invocation: true
 ## Host capability boundary
 
 `scripts/hillclimb.py` needs Python 3.9+ only and no network; it refuses state
-inside a Git worktree. Without Python, report no verdict; never invent one.
+inside a Git worktree. Without Python, report no verdict.
 
 ## Invocation
 
