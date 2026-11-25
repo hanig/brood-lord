@@ -71,62 +71,32 @@ def cmd_ledger(args, facade):
     return 0
 
 
-EVIDENCE_FIELDS = ("finding", "method", "status", "tree", "test_ref", "note")
-
-
 def cmd_record_evidence(args, facade):
-    """Append author-reported counterexample evidence; never a review pass.
-
-    The record binds the change identity, the reviewed head and the exact
-    candidate tree. It cannot change any verdict, severity or exit code.
-    """
-    if (args.diff or args.staged or args.range or args.file or args.list or args.size
-            or args.kind or args.plan or args.claim or args.escalate or args.only
-            or args.profile or args.dispositions or args.fresh_cycle_from
-            or args.allow_single_reviewer or args.context or args.threat_model
-            or any(value is not None for value in
-                   (args.accepted_by, args.reason, args.decision))):
-        facade.config_error("Drop review and adjudication options when using "
-                            "--record-evidence; evidence never runs or replaces a review.")
-    if not facade.valid_head(args.head):
-        facade.config_error("--head must be a full lowercase commit SHA. Pass the "
-                            "reviewed head whose round reported the finding.")
-    if not facade.valid_digest(args.finding):
-        facade.config_error("--finding must be a full lowercase SHA-256 digest. "
-                            "Pass a finding digest listed by --open-findings.")
-    if args.round is None:
-        facade.config_error("Pass --round N, or --round plan, naming the round "
-                            "that reported the finding.")
-    if args.tree is None:
-        tree = facade.candidate_tree("HEAD")
-        if tree is None:
-            facade.config_error("cannot read HEAD^{tree}. Pass --tree with the "
-                                "exact output of git rev-parse HEAD^{tree}.")
-    elif not facade.valid_head(args.tree) or facade.candidate_tree(args.tree) != args.tree:
-        facade.config_error("--tree must be an exact lowercase tree SHA present in "
-                            "this repository. Pass git rev-parse HEAD^{tree}.")
-    else:
-        tree = args.tree
+    """Audit-only evidence bound to identity, head and tree; never a verdict change."""
+    if any(value is not None for value in (args.accepted_by, args.reason, args.decision)):
+        facade.config_error("Drop adjudication fields when using --record-evidence.")
+    tree = (facade.candidate_tree(args.tree or "HEAD")
+            if args.tree is None or facade.valid_head(args.tree) else None)
+    if tree is None or args.tree not in (None, tree):
+        facade.config_error("Pass --tree as the exact output of git rev-parse HEAD^{tree}.")
     try:
-        identity = facade.change_identity(
-            "origin/main" if args.target is None else args.target,
-            args.plan_name, args.unit)
-        record = facade.build_evidence_record(
-            identity=identity, reviewed_head=args.head, finding_digest=args.finding,
-            round_no=args.round, candidate_tree=tree, method=args.method,
-            status=args.status, test_ref=args.test_ref,
+        record = facade._evidence_module().build_record(
+            identity=facade.change_identity(
+                "origin/main" if args.target is None else args.target,
+                args.plan_name, args.unit),
+            reviewed_head=args.head, finding_digest=args.finding, round_no=args.round,
+            candidate_tree=tree, method=args.method, status=args.status,
+            test_ref=None if args.test_ref is None else facade.redact(args.test_ref),
             summary=None if args.note is None else facade.redact(args.note))
     except (OSError, ValueError, RuntimeError) as exc:
         facade.config_error(facade.redact(
-            f"evidence refused: {exc}. Pass the same --target/--plan-name/--unit "
-            "as the review and valid evidence fields."))
-    journal = facade.record_evidence(record)
+            f"evidence refused: {exc}. Pass --head, --finding (from --open-findings), "
+            "--round and the review's --target/--plan-name/--unit."))
+    journal = facade._ledger.record_evidence(record, facade)
     print(facade.json.dumps(facade.redact_ledger({
         "state": "EVIDENCE_RECORDED" if journal["written"] else "EVIDENCE_UNCONFIRMED",
-        "reviewed_head": args.head, "round": record["round"],
-        "finding_digest": args.finding, "candidate_tree": tree,
-        "method": record["method"], "status": record["status"],
-        "journal": journal, "review_verdict_changed": False,
+        "reviewed_head": args.head, "finding_digest": args.finding,
+        "candidate_tree": tree, "journal": journal, "review_verdict_changed": False,
     }), indent=2))
     return 0
 
@@ -472,22 +442,20 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason,
 
 def _dispatch_early_commands(args, facade):
     """Handle offline ledger commands and --size preflight before loading reviewers."""
-    evidence_fields = [name for name in EVIDENCE_FIELDS if getattr(args, name) is not None]
-    if args.record_evidence:
-        facade.sys.exit(facade.cmd_record_evidence(args))
-    if evidence_fields:
-        facade.config_error("--{} needs --record-evidence. Pass --record-evidence, "
-                            "or drop the evidence fields.".format(
-                                evidence_fields[0].replace("_", "-")))
-    if args.adjudicate is not None or args.open_findings:
+    evidence = args.record_evidence
+    if not evidence and any(getattr(args, name) is not None for name in (
+            "finding", "method", "status", "tree", "test_ref", "note")):
+        facade.config_error("Pass --record-evidence with evidence fields, or drop them.")
+    if args.adjudicate is not None or args.open_findings or evidence:
         if (args.diff or args.staged or args.range or args.file or args.list or args.size or args.kind
                 or args.plan or args.claim or args.escalate or args.only
                 or args.profile or args.dispositions or args.fresh_cycle_from
                 or args.allow_single_reviewer or args.context or args.threat_model
-                or args.target is not None or args.plan_name is not None or args.unit is not None):
+                or not evidence and (args.target is not None or args.plan_name is not None
+                                     or args.unit is not None)):
             facade.config_error("Drop review options when using a ledger command; "
                                 "adjudication never runs or replaces a review.")
-        facade.sys.exit(facade.cmd_ledger(args))
+        facade.sys.exit(cmd_record_evidence(args, facade) if evidence else facade.cmd_ledger(args))
     if args.round == "plan":
         facade.config_error("--round plan is only an adjudication selector. "
                             "Pass --kind plan without --round for a plan review.")

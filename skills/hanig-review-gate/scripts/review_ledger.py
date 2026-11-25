@@ -498,7 +498,7 @@ def journal_findings(records, head, facade):
                 unreadable.append(damaged)
             continue
         if record["type"] == "evidence":
-            continue  # audit-only; never a finding or an adjudication
+            continue
         round_no = record["round"]
         if record["type"] == "adjudication":
             adjudicated.add((round_no, record["finding_digest"]))
@@ -532,28 +532,9 @@ def record_adjudication(args, round_no, facade):
     return facade._record_journal(write)
 
 
-def record_evidence(record, files, facade):
+def record_evidence(record, facade):
     """Append author-reported evidence; no verdict or severity is revised."""
     facade.validate_journal_record(record)
+    line = json.dumps(facade.redact_ledger(record), sort_keys=True) + "\n"
+    return facade._record_journal(lambda: facade._run_journal_append([], line))
 
-    def write():
-        line = json.dumps(facade.redact_ledger(record), sort_keys=True) + "\n"
-        return facade._run_journal_append(list(files), line)
-    return facade._record_journal(write)
-
-
-def prior_evidence(records, identity, facade):
-    """Valid evidence for one review identity plus known finding locations."""
-    found = [record for _path, record in records
-             if record.get("type") == "evidence" and record.get("identity") == identity
-             and not facade.evidence_record_problems(record)]
-    locations = {}
-    for _path, record in records:
-        results = record.get("results") if record.get("type") == "review_round" else None
-        for result in results if isinstance(results, list) else ():
-            findings = result.get("findings") if isinstance(result, dict) else None
-            for finding in findings if isinstance(findings, list) else ():
-                if (isinstance(finding, dict) and isinstance(finding.get("location"), str)
-                        and facade.valid_digest(finding.get("finding_digest"))):
-                    locations.setdefault(finding["finding_digest"], finding["location"])
-    return found, locations
