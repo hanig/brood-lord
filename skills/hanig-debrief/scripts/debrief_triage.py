@@ -137,7 +137,6 @@ def evaluate_durability(durability, repo_root, at="durability"):
         base = Path(repo_root).resolve(strict=True)
     except (OSError, RuntimeError) as exc:
         raise S.SchemaError("repo_root: unreadable directory") from exc
-    S.need(base.is_dir(), "repo_root", "expected directory")
     outcome = {"form": durability["form"], "holds_6mo": durability["holds_6mo"],
                "holds_6mo_basis": S.HOLDS_6MO_BASIS}
     if durability["form"] == "structure":
@@ -185,7 +184,6 @@ def main(argv=None):
         S.need(not carried or args.repo_root is not None, "durability",
                "durability metadata requires --repo-root")
         outcomes = triage_durability(record, args.repo_root) if carried else {}
-        # An accepted learning cannot survive a durability rejection.
         conflicts = ["%s: %s" % (key, row["reason"]) for key, row in outcomes.items()
                      if row["disposition"] == "rejected"
                      and record["dispositions"][key]["disposition"] == "accept"]

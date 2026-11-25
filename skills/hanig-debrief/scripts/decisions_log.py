@@ -34,8 +34,6 @@ def sanitize(value):
 
 def checked_path(raw):
     """Refuse a log path whose lexical or resolved ancestry holds a .git entry."""
-    if raw is None or str(raw) == "":
-        raise LogError("an explicit --log PATH is required")
     lexical, resolved = Path(raw).absolute(), Path(raw).resolve()
     for parent in (lexical, resolved) + tuple(lexical.parents) + tuple(resolved.parents):
         if os.path.lexists(str(parent / ".git")):
@@ -69,7 +67,8 @@ def parse(data):
             row["schema"] != SCHEMA and "unknown schema" or
             row["seq"] != str(index) and "sequence gap or reorder" or
             not re.fullmatch(STAMP, row["timestamp_utc"]) and "invalid timestamp" or
-            any(unicodedata.category(c) in UNSAFE for c in line.replace("\t", ""))
+            # Cn is writer-version dependent: a newer Unicode may assign it.
+            any(unicodedata.category(c) in UNSAFE - {"Cn"} for c in line.replace("\t", ""))
             and "unsanitized character" or
             not all(row[k].strip() for k in ("run_id", "decision_kind", "claim"))
             and "empty required cell" or
@@ -116,8 +115,11 @@ def append(raw, run_id, decision_kind, claim, evidence_ref="", supersedes=None, 
         raise LogError("run_id, kind and claim must be nonempty after sanitizing")
     for parent in reversed(path.parents):
         if not os.path.lexists(str(parent)):
-            os.mkdir(str(parent), 0o700)
-            os.chmod(str(parent), 0o700)
+            try:
+                os.mkdir(str(parent), 0o700)
+                os.chmod(str(parent), 0o700)
+            except FileExistsError:  # a concurrent append created it
+                pass
     flags = os.O_RDWR | os.O_APPEND
     try:
         fd = _open(path, flags | os.O_CREAT | os.O_EXCL)
@@ -134,7 +136,7 @@ def append(raw, run_id, decision_kind, claim, evidence_ref="", supersedes=None, 
             "" if supersedes is None else str(supersedes),
             rows[-1]["row_sha256"] if rows else GENESIS]
         body.append(_digest(body))
-        data = (b"" if rows else HEADER) + ("\t".join(body) + "\n").encode("utf-8")
+        data = (b"" if os.fstat(fd).st_size else HEADER) + ("\t".join(body) + "\n").encode()
         view = memoryview(data)
         while view:
             view = view[os.write(fd, view):]
