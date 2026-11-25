@@ -315,8 +315,7 @@ def load_dispositions(path, facade):
                                 f"valid UTF-8 text. Pass text without lone surrogates.")
         if "defect_class" in entry and not valid_defect_class(entry["defect_class"]):
             facade.config_error(f"disposition {digest} defect_class must be a lowercase "
-                                "slug matching [a-z][a-z0-9_-]{0,63}. Pass the token "
-                                "exactly, or omit the field.")
+                                "slug matching [a-z][a-z0-9_-]{0,63}, or omitted.")
         if disposition in ("reproduced", "not-reproduced"):
             reproduction = entry.get("reproduction")
             if not isinstance(reproduction, dict):

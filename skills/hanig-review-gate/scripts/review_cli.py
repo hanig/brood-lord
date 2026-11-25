@@ -449,8 +449,7 @@ def _dispatch_early_commands(args, facade):
                 or args.plan or args.claim or args.escalate or args.only
                 or args.profile or args.dispositions or args.fresh_cycle_from
                 or args.allow_single_reviewer or args.context or args.threat_model
-                or args.require_premise_ack or args.premise_memo is not None
-                or args.continue_patching is not None
+                or args.require_premise_ack or {args.premise_memo, args.continue_patching} != {None}
                 or (args.accepted_by or args.reason or args.decision if evidence else
                     args.target is not None or args.plan_name is not None or args.unit is not None)):
             facade.config_error("Drop review options when using a ledger command; "
@@ -718,7 +717,6 @@ def _collect_and_emit_verdict(args, completed, failed, unavailable, tiers_run,
         n_out_of_scope_critical=len(oos_critical),
         n_incomplete=len(incomplete))
     facade.disarm_watchdog()
-    premise = facade.premise_final(args, completed)
     journal = facade.record_review_round(args, completed, state)
     facade.release_round(args, completed, state)
 
@@ -739,7 +737,7 @@ def _collect_and_emit_verdict(args, completed, failed, unavailable, tiers_run,
         "out_of_scope_findings": out_of_scope,
         "rejecting_reviewers": rejecting,
         "journal": journal,
-        "premise_check": premise,
+        "premise_check": facade._premise.final(args, completed, facade),
         "premise_ack": getattr(args, "premise_ack", None),
         "results": completed,
     }
