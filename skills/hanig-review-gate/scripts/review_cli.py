@@ -73,9 +73,10 @@ def cmd_ledger(args, facade):
 
 def cmd_record_evidence(args, facade):
     """Audit-only evidence bound to identity, head and tree; never a verdict change."""
-    tree = facade.candidate_tree("HEAD")  # --tree can only confirm it
+    tree = facade.candidate_tree(args.head) if facade.valid_head(args.head) else None
     if tree is None or args.tree not in (None, tree):
-        facade.config_error("Pass --tree only as the exact output of git rev-parse HEAD^{tree}.")
+        facade.config_error("Pass --head as the full checked commit; --tree, if given, "
+                            "must be its exact tree.")
     try:
         record = facade._evidence_module().build_record(
             identity=facade.change_identity(

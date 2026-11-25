@@ -1557,7 +1557,7 @@ def candidate_tree(ref):
 
 
 def prior_evidence(args):
-    """Valid, redacted evidence for this identity via the bounded helper, or None."""
+    """Redacted valid evidence for this identity, or None."""
     try:
         found = [r for r in map(deep_redact, json.loads(_run_journal_append(
                      args.file, {"read": "evidence"})))

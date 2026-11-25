@@ -95,7 +95,8 @@ def evaluate(records, current_tree):
 
 
 def _line(value, cap=TEXT_MAX):
-    return " ".join(sanitize_text(str(value)).split())[:cap]
+    text = " ".join(sanitize_text(str(value)).split())[:cap]
+    return text.replace("<<<", "\u2039" * 3)
 
 
 def render_prompt_block(entries, current_tree):
@@ -113,11 +114,11 @@ def render_prompt_block(entries, current_tree):
             else "  recorded against the tree under review " + tree]
             + ["  {}: {}".format(k, _line(e[k])) for k in ("test_ref", "summary", "observed")
                if e.get(k)]))
-    shown = []  # whole entries, newest first: a status never loses its STALE line
+    shown = []  # whole entries only, so STALE lines are never cut
     while chunks and len("\n".join([chunks[-1]] + shown)) <= PROMPT_DATA_MAX:
         shown.insert(0, chunks.pop())
     data = "\n".join(shown)
-    fence = hashlib.sha256(data.encode("utf-8")).hexdigest()[:24]  # data cannot contain it
+    fence = hashlib.sha256(data.encode("utf-8")).hexdigest()[:24]
     omitted = len(entries) - len(shown)
     return "\n".join([
         PROMPT_HEADER + ":", "The change author recorded these; the gate did not verify "
