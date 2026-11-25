@@ -28,7 +28,7 @@ class TestSelectionBeforeWrites(unittest.TestCase):
         authored = {name for name, _path, origin in installer.selected_sources(ROOT, ())
                     if origin == "authored"}
         self.assertEqual(authored, {
-            "hanig-wandb-logging", "hanig-debrief", "hanig-orchestrate", "hanig-project", "hanig-swarm",
+            "hanig-wandb-logging", "hanig-debrief", "hanig-hillclimb", "hanig-orchestrate", "hanig-project", "hanig-swarm",
             "hanig-review-gate", "hanig-verified-workflow", "hanig-portable-handoff",
         })
         self.assertEqual(installer.selected_sources(ROOT, ("hanig-debrief",)), [

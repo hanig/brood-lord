@@ -79,7 +79,7 @@ class TreeCase(unittest.TestCase):
 class TestConstants(unittest.TestCase):
     def test_explicit_only_list_and_canonical_bytes(self):
         self.assertEqual(sap.EXPLICIT_ONLY_SKILLS, (
-            "hanig-debrief", "hanig-orchestrate", "hanig-portable-handoff",
+            "hanig-debrief", "hanig-hillclimb", "hanig-orchestrate", "hanig-portable-handoff",
             "hanig-project", "hanig-swarm"))
         self.assertEqual(sap.OPENAI_YAML_BYTES, YAML)
 
@@ -276,7 +276,7 @@ class TestLiveRepository(unittest.TestCase):
 
     def test_explicit_only_list_is_pinned_and_check_exits_zero(self):
         self.assertEqual(sap.EXPLICIT_ONLY_SKILLS, (
-            "hanig-debrief", "hanig-orchestrate", "hanig-portable-handoff",
+            "hanig-debrief", "hanig-hillclimb", "hanig-orchestrate", "hanig-portable-handoff",
             "hanig-project", "hanig-swarm"))
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--check", "--json"],

@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Sequence
 # implicitly.  Unit h1-hillclimb-skill appends "hanig-hillclimb".
 EXPLICIT_ONLY_SKILLS = (
     "hanig-debrief",
+    "hanig-hillclimb",
     "hanig-orchestrate",
     "hanig-portable-handoff",
     "hanig-project",
