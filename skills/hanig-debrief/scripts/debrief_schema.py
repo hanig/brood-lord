@@ -194,17 +194,6 @@ DURABILITY_FORMS = ("structure", "prose")
 HOLDS_6MO_BASIS = "self_attested"
 
 
-def artifact_path(value, at):
-  """Syntactic repo-relative path: no absolute root, empty, '.', '..' or '\\' parts."""
-  text(value, at)
-  need(not any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in value),
-       at, "control character in path")
-  parts = value.split("/")
-  need("\\" not in value and all(part not in ("", ".", "..") for part in parts),
-       at, "expected repository-relative path without traversal")
-  return value
-
-
 def validate_durability(value, at):
   """Optional 6-month/structure-over-prose metadata; holds_6mo is self-attested."""
   need(type(value) is dict, at, "expected object")
@@ -215,14 +204,17 @@ def validate_durability(value, at):
   if form == "structure":
     need("artifact_path" in value, at + ".artifact_path", "required for structure")
     obj(value, ("holds_6mo", "form", "artifact_path"), at)
-    artifact_path(value["artifact_path"], at + ".artifact_path")
+    path, place = value["artifact_path"], at + ".artifact_path"
+    text(path, place)
+    need("\\" not in path and not any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in path)
+         and all(part not in ("", ".", "..") for part in path.split("/")),
+         place, "expected repository-relative path without traversal")
   else:
     need("artifact_path" not in value, at + ".artifact_path", "forbidden for prose")
-    if value["holds_6mo"]:
-      need("conversion_proposal" in value, at + ".conversion_proposal",
-           "required for prose that holds 6 months")
-    allowed = ("holds_6mo", "form", "conversion_proposal")
-    need(set(value) <= set(allowed), at, "unknown or missing fields")
+    need("conversion_proposal" in value or not value["holds_6mo"],
+         at + ".conversion_proposal", "required for prose that holds 6 months")
+    need(set(value) <= {"holds_6mo", "form", "conversion_proposal"}, at,
+         "unknown or missing fields")
     if "conversion_proposal" in value:
       text(value["conversion_proposal"], at + ".conversion_proposal")
   return value

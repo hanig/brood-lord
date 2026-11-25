@@ -165,19 +165,9 @@ def evaluate_durability(durability, repo_root, at="durability"):
 
 def triage_durability(record, repo_root):
     """Outcomes for every disposition row carrying durability metadata."""
-    return {learning_id: evaluate_durability(
-                row["durability"], repo_root,
-                "triage.dispositions.%s.durability" % learning_id)
-            for learning_id, row in sorted(record["dispositions"].items())
-            if "durability" in row}
-
-
-def durability_conflicts(record, outcomes):
-    """Accepted learnings whose durability outcome rejects them."""
-    return ["%s: %s" % (learning_id, outcome["reason"])
-            for learning_id, outcome in sorted(outcomes.items())
-            if outcome["disposition"] == "rejected"
-            and record["dispositions"][learning_id]["disposition"] == "accept"]
+    return {key: evaluate_durability(row["durability"], repo_root,
+                                     "triage.dispositions.%s.durability" % key)
+            for key, row in sorted(record["dispositions"].items()) if "durability" in row}
 
 
 def main(argv=None):
@@ -187,10 +177,7 @@ def main(argv=None):
     check.add_argument("--record", required=True)
     check.add_argument("--packet", required=True)
     check.add_argument("--plan", action="append", required=True)
-    check.add_argument("--repo-root", help="checkout that structure artifact_path values "
-                       "must exist in; required when any row carries durability")
-    check.add_argument("--json", action="store_true",
-                       help="print durability outcomes; holds_6mo is self-attested")
+    check.add_argument("--repo-root", help="checkout holding structure artifact_path files")
     args = parser.parse_args(argv)
     try:
         record = validate(args.record, args.packet, args.plan)
@@ -198,21 +185,17 @@ def main(argv=None):
         S.need(not carried or args.repo_root is not None, "durability",
                "durability metadata requires --repo-root")
         outcomes = triage_durability(record, args.repo_root) if carried else {}
-        conflicts = durability_conflicts(record, outcomes)
-        S.need(not conflicts, "durability",
-               "rejects accepted learning " + "; ".join(conflicts))
+        # An accepted learning cannot survive a durability rejection.
+        conflicts = ["%s: %s" % (key, row["reason"]) for key, row in outcomes.items()
+                     if row["disposition"] == "rejected"
+                     and record["dispositions"][key]["disposition"] == "accept"]
+        S.need(not conflicts, "durability", "rejects accepted " + "; ".join(conflicts))
     except (S.SchemaError, RecursionError) as exc:
         print("triage validation failed: %s" % exc, file=sys.stderr)
         return 1
-    if args.json:
-        print(json.dumps({"valid": True, "durability": outcomes}, sort_keys=True))
-        return 0
     print("triage valid")
-    for learning_id, outcome in outcomes.items():
-        print("%s durability: %s%s (holds_6mo=%s, %s)" % (
-            learning_id, outcome["disposition"],
-            " " + outcome["reason"] if "reason" in outcome else "",
-            str(outcome["holds_6mo"]).lower(), outcome["holds_6mo_basis"]))
+    if outcomes:  # holds_6mo_basis marks every holds_6mo as self-attested
+        print("durability " + json.dumps(outcomes, sort_keys=True))
     return 0
 
 
