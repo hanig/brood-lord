@@ -115,14 +115,14 @@ class TestPstackWiring(unittest.TestCase):
                                       self.mutated(relative, edit))
 
     def test_documented_flags_exist_in_shipped_parsers(self):
-        self.assertEqual(invocations("`x/a.py --b\n--c`\n```\na.py s --d \\\n --e\n```\n", "a.py"),
-                         [(None, {"--b", "--c"}), ("s", {"--d", "--e"})])
+        self.assertEqual(invocations("`x/a.py --b\n--c`\n```\na.py s|t --d \\\n --e\n```\n", "a.py"),
+                         [(None, {"--b", "--c"}), ("s|t", {"--d", "--e"})])
         flags = REVIEW_FLAGS.split()
         self.assertEqual([f for d in (RG, RM) for f in flags if "`" + f not in _read(ROOT, d)], [])
         for name in sorted(CLIS):
             found = invocations(_read(ROOT, RM) + "`review.py %s`" % REVIEW_FLAGS, name)
             self.assertTrue(found, name)
-            for sub, flags in found:
+            for sub, flags in ((s, f) for subs, f in found for s in (subs or "").split("|")):
                 out = _run(ROOT / CLIS[name] / name, *([sub] if sub else []), "--help")
                 self.assertEqual((out.returncode, {f for f in flags if not re.search(
                     r"(?<![\w-])%s(?![\w-])" % f, out.stdout)}), (0, set()), (name, sub))

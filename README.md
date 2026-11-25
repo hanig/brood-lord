@@ -864,10 +864,10 @@ It supports `--diff` (the default), `--staged`, `--range` and repeatable `--file
 plus `--json`, without provider configuration or network calls. Size results are
 not review verdicts. Plan code units to keep the complete PR below the budget.
 
-`--record-evidence` (L1, `review_evidence.py`) appends audit-only counterexample
+`review.py`'s `--record-evidence` (L1; `review_evidence.py` is a module, no CLI) appends audit-only counterexample
 evidence (`--head`, `--finding`, `--round`, `--method`, `--status`, optional
 `--tree`, `--test-ref`, `--note`) bound to identity, head and candidate tree; it
-never changes a verdict. `--require-premise-ack` (L2, `review_premise.py`)
+never changes a verdict. `--require-premise-ack` (L2; module `review_premise.py`)
 refuses round N >= 2 when one `defect_class` struck in rounds N-2 and N-1,
 unless `--premise-memo FILE` or `--continue-patching REASON` acknowledges it.
 
@@ -1010,8 +1010,8 @@ python3 scripts/hillclimb.py init --state-dir S --harness F --metric M --min-eff
 python3 scripts/hillclimb.py record --state-dir S --id H --runs-json R --checklist-json C
 ```
 
-`decisions_log.py` also has `show` and `--json`; `hillclimb.py` also has
-`hypothesize`, `summary` and `verify-log`. Nothing here calls a model.
+Also `decisions_log.py show --log L --json` and
+`hillclimb.py hypothesize|summary|verify-log --state-dir S`. Nothing here calls a model.
 
 ---
 
