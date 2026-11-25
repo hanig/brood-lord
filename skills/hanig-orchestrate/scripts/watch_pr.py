@@ -8,16 +8,7 @@ unchanged aggregate delta; a null patch_id is unavailable and not comparable.
 Echoed strings lose ANSI and Cc/Cf/Cs/Co/Cn/Zl/Zp characters but tab/newline.
 Exit codes below (error: config or API failure).
 """
-import argparse
-import datetime
-import json
-import os
-import re
-import subprocess as SP
-import sys
-import tempfile
-import time
-import unicodedata
+import argparse, datetime, json, os, re, subprocess as SP, sys, tempfile, time, unicodedata
 
 EXIT_CODES = dict(ready=0, ci_pending=10, conflicts=11, threads_open=12, ci_failed=13,
                   ci_zero_step_flake=14, unknown=15, refused_fork=16, error=2)
@@ -29,7 +20,7 @@ PASSING = {"success", "neutral", "skipped"}
 SHA_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/(?!\.\.?$)[A-Za-z0-9._-]{1,100}")
 BANNED = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
-ANSI_RE = re.compile(r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]"  # CSI, OSC, DCS.., other
+ANSI_RE = re.compile(r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]"
                      r"|(?:\x1b\]|\x9d)[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?"
                      r"|\x1b[PX^_][^\x1b\x9c]*(?:\x1b\\|\x9c)?|\x1b[ -/]*[0-~]")
 QUERY = ("query($o:String!,$n:String!,$p:Int!,$c:String){repository(owner:$o,name:$n){"
@@ -66,10 +57,8 @@ def is_id(v):
 def gh_json(runner, args):
   rc, out, err, over = runner(["gh"] + args)
   if rc != 0 or over: raise WatchError("gh %s: exit %s, over cap %s: %s" % (args[:2], rc, over, err[:500]))
-  try:
-    return json.loads(out.decode("utf-8"))
-  except ValueError:
-    raise WatchError("gh %s returned malformed JSON" % args[0])
+  try: return json.loads(out.decode("utf-8"))
+  except ValueError: raise WatchError("gh %s returned malformed JSON" % args[0])
 
 def paged(runner, path, key):
   items = []
@@ -99,7 +88,7 @@ def open_threads(runner, owner, name, number):
     args = ["api", "graphql", "-f", "query=" + QUERY, "-f", "o=" + owner, "-f", "n=" + name,
             "-F", "p=%d" % number] + (["-f", "c=" + cursor] if cursor else [])
     doc = gh_json(runner, args)
-    if doc.get("errors"): raise WatchError("GraphQL errors reading review threads")
+    if doc.get("errors"): raise WatchError("GraphQL errors")
     threads = doc["data"]["repository"]["pullRequest"]["reviewThreads"]
     nodes, info = list(threads["nodes"]), dict(threads["pageInfo"])
     for node in nodes:
@@ -139,11 +128,12 @@ def judge_run(runner, repo, head, run, current, zero_step_jobs):
   try:  # a missing job payload is never assumed empty
     jobs = paged(runner, "repos/%s/actions/runs/%d/jobs" % (repo, rid), "jobs")
   except WatchError:
+    if conclusion == "cancelled": raise  # API error, not CI failure
     jobs = None
   if conclusion != "cancelled":
-    stepless = bool(jobs) and all(isinstance(j, dict) and j.get("steps") == [] for j in jobs)
+    stepless = bool(jobs) and all(j.get("steps") == [] for j in jobs)
     return fail("zero_step_failure_unclassified" if stepless else conclusion)
-  if not jobs or any(not isinstance(j, dict) or not isinstance(j.get("steps"), list) for j in jobs):
+  if not jobs or any(not isinstance(j.get("steps"), list) for j in jobs):
     return fail("job_data_missing")
   if any(j.get("head_sha") != head for j in jobs): return fail("job_head_mismatch")
   if any(j["steps"] for j in jobs): return fail("started_steps")
@@ -179,12 +169,11 @@ def evaluate_ci(runner, repo, head):
   runs = paged(runner, "repos/%s/actions/runs?head_sha=%s" % (repo, head), "workflow_runs")
   checks = paged(runner, "repos/%s/commits/%s/check-runs" % (repo, head), "check_runs")
   statuses = paged(runner, "repos/%s/commits/%s/status" % (repo, head), "statuses")
-  current = [r for r in runs if isinstance(r, dict) and r.get("head_sha") == head]
+  current = [r for r in runs if r.get("head_sha") == head]
+  if any(c.get("head_sha") != head for c in checks): raise WatchError("check run not on head")
   zero_step_jobs = set()
   items = [judge_run(runner, repo, head, r, current, zero_step_jobs) for r in current]
-  items += [judge_check(c, zero_step_jobs) for c in checks
-            if isinstance(c, dict) and c.get("head_sha") == head]
-  items += [judge_status(s) for s in statuses if isinstance(s, dict)]
+  items += [judge_check(c, zero_step_jobs) for c in checks] + [judge_status(s) for s in statuses]
   verdicts = {i["verdict"] for i in items}
   if not items: return "ci_pending", ["no checks reported on the current head"], items, []
   state = ("ci_failed" if "failed" in verdicts else "ci_pending" if "pending" in verdicts
@@ -198,8 +187,10 @@ def aggregate_patch_id(runner, repo, number):
   rc, diff, _, over = runner(["gh", "pr", "diff", str(number), "--repo", repo, "--color", "never"],
                              max_bytes=DIFF_BYTE_CAP)
   if rc != 0 or over or not diff.strip(): return None
-  with tempfile.TemporaryDirectory() as scratch:
-    rc, out = runner(["git", "patch-id", "--stable"], input_bytes=diff, cwd=scratch)[:2]
+  try:
+    with tempfile.TemporaryDirectory() as scratch:
+      rc, out = runner(["git", "patch-id", "--stable"], input_bytes=diff, cwd=scratch)[:2]
+  except OSError: return None
   words = out.decode("ascii", "replace").split()
   return words[0] if rc == 0 and len(words) == 2 and SHA_RE.fullmatch(words[0]) else None
 
@@ -209,8 +200,7 @@ def finish(report, state, reasons):
 
 def new_report(opts):
   now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-  return dict(schema_version=1, observed_at=now, pr=opts.pr, state=None, head_sha=None, action_required=True,
-              reasons=[])
+  return dict(schema_version=1, observed_at=now, pr=opts.pr, head_sha=None)
 
 def observe(opts, runner):
   report = new_report(opts)
@@ -223,7 +213,7 @@ def observe(opts, runner):
     title=pr.get("title"), url=pr.get("url"), author=author.get("login"), head_ref=pr.get("headRefName")))
   refusal = fork_refusal(pr, owner, name)
   if refusal: return finish(report, "refused_fork", [refusal])
-  if pr.get("number") != opts.pr: raise WatchError("gh pr view returned a different pull request")
+  if pr.get("number") != opts.pr: raise WatchError("gh pr view returned another PR")
   if pr.get("state") != "OPEN":
     return finish(report, "unknown", ["pull request state is %s" % pr.get("state")])
   mergeable = pr.get("mergeable")
@@ -265,8 +255,7 @@ def main(argv=None, runner=run_command, out=None, err=None, sleep=time.sleep):
     if not REPO_RE.fullmatch(opts.repo) or opts.pr <= 0 or (opts.interval is None) != (
         opts.max_polls is None) or opts.max_polls is not None and (
         opts.once or not opts.interval > 0 or opts.max_polls < 1):
-      raise WatchError("need OWNER/REPO, a positive --pr, and --interval > 0 with --max-polls >= 1"
-                       " (not with --once)")
+      raise WatchError("need OWNER/REPO, --pr > 0, and --interval > 0 with --max-polls >= 1, not --once")
     polls = opts.max_polls or 1
     for poll in range(1, polls + 1):
       report = observe(opts, runner)

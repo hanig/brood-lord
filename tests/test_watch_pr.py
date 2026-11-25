@@ -1,16 +1,12 @@
 """Offline: gh is a fixture, git patch-id is real; sanitizer checks range(0x110000)."""
-import io
-import json
+import io, json, sys, unicodedata, unittest
 from pathlib import Path
-import sys
-import unicodedata
-import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills/hanig-orchestrate/scripts"))
 import watch_pr as W
 
-HEAD, OLD = "a" * 40, "b" * 40
+HEAD, OLD, T = "a" * 40, "b" * 40, "2026-01-01T%s"
 BANNED = {"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"}  # not W.BANNED
 
 def pr(**over):
@@ -20,7 +16,7 @@ def pr(**over):
 
 def run(rid, conclusion="success", status="completed", wid=1, created=10, head=HEAD):
   return dict(id=rid, name="CI", workflow_id=wid, status=status, conclusion=conclusion, head_sha=head,
-              created_at="2026-01-01T%02d:00:00Z" % created if type(created) is int else created, html_url="r")
+              created_at=T % ("%02d:00:00Z" % created) if type(created) is int else created, html_url="r")
 
 def job(jid=9, steps=(), conclusion="cancelled", head=HEAD):
   return dict(id=jid, status="completed", conclusion=conclusion, head_sha=head, steps=list(steps))
@@ -52,10 +48,8 @@ def route(f, argv):
   path, _, qs = args[1].partition("?")
   parts, first = path.split("/"), qs.endswith("&page=1")
   key, items = {"runs": ("workflow_runs", f["runs"]), "check-runs": ("check_runs", f["checks"]),
-                "status": ("statuses", f["statuses"])}.get(parts[-1], ("jobs", None))
-  if key == "jobs":
-    items = f["jobs"].get(parts[-2])
-    if items is None: return 1, b"", b"HTTP 404", False
+                "status": ("statuses", f["statuses"])}.get(parts[-1]) or ("jobs", f["jobs"].get(parts[-2]))
+  if items is None: return 1, b"", b"HTTP 404", False
   return ok({"total_count": len(items), key: items if first else []})
 
 class Fake:
@@ -124,9 +118,8 @@ class TestOrder(unittest.TestCase):
     code, rep, fake = invoke(fx(**dict(GREEN, runs=[run(1, None, "queued")])), *"--interval 1 --max-polls 3".split())
     self.assertEqual((code, len(fake.calls)), (10, 3 * 5))
 
-F, P, Z = "ci_failed", "ci_pending", "ci_zero_step_flake"
-SUP, ZS, JM, T = "cancelled_superseded_by_newer_run", "zero_step_failure_unclassified", "job_data_missing", \
-  "2026-01-01T%s"
+F, P, Z, E = "ci_failed", "ci_pending", "ci_zero_step_flake", "error"
+SUP, ZS, JM = "cancelled_superseded_by_newer_run", "zero_step_failure_unclassified", "job_data_missing"
 C = lambda *r, **k: dict(runs=[run(101, "cancelled", **k)] + list(r))
 J = lambda *j: dict(jobs={"101": list(j)})
 CI_CASES = [  # (label, fixture overrides, state, a reason that must be listed)
@@ -149,7 +142,9 @@ CI_CASES = [  # (label, fixture overrides, state, a reason that must be listed)
   ("timeout", dict(runs=[run(101, "timed_out")], checks=[]), F, ZS),
   ("startup, no jobs", dict(runs=[run(101, "startup_failure")], jobs={}, checks=[]), F, "startup_failure"),
   ("steps", J(job(steps=[{"name": "Set up job"}])), F, "started_steps"),
-  ("no payload", dict(jobs={}), F, JM), ("no jobs", J(), F, JM),
+  ("jobs API error", dict(jobs={}), E, None), ("no jobs", J(), F, JM),
+  ("check off head", dict(checks=[check(9, "cancelled"), dict(check(5, "failure", "x"), head_sha=None)]), E, None),
+  ("non-object", dict(GREEN, statuses=["x"]), E, None),
   ("no steps key", J({"id": 9, "conclusion": "cancelled", "head_sha": HEAD}), F, JM),
   ("null steps", J(dict(job(), steps=None)), F, JM),
   ("old job", J(job(head=OLD)), F, "job_head_mismatch"),
@@ -183,14 +178,16 @@ class TestPatchId(unittest.TestCase):
     self.assertEqual(rep["patch_id_status"], "unavailable" if rep["patch_id"] is None else "ok")
     return rep["patch_id"]
 
-  def test_restack_equal_change_unequal_errors_unavailable(self):
+  def test_patch_id(self):
     base = self.pid(DIFF % ("1111111..2222222", 3, 3, "x"))
     self.assertRegex(base, "^[0-9a-f]{40}$")
     self.assertEqual(base, self.pid(DIFF % ("3333333..4444444", 40, 40, "x")))
     self.assertNotEqual(base, self.pid(DIFF % ("1111111..2222222", 3, 3, "y")))
-    self.assertIsNone(self.pid(DIFF % ("1..2", 3, 3, "x"), diff_rc=1))
+    d = DIFF % ("1..2", 3, 3, "x")
+    self.assertIsNone(self.pid(d, diff_rc=1))
     self.assertIsNone(self.pid(""))
-    with mock.patch.object(W, "DIFF_BYTE_CAP", 20): self.assertIsNone(self.pid(DIFF % ("1..2", 3, 3, "x")))
+    with mock.patch.object(W, "DIFF_BYTE_CAP", 20): self.assertIsNone(self.pid(d))
+    with mock.patch.object(W.tempfile, "TemporaryDirectory", side_effect=PermissionError): self.assertIsNone(self.pid(d))
 
 class TestSanitizer(unittest.TestCase):
   def test_exhaustive_code_points(self):
@@ -205,7 +202,7 @@ class TestSanitizer(unittest.TestCase):
                       "\x1b]0;t\x1b\\x": "x", "\x9b31mc": "c", "\x1b(Bp": "p"}.items():
       self.assertEqual(W.sanitize(raw), want)
 
-  def test_every_echoed_field_in_human_and_json_output(self):
+  def test_every_echoed_field(self):
     t = "<x>%s\x1b[31m\x1b]0;t\x07</x>" % "".join(
       chr(c) for c in range(0x110000) if chr(c) not in "\t\n" and unicodedata.category(chr(c)) in BANNED)
     p = pr(title=t, author={"login": t}, headRefName=t, url=t)
