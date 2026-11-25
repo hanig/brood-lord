@@ -71,6 +71,66 @@ def cmd_ledger(args, facade):
     return 0
 
 
+EVIDENCE_FIELDS = ("finding", "method", "status", "tree", "test_ref", "note")
+
+
+def cmd_record_evidence(args, facade):
+    """Append author-reported counterexample evidence; never a review pass.
+
+    The record binds the change identity, the reviewed head and the exact
+    candidate tree. It cannot change any verdict, severity or exit code.
+    """
+    if (args.diff or args.staged or args.range or args.file or args.list or args.size
+            or args.kind or args.plan or args.claim or args.escalate or args.only
+            or args.profile or args.dispositions or args.fresh_cycle_from
+            or args.allow_single_reviewer or args.context or args.threat_model
+            or any(value is not None for value in
+                   (args.accepted_by, args.reason, args.decision))):
+        facade.config_error("Drop review and adjudication options when using "
+                            "--record-evidence; evidence never runs or replaces a review.")
+    if not facade.valid_head(args.head):
+        facade.config_error("--head must be a full lowercase commit SHA. Pass the "
+                            "reviewed head whose round reported the finding.")
+    if not facade.valid_digest(args.finding):
+        facade.config_error("--finding must be a full lowercase SHA-256 digest. "
+                            "Pass a finding digest listed by --open-findings.")
+    if args.round is None:
+        facade.config_error("Pass --round N, or --round plan, naming the round "
+                            "that reported the finding.")
+    if args.tree is None:
+        tree = facade.candidate_tree("HEAD")
+        if tree is None:
+            facade.config_error("cannot read HEAD^{tree}. Pass --tree with the "
+                                "exact output of git rev-parse HEAD^{tree}.")
+    elif not facade.valid_head(args.tree) or facade.candidate_tree(args.tree) != args.tree:
+        facade.config_error("--tree must be an exact lowercase tree SHA present in "
+                            "this repository. Pass git rev-parse HEAD^{tree}.")
+    else:
+        tree = args.tree
+    try:
+        identity = facade.change_identity(
+            "origin/main" if args.target is None else args.target,
+            args.plan_name, args.unit)
+        record = facade.build_evidence_record(
+            identity=identity, reviewed_head=args.head, finding_digest=args.finding,
+            round_no=args.round, candidate_tree=tree, method=args.method,
+            status=args.status, test_ref=args.test_ref,
+            summary=None if args.note is None else facade.redact(args.note))
+    except (OSError, ValueError, RuntimeError) as exc:
+        facade.config_error(facade.redact(
+            f"evidence refused: {exc}. Pass the same --target/--plan-name/--unit "
+            "as the review and valid evidence fields."))
+    journal = facade.record_evidence(record)
+    print(facade.json.dumps(facade.redact_ledger({
+        "state": "EVIDENCE_RECORDED" if journal["written"] else "EVIDENCE_UNCONFIRMED",
+        "reviewed_head": args.head, "round": record["round"],
+        "finding_digest": args.finding, "candidate_tree": tree,
+        "method": record["method"], "status": record["status"],
+        "journal": journal, "review_verdict_changed": False,
+    }), indent=2))
+    return 0
+
+
 def changed_paths(args, facade):
     """Collect paths for the same sources as gather; uncertainty costs a tier."""
     paths = set()
@@ -412,6 +472,13 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason,
 
 def _dispatch_early_commands(args, facade):
     """Handle offline ledger commands and --size preflight before loading reviewers."""
+    evidence_fields = [name for name in EVIDENCE_FIELDS if getattr(args, name) is not None]
+    if args.record_evidence:
+        facade.sys.exit(facade.cmd_record_evidence(args))
+    if evidence_fields:
+        facade.config_error("--{} needs --record-evidence. Pass --record-evidence, "
+                            "or drop the evidence fields.".format(
+                                evidence_fields[0].replace("_", "-")))
     if args.adjudicate is not None or args.open_findings:
         if (args.diff or args.staged or args.range or args.file or args.list or args.size or args.kind
                 or args.plan or args.claim or args.escalate or args.only

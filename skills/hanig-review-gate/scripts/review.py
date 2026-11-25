@@ -134,6 +134,15 @@ _ledger = _load_sibling("_hanig_review_gate_ledger", "review_ledger.py")
 _schema = _load_sibling("_hanig_review_gate_schema", "review_schema.py")
 _cli = _load_sibling("_hanig_review_gate_cli", "review_cli.py")
 _subs = _load_sibling("_hanig_review_gate_subscriptions", "review_subscriptions.py")
+_evidence = None
+
+
+def _evidence_module():
+    """Load the pure evidence module on first use, never at gate start-up."""
+    global _evidence
+    if _evidence is None:
+        _evidence = _load_sibling("_hanig_review_gate_evidence", "review_evidence.py")
+    return _evidence
 
 def change_identity(target="origin/main", plan_name=None, unit=None):
     return _ledger.change_identity(target, plan_name, unit, facade=_SELF)
@@ -821,7 +830,11 @@ def valid_ledger_field(field, value):
         "accepted_by": valid_identity, "round": valid_round,
         "timestamp": valid_timestamp, "date": valid_timestamp,
         "schema_version": lambda v: type(v) is int and v in (1, 2),
-        "type": lambda v: isinstance(v, str) and v in ("review_round", "adjudication"),
+        "type": lambda v: isinstance(v, str) and v in ("review_round", "adjudication",
+                                                       "evidence"),
+        "identity": valid_digest, "candidate_tree": valid_head,
+        "method": lambda v: isinstance(v, str) and v in _evidence_module().METHODS,
+        "status": lambda v: isinstance(v, str) and v in _evidence_module().STATUSES,
         "kind": lambda v: isinstance(v, str) and v in ("plan", "implementation"),
         "decision": lambda v: isinstance(v, str) and v in ADJUDICATION_DECISIONS,
         "verdict": lambda v: isinstance(v, str) and (v in STATES or v in PLAN_STATES),
@@ -841,7 +854,8 @@ def redact_ledger(obj, path=()):
     """
     typed_paths = {(field,): field for field in (
         "reviewed_head", "finding_digest", "accepted_by", "round",
-        "timestamp", "date", "schema_version", "type", "kind", "decision", "verdict")}
+        "timestamp", "date", "schema_version", "type", "kind", "decision", "verdict",
+        "identity", "candidate_tree", "method", "status")}
     typed_paths[("author", "[]")] = "author"
     typed_paths[("claim_digests", "[]")] = "claim_digest"
     for prefix in (("results", "[]", "findings", "[]"), ("open_findings", "[]")):
@@ -861,7 +875,9 @@ def redact_ledger(obj, path=()):
              "rejecting_reviewers", "panel_policy", "finding_digest",
              "decision", "accepted_by", "reason", "author", "timestamp",
              "state", "open_findings", "unattributable_records", "unreadable_records", "journal",
-             "review_verdict_changed", "input_redactions", "plan_exchange"},
+             "review_verdict_changed", "input_redactions", "plan_exchange",
+             "identity", "candidate_tree", "method", "status", "recorded_at",
+             "test_ref", "summary", "observed"},
         ("input_redactions", "[]"): {"source", "kind", "start_char", "end_char",
                                     "removed_chars"},
         ("results", "[]"): {"findings"},
@@ -876,7 +892,8 @@ def redact_ledger(obj, path=()):
     }
     schema_tokens = {
         ("state",): {"OPEN_FINDINGS", "NO_OPEN_FINDINGS", "UNATTRIBUTABLE",
-                     "ADJUDICATION_RECORDED", "ADJUDICATION_UNCONFIRMED"},
+                     "ADJUDICATION_RECORDED", "ADJUDICATION_UNCONFIRMED",
+                     "EVIDENCE_RECORDED", "EVIDENCE_UNCONFIRMED"},
     }
     if isinstance(obj, str) and obj in schema_tokens.get(path, ()):
         return obj
@@ -1533,6 +1550,51 @@ def cmd_ledger(args):
     return _cli.cmd_ledger(args, _SELF)
 
 
+def evidence_record_problems(record):
+    return _evidence_module().record_problems(record)
+
+
+def build_evidence_record(**fields):
+    return _evidence_module().build_record(**fields)
+
+
+def record_evidence(record, files=()):
+    return _ledger.record_evidence(record, files, _SELF)
+
+
+def cmd_record_evidence(args):
+    return _cli.cmd_record_evidence(args, _SELF)
+
+
+def candidate_tree(ref):
+    """Exact tree SHA for a commit ref, or None; the output is never trimmed."""
+    out = git_out("rev-parse", "--verify", "--quiet", ref + "^{tree}")
+    value = out[:-1] if out.endswith("\n") else None
+    return value if valid_head(value) else None
+
+
+def prior_evidence(args):
+    """Evidence for this round's reserved identity, evaluated for staleness.
+
+    Carry-forward is advisory: unreadable history or a missing reservation
+    yields None and the prompt is unchanged. It never touches the verdict.
+    """
+    reservation = getattr(args, "round_reservation", None)
+    if args.kind != "implementation" or not reservation:
+        return None
+    try:
+        records = read_review_journal(review_journal_path(args.file))
+        found, locations = _ledger.prior_evidence(
+            records, reservation[1]["identity"], _SELF)
+    except Exception:
+        return None
+    if not found:
+        return None
+    head = getattr(args, "reviewed_head", None)
+    tree = candidate_tree(head) if valid_head(head) else None
+    return _evidence_module().evaluate(found, tree), tree, locations
+
+
 reject_duplicate_keys = _schema.reject_duplicate_keys
 
 
@@ -1545,7 +1607,7 @@ def has_honest_run_claim(claims):
 
 
 def build_prompt(body, claims, truncated, context, threat_model=None,
-                 dispositions=None, input_redactions=()):
+                 dispositions=None, input_redactions=(), prior_evidence=None):
     out = []
     if input_redactions:
         out.append(redaction_notice(input_redactions) + "\n")
@@ -1571,6 +1633,8 @@ def build_prompt(body, claims, truncated, context, threat_model=None,
             for field in ("setup", "command", "expected", "observed", "revision"):
                 out.append(f"    {field}: {entry['reproduction'][field]}")
         out.append("")
+    if prior_evidence:
+        out.append(_evidence_module().render_prompt_block(*prior_evidence))
     if claims:
         out.append("CLAIMS ASSERTED ABOUT THIS WORK — assess each one:")
         for c in claims:
@@ -2110,6 +2174,15 @@ def build_parser():
                         help="record an independent external decision; never a review pass")
     ledger.add_argument("--open-findings", action="store_true",
                         help="query unadjudicated confirmed findings as JSON; exit 1 if any")
+    ledger.add_argument("--record-evidence", action="store_true",
+                        help="append audit-only counterexample evidence; never a review")
+    ap.add_argument("--finding", metavar="DIGEST", help="finding digest for --record-evidence")
+    ap.add_argument("--method", help="inspection or independently_written_test")
+    ap.add_argument("--status",
+                    help="reproduced, not_reproduced, inconclusive or not_executable")
+    ap.add_argument("--tree", metavar="SHA", help="candidate tree (default HEAD^{tree})")
+    ap.add_argument("--test-ref", help="repo-relative test path or id for the evidence")
+    ap.add_argument("--note", help="short evidence summary (sanitized, capped)")
     ap.add_argument("--head", metavar="SHA", help="exact reviewed head for ledger commands")
     ap.add_argument("--accepted-by", metavar="NAME", help="independent acceptor's declared identity")
     ap.add_argument("--reason", help="reason for the external adjudication")
@@ -2189,6 +2262,10 @@ def _main():
 
     if args.kind == "implementation":
         reserve_review_round(args)
+        evidence = prior_evidence(args)
+        if evidence:
+            prompt = build_prompt(body, args.claim, truncated, args.context, args.threat_model,
+                                  dispositions, args.input_redactions, evidence)
 
     if args.kind == "plan":
         arm_watchdog(args.watchdog if args.watchdog is not None
