@@ -144,6 +144,10 @@ def _evidence_module():
     return _evidence
 
 
+def _premise_module():  # lazy: plan reviews and copied fixtures never load it
+    return _load_sibling("_hanig_review_gate_premise", "review_premise.py")
+
+
 def change_identity(target="origin/main", plan_name=None, unit=None):
     return _ledger.change_identity(target, plan_name, unit, facade=_SELF)
 round_ledger_root = _ledger.round_ledger_root
@@ -657,6 +661,9 @@ def _journal_child(payload):
     if payload["record_line"] == {"read": "evidence"}:
         return {"ok": True, "path": json.dumps([
             r for _p, r in read_review_journal(path) if r.get("type") == "evidence"])}
+    if isinstance(payload["record_line"], dict) and "identity" in payload["record_line"]:
+        return {"ok": True, "path": json.dumps(_premise_module().read_journal(
+            str(path), payload["record_line"]["identity"]))}
     record_path = _write_review_journal(path, payload["record_line"])
     return {"ok": True, "path": str(record_path)}
 
@@ -665,12 +672,15 @@ def _run_journal_child(args, completed, verdict):
     """Run journal I/O out of process so stalled storage cannot gate review."""
     # Only the finished record is redacted. The non-persisted control envelope
     # is wrapped afterwards, and the child never interprets record fields.
-    _record, line = prepare_review_journal(
+    record, line = prepare_review_journal(
         args.kind, args.round, [result["name"] for result in completed],
         verdict, args.claim, panel_policy=getattr(args, "panel_policy", None),
         results=completed, reviewed_head=getattr(args, "reviewed_head", None),
         input_redactions=getattr(args, "input_redactions", ()),
         plan_exchange=getattr(args, "plan_exchange", None))
+    if args.kind == "implementation":
+        line = json.dumps(dict(record, **redact_ledger(_cli.premise_journal_fields(args))),
+                          sort_keys=True) + "\n"
     return _run_journal_append(args.file, line)
 
 
@@ -2142,6 +2152,12 @@ def build_parser():
                     help="round 2 and later: digest-keyed JSON mapping every "
                          "prior confirmed finding to reproduced, "
                          "not-reproduced, or deferred with a one-line reason")
+    ap.add_argument("--require-premise-ack", action="store_true",
+                    help="refuse round N before review when a defect_class struck "
+                         "in rounds N-2 and N-1, unless acknowledged")
+    ack = ap.add_mutually_exclusive_group()
+    ack.add_argument("--premise-memo", metavar="FILE", help="journals its SHA-256 and path")
+    ack.add_argument("--continue-patching", metavar="REASON", help="journaled one-line reason")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--list", action="store_true", help="show reviewers and availability")
     ledger = ap.add_mutually_exclusive_group()
@@ -2178,6 +2194,7 @@ def _main():
     reviewers = load_effective_reviewers()
     roster = reviewers
     _cli._validate_protocol_flags(args, _SELF)
+    _cli.premise_preflight(args, dispositions, _SELF)
     profile, profile_reason = select_profile(args)
     args.selected_profile = profile
     tier_text = f"tier: {profile} ({profile_reason})"
@@ -2231,6 +2248,8 @@ def _main():
                           args.threat_model, dispositions, args.input_redactions)
 
     if args.kind == "implementation":
+        if args.require_premise_ack and args.round >= 2:
+            _premise_module().gate(args, _SELF)
         reserve_review_round(args)
         evidence = prior_evidence(args)
         if evidence:

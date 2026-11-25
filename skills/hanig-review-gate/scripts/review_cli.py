@@ -449,6 +449,7 @@ def _dispatch_early_commands(args, facade):
                 or args.plan or args.claim or args.escalate or args.only
                 or args.profile or args.dispositions or args.fresh_cycle_from
                 or args.allow_single_reviewer or args.context or args.threat_model
+                or args.require_premise_ack or {args.premise_memo, args.continue_patching} != {None}
                 or (args.accepted_by or args.reason or args.decision if evidence else
                     args.target is not None or args.plan_name is not None or args.unit is not None)):
             facade.config_error("Drop review options when using a ledger command; "
@@ -736,6 +737,8 @@ def _collect_and_emit_verdict(args, completed, failed, unavailable, tiers_run,
         "out_of_scope_findings": out_of_scope,
         "rejecting_reviewers": rejecting,
         "journal": journal,
+        "premise_check": facade._premise_module().final(args, completed, facade),
+        "premise_ack": getattr(args, "premise_ack", None),
         "results": completed,
     }
     if state == "REVIEW_CLAIMS_REFUTED":
@@ -835,3 +838,37 @@ def _collect_and_emit_verdict(args, completed, failed, unavailable, tiers_run,
                   f"refute it.")
 
     facade.sys.exit(facade.STATES[state])
+
+
+def premise_preflight(args, dispositions, facade):
+    """Validate premise acknowledgments; digest dispositions before sanitizing."""
+    memo, reason, os = args.premise_memo, args.continue_patching, facade.os
+    if (args.require_premise_ack or {memo, reason} != {None}) and args.kind != "implementation":
+        facade.config_error("Drop premise flags outside --kind implementation.")
+    args.premise_ack = args.premise_history = None
+    if memo is not None:
+        try:
+            with os.fdopen(os.open(memo, os.O_RDONLY | os.O_NONBLOCK), "rb") as stream:
+                regular = facade.stat.S_ISREG(os.fstat(stream.fileno()).st_mode)
+                raw = stream.read(facade.MAX_FILE_READ_BYTES + 1) if regular else b""
+            if len(raw) > facade.MAX_FILE_READ_BYTES or not raw.decode("utf-8").strip():
+                raise ValueError("blank, oversized or not a regular file")
+        except (OSError, ValueError) as exc:
+            facade.config_error("--premise-memo must be a non-empty UTF-8 file: {}".format(exc))
+        args.premise_ack = {"mode": "premise_memo", "path": os.path.abspath(memo),
+                            "sha256": facade.hashlib.sha256(raw).hexdigest()}
+    elif reason is not None:
+        if not reason.strip() or reason.splitlines() != [reason]:
+            facade.config_error("--continue-patching must be a non-empty one-line reason.")
+        args.premise_ack = {"mode": "continue_patching", "reason": reason}
+    args.premise_dispositions = [dict(
+        finding_digest=facade.finding_digest(e["location"], e["summary"]),
+        disposition=e["disposition"], **{k: e[k] for k in ("defect_class",) if k in e})
+        for e in dispositions]
+
+
+def premise_journal_fields(args):
+    owned = (getattr(args, "round_reservation", None) or (None, {}))[1]
+    return dict({k: owned[k] for k in ("identity", "cycle") if isinstance(owned, dict) and k in owned},
+                dispositions=getattr(args, "premise_dispositions", None) or [],
+                premise_ack=getattr(args, "premise_ack", None))
