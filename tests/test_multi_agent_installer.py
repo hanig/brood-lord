@@ -24,7 +24,7 @@ spec.loader.exec_module(installer)
 
 
 class TestSelectionBeforeWrites(unittest.TestCase):
-    def test_nine_authored_bundles_include_standalone_logging(self):
+    def test_eight_authored_bundles_include_standalone_logging(self):
         authored = {name for name, _path, origin in installer.selected_sources(ROOT, ())
                     if origin == "authored"}
         self.assertEqual(authored, {
