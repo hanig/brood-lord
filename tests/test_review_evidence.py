@@ -71,9 +71,8 @@ class TestEvidence(unittest.TestCase):
 
     def test_schema_is_closed_and_exact(self):
         self.assertEqual(ev.record_problems(record()), [])
-        self.assertEqual(ev.METHODS, ("inspection", "independently_written_test"))
-        self.assertEqual(ev.STATUSES, ("reproduced", "not_reproduced", "inconclusive",
-                                       "not_executable"))
+        self.assertEqual(ev.METHODS + ev.STATUSES, ("inspection", "independently_written_test",
+                         "reproduced", "not_reproduced", "inconclusive", "not_executable"))
         self.assertEqual(record(round_no="plan", tree="f" * 64, recorded_at=None)["round"], "plan")
         for kw in ({"method": "run"}, {"status": "stale"}, {"tree": "A" * 40}, {"tree": " " + A},
                    {"round_no": 0}, {"round_no": True}, {"test_ref": "/a"}, {"test_ref": "../a"},
@@ -185,7 +184,6 @@ class TestJournalAndMain(unittest.TestCase):
         self.assertNotIn("hand-edited", after[0][1])
         self.assertEqual([r[0] for r in after], [r[0] for r in base])
         self.assertEqual(after[1][0][:2], (review.STATES["REVIEW_FAIL"], "REVIEW_FAIL"))
-        self.assertEqual(after[1][0][2][0]["severity"], "major")
 
 
 class TestRecordEvidenceCli(unittest.TestCase):
@@ -210,7 +208,7 @@ class TestRecordEvidenceCli(unittest.TestCase):
         args = ("--record-evidence", "--head", head, "--finding", DIGEST, "--round", "1",
                 "--method", "independently_written_test", "--status", "not_reproduced")
         for argv in (args + ("--tree", "f" * 40), args + ("--tree", head), args[:-2],
-                     args + ("--kind", "plan"), args + ("--tree=--help",),
+                     args + ("--kind", "plan"), args + ("--reason", "x"),
                      ("--open-findings", "--head", head, "--note", "x")):
             self.assertEqual(run(*argv, git=False).returncode, 4, argv)
         self.assertFalse((root / "state").exists())

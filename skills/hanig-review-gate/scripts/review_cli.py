@@ -73,8 +73,6 @@ def cmd_ledger(args, facade):
 
 def cmd_record_evidence(args, facade):
     """Audit-only evidence bound to identity, head and tree; never a verdict change."""
-    if any(value is not None for value in (args.accepted_by, args.reason, args.decision)):
-        facade.config_error("Drop adjudication fields when using --record-evidence.")
     tree = (facade.candidate_tree(args.tree or "HEAD")
             if args.tree is None or facade.valid_head(args.tree) else None)
     if tree is None or args.tree not in (None, tree):
@@ -90,8 +88,8 @@ def cmd_record_evidence(args, facade):
             summary=None if args.note is None else facade.redact(args.note))
     except (OSError, ValueError, RuntimeError) as exc:
         facade.config_error(facade.redact(
-            f"evidence refused: {exc}. Pass --head, --finding (from --open-findings), "
-            "--round and the review's --target/--plan-name/--unit."))
+            f"evidence refused: {exc}. Pass valid --head/--finding/--round and the "
+            "review's --target/--plan-name/--unit."))
     journal = facade._ledger.record_evidence(record, facade)
     print(facade.json.dumps(facade.redact_ledger({
         "state": "EVIDENCE_RECORDED" if journal["written"] else "EVIDENCE_UNCONFIRMED",
@@ -451,8 +449,8 @@ def _dispatch_early_commands(args, facade):
                 or args.plan or args.claim or args.escalate or args.only
                 or args.profile or args.dispositions or args.fresh_cycle_from
                 or args.allow_single_reviewer or args.context or args.threat_model
-                or not evidence and (args.target is not None or args.plan_name is not None
-                                     or args.unit is not None)):
+                or (args.accepted_by or args.reason or args.decision if evidence else
+                    args.target is not None or args.plan_name is not None or args.unit is not None)):
             facade.config_error("Drop review options when using a ledger command; "
                                 "adjudication never runs or replaces a review.")
         facade.sys.exit(cmd_record_evidence(args, facade) if evidence else facade.cmd_ledger(args))

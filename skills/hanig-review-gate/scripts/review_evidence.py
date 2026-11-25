@@ -1,8 +1,7 @@
 """Counterexample evidence records: schema, staleness and prompt rendering.
 
-Python 3.8+, stdlib only; never imports the review facade. Pure: no process,
-shell or evaluation import (pinned by tests/test_review_evidence.py). Records
-are author-reported audit data; they never change a verdict or severity.
+Python 3.8+, stdlib only. Pure: no process, shell or evaluation import (pinned
+by tests/test_review_evidence.py). Records never change a verdict or severity.
 """
 
 import datetime
@@ -70,8 +69,8 @@ def record_problems(record):
 def build_record(*, identity, reviewed_head, finding_digest, round_no, candidate_tree,
                  method, status, test_ref=None, summary=None, observed=None,
                  recorded_at=None):
-    """Validated record, else ValueError naming each bad field. Identifiers are
-    checked as given, never trimmed or case-folded; free text is sanitized, capped."""
+    """Validated record, else ValueError. Identifiers are checked as given (never
+    trimmed or case-folded); free text is sanitized, then capped."""
     record = {"type": "evidence", "schema_version": 1, "identity": identity,
               "reviewed_head": reviewed_head, "finding_digest": finding_digest,
               "round": round_no, "candidate_tree": candidate_tree, "method": method,
@@ -90,8 +89,7 @@ def build_record(*, identity, reviewed_head, finding_digest, round_no, candidate
 
 
 def evaluate(records, current_tree):
-    """Copies with effective_status; a tree other than current_tree (exact
-    comparison, None included) is stale. Inputs are never modified."""
+    """Copies; any tree != current_tree (exact, None included) is stale."""
     return [dict(r, effective_status=r["status"] if r["candidate_tree"] == current_tree
                  else "stale") for r in records]
 

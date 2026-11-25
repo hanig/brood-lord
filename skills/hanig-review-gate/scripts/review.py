@@ -652,8 +652,11 @@ def _write_review_journal(path, line):
 
 
 def _journal_child(payload):
-    """Perform one append in the bounded audit-only helper process."""
+    """Perform one append, or one evidence read, in the bounded helper process."""
     path = review_journal_path(payload["files"])
+    if payload["record_line"] is None:
+        return {"ok": True, "path": json.dumps([
+            r for _p, r in read_review_journal(path) if r.get("type") == "evidence"])}
     record_path = _write_review_journal(path, payload["record_line"])
     return {"ok": True, "path": str(record_path)}
 
@@ -1554,13 +1557,11 @@ def candidate_tree(ref):
 
 
 def prior_evidence(args):
-    """Valid evidence for the reserved identity, evaluated against the reviewed
-    tree; advisory, so unreadable history yields None."""
-    reservation = getattr(args, "round_reservation", None)
+    """Valid evidence for this identity via the bounded helper; advisory (None on error)."""
     try:
-        found = [r for _p, r in read_review_journal(review_journal_path(args.file))
-                 if r.get("type") == "evidence" and r.get("identity") == reservation[1][
-                     "identity"] and not evidence_record_problems(r)]
+        found = [r for r in json.loads(_run_journal_append(args.file, None))
+                 if r.get("identity") == args.round_reservation[1]["identity"]
+                 and not evidence_record_problems(r)]
     except Exception:
         return None
     head = getattr(args, "reviewed_head", None)
@@ -2150,7 +2151,7 @@ def build_parser():
     ledger.add_argument("--record-evidence", action="store_true",
                         help="append audit-only counterexample evidence")
     for flag in ("--finding", "--method", "--status", "--tree", "--test-ref", "--note"):
-        ap.add_argument(flag, help="--record-evidence field; --tree defaults to HEAD^{tree}")
+        ap.add_argument(flag, help="evidence field (--tree: HEAD^{tree})")
     ap.add_argument("--head", metavar="SHA", help="exact reviewed head for ledger commands")
     ap.add_argument("--accepted-by", metavar="NAME", help="independent acceptor's declared identity")
     ap.add_argument("--reason", help="reason for the external adjudication")
