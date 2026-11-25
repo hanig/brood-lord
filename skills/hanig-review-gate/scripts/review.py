@@ -654,7 +654,7 @@ def _write_review_journal(path, line):
 def _journal_child(payload):
     """Perform one append, or one evidence read, in the bounded helper process."""
     path = review_journal_path(payload["files"])
-    if payload["record_line"] is None:
+    if payload["record_line"] == {"read": "evidence"}:
         return {"ok": True, "path": json.dumps([
             r for _p, r in read_review_journal(path) if r.get("type") == "evidence"])}
     record_path = _write_review_journal(path, payload["record_line"])
@@ -1559,7 +1559,7 @@ def candidate_tree(ref):
 def prior_evidence(args):
     """Valid evidence for this identity via the bounded helper; advisory (None on error)."""
     try:
-        found = [r for r in json.loads(_run_journal_append(args.file, None))
+        found = [r for r in json.loads(_run_journal_append(args.file, {"read": "evidence"}))
                  if r.get("identity") == args.round_reservation[1]["identity"]
                  and not evidence_record_problems(r)]
     except Exception:
