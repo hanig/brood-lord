@@ -117,11 +117,9 @@ bootstraps with recent history and legitimately differs from the run after it.
 
 ## Audited decision trails
 
-A handoff records pointers, not why decisions were made. For an audited
-decision trail, use `hanig-debrief`: `scripts/decisions_log.py` keeps an
-append-only, hash-chained `decisions.tsv` outside the worktree, and
-`scripts/debrief_audit.py` checks its claims against this workspace's own
-transcripts. Record the log's path in the handoff; never copy it.
+For an audited trail of why decisions were made, use `hanig-debrief`'s
+`decisions_log.py` (hash-chained log outside the worktree) and
+`debrief_audit.py` (checks its claims against this workspace's transcripts).
 
 ## Design record
 

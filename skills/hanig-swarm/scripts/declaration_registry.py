@@ -57,10 +57,9 @@ def _closed_ids(value):
 CLOSED_DECLARATIONS = {
     "hanig-wandb-logging": _closed_ids("logging.conventions logging.boundary capability.host paths.skill-directory logging.credentials approval.shared-state"),
     "hanig-debrief": _closed_ids("""
-        purpose.scope capability.programs capability.decisions-log capability.audit
-        capability.attention paths.skill-directory approval.packet
+        purpose.scope capability.programs paths.skill-directory approval.packet
         workflow.draft workflow.classify workflow.packet workflow.approve workflow.triage
-        workflow.durability
+        capability.decisions-log capability.audit capability.attention workflow.durability
     """),
     "hanig-swarm": _closed_ids("""
         placement.behavior-deciding placement.reference-elaboration
@@ -104,12 +103,12 @@ CLOSED_DECLARATIONS = {
         delegation.preamble delegation.contract
         delegation.configuration delegation.continuation retry.boundary
         evidence.checkable evidence.detector-ledger evidence.authority review.panel-source
-        review.author-exclusion review.claims review.honesty review.cost
-        review.effort review.rounds review.counterexample-evidence
-        review.premise-check adjudication.matrix
+        review.author-exclusion review.claims review.counterexample-evidence
+        review.premise-check watch.pr-oracle review.honesty review.cost
+        review.effort review.rounds adjudication.matrix
         adjudication.concurrence adjudication.envelope adjudication.record
         adjudication.nonoverridable adjudication.honesty watch.facts
-        watch.source watch.proof watch.pr-oracle loop.quiescence loop.advance loop.yield
+        watch.source watch.proof loop.quiescence loop.advance loop.yield
         preservation.before-cleanup dispatch.mechanics merge.requirements
         merge.flake-triage
         code.merge-command limit.merge-command

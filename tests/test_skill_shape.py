@@ -152,12 +152,13 @@ ORCHESTRATE_DECLARATIONS = (
     "review.panel-source",
     "review.author-exclusion",
     "review.claims",
+    "review.counterexample-evidence",
+    "review.premise-check",
+    "watch.pr-oracle",
     "review.honesty",
     "review.cost",
     "review.effort",
     "review.rounds",
-    "review.counterexample-evidence",
-    "review.premise-check",
     "adjudication.matrix",
     "adjudication.concurrence",
     "adjudication.envelope",
@@ -167,7 +168,6 @@ ORCHESTRATE_DECLARATIONS = (
     "watch.facts",
     "watch.source",
     "watch.proof",
-    "watch.pr-oracle",
     "loop.quiescence",
     "loop.advance",
     "loop.yield",
@@ -266,11 +266,9 @@ PROJECT_DECLARATIONS = (
 )
 
 DEBRIEF_DECLARATIONS = ("purpose.scope", "capability.programs",
-                        "capability.decisions-log", "capability.audit",
-                        "capability.attention",
                         "paths.skill-directory", "approval.packet",
                         'workflow.draft', 'workflow.classify', 'workflow.packet', 'workflow.approve', 'workflow.triage',
-                        "workflow.durability")
+                        'capability.decisions-log', 'capability.audit', 'capability.attention', 'workflow.durability')
 
 WANDB_DECLARATIONS = ('logging.conventions', 'logging.boundary', 'capability.host', 'paths.skill-directory', 'logging.credentials', 'approval.shared-state')
 
