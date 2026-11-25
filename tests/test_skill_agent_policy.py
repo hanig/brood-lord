@@ -1,8 +1,5 @@
-"""Contract tests for lib/skill_agent_policy.py on synthetic skill trees only.
-
-The live repository is deliberately not checked here: unit p2-policy-apply
-applies the frontmatter and agents/openai.yaml files.
-"""
+"""Contract tests for lib/skill_agent_policy.py on synthetic skill trees and
+on the live repository, which unit p2-policy-apply brought into policy."""
 
 import ast
 import hashlib
@@ -272,6 +269,31 @@ class TestWrite(TreeCase):
         self.assertEqual(self.cli("--check").returncode, 0)
         os.chmod(str(locked), 0o755)
         self.assertEqual({p.name: self.snapshot(p) for p in vendored}, before)
+
+
+class TestLiveRepository(unittest.TestCase):
+    IMPLICIT = ("hanig-review-gate", "hanig-verified-workflow", "hanig-wandb-logging")
+
+    def test_explicit_only_list_is_pinned_and_check_exits_zero(self):
+        self.assertEqual(sap.EXPLICIT_ONLY_SKILLS, (
+            "hanig-debrief", "hanig-orchestrate", "hanig-portable-handoff",
+            "hanig-project", "hanig-swarm"))
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--check", "--json"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+            timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(Path(report["skills_root"]), ROOT / "skills")
+        states = {s["name"]: (s["flag"], s["openai_yaml"]) for s in report["skills"]}
+        self.assertEqual(sorted(states), sorted(sap.EXPLICIT_ONLY_SKILLS + self.IMPLICIT))
+        for name in sap.EXPLICIT_ONLY_SKILLS:
+            self.assertEqual(states[name], (sap.FLAG_TRUE, "ok"), name)
+            self.assertEqual((ROOT / "skills" / name / "agents" / "openai.yaml")
+                             .read_bytes(), YAML)
+        for name in self.IMPLICIT:
+            self.assertEqual(states[name], (sap.FLAG_ABSENT, "absent"), name)
+            self.assertFalse(os.path.lexists(str(ROOT / "skills" / name / "agents")))
 
 
 if __name__ == "__main__":

@@ -47,6 +47,8 @@ No linter, no formatter, no build. Standard library only (`tests/test_stdlib_imp
 
 `lib/` is the installer: `skill_installer.py` plans and `skill_lifecycle.py` mutates, keeping discovery and writes at the edges so unsafe requests fail before touching any destination. It installs skill directories only (no Paseo, bus, `models.json`, routing state, credentials or connectors); `--uninstall` removes only what an exact copy marker or binding sidecar proves this repo installed.
 
+`lib/skill_agent_policy.py --write|--check` keeps `disable-model-invocation: true` skills (`EXPLICIT_ONLY_SKILLS`) paired with a byte-exact `agents/openai.yaml`; the installer and `bin/doctor` reject a missing or altered installed copy.
+
 `skills/` holds two populations classified by the `hanig-` prefix (`install.sh` and `bin/doctor`): 8 authored bundles (`hanig-project`, `hanig-swarm`, `hanig-verified-workflow`, `hanig-review-gate`, `hanig-portable-handoff`, `hanig-orchestrate`, `hanig-debrief`, `hanig-wandb-logging`) and 8 vendored verbatim bundles (`paseo*`, `pi-fleet`, `agent-bus`, `start-a-sprint`, untouched by `--uninstall`). `hanig-orchestrate` deliberately does NOT restate the mandate grant (`docs/orchestrator-mandate.md` is live authority).
 
 The bus executable is `bin/bus` (`$MULTI_AGENT_SKILLS_CHECKOUT/bin/bus`). Never create `~/.agent-bus/bin/bus` to satisfy vendored prose. `bin/bus` carries one tracked local patch pinned by `tests/test_bus_models.py`.

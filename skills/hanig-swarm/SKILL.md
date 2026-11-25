@@ -9,6 +9,7 @@ description: >-
   attempt, and reports DONE / RUNNING / FAILED / PREEMPTED / INCOMPLETE. Use
   with the paseo skills for agent lifecycle; a code unit gets a per-attempt
   worktree and is judged here.
+disable-model-invocation: true
 ---
 
 # hanig-swarm
