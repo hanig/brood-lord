@@ -1,13 +1,5 @@
-"""Read-only audit of decisions.tsv against local transcripts of ONE workspace.
-
-A transcript counts only if its own header names cwd == realpath(--workspace):
-Claude ~/.claude/projects/<slug>/*.jsonl (slug is a hint, never trusted) by the
-first "cwd" within 32 lines / 64 KiB; Codex ~/.codex/sessions rollouts by line 1
-payload.cwd. Other files are closed after that header. evidence_ref claims,
-';'-separated: command:<substring>, file:<path>, commit:<hex sha>, test:<substring>
-(a run of it exited 0). Prose, missing coverage and ambiguity are "unverifiable".
-JSON output: row ids, claim kinds, statuses, session ids and line numbers only.
-"""
+"""Read-only audit of decisions.tsv claims (command:, file:, commit:, test:) against
+Claude/Codex transcripts whose header cwd is realpath(--workspace). Prints ids only."""
 import argparse
 from contextlib import closing
 import hashlib
@@ -28,7 +20,7 @@ PREFIX = {"command": "command_ran", "file": "file_edited", "commit": "commit_exi
 KINDS = tuple(PREFIX.values()) + ("prose",)
 TOKEN = re.compile(r";\s*(?=(?:command|file|commit|test):)")
 HEADER_BYTES, CLAUDE_LINES, CHUNK = 1 << 16, 32, 4096
-MIN_NEEDLE, MAX_MATCHES = 4, 20  # shorter substrings are ambiguous
+MIN_NEEDLE, MAX_MATCHES = 4, 20
 EXEC_TOOLS = {"Bash", "exec_command", "shell", "local_shell", "exec"}
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 EXIT_RE = re.compile(r"^Process exited with code (-?[0-9]{1,4})$", re.M)
@@ -55,7 +47,6 @@ def _open_regular(path):
 
 
 def header_lines(path, max_lines):
-    """Leading complete lines, read lazily in 4 KiB steps; at most max_lines and 64 KiB."""
     fd, buf, total = _open_regular(path), b"", 0
     if fd is None:
         return
@@ -63,7 +54,7 @@ def header_lines(path, max_lines):
         while max_lines and total < HEADER_BYTES:
             chunk = os.read(fd, min(CHUNK, HEADER_BYTES - total))
             total += len(chunk)
-            buf += chunk or b"\n"  # EOF completes a final unterminated line
+            buf += chunk or b"\n"
             while b"\n" in buf and max_lines:
                 line, buf = buf.split(b"\n", 1)
                 max_lines -= 1
@@ -86,7 +77,7 @@ def claude_verified(path, ws, cache):
     with closing(header_lines(path, CLAUDE_LINES)) as lines:
         for raw in lines:
             obj = _json(raw)
-            if isinstance(obj, dict) and "cwd" in obj:  # the first cwd decides
+            if isinstance(obj, dict) and "cwd" in obj:
                 return _cwd_is(obj["cwd"], ws, cache)
     return False
 
@@ -126,7 +117,7 @@ def discover(home, ws, spelled):
 
 def _claude_events(obj, ws, cache):
     if "cwd" in obj and not _cwd_is(obj["cwd"], ws, cache):
-        return  # a record from another directory is never evidence
+        return
     msg = obj.get("message")
     content = msg.get("content") if isinstance(msg, dict) else None
     for item in content if isinstance(content, list) else ():
@@ -144,7 +135,7 @@ def _claude_events(obj, ws, cache):
 def _exit_code(out):
     if isinstance(out, str):
         head, sep, _ = out.partition("\nOutput:")
-        match = sep and EXIT_RE.search(head)  # never read the tool's own output
+        match = sep and EXIT_RE.search(head)
         if match:
             return int(match.group(1))
         obj = _json(out) if out.startswith("{") else None
@@ -198,18 +189,15 @@ def scan(kind, path, ws, cache):
     return execs, edits
 
 
-def git_runner(ws):
+def cat_file_e(ws, obj):
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env["GIT_NO_LAZY_FETCH"] = "1"  # never fetch a missing object from a promisor
-
-    def run(args):
-        try:
-            return subprocess.run(["git", "-C", ws] + args, env=env, stdin=subprocess.DEVNULL,
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                  timeout=30).returncode
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-    return run
+    env["GIT_NO_LAZY_FETCH"] = "1"
+    try:
+        return subprocess.run(["git", "-C", ws, "cat-file", "-e", obj], env=env,
+                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=30).returncode
+    except (OSError, subprocess.TimeoutExpired):
+        return None
 
 
 def claims(row):
@@ -223,7 +211,7 @@ def claims(row):
     return out or [("prose", "")]
 
 
-def verify(kind, value, sessions, ws, git):
+def verify(kind, value, sessions, ws):
     if kind == "file_edited":
         hits = [(s, n) for s, _, edits in sessions for p, n in edits if p == _norm(value, ws)]
         return ("supported" if hits else "unverifiable"), hits
@@ -235,23 +223,22 @@ def verify(kind, value, sessions, ws, git):
         if kind == "test_ran" and hits and all(r["ok"] for _, r in hits):
             return "contradicted", [(s, r["line"]) for s, r in hits]  # every exit known, nonzero
     if kind == "commit_exists" and re.fullmatch(r"[0-9a-f]{7,64}", value):
-        code = git(["cat-file", "-e", value + "^{commit}"])
-        if code == 0:
+        if cat_file_e(ws, value + "^{commit}") == 0:
             return "supported", []
-        if code is not None and len(value) in (40, 64) and git(["rev-parse", "--git-dir"]) == 0:
+        if len(value) in (40, 64) and cat_file_e(ws, value) in (0, 1):  # 1: absent; 0: not a commit
             return "contradicted", []
     return "unverifiable", []
 
 
 def audit(rows, ws, home, spelled):
     found, rejected = discover(home, ws, spelled)
-    cache, git = {}, git_runner(ws)
+    cache = {}
     sessions = [(session_id(k, p),) + scan(k, p, ws, cache) for k, p in found]
     out = [{"seq": row["seq"], "claims": [
         {"kind": kind, "status": status,
          "matches": [{"session": s, "line": n} for s, n in hits[:MAX_MATCHES]]}
         for kind, value in claims(row)
-        for status, hits in [verify(kind, value, sessions, ws, git)]]} for row in rows]
+        for status, hits in [verify(kind, value, sessions, ws)]]} for row in rows]
     return {"schema": SCHEMA, "workspace": ws, "sessions": [s[0] for s in sessions],
             "rejected_candidates": rejected, "rows": out,
             "decisions_head_sha256": rows[-1]["row_sha256"] if rows else D.GENESIS}

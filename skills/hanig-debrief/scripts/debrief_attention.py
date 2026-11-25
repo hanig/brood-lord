@@ -1,7 +1,4 @@
-"""Offline cross-vendor "Attention" prompt pack (pack) and report checker (validate).
-
-No subprocess and no network; a gated `run --allow-egress` is follow-up work.
-"""
+"""Offline "Attention" prompt pack (pack) and report checker (validate)."""
 import argparse
 import hashlib
 import json
@@ -34,7 +31,6 @@ class AttentionError(ValueError):
 
 
 def sanitize(value):
-    """Drop ANSI escapes and Cc/Cf/Cs/Co/Cn/Zl/Zp code points except tab and newline."""
     return "".join(c for c in ANSI.sub("", str(value))
                    if c in "\t\n" or unicodedata.category(c) not in D.UNSAFE)
 
@@ -96,18 +92,17 @@ def validate(text, seqs=None):
     if not (header and isinstance(report, dict)
             and set(report) == {"reviewer_model", "status", "flags"}
             and report["reviewer_model"] == header.group(1).strip()):
-        raise AttentionError("need 'reviewed by <model>' then JSON with exactly "
-                             "reviewer_model (same model), status, flags")
+        raise AttentionError("need 'reviewed by <model>' and JSON reviewer_model/status/flags")
     flags, empty = report["flags"], report["status"] == "no_flags"
     if report["status"] not in ("flags", "no_flags") or not isinstance(flags, list) \
             or empty != (not flags) or empty != said_none:
-        raise AttentionError("'No flags', status no_flags and an empty list go together")
+        raise AttentionError("'No flags', no_flags and [] must agree")
     for flag in flags:
         if not (isinstance(flag, dict) and set(flag) == {"row_seq", "category", "detail"}
                 and type(flag["row_seq"]) is int and flag["category"] in CATEGORIES
                 and isinstance(flag["detail"], str) and 0 < len(flag["detail"].strip()) <= 4000
                 and (flag["row_seq"] in seqs if seqs is not None else flag["row_seq"] > 0)):
-            raise AttentionError("malformed flag or row not in the pack: %r" % (flag,))
+            raise AttentionError("bad flag: %r" % (flag,))
     return report
 
 

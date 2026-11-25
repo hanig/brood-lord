@@ -1,4 +1,3 @@
-"""hanig-debrief workspace-verified transcript audit and offline Attention pack."""
 import ast
 import io
 import json
@@ -153,7 +152,7 @@ class TestAudit(Base):
             for private in (".claude", ".codex"):
                 self.assertFalse(path.startswith(os.path.join(real_home, private)), path)
         for path in (self.claude_b, self.rollout_b):
-            self.assertEqual(opens.count(str(path)), 1)  # header only, never scanned
+            self.assertEqual(opens.count(str(path)), 1)
             line1 = len(path.read_bytes().split(b"\n")[0]) + 1
             self.assertLessEqual(read[str(path)], line1 + A.CHUNK)
 
@@ -179,7 +178,7 @@ class TestAttention(Base):
             T.check_pack(text.replace("adopt", "adopT"))
         D.append(self.log, "r", "adopt", "later")
         self.assertEqual(call(T, ["pack", "--decisions", str(self.log), "--audit",
-                                  str(self.audit_json)])[0], 1)  # stale audit head
+                                  str(self.audit_json)])[0], 1)
 
     def test_sanitize_property(self):
         self.assertEqual(T.sanitize("\x1b[31mred\x1b[0m\u202e\tx\n\x1b]0;t\x07"), "red\tx\n")
@@ -199,7 +198,7 @@ class TestAttention(Base):
         for text, want in [
                 ("reviewed by m\n" + json.dumps(ok), 0),
                 ("reviewed by m\nNo flags\n```json\n%s\n```" % json.dumps(none), 0),
-                ("reviewed by m\n" + json.dumps(none), 1),  # "No flags" line missing
+                ("reviewed by m\n" + json.dumps(none), 1),
                 ("reviewed by m\nNo flags\n" + json.dumps(dict(none, status="flags")), 1),
                 ("reviewed by m\n" + json.dumps({"status": "flags", "flags": [flag]}), 1),
                 ("reviewed by n\n" + json.dumps(ok), 1), (json.dumps(ok), 1),
