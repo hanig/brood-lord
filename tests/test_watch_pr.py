@@ -1,5 +1,4 @@
-"""Offline watch_pr.py tests: gh is a fixture (live step details are not exercised),
-git patch-id is real, and the sanitizer check enumerates range(0x110000)."""
+"""Offline: gh is a fixture, git patch-id is real; sanitizer checks range(0x110000)."""
 import io
 import json
 from pathlib import Path
@@ -9,37 +8,34 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills/hanig-orchestrate/scripts"))
-import watch_pr as W  # noqa: E402
+import watch_pr as W
 
 HEAD, OLD = "a" * 40, "b" * 40
-BANNED = {"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"}  # the task's list, not the script's
+BANNED = {"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"}  # not W.BANNED
 
 def pr(**over):
-  return dict({"number": 7, "title": "T", "author": {"login": "dev"}, "url": "u", "state": "OPEN",
-               "headRefName": "f", "headRefOid": HEAD, "headRepository": {"name": "w"},
-               "headRepositoryOwner": {"login": "acme"}, "isCrossRepository": False,
-               "mergeable": "MERGEABLE"}, **over)
+  return dict(dict(number=7, title="T", author={"login": "dev"}, url="u", state="OPEN", headRefName="f",
+                   headRefOid=HEAD, headRepository={"name": "w"}, headRepositoryOwner={"login": "acme"},
+                   isCrossRepository=False, mergeable="MERGEABLE"), **over)
 
-def run(rid, conclusion="success", status="completed", wid=1, created="T10", head=HEAD):
-  return {"id": rid, "name": "CI", "workflow_id": wid, "status": status, "conclusion": conclusion,
-          "created_at": created, "head_sha": head, "html_url": "r"}
+def run(rid, conclusion="success", status="completed", wid=1, created=10, head=HEAD):
+  return dict(id=rid, name="CI", workflow_id=wid, status=status, conclusion=conclusion, head_sha=head,
+              created_at="2026-01-01T%02d:00:00Z" % created if type(created) is int else created, html_url="r")
 
 def job(jid=9, steps=(), conclusion="cancelled", head=HEAD):
-  return {"id": jid, "status": "completed", "conclusion": conclusion, "head_sha": head,
-          "steps": list(steps)}
+  return dict(id=jid, status="completed", conclusion=conclusion, head_sha=head, steps=list(steps))
 
 def check(cid, conclusion="success", app="github-actions", status="completed"):
-  return {"id": cid, "name": "t", "status": status, "conclusion": conclusion, "head_sha": HEAD,
-          "app": {"slug": app}, "details_url": "d"}
+  return dict(id=cid, name="t", status=status, conclusion=conclusion, head_sha=HEAD, app={"slug": app},
+              details_url="d")
 
 def thread(tid, resolved=False):
-  return {"id": tid, "isResolved": resolved, "path": "a.py", "line": 3,
-          "comments": {"nodes": [{"author": {"login": "rev"}, "body": "nit", "url": "c"}]}}
+  return dict(id=tid, isResolved=resolved, path="a.py", line=3,
+              comments={"nodes": [{"author": {"login": "rev"}, "body": "nit", "url": "c"}]})
 
-def fx(**over):
-  """Zero-step flake by default: one cancelled run whose only job has no steps."""
-  return dict({"pr": pr(), "runs": [run(101, "cancelled")], "jobs": {"101": [job()]},
-               "checks": [check(9, "cancelled")], "statuses": []}, **over)
+def fx(**over):  # zero-step flake by default
+  return dict(dict(pr=pr(), runs=[run(101, "cancelled")], jobs={"101": [job()]}, checks=[check(9, "cancelled")],
+                   statuses=[]), **over)
 
 GREEN = dict(runs=[run(100)], jobs={}, checks=[check(8)], statuses=[{"context": "l", "state": "success"}])
 
@@ -47,36 +43,33 @@ def route(f, argv):
   args, ok = argv[1:], lambda d: (0, json.dumps(d).encode(), b"", False)
   if args[:2] == ["pr", "view"]:
     return (1, b"", f["err"].encode("utf-8", "surrogatepass"), False) if "err" in f else ok(f["pr"])
-  if args[:2] == ["pr", "diff"]:
-    return f.get("diff_rc", 0), f.get("diff", "").encode(), b"", False
+  if args[:2] == ["pr", "diff"]: return f.get("diff_rc", 0), f.get("diff", "").encode(), b"", False
   if args[:2] == ["api", "graphql"]:
     pages = f.get("threads", [[]])
     i = int(([a[2:] for a in args if a.startswith("c=")] or ["0"])[0])
     return ok({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": pages[i],
-               "pageInfo": {"hasNextPage": i + 1 < len(pages), "endCursor": str(i + 1)}}}}}})
+               "pageInfo": f.get("info", {"hasNextPage": i + 1 < len(pages), "endCursor": str(i + 1)})}}}}})
   path, _, qs = args[1].partition("?")
   parts, first = path.split("/"), qs.endswith("&page=1")
   key, items = {"runs": ("workflow_runs", f["runs"]), "check-runs": ("check_runs", f["checks"]),
                 "status": ("statuses", f["statuses"])}.get(parts[-1], ("jobs", None))
   if key == "jobs":
     items = f["jobs"].get(parts[-2])
-    if items is None:
-      return 1, b"", b"HTTP 404", False
+    if items is None: return 1, b"", b"HTTP 404", False
   return ok({"total_count": len(items), key: items if first else []})
 
-class Fake(object):
+class Fake:
   def __init__(self, f):
     self.f, self.calls = f, []
 
   def __call__(self, argv, input_bytes=None, max_bytes=None, cwd=None):
     self.calls.append(argv)
-    if argv[0] == "git":
-      return W.run_command(argv, input_bytes, max_bytes, cwd)
+    if argv[0] == "git": return W.run_command(argv, input_bytes, max_bytes, cwd)
     rc, out, err, _ = route(self.f, argv)
     cap = W.API_BYTE_CAP if max_bytes is None else max_bytes
     return (rc, b"", err, True) if len(out) > cap else (rc, out, err, False)
 
-  def mutating(self):  # read-only means pr view, pr diff, GET api and query-only GraphQL
+  def mutating(self):  # all but pr view/diff, GET api and query-only GraphQL
     return [c for c in self.calls if c[0] == "gh" and c[1:3] not in (["pr", "view"], ["pr", "diff"])
             and (c[1] != "api" or {"-X", "--method"} & set(c) or "mutation" in str(c))]
 
@@ -99,6 +92,8 @@ class TestOrder(unittest.TestCase):
     p = pr()
     del p["headRepository"]
     self.assertEqual(len(invoke(fx(pr=p))[2].calls), 1)
+    p = pr(headRepositoryOwner={"login": "ACME"}, headRepository={"name": "W"})
+    self.assertEqual(invoke(fx(pr=p, **GREEN))[0], 0)  # case-insensitive names
 
   def test_conflicts_and_unknown_stop_after_pr_view(self):
     for mergeable, code in (("CONFLICTING", 11), ("UNKNOWN", 15), (None, 15), ("X", 15)):
@@ -113,6 +108,8 @@ class TestOrder(unittest.TestCase):
     code, rep, _ = invoke(fx(threads=[[thread("A", True)], [{"id": "C"}]], **GREEN))
     self.assertEqual((code, [t["id"] for t in rep["threads"]]), (12, ["C"]))  # page 2, no flag
     self.assertEqual(invoke(fx(threads=[[thread("A", True)]], **GREEN))[0], 0)
+    for info in ({}, {"hasNextPage": None}, {"hasNextPage": "false"}):
+      self.assertEqual(invoke(fx(threads=[[]], info=info, **GREEN))[0], 2, info)
 
   def test_schema_errors_and_polling(self):
     code, rep, _ = invoke(fx(**GREEN))
@@ -124,39 +121,44 @@ class TestOrder(unittest.TestCase):
     for extra in (["--interval", "1"], ["--once", "--interval", "1", "--max-polls", "2"]):
       code, rep, fake = invoke(fx(), *extra)
       self.assertEqual((code, fake.calls), (2, []))
-    code, rep, fake = invoke(fx(**dict(GREEN, runs=[run(1, None, "queued")])), "--interval", "1",
-                             "--max-polls", "3")
+    code, rep, fake = invoke(fx(**dict(GREEN, runs=[run(1, None, "queued")])), *"--interval 1 --max-polls 3".split())
     self.assertEqual((code, len(fake.calls)), (10, 3 * 5))
 
 F, P, Z = "ci_failed", "ci_pending", "ci_zero_step_flake"
+SUP, ZS, JM, T = "cancelled_superseded_by_newer_run", "zero_step_failure_unclassified", "job_data_missing", \
+  "2026-01-01T%s"
+C = lambda *r, **k: dict(runs=[run(101, "cancelled", **k)] + list(r))
+J = lambda *j: dict(jobs={"101": list(j)})
 CI_CASES = [  # (label, fixture overrides, state, a reason that must be listed)
   ("green", GREEN, "ready", None), ("none", dict(runs=[], checks=[], statuses=[]), P, None),
   ("zero-step", {}, Z, None),
   ("stale cancel", dict(GREEN, runs=[run(100), run(90, "cancelled", head=OLD)]), "ready", None),
-  ("stale failure", dict(runs=[run(101, "cancelled"), run(90, "failure", head=OLD)]), Z, None),
-  ("newer ok", dict(runs=[run(101, "cancelled"), run(102, created="T11")]), F,
-   "cancelled_superseded_by_newer_run"),
-  ("newer queued", dict(runs=[run(101, "cancelled"), run(102, None, "queued", created="T11")]), F,
-   "cancelled_superseded_by_newer_run"),
-  ("older/other", dict(runs=[run(101, "cancelled"), run(99, created="T09"), run(102, wid=2)]), Z, None),
-  ("failure", dict(runs=[run(101, "failure")], checks=[]), F, "zero_step_failure_unclassified"),
-  ("startup", dict(runs=[run(101, "startup_failure")], checks=[]), F, "zero_step_failure_unclassified"),
-  ("timeout", dict(runs=[run(101, "timed_out")], checks=[]), F, "zero_step_failure_unclassified"),
-  ("startup, no jobs", dict(runs=[run(101, "startup_failure")], jobs={}, checks=[]), F,
-   "startup_failure"),
-  ("steps", dict(jobs={"101": [job(steps=[{"name": "Set up job"}])]}), F, "started_steps"),
-  ("no payload", dict(jobs={}), F, "job_data_missing"),
-  ("no jobs", dict(jobs={"101": []}), F, "job_data_missing"),
-  ("no steps key", dict(jobs={"101": [{"id": 9, "conclusion": "cancelled", "head_sha": HEAD}]}), F,
-   "job_data_missing"),
-  ("null steps", dict(jobs={"101": [dict(job(), steps=None)]}), F, "job_data_missing"),
-  ("old job", dict(jobs={"101": [job(head=OLD)]}), F, "job_head_mismatch"),
-  ("job failed", dict(jobs={"101": [job(conclusion="failure")]}), F, "job_not_cancelled"),
+  ("stale failure", C(run(90, "failure", head=OLD)), Z, None),
+  ("newer ok", C(run(102, created=11)), F, SUP),
+  ("newer queued", C(run(102, None, "queued", created=11)), F, SUP),
+  ("older/other", C(run(99, created=9), run(102, wid=2)), Z, None),
+  # parsed times; unparseable or offset-less never qualify
+  ("newer by offset", C(run(99, created=T % "09:00:00-02:00")), F, SUP),
+  ("same time", C(run(102, created=T % "10:00:00+00:00")), F, SUP),
+  ("bad time", C(created="T10"), F, SUP), ("naive time", C(created=T % "10:00:00"), F, SUP),
+  ("other bad", C(run(102, created=None)), F, SUP),
+  ("check-run url", dict(J(dict(job(), check_run_url="h/check-runs/55")), checks=[check(55, "cancelled")]),
+   Z, None),
+  ("failure", dict(runs=[run(101, "failure")], checks=[]), F, ZS),
+  ("startup", dict(runs=[run(101, "startup_failure")], checks=[]), F, ZS),
+  ("timeout", dict(runs=[run(101, "timed_out")], checks=[]), F, ZS),
+  ("startup, no jobs", dict(runs=[run(101, "startup_failure")], jobs={}, checks=[]), F, "startup_failure"),
+  ("steps", J(job(steps=[{"name": "Set up job"}])), F, "started_steps"),
+  ("no payload", dict(jobs={}), F, JM), ("no jobs", J(), F, JM),
+  ("no steps key", J({"id": 9, "conclusion": "cancelled", "head_sha": HEAD}), F, JM),
+  ("null steps", J(dict(job(), steps=None)), F, JM),
+  ("old job", J(job(head=OLD)), F, "job_head_mismatch"),
+  ("job failed", J(job(conclusion="failure")), F, "job_not_cancelled"),
   ("status", dict(statuses=[{"context": "x", "state": "failure"}]), F, "non_actions_status_failure"),
   ("other app", dict(checks=[check(9, "cancelled"), check(9, "cancelled", "ci")]), F,
    "non_actions_check_cancelled"),
   ("status pending", dict(statuses=[{"context": "x", "state": "pending"}]), P, None),
-  ("in progress", dict(runs=[run(101, "cancelled"), run(5, None, "in_progress", wid=2)]), P, None),
+  ("in progress", C(run(5, None, "in_progress", wid=2)), P, None),
   ("uncovered", dict(GREEN, checks=[check(77, "cancelled")]), F, "cancelled"),
   ("no conclusion", dict(GREEN, runs=[run(100, None)]), F, "conclusion_missing"),
 ]
@@ -167,8 +169,7 @@ class TestCi(unittest.TestCase):
       with self.subTest(label):
         code, rep, fake = invoke(fx(**over), "--patch-id")
         self.assertEqual((rep["state"], code), (state, W.EXIT_CODES[state]), rep)
-        if reason:
-          self.assertIn(reason, [c.get("reason") for c in rep["checks"]])
+        if reason: self.assertIn(reason, [c.get("reason") for c in rep["checks"]])
         self.assertEqual(fake.mutating(), [])
         self.assertEqual(rep.get("zero_step_runs"), [101] if state == "ci_zero_step_flake" else None)
 
@@ -179,6 +180,7 @@ class TestPatchId(unittest.TestCase):
     code, rep, fake = invoke(fx(diff=diff, **dict(GREEN, **over)), "--patch-id")
     self.assertEqual(rep["patch_id_note"], "aggregate delta identity only; never certifies CI validity")
     self.assertNotIn("--patch", [a for c in fake.calls for a in c])
+    self.assertEqual(rep["patch_id_status"], "unavailable" if rep["patch_id"] is None else "ok")
     return rep["patch_id"]
 
   def test_restack_equal_change_unequal_errors_unavailable(self):
@@ -186,14 +188,13 @@ class TestPatchId(unittest.TestCase):
     self.assertRegex(base, "^[0-9a-f]{40}$")
     self.assertEqual(base, self.pid(DIFF % ("3333333..4444444", 40, 40, "x")))
     self.assertNotEqual(base, self.pid(DIFF % ("1111111..2222222", 3, 3, "y")))
-    self.assertEqual(self.pid(DIFF % ("1..2", 3, 3, "x"), diff_rc=1), "unavailable")
-    self.assertEqual(self.pid(""), "unavailable")
-    with mock.patch.object(W, "DIFF_BYTE_CAP", 20):
-      self.assertEqual(self.pid(DIFF % ("1..2", 3, 3, "x")), "unavailable")
+    self.assertIsNone(self.pid(DIFF % ("1..2", 3, 3, "x"), diff_rc=1))
+    self.assertIsNone(self.pid(""))
+    with mock.patch.object(W, "DIFF_BYTE_CAP", 20): self.assertIsNone(self.pid(DIFF % ("1..2", 3, 3, "x")))
 
 class TestSanitizer(unittest.TestCase):
   def test_exhaustive_code_points(self):
-    # A trailing character could be a sequence body after ESC/CSI/OSC; test_ansi covers that.
+    # a trailing char may be a sequence body; test_ansi covers that
     wrong = [cp for cp in range(0x110000) for text in (chr(cp), "a" + chr(cp))
              if W.sanitize(text) != (text if chr(cp) in "\t\n"
                                      or unicodedata.category(chr(cp)) not in BANNED else text[:-1])]
@@ -213,7 +214,7 @@ class TestSanitizer(unittest.TestCase):
       {"context": t, "state": "error", "target_url": t}], checks=[dict(check(6, "x", "ci"), name=t, details_url=t)])
     cases = [(12, fx(pr=p, threads=[[node]]), 9), (13, fx(pr=p, **ci), 13),
              (16, fx(pr=dict(p, headRepositoryOwner={"login": t})), 5), (2, fx(err=t), 0)]
-    with mock.patch.object(W, "API_BYTE_CAP", 1 << 30):  # the escaped payload exceeds 16 MiB
+    with mock.patch.object(W, "API_BYTE_CAP", 1 << 30):  # payload > 16 MiB
       for want, f, fields in cases:
         for as_json in (True, False):
           code, out, _ = invoke(f, as_json=as_json)

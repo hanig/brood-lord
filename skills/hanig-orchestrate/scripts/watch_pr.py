@@ -3,12 +3,10 @@
 
 Stops at the first blocker: fork/null-head refusal (before any other gh call),
 conflicts (UNKNOWN is never clean), open review threads, CI on headRefOid.
-Makes no mutating gh call and never checks out PR code (the opt-in rerun is
-deferred). Equal --patch-id values prove only an unchanged aggregate delta.
+No mutating gh call, no PR checkout. Equal --patch-id values prove only an
+unchanged aggregate delta; a null patch_id is unavailable and not comparable.
 Echoed strings lose ANSI and Cc/Cf/Cs/Co/Cn/Zl/Zp characters but tab/newline.
-
-Exit: ready 0, ci_pending 10, conflicts 11, threads_open 12, ci_failed 13,
-ci_zero_step_flake 14, unknown 15, refused_fork 16, config/API error 2.
+Exit codes below (error: config or API failure).
 """
 import argparse
 import datetime
@@ -31,7 +29,7 @@ PASSING = {"success", "neutral", "skipped"}
 SHA_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/(?!\.\.?$)[A-Za-z0-9._-]{1,100}")
 BANNED = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
-ANSI_RE = re.compile(r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]"  # CSI, then OSC, DCS/SOS/PM/APC, other
+ANSI_RE = re.compile(r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]"  # CSI, OSC, DCS.., other
                      r"|(?:\x1b\]|\x9d)[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?"
                      r"|\x1b[PX^_][^\x1b\x9c]*(?:\x1b\\|\x9c)?|\x1b[ -/]*[0-~]")
 QUERY = ("query($o:String!,$n:String!,$p:Int!,$c:String){repository(owner:$o,name:$n){"
@@ -48,8 +46,7 @@ def sanitize(text):
   return "".join(c for c in text if c in "\t\n" or unicodedata.category(c) not in BANNED)
 
 def clean(v):
-  if isinstance(v, dict):
-    return {clean(k): clean(x) for k, x in v.items()}
+  if isinstance(v, dict): return {clean(k): clean(x) for k, x in v.items()}
   return [clean(x) for x in v] if isinstance(v, list) else sanitize(v) if isinstance(v, str) else v
 
 def run_command(argv, input_bytes=None, max_bytes=None, cwd=None):
@@ -68,8 +65,7 @@ def is_id(v):
 
 def gh_json(runner, args):
   rc, out, err, over = runner(["gh"] + args)
-  if rc != 0 or over:
-    raise WatchError("gh %s: exit %s, over cap %s: %s" % (args[:2], rc, over, err[:500]))
+  if rc != 0 or over: raise WatchError("gh %s: exit %s, over cap %s: %s" % (args[:2], rc, over, err[:500]))
   try:
     return json.loads(out.decode("utf-8"))
   except ValueError:
@@ -84,22 +80,17 @@ def paged(runner, path, key):
       raise WatchError("unexpected %s listing" % key)
     items += doc[key]
     if len(items) >= total or not doc[key]:
-      if len(items) < total:
-        raise WatchError("%s listing incomplete" % key)
+      if len(items) < total: raise WatchError("%s listing incomplete" % key)
       return items
   raise WatchError("%s listing exceeds %d pages" % (key, MAX_PAGES))
 
 def fork_refusal(pr, owner, name):
   repo, who = pr.get("headRepository"), pr.get("headRepositoryOwner")
-  if not isinstance(repo, dict) or not isinstance(who, dict):
-    return "head repository is missing or null"
-  head = (who.get("login"), repo.get("name"))
-  if not all(isinstance(x, str) and x for x in head):
-    return "head repository owner or name is missing"
-  if head != (owner, name):  # exact: a case-only mismatch refuses
+  head = (who.get("login"), repo.get("name")) if isinstance(repo, dict) and isinstance(who, dict) else (0,)
+  if not all(isinstance(x, str) and x for x in head): return "head repository, owner or name is missing"
+  if tuple(x.lower() for x in head) != (owner.lower(), name.lower()):
     return "head repository %s/%s differs from base %s/%s" % (head + (owner, name))
-  if pr.get("isCrossRepository") is not False:
-    return "isCrossRepository is not false"
+  if pr.get("isCrossRepository") is not False: return "isCrossRepository is not false"
   return None
 
 def open_threads(runner, owner, name, number):
@@ -108,47 +99,43 @@ def open_threads(runner, owner, name, number):
     args = ["api", "graphql", "-f", "query=" + QUERY, "-f", "o=" + owner, "-f", "n=" + name,
             "-F", "p=%d" % number] + (["-f", "c=" + cursor] if cursor else [])
     doc = gh_json(runner, args)
-    if doc.get("errors"):
-      raise WatchError("GraphQL errors reading review threads")
+    if doc.get("errors"): raise WatchError("GraphQL errors reading review threads")
     threads = doc["data"]["repository"]["pullRequest"]["reviewThreads"]
     nodes, info = list(threads["nodes"]), dict(threads["pageInfo"])
     for node in nodes:
       if node.get("isResolved") is True:
         continue  # anything but an explicit true is open
       first = ((node.get("comments") or {}).get("nodes") or [{}])[0]
-      found.append({"id": node.get("id"), "path": node.get("path"), "line": node.get("line"),
-                    "author": (first.get("author") or {}).get("login"), "url": first.get("url"),
-                    "excerpt": sanitize(first.get("body") or "")[:200]})
-    if info.get("hasNextPage") is not True:
-      return found
+      found.append(dict(id=node.get("id"), path=node.get("path"), line=node.get("line"), url=first.get("url"),
+        author=(first.get("author") or {}).get("login"), excerpt=sanitize(first.get("body") or "")[:200]))
+    if type(info.get("hasNextPage")) is not bool: raise WatchError("hasNextPage is not a boolean")
+    if not info["hasNextPage"]: return found
     cursor = info["endCursor"] + ""  # a missing cursor is an error, not page 1 again
   raise WatchError("review threads exceed %d pages" % MAX_PAGES)
 
+def when(v):  # aware ISO-8601 datetime or None; 3.9 rejects a trailing Z
+  try: t = datetime.datetime.fromisoformat(re.sub(r"Z\Z", "+00:00", v))
+  except (TypeError, ValueError): return None
+  return t if t.tzinfo else None
+
 def superseded(run, current):
-  """A newer non-cancelled run of the same workflow exists, or order is unprovable."""
-  wid, mine = run.get("workflow_id"), (run.get("created_at"), run["id"])
-  if not is_id(wid) or not isinstance(mine[0], str):
-    return True
+  """A newer non-cancelled same-workflow run exists, or order is unprovable."""
+  wid, mine = run.get("workflow_id"), (when(run.get("created_at")), run["id"])
+  if not is_id(wid) or mine[0] is None: return True
   for other in current:
     if other is not run and other.get("workflow_id") == wid and other.get("conclusion") != "cancelled":
-      theirs = (other.get("created_at"), other.get("id"))
-      if not isinstance(theirs[0], str) or not is_id(theirs[1]) or theirs > mine:
-        return True
+      theirs = (when(other.get("created_at")), other.get("id"))
+      if theirs[0] is None or not is_id(theirs[1]) or theirs > mine: return True
   return False
 
 def judge_run(runner, repo, head, run, current, zero_step_jobs):
   rid, status, conclusion = run.get("id"), run.get("status"), run.get("conclusion")
-  item = {"kind": "workflow_run", "id": rid, "name": run.get("name"), "url": run.get("html_url"),
-          "verdict": "failed"}
-  fail = lambda reason: dict(item, reason=reason)  # noqa: E731
-  if not is_id(rid):
-    return fail("run_id_missing")
-  if status != "completed":
-    return dict(item, verdict="pending")
-  if not isinstance(conclusion, str) or not conclusion:
-    return fail("conclusion_missing")
-  if conclusion in PASSING:
-    return dict(item, verdict="pass")
+  item = dict(kind="workflow_run", id=rid, name=run.get("name"), url=run.get("html_url"), verdict="failed")
+  fail = lambda reason: dict(item, reason=reason)
+  if not is_id(rid): return fail("run_id_missing")
+  if status != "completed": return dict(item, verdict="pending")
+  if not isinstance(conclusion, str) or not conclusion: return fail("conclusion_missing")
+  if conclusion in PASSING: return dict(item, verdict="pass")
   try:  # a missing job payload is never assumed empty
     jobs = paged(runner, "repos/%s/actions/runs/%d/jobs" % (repo, rid), "jobs")
   except WatchError:
@@ -158,37 +145,33 @@ def judge_run(runner, repo, head, run, current, zero_step_jobs):
     return fail("zero_step_failure_unclassified" if stepless else conclusion)
   if not jobs or any(not isinstance(j, dict) or not isinstance(j.get("steps"), list) for j in jobs):
     return fail("job_data_missing")
-  if any(j.get("head_sha") != head for j in jobs):
-    return fail("job_head_mismatch")
-  if any(j["steps"] for j in jobs):
-    return fail("started_steps")
+  if any(j.get("head_sha") != head for j in jobs): return fail("job_head_mismatch")
+  if any(j["steps"] for j in jobs): return fail("started_steps")
   if any(j.get("status") != "completed" or j.get("conclusion") not in ("cancelled", "skipped")
          for j in jobs) or not any(j.get("conclusion") == "cancelled" for j in jobs):
     return fail("job_not_cancelled")
-  if superseded(run, current):
-    return fail("cancelled_superseded_by_newer_run")
-  zero_step_jobs.update(j.get("id") for j in jobs)
+  if superseded(run, current): return fail("cancelled_superseded_by_newer_run")
+  for j in jobs:  # job id or check_run_url id
+    m = re.search(r"/check-runs/([1-9][0-9]*)\Z", str(j.get("check_run_url")))
+    zero_step_jobs.update([j.get("id")] + ([int(m.group(1))] if m else []))
   return dict(item, verdict="zero_step")
 
 def judge_check(check, zero_step_jobs):
   actions = (check.get("app") or {}).get("slug") == "github-actions"
   status, conclusion, cid = check.get("status"), check.get("conclusion"), check.get("id")
-  item = {"kind": "check_run", "id": cid, "name": check.get("name"), "url": check.get("details_url")}
-  if status != "completed":
-    return dict(item, verdict="pending")
+  item = dict(kind="check_run", id=cid, name=check.get("name"), url=check.get("details_url"))
+  if status != "completed": return dict(item, verdict="pending")
   if not isinstance(conclusion, str) or not conclusion:
     return dict(item, verdict="failed", reason="conclusion_missing")
-  if conclusion in PASSING:
-    return dict(item, verdict="pass")
+  if conclusion in PASSING: return dict(item, verdict="pass")
   if actions and conclusion == "cancelled" and is_id(cid) and cid in zero_step_jobs:
     return dict(item, verdict="zero_step")
   return dict(item, verdict="failed", reason=("" if actions else "non_actions_check_") + conclusion)
 
 def judge_status(st):
   state = st.get("state")
-  item = {"kind": "status", "name": st.get("context"), "url": st.get("target_url")}
-  if state in ("success", "pending"):
-    return dict(item, verdict="pass" if state == "success" else "pending")
+  item = dict(kind="status", name=st.get("context"), url=st.get("target_url"))
+  if state in ("success", "pending"): return dict(item, verdict="pass" if state == "success" else "pending")
   return dict(item, verdict="failed", reason="non_actions_status_%s" % state)
 
 def evaluate_ci(runner, repo, head):
@@ -196,15 +179,14 @@ def evaluate_ci(runner, repo, head):
   runs = paged(runner, "repos/%s/actions/runs?head_sha=%s" % (repo, head), "workflow_runs")
   checks = paged(runner, "repos/%s/commits/%s/check-runs" % (repo, head), "check_runs")
   statuses = paged(runner, "repos/%s/commits/%s/status" % (repo, head), "statuses")
-  current = [r for r in runs if isinstance(r, dict) and r.get("head_sha") == head]  # drop stale
+  current = [r for r in runs if isinstance(r, dict) and r.get("head_sha") == head]
   zero_step_jobs = set()
   items = [judge_run(runner, repo, head, r, current, zero_step_jobs) for r in current]
   items += [judge_check(c, zero_step_jobs) for c in checks
             if isinstance(c, dict) and c.get("head_sha") == head]
   items += [judge_status(s) for s in statuses if isinstance(s, dict)]
   verdicts = {i["verdict"] for i in items}
-  if not items:
-    return "ci_pending", ["no checks reported on the current head"], items, []
+  if not items: return "ci_pending", ["no checks reported on the current head"], items, []
   state = ("ci_failed" if "failed" in verdicts else "ci_pending" if "pending" in verdicts
            else "ci_zero_step_flake" if "zero_step" in verdicts else "ready")
   flakes = sorted(i["id"] for i in items if i["kind"] == "workflow_run" and i["verdict"] == "zero_step")
@@ -215,12 +197,11 @@ def evaluate_ci(runner, repo, head):
 def aggregate_patch_id(runner, repo, number):
   rc, diff, _, over = runner(["gh", "pr", "diff", str(number), "--repo", repo, "--color", "never"],
                              max_bytes=DIFF_BYTE_CAP)
-  if rc != 0 or over or not diff.strip():
-    return "unavailable"
-  with tempfile.TemporaryDirectory() as scratch:  # no repository needed
+  if rc != 0 or over or not diff.strip(): return None
+  with tempfile.TemporaryDirectory() as scratch:
     rc, out = runner(["git", "patch-id", "--stable"], input_bytes=diff, cwd=scratch)[:2]
   words = out.decode("ascii", "replace").split()
-  return words[0] if rc == 0 and len(words) == 2 and SHA_RE.fullmatch(words[0]) else "unavailable"
+  return words[0] if rc == 0 and len(words) == 2 and SHA_RE.fullmatch(words[0]) else None
 
 def finish(report, state, reasons):
   report.update(state=state, reasons=reasons, action_required=state not in ("ready", "ci_pending"))
@@ -228,30 +209,25 @@ def finish(report, state, reasons):
 
 def new_report(opts):
   now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-  return {"schema_version": 1, "observed_at": now, "pr": opts.pr,
-          "state": None, "head_sha": None, "action_required": True, "reasons": []}
+  return dict(schema_version=1, observed_at=now, pr=opts.pr, state=None, head_sha=None, action_required=True,
+              reasons=[])
 
 def observe(opts, runner):
   report = new_report(opts)
   owner, name = opts.repo.split("/")
   pr = gh_json(runner, ["pr", "view", str(opts.pr), "--repo", opts.repo, "--json", PR_FIELDS])
-  if not isinstance(pr, dict):
-    raise WatchError("gh pr view returned no object")
+  if not isinstance(pr, dict): raise WatchError("gh pr view returned no object")
   head = pr.get("headRefOid")
   author = pr.get("author") if isinstance(pr.get("author"), dict) else {}
-  report.update(head_sha=head if isinstance(head, str) else None, pr_info={
-    "title": pr.get("title"), "url": pr.get("url"), "author": author.get("login"),
-    "head_ref": pr.get("headRefName")})
+  report.update(head_sha=head if isinstance(head, str) else None, pr_info=dict(
+    title=pr.get("title"), url=pr.get("url"), author=author.get("login"), head_ref=pr.get("headRefName")))
   refusal = fork_refusal(pr, owner, name)
-  if refusal:
-    return finish(report, "refused_fork", [refusal])
-  if pr.get("number") != opts.pr:
-    raise WatchError("gh pr view returned a different pull request")
+  if refusal: return finish(report, "refused_fork", [refusal])
+  if pr.get("number") != opts.pr: raise WatchError("gh pr view returned a different pull request")
   if pr.get("state") != "OPEN":
     return finish(report, "unknown", ["pull request state is %s" % pr.get("state")])
   mergeable = pr.get("mergeable")
-  if mergeable == "CONFLICTING":
-    return finish(report, "conflicts", ["mergeable is CONFLICTING"])
+  if mergeable == "CONFLICTING": return finish(report, "conflicts", ["mergeable is CONFLICTING"])
   if mergeable != "MERGEABLE":
     return finish(report, "unknown", ["mergeable is %s" % (mergeable or "missing")])
   threads = open_threads(runner, owner, name, opts.pr)
@@ -269,15 +245,15 @@ def observe(opts, runner):
 
 def render(report, as_json):
   report = clean(report)
-  if as_json:
-    return json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+  if as_json: return json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
   head = "PR #%s %s (exit %d)" % (report["pr"], report["state"], EXIT_CODES[report["state"]])
   return "\n".join([head] + ["  %s: %s" % (k, json.dumps(report[k], ensure_ascii=False, sort_keys=True))
                              for k in sorted(report) if k not in ("pr", "state")]) + "\n"
 
 def main(argv=None, runner=run_command, out=None, err=None, sleep=time.sleep):
   out, err = out or sys.stdout, err or sys.stderr
-  p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+  p = argparse.ArgumentParser(description=__doc__ + ", ".join("%s %d" % e for e in EXIT_CODES.items()),
+                              formatter_class=argparse.RawDescriptionHelpFormatter)
   p.add_argument("--repo", required=True, help="base repository OWNER/REPO")
   p.add_argument("--pr", required=True, type=int)
   p.add_argument("--interval", type=float, help="poll while ci_pending or unknown")
@@ -299,10 +275,9 @@ def main(argv=None, runner=run_command, out=None, err=None, sleep=time.sleep):
       err.write("poll %d/%d: %s\n" % (poll, polls, report["state"]))
       sleep(opts.interval)
     if opts.patch_id and report["state"] != "refused_fork":
-      report.update(patch_id=aggregate_patch_id(runner, opts.repo, opts.pr),
-                    patch_id_note=PATCH_ID_NOTE)
-  except (WatchError, AttributeError, KeyError, TypeError, ValueError) as exc:
-    # Any malformed payload is an API error, never a state.
+      pid = aggregate_patch_id(runner, opts.repo, opts.pr)
+      report.update(patch_id=pid, patch_id_status=pid and "ok" or "unavailable", patch_id_note=PATCH_ID_NOTE)
+  except (WatchError, AttributeError, KeyError, TypeError, ValueError) as exc:  # malformed: never a state
     report = finish(new_report(opts), "error", ["%s: %s" % (type(exc).__name__, exc)])
   out.write(render(report, opts.json))
   return EXIT_CODES[report["state"]]
