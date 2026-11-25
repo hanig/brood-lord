@@ -188,3 +188,41 @@ def identifier_grammar(schema, kind):
   if schema == old:
     return EVIDENCE_ID_V1, COHORT_ID_V1, 999
   return EVIDENCE_ID, COHORT_ID, MAX_IDENTIFIERS
+
+
+DURABILITY_FORMS = ("structure", "prose")
+HOLDS_6MO_BASIS = "self_attested"
+
+
+def artifact_path(value, at):
+  """Syntactic repo-relative path: no absolute root, empty, '.', '..' or '\\' parts."""
+  text(value, at)
+  need(not any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in value),
+       at, "control character in path")
+  parts = value.split("/")
+  need("\\" not in value and all(part not in ("", ".", "..") for part in parts),
+       at, "expected repository-relative path without traversal")
+  return value
+
+
+def validate_durability(value, at):
+  """Optional 6-month/structure-over-prose metadata; holds_6mo is self-attested."""
+  need(type(value) is dict, at, "expected object")
+  need("form" in value and "holds_6mo" in value, at, "missing form or holds_6mo")
+  need(type(value["holds_6mo"]) is bool, at + ".holds_6mo", "expected boolean")
+  form = value["form"]
+  need(type(form) is str and form in DURABILITY_FORMS, at + ".form", "unknown form")
+  if form == "structure":
+    need("artifact_path" in value, at + ".artifact_path", "required for structure")
+    obj(value, ("holds_6mo", "form", "artifact_path"), at)
+    artifact_path(value["artifact_path"], at + ".artifact_path")
+  else:
+    need("artifact_path" not in value, at + ".artifact_path", "forbidden for prose")
+    if value["holds_6mo"]:
+      need("conversion_proposal" in value, at + ".conversion_proposal",
+           "required for prose that holds 6 months")
+    allowed = ("holds_6mo", "form", "conversion_proposal")
+    need(set(value) <= set(allowed), at, "unknown or missing fields")
+    if "conversion_proposal" in value:
+      text(value["conversion_proposal"], at + ".conversion_proposal")
+  return value
