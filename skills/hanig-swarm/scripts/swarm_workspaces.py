@@ -678,6 +678,10 @@ def _preserve_and_archive_code_worktree(state, u, unit_dir, report, state_dir=No
 def _reconcile_lor_orphan(unit_dir, intent):
     """Find a Lor session created for this attempt but never bound."""
     attempt_id = Path(unit_dir).name
+    if not intent.get("parent_session_id"):
+        # Never search under whichever session happens to run us now: a miss
+        # there is not evidence that the recorded parent has no such child.
+        return None, "UNKNOWN"
     title = f"[swarm] {intent.get('unit_id')} {attempt_id}"
     session, problem = LIO.find_session_by_title(
         title, parent_session_id=intent.get("parent_session_id"))
