@@ -108,8 +108,9 @@ CLOSED_DECLARATIONS = {
         review.effort review.rounds adjudication.matrix
         adjudication.concurrence adjudication.envelope adjudication.record
         adjudication.nonoverridable adjudication.honesty watch.facts
-        watch.source watch.proof loop.quiescence loop.advance loop.yield
-        preservation.before-cleanup dispatch.mechanics merge.requirements
+        watch.source watch.proof watch.lor-attempts loop.quiescence
+        loop.advance loop.yield preservation.before-cleanup dispatch.mechanics
+        code.agent-switch code.constrained-host merge.requirements
         merge.flake-triage
         code.merge-command limit.merge-command
         tracker.authority tracker.reconcile tracker.drain tracker.dag report.three-parts
@@ -125,7 +126,8 @@ CLOSED_DECLARATIONS = {
         adoption.context repository.destination repository.source-data
         repository.creation-approval interview.judgment-only
         interview.retry-boundary interview.dispatch-complete
-        interview.reporting-cadence interview.orchestration-env plan.inputs plan.scheduler-route
+        interview.reporting-cadence interview.orchestration-env interview.code-agent
+        plan.inputs plan.scheduler-route
         plan.promotion code.configuration code.target-branch runtime.contract env.dedicated
         retry.contract cluster.memory-flag cluster.account-allowance
         cluster.memory-charging cluster.qos-scope findings.interview

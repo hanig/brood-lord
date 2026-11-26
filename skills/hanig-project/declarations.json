@@ -25,6 +25,7 @@
     "interview.dispatch-complete",
     "interview.reporting-cadence",
     "interview.orchestration-env",
+    "interview.code-agent",
     "plan.inputs",
     "plan.scheduler-route",
     "plan.promotion",
@@ -186,7 +187,7 @@
     },
     {
       "id": "interview.judgment-only",
-      "normative_text": "Use `grill-with-docs` when installed, otherwise ask one recommended-answer question at a time, only about judgment THAT inspection cannot settle. At least: done criteria, the scientific claim, discardable work, budget, protected destinations, retry exposure, orchestration environment, and reporting cadence. The list is a floor, not an exhaustive set -- a value `swarm.py schema` requires and inspection cannot supply is a question too.",
+      "normative_text": "Use `grill-with-docs` when installed, otherwise ask one recommended-answer question at a time, only about judgment THAT inspection cannot settle. At least: done criteria, the scientific claim, discardable work, budget, protected destinations, retry exposure, orchestration environment, coding backend, and reporting cadence. The list is a floor, not an exhaustive set -- a value `swarm.py schema` requires and inspection cannot supply is a question too.",
       "references": [
         "references/survey-interview.md"
       ]
@@ -217,6 +218,13 @@
       ]
     },
     {
+      "id": "interview.code-agent",
+      "normative_text": "Ask once at project start which default coding backend, model, and effort (`thinking`) code units use: `paseo` (`claude/MODEL` or `codex/MODEL`, recommended for models served through an enterprise Claude or Codex seat) or `lor` (`lor/CANONICAL_MODEL_ID`, recommended for Lor-served models). When `LOR_SESSION_ID` is set, run `lor model list` and offer its canonical model ids. A Lor backend dispatches only from a coordinator running inside a Lor session with `lor` on PATH, so when the session has neither, say so and recommend Paseo unless the owner will run the coordinator from a Lor session. Record the answer as top-level `code_agent` in `plan.json`, for example `{\"provider\": \"lor/CANONICAL_MODEL_ID\", \"thinking\": \"high\"}` or `{\"provider\": \"claude/MODEL\", \"thinking\": \"high\", \"mode\": \"MODE\"}`; a Paseo `code_agent` carries the explicit mode code.configuration requires, and a Lor one may omit mode. `code_agent` enters `plan_digest` and applies only to code units that pin no `provider` or `model`; omitting it keeps the code.default-agent default. The owner can change the backend at any time mid-project with `swarm.py set-agent`, which edits neither `plan.json` nor `plan_digest`.",
+      "references": [
+        "references/survey-interview.md"
+      ]
+    },
+    {
       "id": "plan.inputs",
       "normative_text": "Declare every path, glob, and configuration file a command reads; empty inputs, placeholders, and globs matching nothing are refused."
     },
@@ -233,7 +241,7 @@
     },
     {
       "id": "code.configuration",
-      "normative_text": "Ask for and declare `provider` and an explicit `mode` on every code unit. The owner must choose unattended autonomy or deliberate default-permission stalling; confirm the selected provider's exact mode spelling from `paseo run --help` or the provider before writing the plan, record the choice, and pass it verbatim. Mode has no portable or exhaustive positive set; the coordinator does not validate the mode against an exhaustive provider set, so clean validation is no evidence the value is supported and an unsupported value may fail only at provider dispatch. Permission bypass must never be chosen silently, and `bypass` is Claude's spelling and Codex rejects it.",
+      "normative_text": "Ask for and declare `provider` and an explicit `mode` for every code unit, on the unit or through the plan's top-level `code_agent` (interview.code-agent); a `lor/CANONICAL_MODEL_ID` provider may omit mode and refuses a restrictive one. The owner must choose unattended autonomy or deliberate default-permission stalling; confirm the selected provider's exact mode spelling from `paseo run --help` or the provider before writing the plan, record the choice, and pass it verbatim. Mode has no portable or exhaustive positive set; the coordinator does not validate the mode against an exhaustive provider set, so clean validation is no evidence the value is supported and an unsupported value may fail only at provider dispatch. Permission bypass must never be chosen silently, and `bypass` is Claude's spelling and Codex rejects it.",
       "references": [
         "references/unit-contract.md"
       ]
@@ -313,7 +321,7 @@
     },
     {
       "id": "code.prompt-boundary",
-      "normative_text": "The coordinator submits a code unit through `paseo run`; the unit uses `prompt`, never `command`, and provider, mode, model, thinking, and environment are fields rather than flags embedded in the prompt.",
+      "normative_text": "The coordinator submits a code unit through `paseo run`, or `lor session start` for a `lor/CANONICAL_MODEL_ID` provider; the unit uses `prompt`, never `command`, and provider, mode, model, thinking, and environment are fields rather than flags embedded in the prompt.",
       "references": [
         "references/unit-contract.md"
       ]

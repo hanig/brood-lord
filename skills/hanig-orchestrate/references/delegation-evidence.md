@@ -15,6 +15,8 @@ A complete delegated prompt contains:
 
 Runner configuration remains structured plan data so the coordinator can validate and pass it as configuration. <!-- declaration: delegation.configuration -->
 
+Changing the coding backend or model mid-project is runner configuration too, and it lives in coordinator state rather than in the plan or a prompt: `swarm.py set-agent` records a revisioned override, and each attempt freezes the agent it was dispatched with. The orchestrator therefore never rewrites a delegated prompt or `plan.json` to move work between `paseo` and `lor`. <!-- declaration: code.agent-switch -->
+
 For both optional updates, use `swarm.py continue PLAN --state-dir DIR --unit OLD --new-id NEW --prompt-file FILE --head-ref RECOVERY_REF --repoint-dependents --tickets DRAFT` to preview a continuation. Omit either flag when its update is not needed. `--write` publishes it and updates the existing draft; repointing refuses dependents with recorded attempts. The draft copies the predecessor entry with `unit` and `continuation_of` adjusted; it does not file tracker issues or rewrite tracker relations. Plan and draft writes are sequential; after an interrupted draft write, rerun the same command to complete the draft update. <!-- declaration: delegation.continuation -->
 
 A continuation names its recovery ref and completed evidence, while a retry receives a fresh attempt and repeats the unit. <!-- declaration: delegation.continuation, retry.boundary -->
