@@ -275,7 +275,19 @@ else
 fi'''
 
 
-def _bind(unit_dir, job_id, state_dir):
+def _bind(unit_dir, job_id, state_dir, backend=None, parent_session_id=None):
+    """Run `unit.py bind`; the backend flags are passed only when given.
+
+    A call without ``backend`` is byte-for-byte the legacy Paseo bind.
+    unit.py validates the combination (LIO.code_binding) and refuses an
+    inconsistent one, so nothing is normalized here.
+    """
+    extra = []
+    if backend is not None:
+        extra += ["--backend", str(backend)]
+    if parent_session_id is not None:
+        extra += ["--parent-session-id", str(parent_session_id)]
     rc, out, err = U.run([sys.executable, str(_HERE / "unit.py"), "bind",
-                          str(unit_dir), "--state-dir", str(state_dir), "--job-id", str(job_id)], timeout=120)
+                          str(unit_dir), "--state-dir", str(state_dir), "--job-id", str(job_id)]
+                         + extra, timeout=120)
     return None if rc == 0 else f"bind failed: {(err or out).strip()[:200]}"

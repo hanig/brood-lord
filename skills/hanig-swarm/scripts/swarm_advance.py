@@ -3,7 +3,6 @@
 Python 3.8+, standard library only; dependencies never point to the facade.
 """
 
-import sys
 import time
 from pathlib import Path
 
@@ -36,18 +35,16 @@ def _bind_attempt(state, uid, unit_dir, job_id, state_dir):
 
     Paseo (and legacy) attempts take the unchanged SD._bind path. A Lor
     attempt also records its backend and parent session in unit.json so the
-    checker observes it through Lor, never `paseo inspect`.
+    checker observes it through Lor, never `paseo inspect`. Both go through
+    SD._bind: swarm_dispatch.py is the only dispatch module that runs
+    `unit.py` (tests/test_d5_activation_guards.py).
     """
     us = ((state.get("units") or {}).get(uid) or {})
     if SS.attempt_backend(us, unit_dir) != LIO.LOR_BACKEND:
         return SD._bind(unit_dir, job_id, state_dir)
-    parent = SS.attempt_parent_session(us, unit_dir)
-    rc, out, err = U.run(
-        [sys.executable, str(Path(__file__).resolve().parent / "unit.py"),
-         "bind", str(unit_dir), "--state-dir", str(state_dir),
-         "--job-id", str(job_id), "--backend", LIO.LOR_BACKEND,
-         "--parent-session-id", str(parent)], timeout=120)
-    return None if rc == 0 else f"bind failed: {(err or out).strip()[:200]}"
+    return SD._bind(unit_dir, job_id, state_dir, backend=LIO.LOR_BACKEND,
+                    parent_session_id=SS.attempt_parent_session(us, unit_dir))
+
 
 def _check_dry_run_contamination(units, state, report):
     """Refuse a dry run when the state directory already holds live real attempts."""
