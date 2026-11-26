@@ -51,7 +51,11 @@ def intent_identity(intent):
 
 
 def author_instruction(intent):
-    """Render frozen contributors without borrowing an unknown current identity."""
+    """Render frozen contributors without borrowing an unknown current identity.
+
+    The worker never runs the review gate on its own diff; it records these
+    flags in evidence.md for the orchestrator's review.py/committee.py runs.
+    """
     current = intent_identity(intent)
     invalid = ""
     if current is not None and not _valid_identity(current):
@@ -69,7 +73,7 @@ def author_instruction(intent):
         instructions.append(
             "The coordinator-recorded provider/model for this unit is "
             "UNKNOWN. Report the missing identity to the coordinator before "
-            "review; do not invent an author or omit --author.")
+            "handing off; do not invent an author or omit --author.")
     for record in intent.get("author_history", []):
         identity = record["identity"]
         if not _valid_identity(identity):
@@ -83,14 +87,15 @@ def author_instruction(intent):
         subject = ("this unit's own model" if current is not None and len(known) == 1
                    else "all known contributing models")
         instructions.append(
-            f"Pass {flags} on every review.py or committee.py run so the gate "
+            f"Record {flags} in evidence.md as the author flags the orchestrator "
+            f"passes on every review.py or committee.py run, so the gate "
             f"excludes {subject}.")
     if unknown:
         records = "; ".join(f"unit {unit!r}, attempt {attempt!r}{invalid}"
                             for unit, attempt, invalid in unknown)
         instructions.append(
             f"The recorded lineage is incomplete: {records}. "
-            "Report these unknown identities to the coordinator before review; "
+            "Report these unknown identities to the coordinator before handing off; "
             "do not guess.")
     return " ".join(instructions)
 

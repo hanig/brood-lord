@@ -113,32 +113,63 @@ class TestCodeProtocolExtraction(unittest.TestCase):
                 self.test_standalone_offline_import()
 
 
-class TestRepairLoopProtocol(unittest.TestCase):
+class TestOrchestratorOwnedGateProtocol(unittest.TestCase):
+    """The author is not its own reviewer; the gate runs where the orchestrator runs."""
     INTENT = {
         "repo": "/fixture/project", "branch": "swarm-fixture",
         "base_commit": "a" * 40, "target_branch": "main",
         "repository_remote": "/fixture/origin.git",
         "judgment_ref": "refs/heads/swarm-fixture",
+        "provider": "p", "model": "author",
     }
     STEPS = (
+        ("author is not its reviewer",
+         "The author is not its own reviewer; the gate runs where the orchestrator runs."),
+        ("worker review prohibition",
+         "NEVER run review.py or committee.py on your own diff"),
+        ("worker pull-request prohibition", "NEVER open a pull request yourself."),
+        ("orchestrator review gate",
+         "The orchestrator runs hanig-review-gate's review.py from its own Lor "
+         "session on your pushed head"),
+        ("repair continuation",
+         "dispatches a repair continuation with the findings on REVIEW_FAIL."),
+        ("scoped tests", "run its scoped tests"),
+        ("mutation checks", "mutation-check every fix"),
+        ("evidence hand-off", "write $SWARM_UNIT_DIR/evidence.md"),
+        ("pushed head evidence", "the exact pushed HEAD SHA"),
+        ("drafted pull request", "a drafted pull-request title and body"),
+        ("test output hand-off", "write $SWARM_UNIT_DIR/test-output.txt"),
         ("finding reproduction",
          "Reproduce each confirmed finding before acting on it."),
         ("in-envelope repair",
          "Repair the reproduced findings that fall inside the task's supported envelope and do not contradict the task."),
-        ("repair round discipline",
-         "Mutation-check each repair, commit all intended edits, and keep the worktree clean. If no findings reproduce, no code repair is required; record not-reproduced dispositions and gate the next round under the same round limit. Only after a REVIEW_FAIL, once all reproduced in-envelope findings (if any) are repaired, gate the next round with --dispositions FILE, up to the round limit the task states. A passing round never requires another. Before stopping for an orchestrator decision on one remaining finding, first repair and mutation-check every other reproduced in-envelope finding that does not contradict the task, and commit those repairs; only then preserve and stop."),
-        ("exhausted or decision-bound review",
-         "Only when a reproduced failure remains after the last permitted round, "
-         "or a remaining finding needs an orchestrator decision (out of envelope, "
-         "or contradicting the task), do NOT open a pull request: follow the recovery "
-         "procedure below without moving the anchored attempt ref, then STOP AND "
-         "REPORT where it was preserved."),
-        ("passing review permission",
-         "Only exit 0 (REVIEW_PASS) permits opening a pull request"),
+        ("repair dispositions",
+         "record a disposition (reproduced or not-reproduced, with its reproduction) "
+         "for every finding in evidence.md, and STOP again."),
+        ("decision-bound repair",
+         "first repair and mutation-check every other reproduced in-envelope finding "
+         "and push those repairs; then follow the recovery procedure below without "
+         "moving the anchored attempt ref, and STOP AND REPORT where it was preserved."),
+    )
+    # Worker-side gate instructions this design retired. None may come back.
+    RETIRED = (
+        "run this repository's review gate",
+        "Before opening a pull request",
+        "Open a pull request",
+        "After opening the pull request",
+        "permits opening a pull request",
+        "After REVIEW_PASS, keep the reviewed head unchanged",
+        "gate the next round",
+        "Pass --author",
+        "--kind implementation",
+        "--dispositions FILE",
     )
 
-    def test_dispatched_repair_sequence_in_order(self):
-        prompt = SCP._dispatch_prompt({"kind": "code", "prompt": "work"}, self.INTENT)
+    def prompt(self, intent=None):
+        return SCP._dispatch_prompt({"kind": "code", "prompt": "work"}, intent or self.INTENT)
+
+    def test_dispatched_hand_off_sequence_in_order(self):
+        prompt = self.prompt()
         self.assertIsNone(SCP._code_protocol_problem(prompt, self.INTENT))
         positions = []
         for name, sentence in self.STEPS:
@@ -146,45 +177,38 @@ class TestRepairLoopProtocol(unittest.TestCase):
                 self.assertEqual(prompt.count(sentence), 1)
                 positions.append(prompt.index(sentence))
         self.assertEqual(positions, sorted(positions))
-        self.assertNotIn("If a reproduced failure remains, do NOT open a pull request", prompt)
-        self.assertIn("unavailable, partial, incomplete, and failing reviews are not a pass", prompt)
 
-    def test_next_round_is_conditional_and_decision_stop_follows_repairs(self):
-        prompt = S._dispatch_prompt({"kind": "code", "prompt": "work"}, self.INTENT)
-        conditional = ("Only after a REVIEW_FAIL, once all reproduced in-envelope "
-                       "findings (if any) are repaired, gate the next round")
-        self.assertIn(conditional, prompt)
-        self.assertIn("A passing round never requires another.", prompt)
-        self.assertIn("commit those repairs; only then preserve and stop.", prompt)
-        # Exercise the consuming guard even when the producer also regresses.
-        for old in (conditional, "A passing round never requires another.",
-                    "commit those repairs; only then preserve and stop."):
-            with self.subTest(removed=old):
-                protocol = SCP._code_completion_protocol(self.INTENT).replace(old, "")
-                with mock.patch.object(SCP, "_code_completion_protocol", return_value=protocol):
-                    mutated = S._dispatch_prompt({"kind": "code"}, self.INTENT)
-                    self.assertEqual(SCP._code_protocol_problem(mutated, self.INTENT),
-                                     "missing repair round discipline")
+    def test_workers_never_run_the_gate_or_open_the_pull_request(self):
+        for remote in (self.INTENT["repository_remote"], None):
+            intent = dict(self.INTENT, repository_remote=remote)
+            prompt = self.prompt(intent)
+            with self.subTest(remote=remote):
+                self.assertIsNone(SCP._code_protocol_problem(prompt, intent))
+                self.assertIn("NEVER run review.py or committee.py on your own diff, "
+                              "in any form, and NEVER open a pull request yourself.", prompt)
+                for retired in self.RETIRED:
+                    self.assertNotIn(retired, prompt)
+                # The only review.py/committee.py mentions forbid the worker,
+                # describe the orchestrator's run, or hand it the author flags.
+                for line in prompt.splitlines():
+                    if "review.py" in line or "committee.py" in line:
+                        self.assertTrue(
+                            line.startswith("ORCHESTRATOR-OWNED REVIEW GATE: "), line)
+        self.assertIn("The orchestrator, not you, opens the pull request", self.prompt())
+        self.assertIn("Record --author p/author in evidence.md as the author flags the "
+                      "orchestrator passes on every review.py or committee.py run",
+                      self.prompt())
 
-    def test_pass_head_and_false_findings_have_explicit_routes(self):
-        prompt = S._dispatch_prompt({"kind": "code"}, self.INTENT)
-        for phrase in (
-                "After REVIEW_PASS, keep the reviewed head unchanged",
-                "If that head changes, do not open a pull request; preserve and stop",
-                "If no findings reproduce, no code repair is required",
-                "record not-reproduced dispositions and gate the next round under the same round limit"):
-            self.assertIn(phrase, prompt)
-            protocol = SCP._code_completion_protocol(self.INTENT).replace(phrase, "")
-            with mock.patch.object(SCP, "_code_completion_protocol", return_value=protocol):
-                mutated = S._dispatch_prompt({"kind": "code"}, self.INTENT)
-                self.assertIsNotNone(SCP._code_protocol_problem(mutated, self.INTENT))
-        self.assertLess(prompt.index("For REVIEW_FAIL, follow this repair loop:"),
-                        prompt.index("Repair the reproduced findings"))
-
-    def test_false_only_failure_explicitly_permits_next_round(self):
-        prompt = S._dispatch_prompt({"kind": "code"}, self.INTENT)
-        self.assertIn("all reproduced in-envelope findings (if any) are repaired", prompt)
-        self.assertIn("record not-reproduced dispositions and gate the next round", prompt)
+    def test_restoring_a_worker_review_instruction_is_detected(self):
+        protocol = SCP._code_completion_protocol(self.INTENT)
+        legacy = protocol.replace(
+            "NEVER run review.py or committee.py on your own diff",
+            "Before opening a pull request, run this repository's review gate")
+        self.assertNotEqual(legacy, protocol)
+        with mock.patch.object(SCP, "_code_completion_protocol", return_value=legacy):
+            prompt = SCP._dispatch_prompt({"kind": "code"}, self.INTENT)
+            self.assertEqual(SCP._code_protocol_problem(prompt, self.INTENT),
+                             "missing worker review prohibition")
 
     def test_required_phrase_guard_rejects_task_contradicting_repair(self):
         protocol = SCP._code_completion_protocol(self.INTENT)

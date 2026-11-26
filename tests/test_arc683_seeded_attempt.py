@@ -485,10 +485,10 @@ class UnseededCompatibilityTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(json.dumps(
             legacy, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
                          "978eec05d93163a32e80c5447b0a4277fbb12c25363ce1e3644076e597075769")
-        # Prompt golden re-captured from this test for the bounded repair-loop
-        # protocol, including its task-contradiction exception.
+        # Prompt golden re-captured from this test for the orchestrator-owned
+        # review gate protocol (2026-11-26): workers hand off, never self-review.
         self.assertEqual(hashlib.sha256(S._dispatch_prompt(unit, intent).encode()).hexdigest(),
-                         "eea045f3c4e2ec1cb157cb940754bb7b51b2c671dcd7107254a7de56f74f89f2")
+                         "6eb525c172b2e1e4a2ff1614bd7f119e383e5edbe299a1b3f1f78591ed7a355f")
         self.assertEqual(S.plan_digest({"name": "seed-compat", "units": [unit]}),
                          "55ce911fb07620734d54da3b6ef9cde709df04d099bc7d7ffd66aaf2d24db93a")
 

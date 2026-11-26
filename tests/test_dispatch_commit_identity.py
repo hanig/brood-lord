@@ -153,13 +153,15 @@ class CommitIdentityTests(unittest.TestCase):
             nested, {"unit": "code", "attempt": "a2", "identity": "p/two"}])
         original = json.dumps(intent, sort_keys=True).encode()
         prompt = S._dispatch_prompt(unit, intent)
-        singleton = ("Pass --author p/current on every review.py or committee.py "
-                     "run so the gate excludes this unit's own model.")
-        inherited = ("Pass --author p/current --author p/override --author p/ancestor "
-                     "--author p/two on every review.py or committee.py run so the "
+        singleton = ("Record --author p/current in evidence.md as the author flags the "
+                     "orchestrator passes on every review.py or committee.py "
+                     "run, so the gate excludes this unit's own model.")
+        inherited = ("Record --author p/current --author p/override --author p/ancestor "
+                     "--author p/two in evidence.md as the author flags the orchestrator "
+                     "passes on every review.py or committee.py run, so the "
                      "gate excludes all known contributing models. "
                      "The recorded lineage is incomplete: unit 'prior', attempt 'z0'. "
-                     "Report these unknown identities to the coordinator before review; "
+                     "Report these unknown identities to the coordinator before handing off; "
                      "do not guess.")
         plain_prompt = S._dispatch_prompt(
             dict(unit, author_history=[]), dict(intent, author_history=[]))
@@ -201,7 +203,7 @@ class CommitIdentityTests(unittest.TestCase):
         self.assertTrue(job)
         prompt = self.fake.launches[0][-1]
         self.assertIn("provider/model for this unit is UNKNOWN", prompt)
-        self.assertNotIn("Pass --author", prompt)
+        self.assertNotIn("Record --author", prompt)
         durable = S.load_state(state_dir)["units"]["code"]
         self.assertEqual(json.dumps(durable["attempt_launch_intents"][attempt.name],
                                     sort_keys=True), original)
