@@ -75,6 +75,10 @@ def maybe_resume(state_dir, uid, u, us, report, state):
     limit = (u.get("provider_resume") or {}).get("max", 0)
     if not limit or u.get("kind") != "code" or not us.get("job_id"):
         return False
+    if SS.attempt_backend(us, us.get("attempt_dir")) != "paseo":
+        # Provider-error resume reads Paseo's error log; a Lor session id is
+        # not a Paseo agent and must never be inspected or messaged as one.
+        return False
     matched = _eligible(us["job_id"])
     if not matched:
         return False

@@ -23,6 +23,9 @@ DEFINITIONS = (
     "_deadline_host_evaluation", "_deadline_exceeded", "_mark_deadline_exceeded",
     "_clear_deadline_breach", "_deadline_attempt_is_unresolved",
     "_occupies_live_resources", "trusted_launch_facts", "trusted_launch_host_anchor",
+    "empty_agent_overrides", "agent_overrides_problem", "load_agent_overrides",
+    "save_agent_overrides", "attempt_launch_intent", "attempt_backend",
+    "attempt_parent_session",
 )
 DATA = (
     "STATE_FILE", "STATE_EPOCH_FILE", "LEASE", "LOCK",

@@ -531,3 +531,105 @@ def trusted_launch_host_anchor(state, unit, attempt_dir):
     us = (state.get("units") or {}).get(unit) or {}
     intent = (us.get("attempt_launch_intents") or {}).get(attempt)
     return intent if isinstance(intent, dict) else None
+
+
+# --- runtime code-agent overrides ----------------------------------------
+# `swarm.py set-agent` switches which coding backend/model NEW attempts use
+# without editing plan.json, so the plan digest a live run is pinned to never
+# changes. Each dispatched attempt freezes its resolved agent into its launch
+# intent; nothing here can move an attempt that already exists.
+AGENT_OVERRIDES_FILE = "agent-overrides.json"
+AGENT_OVERRIDES_SCHEMA = 1
+
+
+def empty_agent_overrides():
+    return {"schema_version": AGENT_OVERRIDES_SCHEMA, "revision": 0,
+            "project": None, "units": {}, "history": []}
+
+
+def agent_overrides_problem(record):
+    """Why a parsed overrides record is not usable, or None."""
+    if not isinstance(record, dict):
+        return "agent overrides are not a JSON object"
+    if record.get("schema_version") != AGENT_OVERRIDES_SCHEMA:
+        return (f"agent overrides schema_version "
+                f"{record.get('schema_version')!r} is not "
+                f"{AGENT_OVERRIDES_SCHEMA}")
+    revision = record.get("revision")
+    if type(revision) is not int or revision < 0:
+        return f"agent overrides revision {revision!r} is not a count"
+    if record.get("project") is not None and not isinstance(record["project"], dict):
+        return "agent overrides 'project' must be an object or null"
+    if not isinstance(record.get("units"), dict) or not all(
+            isinstance(v, dict) for v in record["units"].values()):
+        return "agent overrides 'units' must map unit ids to objects"
+    if not isinstance(record.get("history"), list):
+        return "agent overrides 'history' must be a list"
+    return None
+
+
+def load_agent_overrides(state_dir):
+    """Return (overrides, problem). Absent is the empty record, not an error.
+
+    An unreadable or malformed file is a problem, never "no overrides": an
+    operator who switched a project to another backend must not have it
+    silently reverted by a damaged file.
+    """
+    if state_dir is None:
+        return empty_agent_overrides(), None
+    obj, err = U.read_json(Path(state_dir) / AGENT_OVERRIDES_FILE)
+    if err == "missing":
+        return empty_agent_overrides(), None
+    if err:
+        return None, (f"agent overrides at "
+                      f"{Path(state_dir) / AGENT_OVERRIDES_FILE} are "
+                      f"unreadable ({err}); fix or remove the file")
+    problem = agent_overrides_problem(obj)
+    if problem:
+        return None, (f"{Path(state_dir) / AGENT_OVERRIDES_FILE}: {problem}")
+    return obj, None
+
+
+def save_agent_overrides(state_dir, record):
+    """Atomic, owner-only write. Callers hold the project lock."""
+    problem = agent_overrides_problem(record)
+    if problem:
+        return problem
+    Path(state_dir).mkdir(parents=True, exist_ok=True)
+    path = Path(state_dir) / AGENT_OVERRIDES_FILE
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            json.dump(record, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(str(tmp), str(path))
+    except OSError as exc:
+        return f"cannot write {path}: {exc}"
+    return None
+
+
+def attempt_launch_intent(us, attempt):
+    """The coordinator-recorded launch intent for one attempt, or {}."""
+    if not attempt:
+        return {}
+    intent = ((us or {}).get("attempt_launch_intents") or {}).get(Path(str(attempt)).name)
+    return intent if isinstance(intent, dict) else {}
+
+
+def attempt_backend(us, attempt):
+    """Frozen coding backend of one attempt. Legacy intents read as paseo.
+
+    Read at use time from coordinator state, so existing Paseo projects need
+    no migration and an attempt can never change backend after launch.
+    """
+    backend = attempt_launch_intent(us, attempt).get("backend")
+    return backend if backend in ("paseo", "lor") else "paseo"
+
+
+def attempt_parent_session(us, attempt):
+    """The Lor parent session recorded when a lor attempt was launched."""
+    return attempt_launch_intent(us, attempt).get("parent_session_id")

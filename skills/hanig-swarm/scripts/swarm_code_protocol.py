@@ -199,8 +199,62 @@ If you cannot finish cleanly, STOP AND REPORT the problem instead of working aro
 Leave the worktree clean. Do not force-push or rewrite history. The final commit must descend from recorded base {base}; rewritten history makes honest work unjudgeable.{_seed_carry_forward(intent.get('seed'), repo, remote)}"""
 
 
-def _dispatch_prompt(u, intent=None):
-    """Return the single prompt argv element for an agent dispatch."""
+ATTEMPT_CONTEXT_MARKER = "SWARM ATTEMPT CONTEXT"
+ATTEMPT_CONTEXT_FILE = "context.json"
+# The ONLY names an attempt context may carry. A Lor subagent receives no
+# per-agent environment, so its context is rendered into the prompt; an
+# allowlist (not a filter over os.environ) is what keeps a credential from
+# ever being rendered there.
+_CONTEXT_NAME_PREFIXES = ("SWARM_DEP_",)
+_CONTEXT_NAMES = ("SWARM_UNIT_ID", "SWARM_UNIT_DIR")
+SBATCH_POLICY = (
+    "HOST POLICY: if this sandbox is a constrained login node or `sh_agent` "
+    "sandbox (for example on Chimera), do not run heavy test suites, builds "
+    "or long computations locally; submit them through `sbatch` and wait for "
+    "the job instead. This rule is advisory and is not enforced by the host.")
+
+
+def attempt_context_values(unit_id, unit_dir, deps=()):
+    """Return the ordered allowlisted (name, value) pairs for one attempt."""
+    pairs = [("SWARM_UNIT_ID", str(unit_id)), ("SWARM_UNIT_DIR", str(unit_dir))]
+    for name, value in deps:
+        name = str(name)
+        if not name.startswith(_CONTEXT_NAME_PREFIXES):
+            raise PlanError(f"refusing non-allowlisted attempt context {name!r}")
+        pairs.append((name, str(value)))
+    for name, value in pairs:
+        if name not in _CONTEXT_NAMES and not name.startswith(_CONTEXT_NAME_PREFIXES):
+            raise PlanError(f"refusing non-allowlisted attempt context {name!r}")
+        if any(ch in value for ch in "\r\n\0"):
+            raise PlanError(f"attempt context {name} contains a line break")
+    return pairs
+
+
+def render_attempt_context(pairs):
+    """The prompt block that stands in for the per-agent environment."""
+    lines = [
+        f"{ATTEMPT_CONTEXT_MARKER} (coordinator-rendered)",
+        "This agent was started without SWARM_* environment variables. These "
+        "are their exact values; wherever these instructions name one, use the "
+        "value below (you may export them in your shell first):",
+        "```sh",
+    ]
+    lines += [f"export {name}={shlex.quote(value)}" for name, value in pairs]
+    lines += [
+        "```",
+        f"The same values are recorded in $SWARM_UNIT_DIR/{ATTEMPT_CONTEXT_FILE}, "
+        "outside your git worktree; never copy it into the worktree.",
+        SBATCH_POLICY,
+    ]
+    return "\n".join(lines)
+
+
+def _dispatch_prompt(u, intent=None, attempt_context=None):
+    """Return the single prompt argv element for an agent dispatch.
+
+    ``attempt_context`` (Lor attempts only) is placed before the completion
+    protocol, which must stay the final block.
+    """
     prompt = str(u.get("prompt") or u.get("command") or u.get("id") or "")
     if u.get("kind") != "code":
         return prompt
@@ -208,7 +262,8 @@ def _dispatch_prompt(u, intent=None):
         raise PlanError(
             f"unit {u.get('id','?')!r} is kind=code but has no trusted "
             f"launch intent from which to build its completion protocol")
-    return prompt.rstrip() + "\n\n" + _code_completion_protocol(intent)
+    context = ("\n\n" + attempt_context.strip()) if attempt_context else ""
+    return prompt.rstrip() + context + "\n\n" + _code_completion_protocol(intent)
 
 
 def _code_protocol_problem(prompt, intent):
