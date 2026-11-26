@@ -485,7 +485,8 @@ class TestTheProtocolForbidsGitStash(unittest.TestCase):
 
 class TestTheProtocolReservesMergingForTheOrchestrator(unittest.TestCase):
     RULES = {
-        "worker stop instruction": "After opening the pull request, STOP.",
+        "worker stop instruction": (
+            "After pushing your verified head and writing the evidence files, STOP."),
         "worker merge prohibition": "NEVER merge, approve, or enable auto-merge.",
         "merge authority": "Merge decisions belong to the orchestrator.",
         "closure interpretation": (
@@ -534,7 +535,8 @@ class TestTheProtocolReservesMergingForTheOrchestrator(unittest.TestCase):
 
 # --- ARC-679 -------------------------------------------------------------
 
-GATE_CLAUSE = "Before opening a pull request, run this repository's review gate."
+GATE_CLAUSE = "NEVER run review.py or committee.py on your own diff"
+GATE_NAME = "worker review prohibition"
 PUSH_CLAUSE = "Push after every meaningful edit."
 
 
@@ -569,28 +571,31 @@ class TestTheProtocolRequiresReviewAndPush(unittest.TestCase):
                 self.assertNotIn("Pass --author", prompt)
                 self.assertIsNone(S._code_protocol_problem(prompt, intent))
 
-    def test_review_covers_committed_delta_and_preserves_a_failed_review(self):
+    def test_orchestrator_reviews_the_pushed_delta_and_blocked_work_is_preserved(self):
         protocol = S._code_completion_protocol(INTENT)
         for sentence in (
-                GATE_CLAUSE, "hanig-review-gate's review.py",
-                "--range " + INTENT["base_commit"] + "..HEAD",
-                "COMPLETE delta from the recorded base",
-                "Commit all intended edits first and leave the worktree clean",
-                "Only exit 0 (REVIEW_PASS) permits opening a pull request",
+                GATE_CLAUSE,
+                "The author is not its own reviewer; the gate runs where the orchestrator runs.",
+                "NEVER open a pull request yourself.",
+                "The orchestrator runs hanig-review-gate's review.py from its own Lor session "
+                "on your pushed head with --range " + INTENT["base_commit"] + "..HEAD",
+                "adjudicates its findings, and opens and merges the pull request",
+                "dispatches a repair continuation with the findings on REVIEW_FAIL.",
+                "Commit all intended edits, leave the worktree clean, and push them to the anchored attempt ref.",
+                "write $SWARM_UNIT_DIR/evidence.md",
+                '"This change cannot make an honest run fail."',
+                "the exact pushed HEAD SHA",
+                "write $SWARM_UNIT_DIR/test-output.txt with the verbatim final test output",
                 "Reproduce each confirmed finding before acting on it.",
                 "Repair the reproduced findings that fall inside the task's supported envelope and do not contradict the task.",
-                "Only after a REVIEW_FAIL, once all reproduced in-envelope findings (if any) are repaired, gate the next round with --dispositions FILE",
-                "A passing round never requires another.",
+                "If no findings reproduce, no code repair is required",
                 "first repair and mutation-check every other reproduced in-envelope finding",
-                "commit those repairs; only then preserve and stop.",
-                "up to the round limit the task states",
-                "Only when a reproduced failure remains after the last permitted round",
-                "or a remaining finding needs an orchestrator decision",
-                "(out of envelope, or contradicting the task), do NOT open a pull request",
                 "RECOVERY, NOT READY:", "refs/heads/recovery/swarm-a1",
-                "without moving the anchored attempt ref",
-                "REVIEW_PASS means the panel failed to refute the claims, not proof."):
+                "without moving the anchored attempt ref"):
             self.assertIn(sentence, protocol)
+        for retired in ("run this repository's review gate", "Open a pull request",
+                        "permits opening a pull request", "--dispositions FILE"):
+            self.assertNotIn(retired, protocol)
 
     def test_push_requires_changed_content(self):
         protocol = S._code_completion_protocol(INTENT)
@@ -604,7 +609,7 @@ class TestTheProtocolRequiresReviewAndPush(unittest.TestCase):
                 "target_branch": "main", "prompt": "work",
                 "mode": "full-access", "outputs": ["o"]}
         real_protocol = S._code_completion_protocol
-        for name, clause in (("review gate", GATE_CLAUSE),
+        for name, clause in ((GATE_NAME, GATE_CLAUSE),
                              ("push discipline", PUSH_CLAUSE)):
             with self.subTest(clause=name):
                 def missing(intent):
@@ -672,7 +677,7 @@ class TestReviewAndPushBeforeAgentCreation(unittest.TestCase):
         self.assertIn("missing " + name, error or "")
 
     def test_missing_gate_clause_refuses_before_agent_creation(self):
-        self.assert_missing_clause_refuses(GATE_CLAUSE, "review gate")
+        self.assert_missing_clause_refuses(GATE_CLAUSE, GATE_NAME)
 
     def test_missing_push_clause_refuses_before_agent_creation(self):
         self.assert_missing_clause_refuses(PUSH_CLAUSE, "push discipline")
@@ -704,9 +709,10 @@ class TestReviewAndPushBeforeAgentCreation(unittest.TestCase):
         self.assertIn(GATE_CLAUSE, prompt)
         self.assertIn(PUSH_CLAUSE, prompt)
         # This is a NEW launch: its default is recorded before agent creation.
-        self.assertIn("Pass --author " + S.DEFAULT_AGENT_PROVIDER +
-                      " --author p/prior --author q/earlier on every review.py "
-                      "or committee.py run so the gate excludes all known "
+        self.assertIn("Record --author " + S.DEFAULT_AGENT_PROVIDER +
+                      " --author p/prior --author q/earlier in evidence.md as the "
+                      "author flags the orchestrator passes on every review.py "
+                      "or committee.py run, so the gate excludes all known "
                       "contributing models.", prompt)
         self.assertEqual(prompt.count("--author p/prior"), 1)
 

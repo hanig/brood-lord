@@ -178,7 +178,7 @@ Before creating a code agent, the coordinator anchors `refs/heads/swarm-<attempt
 
 ## Usage
 
-Before review, workers run `scope-check PLAN --state-dir DIR --unit U --head REV --json` (from the attempt worktree: `--head "$(git rev-parse --verify HEAD^{commit})"`) and fix out-of-scope paths. JSON adds `head_source` (`worker` with `--head`, `judged` without it); only judged reports are admissible for merging (exit 0 in scope, 1 out of scope, 2 unchecked).
+Before handing off, workers run `scope-check PLAN --state-dir DIR --unit U --head REV --json` (from the attempt worktree: `--head "$(git rev-parse --verify HEAD^{commit})"`) and fix out-of-scope paths. JSON adds `head_source` (`worker` with `--head`, `judged` without it); only judged reports are admissible for merging (exit 0 in scope, 1 out of scope, 2 unchecked).
 ```bash
 export HANIG_SWARM_DIR="/path/to/loaded/hanig-swarm"
 U="$HANIG_SWARM_DIR/scripts/unit.py"
