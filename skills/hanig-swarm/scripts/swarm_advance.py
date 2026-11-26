@@ -6,6 +6,7 @@ Python 3.8+, standard library only; dependencies never point to the facade.
 import time
 from pathlib import Path
 
+import lor_io as LIO
 import unit as U
 import verify as V
 import worktree as W
@@ -26,6 +27,23 @@ from swarm_types import (
     OutboxError,
     RUNNING,
 )
+
+
+
+def _bind_attempt(state, uid, unit_dir, job_id, state_dir):
+    """Bind via unit.py with the attempt's FROZEN backend.
+
+    Paseo (and legacy) attempts take the unchanged SD._bind path. A Lor
+    attempt also records its backend and parent session in unit.json so the
+    checker observes it through Lor, never `paseo inspect`. Both go through
+    SD._bind: swarm_dispatch.py is the only dispatch module that runs
+    `unit.py` (tests/test_d5_activation_guards.py).
+    """
+    us = ((state.get("units") or {}).get(uid) or {})
+    if SS.attempt_backend(us, unit_dir) != LIO.LOR_BACKEND:
+        return SD._bind(unit_dir, job_id, state_dir)
+    return SD._bind(unit_dir, job_id, state_dir, backend=LIO.LOR_BACKEND,
+                    parent_session_id=SS.attempt_parent_session(us, unit_dir))
 
 
 def _check_dry_run_contamination(units, state, report):
@@ -179,7 +197,8 @@ def _recover_unbound_attempts(units, state, state_dir, dry_run,
                           f"completed its trusted launch snapshot")
             SS.save_state(state_dir, state)
         if us.get("bind_pending") and us.get("job_id"):
-            if not SD._bind(us["attempt_dir"], us["job_id"], state_dir):
+            if not _bind_attempt(state, uid, us["attempt_dir"], us["job_id"],
+                                 state_dir):
                 us.pop("bind_pending", None)
                 SS._set_unit_state(us, "SUBMITTED")
                 report.append(f"{uid}: binding to job {us['job_id']} succeeded "
@@ -197,8 +216,9 @@ def _recover_unbound_attempts(units, state, state_dir, dry_run,
             continue
         if us.get("job_id"):
             continue
-        job, note = SW.reconcile_orphan(us["attempt_dir"], us.get("allocated_at"),
-                                        kind=u.get("kind"))
+        job, note = SW.reconcile_orphan(
+            us["attempt_dir"], us.get("allocated_at"), kind=u.get("kind"),
+            intent=SS.attempt_launch_intent(us, us["attempt_dir"]))
         if job:
             if u.get("kind") == "code":
                 host_problem = W.launch_host_problem(
@@ -240,7 +260,8 @@ def _recover_unbound_attempts(units, state, state_dir, dry_run,
             us["bind_pending"] = True
             SS._set_unit_state(us, "SUBMITTED")
             SS.save_state(state_dir, state)
-            bind_error = SD._bind(us["attempt_dir"], job, state_dir)
+            bind_error = _bind_attempt(state, uid, us["attempt_dir"], job,
+                                       state_dir)
             if bind_error:
                 report.append(f"{uid}: recovered {job} but {bind_error}; "
                               f"binding will retry next advance")
@@ -289,8 +310,9 @@ def _recover_unbound_attempts(units, state, state_dir, dry_run,
                         SS._set_unit_state(us, "SUBMITTED")
                         us["bind_pending"] = True
                         SS.save_state(state_dir, state)
-                        bind_error = SD._bind(
-                            us["attempt_dir"], recovered_job, state_dir)
+                        bind_error = _bind_attempt(
+                            state, uid, us["attempt_dir"], recovered_job,
+                            state_dir)
                         if bind_error:
                             report.append(
                                 f"{uid}: recovered agent {recovered_job} but "
@@ -644,6 +666,21 @@ def _apply_retry_and_teardown(
                 state, u, attempt, report)
 
 
+def _lor_claim_liveness(us):
+    """Claim liveness for a Lor attempt from Lor, never from Paseo's registry."""
+    agent = us.get("job_id")
+    if not agent:
+        return SP.CLAIM_UNKNOWN, "the lor attempt records no session id"
+    obs = LIO.poll_session(
+        str(agent),
+        parent_session_id=SS.attempt_parent_session(us, us.get("attempt_dir")))
+    if obs["state"] == "running":
+        return SP.CLAIM_LIVE, f"lor session {agent} is still running"
+    if obs["state"] in ("idle", "failed", "cancelled"):
+        return SP.CLAIM_FREE, f"lor session {agent} is {obs['state']}"
+    return SP.CLAIM_UNKNOWN, f"lor session {agent}: {obs['detail']}"
+
+
 def _release_completed_output_claims(units, state, state_dir, root, dry_run,
                                      report):
     """Release output claims for units no longer occupying live resources."""
@@ -656,9 +693,13 @@ def _release_completed_output_claims(units, state, state_dir, root, dry_run,
                     and (u.get("kind") != "code" or W.attempt_belongs_to_host(
                         SS.trusted_launch_host_anchor(
                             state, uid, us["attempt_dir"])) is True)):
-                live, why = SP._claim_liveness({
-                    "attempt": Path(us["attempt_dir"]).name,
-                    "kind": u.get("kind"), "job": us.get("job_id")})
+                if (u.get("kind") == "code" and SS.attempt_backend(
+                        us, us["attempt_dir"]) == LIO.LOR_BACKEND):
+                    live, why = _lor_claim_liveness(us)
+                else:
+                    live, why = SP._claim_liveness({
+                        "attempt": Path(us["attempt_dir"]).name,
+                        "kind": u.get("kind"), "job": us.get("job_id")})
                 if live == SP.CLAIM_FREE:
                     us["terminal_resource_release"] = {
                         "attempt_dir": us["attempt_dir"],
@@ -674,7 +715,7 @@ def _release_completed_output_claims(units, state, state_dir, root, dry_run,
 
 def _dispatch_ready_units(plan, units, state, state_dir, root, dry_run,
                           max_new, plan_path, dispatch_targets, halted,
-                          report, submit_fn):
+                          report, submit_fn, agent_preflight=None):
     """Hold failed-upstream units and dispatch every ready unit within caps."""
     budget = (plan.get("budget") or {}).get("gpu_hours")
     spent = sum(SS._unit_state(state, uid)["gpu_hours"] for uid in units)
@@ -734,6 +775,15 @@ def _dispatch_ready_units(plan, units, state, state_dir, root, dry_run,
                 continue
 
         dispatch_source = None
+        if u.get("kind") == "code" and agent_preflight is not None:
+            # Before allocation: an agent that cannot be started from here
+            # (e.g. a Lor model with no LOR_SESSION_ID) is refused with no
+            # attempt directory, worktree, claim or agent created.
+            problem = agent_preflight(u)
+            if problem:
+                report.append(f"{uid}: REFUSING dispatch -- {problem}")
+                dispatch_refusal = str(problem)
+                continue
         if u.get("kind") == "code":
             target, problem = SP._dispatch_target_for_advance(
                 u, dispatch_targets)
@@ -818,7 +868,8 @@ def _dispatch_ready_units(plan, units, state, state_dir, root, dry_run,
         if held_claims:
             SP._note_claimed_attempt(u, root, state_dir, Path(unit_dir).name,
                                      job_id)
-        berr = SD._bind(unit_dir, job_id, state_dir) if needs_bind else None
+        berr = (_bind_attempt(state, uid, unit_dir, job_id, state_dir)
+                if needs_bind else None)
         if berr:
             us["bind_pending"] = True
             report.append(f"{uid}: submitted {job_id} but {berr}. The job is "

@@ -1540,5 +1540,9 @@ def plan_digest(plan):
         content["environments"] = plan["environments"]
     if "orchestrator" in plan:
         content["orchestrator"] = plan["orchestrator"]
+    # Only when declared, so every plan without one keeps its digest byte for
+    # byte. Runtime `set-agent` overrides live in state, never here.
+    if "code_agent" in plan:
+        content["code_agent"] = plan["code_agent"]
     payload = json.dumps(content, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()

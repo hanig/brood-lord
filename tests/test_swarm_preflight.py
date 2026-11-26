@@ -86,7 +86,8 @@ class TestPreflightExtraction(unittest.TestCase):
         consumers = {n.attr for tree in trees for n in ast.walk(tree) if isinstance(n, ast.Attribute)
                      and isinstance(n.value, ast.Name) and n.value.id == "SP"}
         self.assertEqual(consumers, {
-            "DRY_PREFIX", "CLAIM_FREE", "_claim_liveness",
+            "DRY_PREFIX", "CLAIM_FREE", "CLAIM_LIVE", "CLAIM_UNKNOWN",
+            "_claim_liveness",
             "PreflightRefusal",
             "_code_worktree_names",
             "_dirty_refusal",
