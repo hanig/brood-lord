@@ -1719,7 +1719,8 @@ def load_reviewers():
                          f"or omit effort")
         if (r["provider"] == "lor" and r.get("effort") is not None
                 and r["effort"] not in _lor.LOR_EFFORTS):
-            config_error(f"lor reviewer {r['name']!r} has unsupported effort {r['effort']!r}")
+            config_error(f"lor reviewer {r['name']!r} has unsupported effort {r['effort']!r}; "
+                         f"Pass {', '.join(_lor.LOR_EFFORTS)} or omit effort")
         if "lor_model" in r and not (isinstance(r["lor_model"], str) and r["lor_model"].strip()):
             config_error(f"reviewer 'lor_model' must be a non-empty string, got {r['lor_model']!r}")
         if r.get("effort") is not None and not isinstance(r["effort"], str):
