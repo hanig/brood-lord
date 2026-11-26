@@ -122,6 +122,10 @@ LOR_FAKE = TL.FAKE.replace('else "OK"', "else %r" % VERDICT)
 CLAUDE_AI = json.dumps({"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty"})
 SAFE_KEYS = {"HOME", "USER", "PATH", "LANG", "LC_ALL", "TMPDIR", "CLAUDE_CONFIG_DIR",
              "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CODEX_HOME"}
+# Apple's Python runtime injects these into os.environ even under `env -i`;
+# only on darwin may a seat's env carry them. Linux keeps SAFE_KEYS exactly.
+DARWIN_RUNTIME_KEYS = frozenset({"__CF_USER_TEXT_ENCODING", "__PYVENV_LAUNCHER__"})
+SEAT_ENV_KEYS = SAFE_KEYS | (DARWIN_RUNTIME_KEYS if sys.platform == "darwin" else frozenset())
 
 
 def seats():
@@ -260,7 +264,12 @@ class TestSlurmExecution(SlurmHost):
                     break
                 time.sleep(0.02)
             self.assertFalse(Path(call["cwd"]).exists(), "node-local TMPDIR not removed")
-            self.assertLessEqual(set(call["env"]), SAFE_KEYS, call["env"])
+            self.assertLessEqual(set(call["env"]), SEAT_ENV_KEYS, call["env"])
+            # Platform-independent: no Lor key and no API/billing key, ever.
+            self.assertFalse([k for k in call["env"] if k.upper().startswith("LOR_")])
+            self.assertFalse(set(SECRETS) & set(call["env"]))
+            self.assertFalse([k for k in call["env"] if "API_KEY" in k.upper()
+                              or k.upper().endswith(("_TOKEN", "_SECRET", "BILLING"))], call["env"])
             self.assertFalse(set(SECRETS.values()) & set(call["env"].values()))
         codex = next(c for c in clis if c["cli"] == "codex")
         self.assertEqual(codex["argv"][codex["argv"].index("-C") + 1], codex["cwd"])
@@ -285,7 +294,10 @@ class TestSlurmExecution(SlurmHost):
             with self.subTest(cli=call["cli"], argv=call["argv"][:2]):
                 cwd = call["cwd"]
                 self.assertTrue(os.path.isabs(cwd), cwd)
-                self.assertEqual(Path(cwd).parent, real)  # physical, not via the link
+                # physical, not via the link, even if self.d.parent itself
+                # traverses a symlink (macOS /var -> /private/var)
+                self.assertEqual(Path(cwd).parent, real.resolve())
+                self.assertNotEqual(Path(cwd).parent, link)
                 self.assertTrue(Path(cwd).name.startswith("hanig-review-seat."), cwd)
                 self.assertEqual(call["env"]["TMPDIR"], cwd)
                 if call["cli"] == "codex":
