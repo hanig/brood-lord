@@ -431,6 +431,20 @@ def _launch_lor_agent(u, unit_dir, state, state_dir, attempt, intent,
     it. Context reaches the agent only through an allowlisted prompt block
     and an owner-only context.json outside the worktree.
     """
+    # `lor session start` parents the subagent to the ambient LOR_SESSION_ID,
+    # while every later poll, bind and lookup uses the frozen intent's parent.
+    # Starting under another parent would orphan the subagent from its own
+    # attempt, so a mismatch refuses before any Lor side effect.
+    recorded = str(intent.get("parent_session_id") or "").strip()
+    ambient = str(os.environ.get("LOR_SESSION_ID") or "").strip()
+    if ambient != recorded:
+        return None, (
+            f"unit {u['id']!r} attempt {attempt!r}: the recorded Lor launch "
+            f"intent belongs to a different parent session ({recorded!r}) "
+            f"than this process's LOR_SESSION_ID ({ambient!r}); refusing to "
+            f"start a subagent the recorded parent could never observe. "
+            f"Re-dispatch from parent session {recorded!r}, or allocate a "
+            f"fresh attempt from this session")
     try:
         unit_real = str(Path(unit_dir).resolve())
         work_real = str(Path(workspace).resolve())
