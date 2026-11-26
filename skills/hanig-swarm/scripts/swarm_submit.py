@@ -198,8 +198,17 @@ def _prepare_code_worktree(u, unit_dir, state, state_dir, attempt, intent):
         f"refs/heads/{intent['branch']}")
     lor = intent.get("backend") == LIO.LOR_BACKEND
     if rc == 0:
-        existing_agent, _note = SW.reconcile_orphan(
+        existing_agent, note = SW.reconcile_orphan(
             unit_dir, kind="code", intent=intent)
+        if lor and not existing_agent and note == "UNKNOWN":
+            # Paseo is guarded below by its registry ownership check; a Lor
+            # attempt skips that, so an unanswerable title lookup must refuse
+            # here rather than start a second session for one attempt.
+            return None, None, (
+                f"attempt {attempt!r} has branch {intent['branch']!r}, but "
+                f"Lor could not be asked whether a session already exists "
+                f"for it; refusing to start another. Retry when `lor session "
+                f"list` answers")
         if existing_agent:
             recovery_error = SW._recover_code_launch(
                 state if state is not None else {}, u, unit_dir,
