@@ -2,6 +2,10 @@
 
 Limits: no client-side max_output_tokens; `--tools pass` is the smallest tool
 list Lor accepts; a start that times out returns no id to stop.
+Every returned id gets `lor session stop`. A failed stop fails closed unless
+the subagent already finished cleanly (STOP or length): a `--tools pass`
+subagent has no tool that can spawn background work, so after a clean finish
+the stop is best-effort and its failure never discards the verdict.
 Python 3.8+, stdlib only. Must never import review.py.
 """
 
@@ -213,10 +217,10 @@ def lor_messages(rev, messages, system, timeout, deadline=None, *,
     reason = got["finish_reason"]
     if watch_err == "timeout":
         return None, f"lor subagent {sid} timed out after {seconds:.1f}s{stopped}"
-    if start_err or got["error"] or watch_err or (reason != STOP and reason not in LENGTH):
+    clean = not (start_err or watch_err or got["error"]) and (reason == STOP or reason in LENGTH)
+    if not clean:  # may still be running: fail closed and name any failed stop
         return None, f"lor subagent {sid} failed: {got['error'] or watch_err or reason}{stopped}"
-    if stopped:  # fail closed: never report success for a subagent left running
-        return None, stopped[2:]
+    # Clean finish: a failed post-finish stop is best-effort (module docstring).
     empty = (no_content_error or (lambda *a, **k: None if got["text"].strip() else "no content"))(
         rev, got["text"], finish_reason="length" if reason in LENGTH else None,
         reasoning_tokens=got["reasoning_tokens"], completion_tokens=got["out_tokens"],

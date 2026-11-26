@@ -19,12 +19,13 @@ L = R._lor
 FAKE = '''#!%s
 import json, os, subprocess, sys, time
 d = os.environ["FAKE_LOR"]; mode = open(d + "/mode").read(); verb = sys.argv[2]
+stop_fail, mode = mode.endswith("stop-fail"), mode.split("+")[0]
 open(d + "/calls", "a").write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "ls": os.listdir("."),
     "env": sorted(os.environ), "stdin": sys.stdin.read() if verb == "start" else ""}) + "\\n")
 BLANK = ("timeout", "drop", "pass", "error", "cancel", "empty")
 ev = lambda e: print(json.dumps({"recorded": {"event": e}}), flush=True)
 if verb == "start" and mode == "start-fail": sys.exit("refused " + "x" * 290 + os.environ["LOR_SESSION_TOKEN"])
-if verb == "stop" and mode == "stop-fail": sys.exit("stop refused")
+if verb == "stop" and stop_fail: sys.exit("stop refused")
 if verb == "start" and mode != "start-fail":
     print('{\\n  "session_id": "0d6f1c2e-1111-4222-8333-944455556666"\\n}', flush=True)
     time.sleep(60 if mode == "start-hang" else 0)
@@ -148,11 +149,21 @@ class TestLor(unittest.TestCase):
         self.assertEqual(len(self.calls()), 1)
         for mode, verbs, want in (("sid-fail", ["start", "stop"], "start failed"),
                                   ("start-hang", ["start", "stop"], "start timed out"),
-                                  ("stop-fail", ["start", "watch", "stop"], "stop failed")):
-            self.mode(mode)
-            result, err = R.call_lor(seats()["astra"], "p", 2)
-            self.assertEqual((result, [c["argv"][1] for c in self.calls()]), (None, verbs))
-            self.assertIn(want, err)
+                                  ("timeout", ["start", "watch", "stop"], "timed out"),
+                                  ("error", ["start", "watch", "stop"], "router down"),
+                                  ("cancel", ["start", "watch", "stop"], "CANCELLED"),
+                                  ("drop", ["start", "watch", "stop"], "watch ended")):
+            for stop in ("", "+stop-fail"):  # not cleanly finished: a failed stop is reported
+                with self.subTest(mode=mode + stop):
+                    self.mode(mode + stop)
+                    result, err = R.call_lor(seats()["astra"], "p", 2)
+                    self.assertEqual((result, [c["argv"][1] for c in self.calls()]), (None, verbs))
+                    self.assertIn(want, err)
+                    self.assertEqual("lor session stop failed" in err and "stop refused" in err, bool(stop))
+        self.mode("stop-fail")  # clean FINISH_REASON_STOP: a failed stop keeps the verdict
+        result, err = R.call_lor(seats()["astra"], "p", 20)
+        self.assertEqual((err, result and result["text"], [c["argv"][1] for c in self.calls()]),
+                         (None, "OK", ["start", "watch", "stop"]))
         for var in L.LOR_SECRET_ENV:
             self.assertEqual(R.redact(f"x {os.environ[var]}"), f"x <{var} redacted>")
         with mock.patch.object(R.subprocess, "Popen", side_effect=OSError) as popen, \
