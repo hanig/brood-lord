@@ -10,8 +10,8 @@
  "_profiles": {
   "plan": "Two contrasting model makers, never escalated. For acceptance criteria and designs, before code exists. Ordered plan reserves can restore quorum and maker contrast after author exclusion. Owner decision 2026-10-19: luna and kimi-k3, OpenAI and Moonshot, chosen by the spec-case benchmark tie rule because the candidate pairs were not separated and Luna had 33% measured code-review recall.",
   "fast": "luna and haiku-5.5; cheapest implementation panel, the first tier of --escalate (owner decision 2026-10-12).",
-  "standard": "terra, kimi-k2.7-code and sonnet-5.5; the usual fixed implementation panel. Escalating from fast retains its verdicts and adds these three seats.",
-  "deep": "2026-11-06: standard + sol + astra. Final --escalate tier or fixed --profile deep. Sol now writes the code; an author does not review or tiebreak its own work, so author exclusion removes sol on Sol-authored units.",
+  "standard": "terra, kimi-k3 and sonnet-5.5; the usual fixed implementation panel (owner decision 2026-11-26: Lor-served kimi-k3 replaces kimi-k2.7-code, so no seat spends OpenRouter/OpenAI API credit). Escalating from fast retains its verdicts and adds these three seats.",
+  "deep": "2026-11-06: standard + sol + astra. 2026-11-26: standard now carries kimi-k3 in place of kimi-k2.7-code. Final --escalate tier or fixed --profile deep. Sol now writes the code; an author does not review or tiebreak its own work, so author exclusion removes sol on Sol-authored units.",
   "committee": "committee.py members, separate from gate profiles. Owner decision 2026-10-13: deepseek-v4-pro, gemini-argon and sonnet-5.5, three model makers. DeepSeek sits in no gate profile.\n2026-11-18: deepseek-v4-pro, gemini-neon and sonnet-5.5.",
   "tiebreak": "2026-11-06: astra-tiebreak took the primary tiebreak seat. The primary is the one enabled reviewer whose profiles are exactly [\"tiebreak\"]. Selected by profile, never name or model. Sol became the code author on 2026-11-06, and sol-tiebreak was disabled. Authors and prior voters are excluded by canonical model identity. When the primary is excluded, an eligible ordered reserve must have a different maker from the primary.",
   "planning": "2026-11-06: gemini-argon, muse-wonder and terra (orchestrator amendment: OpenRouter and OpenAI providers). Astra left planning and gained deep and tiebreak seats as Sol took over code authoring. A model that voted on the committee cannot tiebreak its split.\n2026-11-18: gemini-neon, muse-wonder and terra."
@@ -202,11 +202,8 @@
     "major": 2
    },
    "effort": null,
-   "profiles": [
-    "deep",
-    "standard"
-   ],
-   "enabled": true,
+   "profiles": [],
+   "enabled": false,
    "_cost": {
     "in": 0.67,
     "out": 3.4
@@ -223,7 +220,7 @@
     "output_tokens": 22922,
     "observed_in": "gate run, PR #39 fresh-cycle round 1"
    },
-   "_note": "Owner decision 2026-10-12: leaves plan, retaining standard and deep with null effort unchanged."
+   "_note": "Owner decision 2026-10-12: leaves plan, retaining standard and deep with null effort unchanged.\nOwner decision 2026-11-26: disabled and removed from every profile. Lor-served kimi-k3 replaces it in standard and deep, so the default review profiles incur zero OpenRouter/OpenAI API spend; this seat had no lor_model and could only run on a paid OpenRouter key."
   },
   {
    "name": "sonnet-5.5",
@@ -619,7 +616,9 @@
    "max_output_tokens": 128000,
    "enabled": true,
    "profiles": [
-    "plan"
+    "plan",
+    "standard",
+    "deep"
    ],
    "family": {
     "listing": "openrouter",
@@ -629,7 +628,7 @@
     "suffix": "",
     "major": 3
    },
-   "_note": "Owner decision 2026-10-12: joins astra in the two-seat plan panel. OpenRouter accepted xhigh in the first live probe (finish_reason stop); no high fallback was needed.",
+   "_note": "Owner decision 2026-10-12: joins astra in the two-seat plan panel. OpenRouter accepted xhigh in the first live probe (finish_reason stop); no high fallback was needed.\nOwner decision 2026-11-26: joins standard and deep, replacing kimi-k2.7-code, served through Lor (lor_model) so the default implementation panels incur zero OpenRouter/OpenAI API spend.",
    "_max_output_tokens": "MEASURED through review.PROVIDERS with review.SYSTEM and input ping at the configured effort and 128000 cap. Establishes budget acceptance and usable output, not capacity for every review.",
    "_max_output_tokens_accepted": {
     "date": "2026-10-13",

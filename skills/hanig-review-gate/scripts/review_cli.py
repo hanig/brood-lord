@@ -292,7 +292,7 @@ def escalate(all_reviewers, prompt, args, truncated, label, body_len, facade):
         for rev in panel:
             why = facade.availability(rev)
             (tier_unavail if why else runnable).append(
-                {"name": rev["name"], "reason": why} if why else rev)
+                facade.unavailable_entry(rev, why) if why else rev)
         unavailable.extend(tier_unavail)
         for r in panel:
             seen.add(r["name"])
@@ -315,9 +315,10 @@ def escalate(all_reviewers, prompt, args, truncated, label, body_len, facade):
             for r in res:
                 if r["ok"]:
                     print(f"  {r['name']:<18} {str(r['verdict']).upper():<9} "
-                          f"{len(r['findings'])} finding(s)  {r['elapsed_s']}s")
+                          f"{len(r['findings'])} finding(s)  {r['elapsed_s']}s  "
+                          f"{seat_where(r)}")
                 else:
-                    print(f"  {r['name']:<18} ERROR     {r['error'][:70]}")
+                    print(f"  {r['name']:<18} ERROR     {seat_where(r)}  {r['error'][:70]}")
         bad_so_far = bad_so_far \
             or any(facade.is_confirmed(f) for r in tier_completed for f in r["findings"]) \
             or any(facade.norm(c.get("status")) == "refuted"
@@ -342,6 +343,13 @@ def escalate(all_reviewers, prompt, args, truncated, label, body_len, facade):
                       f"(quorum {args.quorum}); escalating to recruit more.")
             continue
     return completed, failed, unavailable, tiers_run
+
+
+def seat_where(entry):
+    """provider/route[ job N] for human output; receipts carry the fields."""
+    job = entry.get("slurm_job_id")
+    return (f"[{entry.get('provider') or '?'}/{entry.get('route') or '?'}"
+            + (f" job {job}" if job else "") + "]")
 
 
 def decide_state(n_completed, n_failed, confirmed, refuted_claims,
@@ -381,7 +389,7 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason,
         print("REVIEW_ERROR — configuration problem; no review took place.",
               file=facade.sys.stderr)
         return facade.STATES["REVIEW_ERROR"]
-    unavailable = [{"name": m["name"], "reason": facade.availability(m)}
+    unavailable = [facade.unavailable_entry(m, facade.availability(m))
                    for m in members if facade.availability(m)]
     if unavailable:
         state, exchange, completed = "REVIEW_UNAVAILABLE", {
@@ -399,6 +407,15 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason,
                           and row["outcome"] not in ("refuted", "restated")]}
             for m in members]
     args.plan_exchange = exchange
+    # A plan panel runs whole or not at all: one blocked seat leaves both unrun.
+    rows = {"completed": [], "failed": [], "unavailable": []}
+    for m in members:
+        answers = exchange["members"].get(m["name"], {}).get("answers", [])
+        status = ("unavailable" if unavailable else
+                  "completed" if completed and not any(a.get("error") for a in answers)
+                  else "failed")
+        rows[status].append(dict(facade.seat_placement(m), name=m["name"]))
+    args.seat_routes = facade.build_seat_routes(**rows)
     facade.disarm_watchdog()
     journal = facade.record_review_round(args, completed, state)
     report = {"state": state, "checked_at": facade.now(), "reviewed": label,
@@ -406,7 +423,7 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason,
               "quorum": 2, "truncated": truncated, "excluded": excluded,
               "unavailable": unavailable, "results": completed,
               "panel_policy": args.panel_policy, "input_redactions": args.input_redactions,
-              "plan_exchange": exchange, "journal": journal}
+              "plan_exchange": exchange, "seat_routes": args.seat_routes, "journal": journal}
     if args.json:
         print(facade.redact(facade.json.dumps(report, indent=2)))
     else:
@@ -433,7 +450,7 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason,
                     and "non_executable_reason" not in finding):
                 print("      no counterexample")
         for entry in unavailable:
-            print(facade.redact(f"{entry['name']}: {entry['reason']}"))
+            print(facade.redact(f"{entry['name']}: {entry['reason']} {seat_where(entry)}"))
         print(f"\n{state} — two seats, two turns; a pass is not proof.")
     return facade.PLAN_STATES[state]
 
@@ -622,15 +639,17 @@ def _execute_implementation_panel(args, reviewers, prompt, body, label,
     for rev in reviewers:
         why = facade.availability(rev)
         (unavailable if why else runnable).append(
-            {"name": rev["name"], "reason": why} if why else rev)
+            facade.unavailable_entry(rev, why) if why else rev)
 
     if not runnable:
         facade.disarm_watchdog()
+        args.seat_routes = facade.build_seat_routes(unavailable=unavailable)
         journal = facade.record_review_round(args, [], "REVIEW_UNAVAILABLE")
         facade.release_round(args, [], "REVIEW_UNAVAILABLE")
         report = {"state": "REVIEW_UNAVAILABLE", "checked_at": facade.now(),
                   "profile": profile, "profile_reason": profile_reason,
                   "reviewed": label, "unavailable": unavailable, "results": [],
+                  "seat_routes": args.seat_routes,
                   "excluded": excluded,
                   "panel_policy": args.panel_policy,
                   "input_redactions": args.input_redactions,
@@ -643,7 +662,7 @@ def _execute_implementation_panel(args, reviewers, prompt, body, label,
             print("REVIEW_UNAVAILABLE" + policy_text
                   + " — no reviewer could run:")
             for u in unavailable:
-                print(f"  - {u['name']}: {u['reason']}")
+                print(f"  - {u['name']} {seat_where(u)}: {u['reason']}")
             print("\nThis is NOT a pass. The change is unreviewed.")
         facade.sys.exit(facade.STATES["REVIEW_UNAVAILABLE"])
 
@@ -662,11 +681,13 @@ def _execute_implementation_panel(args, reviewers, prompt, body, label,
             reviewers, prompt, args, truncated, label, len(body))
         if not completed and not failed:
             facade.disarm_watchdog()
+            args.seat_routes = facade.build_seat_routes(unavailable=unavailable)
             journal = facade.record_review_round(args, [], "REVIEW_UNAVAILABLE")
             facade.release_round(args, [], "REVIEW_UNAVAILABLE")
             report = {"state": "REVIEW_UNAVAILABLE", "checked_at": facade.now(),
                       "profile": profile, "profile_reason": profile_reason,
                       "reviewed": label, "unavailable": unavailable, "results": [],
+                      "seat_routes": args.seat_routes,
                       "excluded": excluded, "panel_policy": args.panel_policy,
                       "input_redactions": args.input_redactions, "journal": journal}
             if args.json:
@@ -717,6 +738,7 @@ def _collect_and_emit_verdict(args, completed, failed, unavailable, tiers_run,
         n_out_of_scope_critical=len(oos_critical),
         n_incomplete=len(incomplete))
     facade.disarm_watchdog()
+    args.seat_routes = facade.build_seat_routes(completed, failed, unavailable)
     journal = facade.record_review_round(args, completed, state)
     facade.release_round(args, completed, state)
 
@@ -731,8 +753,11 @@ def _collect_and_emit_verdict(args, completed, failed, unavailable, tiers_run,
         "truncated": truncated, "quorum": args.quorum,
         "completed": len(completed), "unavailable": unavailable,
         "failed": [{"name": r["name"], "error": r["error"],
-                    "incomplete": bool(r.get("incomplete"))}
+                    "incomplete": bool(r.get("incomplete")),
+                    "provider": r.get("provider"), "model": r.get("model"),
+                    "route": r.get("route")}
                    for r in failed],
+        "seat_routes": args.seat_routes,
         "confirmed_findings": confirmed, "refuted_claims": refuted_claims,
         "out_of_scope_findings": out_of_scope,
         "rejecting_reviewers": rejecting,
@@ -758,15 +783,16 @@ def _collect_and_emit_verdict(args, completed, failed, unavailable, tiers_run,
                 tok = (f"{r.get('in_tokens') or '?'}in/"
                        f"{r.get('out_tokens') or '?'}out")
                 print(f"  {r['name']:<18} {str(r['verdict']).upper():<9} "
-                      f"{len(r['findings'])} finding(s)  {r['elapsed_s']}s  {tok}")
+                      f"{len(r['findings'])} finding(s)  {r['elapsed_s']}s  {tok}  "
+                      f"{seat_where(r)}")
             for r in failed:
-                print(f"  {r['name']:<18} ERROR     {r['error'][:80]}")
+                print(f"  {r['name']:<18} ERROR     {seat_where(r)}  {r['error'][:80]}")
         else:
             spent = sum((r.get("out_tokens") or 0) for r in completed)
             print(f"  tiers run: {' -> '.join(tiers_run)}  "
                   f"({len(completed)} verdict(s), {spent} output tokens)")
         for u in unavailable:
-            print(f"  {u['name']:<18} SKIPPED   {u['reason']}")
+            print(f"  {u['name']:<18} SKIPPED   {seat_where(u)}  {u['reason']}")
 
         if rejecting and not confirmed and not refuted_claims:
             print(f"\nREJECTED BY: {', '.join(rejecting)}")

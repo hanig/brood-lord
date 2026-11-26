@@ -193,21 +193,40 @@ class TestLor(unittest.TestCase):
             self.assertEqual(R.effective_provider(resolved), rev["provider"])
             if name in lor_seats and rev.get("enabled", True):
                 self.assertIsNone(R.availability(rev))
-        self.assertEqual(R.availability(seats()["kimi-k2.7-code"]), "OPENROUTER_API_KEY not set")
+        # 2026-11-26: the paid-API-only seat is disabled, not merely unrouted.
+        self.assertEqual(R.availability(seats()["kimi-k2.7-code"]), "disabled in reviewers.json")
         out = io.StringIO()
-        with redirect_stdout(out), mock.patch.object(R._subs, "claude_availability", return_value=None), \
+        with redirect_stdout(out), mock.patch.dict(os.environ, {"HANIG_REVIEW_SLURM": "off"}), \
+                mock.patch.object(R._subs, "claude_availability", return_value=None), \
                 mock.patch.object(R._subs, "codex_availability", return_value=None):
             R.cmd_list(R.load_reviewers(), probe=False)
-        rows = dict(line.split()[:2] for line in out.getvalue().splitlines()[1:] if line.strip())
-        self.assertEqual({n for n, p in rows.items() if p == "lor"}, lor_seats)
-        self.assertEqual((rows["terra"], rows["sonnet-5.5"]), ("codex", "claude"))
+        header, *body = out.getvalue().splitlines()
+        self.assertEqual(header.split()[:4], ["REVIEWER", "PROVIDER", "ROUTE", "MODEL"])
+        rows = {line.split()[0]: line.split()[1:3] for line in body if line.strip()
+                and not line.split()[0].isdigit() and not line.startswith("No reviewer")}
+        self.assertEqual({n for n, (p, _r) in rows.items() if p == "lor"}, lor_seats)
+        self.assertEqual({n for n, (_p, r) in rows.items() if r == "lor"}, lor_seats)
+        self.assertEqual((rows["terra"], rows["sonnet-5.5"]),
+                         (["codex", "cli_local"], ["claude", "cli_local"]))
         explicit = {"name": "x", "provider": "lor", "model": "m"}
-        for env in ({"LOR_SESSION_ID": ""}, {L.OPT_OUT: "1"}):
-            with self.subTest(env=env), mock.patch.dict(os.environ, env, OPENAI_API_KEY=""):
-                self.assertEqual(R.effective_provider(seats()["astra"]), "openai")
-                self.assertEqual(R.availability(seats()["astra"]), "OPENAI_API_KEY not set")
-                self.assertIn("lor provider disabled", R.availability(explicit))
-                self.assertIn("lor provider disabled", R.call_lor(explicit, "p", 5)[1])
+        # Fail closed: outside a Lor session a lor_model seat stays `lor` and is
+        # blocked with an actionable reason; a paid key is never used for it.
+        with mock.patch.dict(os.environ, {"LOR_SESSION_ID": ""}, OPENAI_API_KEY="sk-paid"):
+            for rev in (seats()["astra"], explicit):
+                self.assertEqual((R.effective_provider(rev), R.seat_route(rev)), ("lor", "lor"))
+                why = R.availability(rev)
+                self.assertIn(f"lor routing required for {rev['name']}: LOR_SESSION_ID unset", why)
+                self.assertIn(f"{L.OPT_OUT}=1", why)
+                self.assertIn("lor routing required", R.call_lor(rev, "p", 5)[1])
+            result = R.run_one(seats()["astra"], "review", 5)
+            self.assertEqual((result["ok"], result["provider"], result["route"]), (False, "lor", "lor"))
+        self.assertEqual(self.calls(), [])
+        with mock.patch.dict(os.environ, {L.OPT_OUT: "1"}, OPENAI_API_KEY=""):
+            self.assertEqual((R.effective_provider(seats()["astra"]), R.seat_route(seats()["astra"])),
+                             ("openai", "api"))
+            self.assertEqual(R.availability(seats()["astra"]), "OPENAI_API_KEY not set")
+            self.assertIn("lor provider disabled", R.availability(explicit))
+            self.assertIn("lor provider disabled", R.call_lor(explicit, "p", 5)[1])
 
     def test_committee_routes_lor_and_contrasts_effective_providers(self):
         history = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
@@ -217,7 +236,7 @@ class TestLor(unittest.TestCase):
         self.mode("timeout")
         self.assertIn("timed out", C.ask_member(seats()["gemini-neon"], [], "p", 1)[1])
         for profile in ("committee", "planning", "plan"):
-            for env in ({}, {"LOR_SESSION_ID": ""}):
+            for env in ({}, {"LOR_SESSION_ID": ""}, {L.OPT_OUT: "1"}):
                 with self.subTest(profile=profile, env=env), mock.patch.dict(os.environ, env):
                     panels = [[r for r in R.load_reviewers() if R.in_profile(r, profile)]]
                     if profile != "plan":
@@ -226,7 +245,8 @@ class TestLor(unittest.TestCase):
                     for panel in panels:
                         self.assertGreaterEqual(len(C.transports(panel)), 2)
                         self.assertGreaterEqual(len(R._panels.panel_makers(panel)), 2)
-                    self.assertEqual("lor" in C.transports(panels[0]), not env)
+                    # Only an explicit opt-out leaves Lor: a missing session blocks.
+                    self.assertEqual("lor" in C.transports(panels[0]), L.OPT_OUT not in env)
         with mock.patch("sys.stderr", io.StringIO()), self.assertRaisesRegex(SystemExit, "provider 'lor'"):
             C.pick_members(["gemini-neon,muse-wonder"])
         data = json.loads(R.CONFIG.read_text())
