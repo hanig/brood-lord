@@ -25,6 +25,7 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(ROOT / "tests"))
 import review as R  # noqa: E402
 import test_lor_provider as TL  # noqa: E402  (module object only: its fake lor CLI)
+from tests.watchdog_guard import guarded_main  # noqa: E402
 
 RS = R._subs
 SL = RS._slurm
@@ -37,7 +38,7 @@ SECRETS = {"LOR_SESSION_TOKEN": "lor-sess-SECRET", "LOR_ROUTER_TOKEN": "lor-rout
 # Fake Slurm: sbatch logs argv, env, script text and the stage dir mode, then
 # runs the job script detached under a bare environment (like --export=NONE).
 SBATCH = r'''#!%(py)s
-import json, os, stat, subprocess, sys
+import fcntl, json, os, stat, subprocess, sys
 d = %(d)r
 mode = open(d + "/mode").read().strip()
 script = sys.argv[-1]
@@ -45,11 +46,14 @@ st = os.stat(os.path.dirname(script))
 rec = {"argv": sys.argv[1:], "env": dict(os.environ), "script": open(script).read(),
        "stage": os.path.dirname(script), "stage_mode": stat.S_IMODE(st.st_mode),
        "stdin_exists": os.path.exists(os.path.join(os.path.dirname(script), "stdin.txt"))}
-open(d + "/sbatch.log", "a").write(json.dumps(rec) + "\n")
+with open(d + "/sbatch.log", "a+") as log:  # concurrent seats: allocate ids atomically
+    fcntl.flock(log, fcntl.LOCK_EX)
+    log.seek(0)
+    jid = str(4001 + len(log.read().splitlines()))
+    log.write(json.dumps(dict(rec, jid=jid)) + "\n")
+    log.flush()
 if mode == "submit-fail":
     sys.exit("sbatch: error: invalid partition")
-n = len(open(d + "/sbatch.log").read().splitlines())
-jid = str(4000 + n)
 job_env = {"SLURM_JOB_ID": jid, "PATH": "/usr/bin:/bin"}
 if os.path.exists(d + "/slurm-tmpdir"):  # node-local scratch the scheduler exports
     job_env["SLURM_TMPDIR"] = open(d + "/slurm-tmpdir").read()
@@ -87,18 +91,40 @@ except (OSError, ValueError):
 SACCT = r'''#!%(py)s
 print("FAILED")
 '''
+# Fake sinfo/scontrol: log argv; output, exit code and delay come from files.
+# The default (no sinfo-out file) is a one-partition site with no _batch sibling.
+SINFO = r'''#!%(py)s
+import os, sys, time
+d = %(d)r
+open(d + "/sinfo.log", "a").write(" ".join(sys.argv[1:]) + "\n")
+if os.path.exists(d + "/sinfo-sleep"):
+    time.sleep(float(open(d + "/sinfo-sleep").read()))
+out = open(d + "/sinfo-out").read() if os.path.exists(d + "/sinfo-out") else "all* up\n"
+sys.stdout.write(out)
+sys.exit(int(open(d + "/sinfo-rc").read()) if os.path.exists(d + "/sinfo-rc") else 0)
+'''
+SCONTROL = r'''#!%(py)s
+import os, sys
+d = %(d)r
+open(d + "/scontrol.log", "a").write(" ".join(sys.argv[1:]) + "\n")
+if os.path.exists(d + "/scontrol-out"):
+    sys.stdout.write(open(d + "/scontrol-out").read())
+else:
+    print("PartitionName=%%s\n   QoS=N/A DefaultTime=NONE" %% sys.argv[-1])
+'''
 # Fake claude/codex: log where and with what environment they ran.
 CLAUDE = r'''#!%(py)s
 import json, os, sys
 d = %(d)r
 auth = open(d + "/claude-auth").read()
+verdict = open(d + "/verdict").read() if os.path.exists(d + "/verdict") else %(verdict)r
 open(d + "/cli.log", "a").write(json.dumps({"cli": "claude", "argv": sys.argv[1:], "cwd": os.getcwd(),
     "env": dict(os.environ)}) + "\n")
 if sys.argv[1:3] == ["auth", "status"]:
     print(auth)
     sys.exit(0)
 sys.stdin.read()
-print(json.dumps({"type": "result", "result": %(verdict)r, "stop_reason": "end_turn",
+print(json.dumps({"type": "result", "result": verdict, "stop_reason": "end_turn",
                   "usage": {"input_tokens": 11, "output_tokens": 7},
                   "modelUsage": {"claude-sonnet-5-5": {"canonicalModel": "claude-sonnet-5-5"}},
                   "uuid": "u-1"}))
@@ -108,9 +134,10 @@ import json, os, sys
 d = %(d)r
 open(d + "/cli.log", "a").write(json.dumps({"cli": "codex", "argv": sys.argv[1:], "cwd": os.getcwd(),
     "env": dict(os.environ)}) + "\n")
+verdict = open(d + "/verdict").read() if os.path.exists(d + "/verdict") else %(verdict)r
 sys.stdin.read()
 for ev in ({"type": "thread.started", "thread_id": "thr-1"},
-           {"type": "item.completed", "item": {"type": "agent_message", "text": %(verdict)r}},
+           {"type": "item.completed", "item": {"type": "agent_message", "text": verdict}},
            {"type": "turn.completed", "usage": {"input_tokens": 5, "output_tokens": 3}}):
     print(json.dumps(ev))
 '''
@@ -120,6 +147,21 @@ VERDICT = json.dumps({"verdict": "upheld", "findings": [], "claims": [
     "notes": ""})
 LOR_FAKE = TL.FAKE.replace('else "OK"', "else %r" % VERDICT)
 CLAUDE_AI = json.dumps({"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty"})
+PLAN_VERDICT = json.dumps({"verdict": "upheld", "findings": [], "claims": [
+    {"claim_index": 0, "claim": R.HONEST_RUN_CLAIM, "status": "supported",
+     "why": "the plan keeps every honest run on its unchanged success path"}],
+    "notes": "", "own_findings": [], "peer_responses": []})
+# A review seat run under the real SIGALRM/SIGTERM handlers, as a panel runs it.
+SIGTERM_CHILD = r'''
+import concurrent.futures, sys
+sys.path.insert(0, sys.argv[1])
+import review as R
+seat = {r["name"]: r for r in R.load_reviewers()}[sys.argv[2]]
+R.arm_watchdog(3600)
+with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+    print(ex.submit(R.run_one, seat, "review", 120).result())
+R.disarm_watchdog()
+'''
 SAFE_KEYS = {"HOME", "USER", "PATH", "LANG", "LC_ALL", "TMPDIR", "CLAUDE_CONFIG_DIR",
              "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CODEX_HOME"}
 # Apple's Python runtime injects these into os.environ even under `env -i`;
@@ -148,7 +190,8 @@ class SlurmHost(unittest.TestCase):
             {"auth_mode": "chatgpt", "tokens": {"access_token": "chatgpt-tok"}}))
         fmt = {"py": sys.executable, "d": str(self.d), "verdict": VERDICT}
         for name, body in (("sbatch", SBATCH), ("squeue", SQUEUE), ("scancel", SCANCEL),
-                           ("sacct", SACCT), ("claude", CLAUDE), ("codex", CODEX),
+                           ("sacct", SACCT), ("sinfo", SINFO), ("scontrol", SCONTROL),
+                           ("claude", CLAUDE), ("codex", CODEX),
                            ("lor", LOR_FAKE % sys.executable)):
             (self.bin / name).write_text(body % fmt if name != "lor" else body)
             (self.bin / name).chmod(0o755)
@@ -408,6 +451,313 @@ class TestSlurmExecution(SlurmHost):
         for key in ("OPENAI_API_KEY", "LOR_ROUTER_TOKEN", "HOME", "TMPDIR"):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 SL.runtime_env({key: "x"})
+
+class TestAgentHostDetection(SlurmHost):
+    AGENT = {"SLURM_JOB_ID": "999", "SLURM_JOB_NAME": "sh_agent"}
+
+    def test_agent_host_job_shapes(self):
+        cases = ((self.AGENT, True),
+                 ({"SLURM_JOB_ID": "999", "SLURM_JOB_NAME": " SH_AGENT "}, True),
+                 ({"SLURM_JOB_ID": "999", "SLURM_JOB_NAME": "sh_agent-2"}, True),
+                 ({"SLURM_JOB_ID": "999", "SLURM_JOB_NAME": "sh_agent_x"}, True),
+                 ({"SLURM_JOB_ID": "999", "SLURM_PTY_PORT": "39995"}, True),
+                 ({"SLURM_JOB_ID": "999", "SLURM_PTY_PORT": "39995", "SLURM_JOB_NAME": "bash"}, True),
+                 ({"SLURM_JOB_ID": "999", "SLURM_JOB_NAME": "sh_agentx"}, False),
+                 ({"SLURM_JOB_ID": "999", "SLURM_PTY_PORT": "39995", "LOR_SESSION_ID": ""}, False),
+                 ({"SLURM_JOB_ID": "999", "SLURM_PTY_PORT": "39995",
+                   "SLURM_JOB_NAME": "hanig-rev-terra"}, False),
+                 ({"SLURM_JOB_ID": "999"}, False),
+                 ({"SLURM_JOB_NAME": "sh_agent"}, False),
+                 ({"SLURM_PTY_PORT": "39995"}, False))
+        for env, want in cases:
+            with self.subTest(env=env), mock.patch.dict(os.environ, env):
+                self.assertIs(SL.is_agent_host_job(), want)
+                self.assertIs(SL.is_agent_host_job(dict(os.environ)), want)
+
+    def test_auto_offloads_from_agent_host_but_never_from_a_compute_job(self):
+        claude_seat = seats()["sonnet-5.5"]
+        cases = ((self.AGENT, True),
+                 ({"SLURM_JOB_ID": "999", "SLURM_PTY_PORT": "39995"}, True),
+                 ({"SLURM_JOB_ID": "999"}, False),
+                 ({"SLURM_JOB_ID": "999", "SLURM_JOB_NAME": "hanig-rev-terra"}, False),
+                 ({"SLURM_JOB_ID": "999", "SLURM_JOB_NAME": "hanig-rev-terra",
+                   "SLURM_PTY_PORT": "39995"}, False),
+                 ({"SLURM_JOB_ID": "999", "SLURM_PTY_PORT": "39995", "LOR_SESSION_ID": ""}, False),
+                 (dict(self.AGENT, HANIG_REVIEW_SLURM="off"), False),
+                 (dict(self.AGENT, PATH="/usr/bin:/bin"), False),
+                 (dict(self.AGENT, PATH="/usr/bin:/bin", HANIG_REVIEW_SLURM="force"), True))
+        for env, want in cases:
+            with self.subTest(env=env), mock.patch.dict(os.environ, env):
+                self.assertIs(RS.use_slurm_offload(), want)
+                self.assertEqual(R.seat_route(claude_seat), "cli_slurm" if want else "cli_local")
+
+    def test_agent_host_seat_runs_as_a_job(self):
+        with mock.patch.dict(os.environ, dict(self.AGENT, SLURM_JOB_PARTITION="all")):
+            result, err = R.call_codex(seats()["terra"], "review", 30)
+        self.assertIsNone(err)
+        self.assertEqual((result["route"], result["slurm_job_id"]), ("cli_slurm", "4001"))
+        self.assert_cleaned(["4001"])
+
+
+class TestBatchPartition(SlurmHost):
+    AGENT = {"SLURM_JOB_ID": "999", "SLURM_JOB_NAME": "sh_agent", "SLURM_JOB_PARTITION": "cpu"}
+    SPLIT = "cpu* up\ncpu_batch up\n"
+
+    def sinfo(self, out=None, rc=None, sleep=None):
+        for name, value in (("sinfo-out", out), ("sinfo-rc", rc), ("sinfo-sleep", sleep)):
+            if value is not None:
+                (self.d / name).write_text(str(value))
+
+    def submit(self, env=()):
+        for name in ("sbatch.log", "sinfo.log", "scontrol.log"):
+            (self.d / name).unlink(missing_ok=True)
+        with mock.patch.dict(os.environ, dict(env)):
+            self.assertIsNone(R.call_codex(seats()["terra"], "review", 30)[1])
+        (sub,) = self.log("sbatch.log")
+        return [a for a in sub["argv"] if a.startswith("--partition") or a == "-p"
+                or (a.startswith("-p") and not a.startswith("--"))]
+
+    def test_agent_host_on_interactive_default_gets_its_batch_sibling(self):
+        self.sinfo(self.SPLIT)
+        self.assertEqual(self.submit(self.AGENT), ["--partition=cpu_batch"])
+        self.assertEqual(self.log("sinfo.log"), ["-h -o %P %a"])
+        self.assertEqual(self.log("scontrol.log"), [])  # the job shape decided
+        self.assertEqual(self.submit(dict(self.AGENT, SLURM_JOB_PARTITION="")),
+                         ["--partition=cpu_batch"])
+
+    def test_interactive_qos_selects_the_batch_sibling_from_a_login_node(self):
+        self.sinfo(self.SPLIT)
+        (self.d / "scontrol-out").write_text(
+            "PartitionName=cpu\n   AllowGroups=ALL Default=YES QoS=cpu_interact\n")
+        self.assertEqual(self.submit(), ["--partition=cpu_batch"])
+        self.assertEqual(self.log("scontrol.log"), ["show partition cpu"])
+        # An agent host on another partition defers to the same QoS check.
+        self.assertEqual(self.submit(dict(self.AGENT, SLURM_JOB_PARTITION="gpu")),
+                         ["--partition=cpu_batch"])
+        (self.d / "scontrol-out").write_text("PartitionName=cpu\n   QoS=normal\n")
+        self.assertEqual(self.submit(), [])
+        self.assertEqual(self.submit(dict(self.AGENT, SLURM_JOB_PARTITION="gpu")), [])
+
+    def test_sites_without_a_batch_sibling_are_untouched(self):
+        self.assertEqual(self.submit(self.AGENT), [])  # default fake: "all* up" only
+        self.assertEqual(self.submit(), [])
+        for out in ("cpu* up\ncpu_batch down\n", "cpu up\ncpu_batch up\n",
+                    "gpu* up\ncpu_batch up\n", "", "garbage\n"):
+            with self.subTest(out=out):
+                self.sinfo(out)
+                self.assertEqual(self.submit(self.AGENT), [])
+
+    def test_explicit_partition_always_wins(self):
+        self.sinfo(self.SPLIT)
+        self.assertEqual(self.submit(dict(self.AGENT, HANIG_REVIEW_SLURM_PARTITION="custom")),
+                         ["--partition=custom"])
+        self.assertEqual(self.log("sinfo.log"), [], "probed a configured partition")
+        for extra in ("-p custom", "-pcustom", "--partition custom", "--partition=custom",
+                      "--gres=none -p custom"):
+            with self.subTest(extra=extra):
+                got = self.submit(dict(self.AGENT, HANIG_REVIEW_SLURM_EXTRA_ARGS=extra))
+                self.assertNotIn("--partition=cpu_batch", got)
+                self.assertTrue(got)
+                self.assertEqual(self.log("sinfo.log"), [])
+        self.assertEqual(self.submit(dict(self.AGENT, HANIG_REVIEW_SLURM_EXTRA_ARGS="--gres=none")),
+                         ["--partition=cpu_batch"])
+
+    def test_probe_failures_fail_safe_to_no_partition(self):
+        self.sinfo(self.SPLIT, rc=1)
+        self.assertEqual(self.submit(self.AGENT), [])
+        (self.d / "sinfo-rc").unlink()
+        self.sinfo(sleep=3)
+        with mock.patch.object(SL, "PARTITION_PROBE_SECONDS", 1.0):
+            started = time.monotonic()
+            self.assertEqual(self.submit(self.AGENT), [])
+            self.assertLess(time.monotonic() - started, 2.9)
+        (self.d / "sinfo-sleep").unlink()
+        (self.bin / "sinfo").unlink()
+        tools = dict(SL.slurm_tools(), sinfo=None)
+        self.assertIsNone(SL.auto_batch_partition(tools, dict(os.environ, **self.AGENT), None))
+        self.assertIsNone(SL.slurm_tools(dict(os.environ, PATH=str(self.bin)))["sinfo"])
+        self.assertEqual(self.submit(self.AGENT), [])  # offload still submits
+        self.assertTrue(RS.use_slurm_offload())
+
+    def test_availability_checks_never_probe_partitions(self):
+        self.sinfo(self.SPLIT)
+        with mock.patch.dict(os.environ, self.AGENT):
+            for rev in seats().values():
+                R.availability(rev)
+                R.seat_route(rev)
+        self.assertEqual(self.log("sinfo.log"), [])
+        self.assertEqual(self.log("scontrol.log"), [])
+
+
+class TestPlanSlurmReceipts(SlurmHost):
+    def test_plan_receipts_carry_every_turns_slurm_job(self):
+        jroot = self.d.parent / (R.JOURNAL_TEST_ROOT_PREFIX + "plan")
+        jroot.mkdir()
+        plan = jroot / "plan.md"
+        plan.write_text("Read records sequentially and emit them without sorting.\n")
+        (self.d / "verdict").write_text(PLAN_VERDICT)
+        roster = seats()
+        members = [dict(roster[n], profiles=["plan"]) for n in ("sonnet-5.5", "terra")]
+        argv = ["review.py", "--kind", "plan", "--file", str(plan), "--json",
+                "--claim", R.HONEST_RUN_CLAIM]
+        out = io.StringIO()
+        state = jroot / "state"
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(state),
+                                          R.JOURNAL_TEST_MARKER: str(jroot)}), \
+                mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(R, "load_effective_reviewers", return_value=members), \
+                redirect_stdout(out), redirect_stderr(io.StringIO()), \
+                self.assertRaises(SystemExit) as stopped:
+            guarded_main(R.main)
+        report = json.loads(out.getvalue())
+        self.assertEqual((stopped.exception.code, report["state"]), (0, "PLAN_PASS"))
+        jobs = {}
+        for sub in self.log("sbatch.log"):  # in submission order per seat
+            name = next(a for a in sub["argv"] if a.startswith("--job-name="))
+            jobs.setdefault(name.split("hanig-rev-", 1)[1], []).append(sub["jid"])
+        self.assertEqual({k: len(v) for k, v in jobs.items()}, {"sonnet-5.5": 2, "terra": 2})
+        record = [json.loads(x) for x in Path(report["journal"]["path"]).read_text().splitlines()]
+        self.assertEqual(len(record), 1)
+        for source in (report["seat_routes"], record[0]["seat_routes"]):
+            for seat, ids in jobs.items():
+                with self.subTest(seat=seat):
+                    self.assertEqual(source[seat], {
+                        "provider": roster[seat]["provider"], "model": roster[seat]["model"],
+                        "route": "cli_slurm", "status": "completed",
+                        "slurm_job_id": ids[-1], "slurm_job_ids": ids})
+        for seat, ids in jobs.items():
+            usages = [a["usage"] for a in report["plan_exchange"]["members"][seat]["answers"]]
+            self.assertEqual([(u["route"], u["slurm_job_id"]) for u in usages],
+                             [("cli_slurm", i) for i in ids])
+        self.assertEqual(sorted(self.log("scancel.log")), sorted(sum(jobs.values(), [])))
+        self.assertEqual(list((state / "hanig-review-gate" / "slurm-seats").iterdir()), [])
+
+    def test_plan_job_ids_come_from_usage_or_a_failed_turns_error(self):
+        ids = R._cli.plan_slurm_job_ids
+        self.assertEqual(ids([
+            {"usage": {"slurm_job_id": "11", "route": "cli_slurm"}, "error": None},
+            {"usage": None, "error": "slurm job 12 ended (FAILED) without writing rc.txt"},
+            {"usage": {"slurm_job_id": "11"}, "error": None},
+            {"usage": {"in_tokens": 1}, "error": "codex CLI error: boom"},
+            {"usage": None, "error": "xslurm job 99 is not a job reference"},
+            "not an answer"]), ["11", "12"])
+        self.assertEqual(ids([]), [])
+        routes = R.build_seat_routes(failed=[{"name": "s", "provider": "codex", "model": "m",
+                                              "route": "cli_slurm", "slurm_job_id": "12",
+                                              "slurm_job_ids": ["11", "12"]}])
+        self.assertEqual(routes["s"]["slurm_job_ids"], ["11", "12"])
+
+    def test_ledger_rejects_malformed_slurm_job_ids(self):
+        good = {"provider": "codex", "model": "m", "route": "cli_slurm", "status": "completed",
+                "slurm_job_id": "4002", "slurm_job_ids": ["4001", "4002"]}
+        record, line = R.prepare_review_journal("implementation", 1, [], "REVIEW_PASS", [],
+                                                seat_routes={"s": good})
+        self.assertEqual(json.loads(line)["seat_routes"]["s"]["slurm_job_ids"], ["4001", "4002"])
+        for bad in ({"slurm_job_ids": []}, {"slurm_job_ids": "4002"},
+                    {"slurm_job_ids": ["4001", ""]}, {"slurm_job_ids": ["4001", 4002]},
+                    {"slurm_job_ids": ["4002", "4001"]}, {"slurm_job_id": ""},
+                    {"slurm_job_id": 4002, "slurm_job_ids": [4002]}):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "slurm_job_id"):
+                R.prepare_review_journal("implementation", 1, [], "REVIEW_PASS", [],
+                                         seat_routes={"s": dict(good, **bad)})
+
+
+class TestSigtermCleanup(SlurmHost):
+    def wait_for(self, predicate, seconds=30.0):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            if predicate():
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_sigterm_cancels_the_job_removes_staging_and_exits_143(self):
+        self.mode("hang")
+        proc = subprocess.Popen([sys.executable, "-c", SIGTERM_CHILD, str(SCRIPTS), "sonnet-5.5"],
+                                env=dict(os.environ), stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        # squeue runs only after the job is registered as active.
+        self.assertTrue(self.wait_for(lambda: self.log("squeue.log")), "seat never polled")
+        stages = list(self.stage_base().iterdir())
+        self.assertEqual(len(stages), 1)
+        proc.send_signal(signal.SIGTERM)
+        out, err = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 128 + signal.SIGTERM, err.decode())
+        self.assertIn("SIGTERM", err.decode())
+        self.assertEqual(out.decode(), "")  # no verdict was printed
+        self.assert_cleaned(["4001"])
+        self.assertFalse(stages[0].exists())
+
+    def test_cancel_removes_a_stage_whose_job_was_never_registered(self):
+        stage = SL._private_dir(SL.stage_root())
+        self.assertIn(stage, SL._ACTIVE_STAGES)
+        self.assertNotIn(stage, [v[2] for v in SL._ACTIVE.values()])
+        SL.cancel_active_jobs()
+        SL.cancel_active_jobs()  # idempotent
+        self.assertFalse(stage.exists())
+        self.assertEqual((SL._ACTIVE, SL._ACTIVE_STAGES), ({}, set()))
+        self.assertEqual(self.log("scancel.log"), [])
+
+    def test_shutdown_during_sbatch_cancels_the_late_job(self):
+        self.mode("hang")
+        real_call = SL._call
+
+        def sigterm_during_sbatch(argv, *args, **kwargs):
+            got = real_call(argv, *args, **kwargs)
+            if os.path.basename(argv[0]) == "sbatch":
+                SL.cancel_active_jobs()  # lands before the job id is registered
+            return got
+
+        with mock.patch.object(SL, "_call", side_effect=sigterm_during_sbatch):
+            result, err = R.call_claude(seats()["sonnet-5.5"], "review", 30)
+        self.assertIsNone(result)
+        self.assertIn("slurm job 4001 cancelled: shutdown during submission", err)
+        self.assert_cleaned(["4001"])
+        self.assertEqual((SL._ACTIVE, SL._ACTIVE_STAGES), ({}, set()))
+
+    @unittest.skipUnless(hasattr(signal, "SIGALRM"), "requires POSIX alarms")
+    def test_arm_installs_and_disarm_restores_the_previous_handler(self):
+        saved = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGALRM)}
+        for sig, handler in saved.items():
+            self.addCleanup(signal.signal, sig, handler)
+        self.addCleanup(signal.alarm, 0)
+
+        def previous(_s, _f):
+            pass
+
+        for seconds in (3600, 0):
+            with self.subTest(seconds=seconds):
+                signal.signal(signal.SIGTERM, previous)
+                R.arm_watchdog(seconds)
+                R.arm_watchdog(seconds)  # re-arming never captures our own handler
+                self.assertIs(signal.getsignal(signal.SIGTERM), R._on_sigterm)
+                R.disarm_watchdog()
+                self.assertIs(signal.getsignal(signal.SIGTERM), previous)
+                R.disarm_watchdog()
+                self.assertIs(signal.getsignal(signal.SIGTERM), previous)
+        import threading
+        signal.signal(signal.SIGTERM, previous)
+        worker = threading.Thread(target=R.arm_watchdog, args=(0,))
+        worker.start()
+        worker.join()
+        self.assertIs(signal.getsignal(signal.SIGTERM), previous)  # main thread only
+        R.disarm_watchdog()
+        self.assertIs(signal.getsignal(signal.SIGTERM), previous)
+
+    def test_handler_cancels_active_jobs_and_exits_143(self):
+        stage = SL._private_dir(SL.stage_root())
+        SL._ACTIVE["4998"] = (SL.slurm_tools(), SL.submission_env(RS._strip_default_key), stage)
+        saved = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, saved)
+        with mock.patch.object(R.os, "_exit", side_effect=SystemExit) as exit_, \
+                redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
+            R._on_sigterm(signal.SIGTERM, None)
+        exit_.assert_called_once_with(143)
+        self.assertIn("SIGTERM", err.getvalue())
+        self.assertEqual(self.log("scancel.log"), ["4998"])
+        self.assertFalse(stage.exists())
+        self.assertEqual((SL._ACTIVE, SL._ACTIVE_STAGES), ({}, set()))
 
 
 class TestFailClosedLorRouting(SlurmHost):

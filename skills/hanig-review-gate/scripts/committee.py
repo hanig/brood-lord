@@ -266,6 +266,11 @@ def _ask_member(member, history, prompt, timeout, *, system=None,
         if err:
             return None, err, None
         usage = {"in_tokens": result["in_tokens"], "out_tokens": result["out_tokens"]}
+        if provider in ("claude", "codex") and result.get("slurm_job_id") is not None:
+            # Where an offloaded turn ran: a plan receipt names every Slurm job
+            # it used. A local turn's usage stays exactly the token counts.
+            usage.update(route=result.get("route") or "cli_slurm",
+                         slurm_job_id=result["slurm_job_id"])
         if require_complete and result["status"] != "completed":
             return None, f"incomplete/truncated {label} reply", usage
         return result["text"], None, usage

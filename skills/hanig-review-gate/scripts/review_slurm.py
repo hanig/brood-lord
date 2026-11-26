@@ -25,6 +25,21 @@ subscription credentials must be reachable from compute nodes; an explicitly
 configured stage directory is trusted as given; a process killed by SIGKILL
 cannot run `scancel`, so `--time` bounds any such orphan.
 
+Agent hosts: an interactive agent-host allocation (`SLURM_JOB_NAME=sh_agent`,
+or `SLURM_PTY_PORT` plus `LOR_SESSION_ID` outside a `hanig-rev-*` seat job) is
+a constrained login-like host, so `auto` still offloads from it, while any
+other Slurm job (a batch job or an offloaded seat) never offloads again. When
+no partition is configured, `auto_batch_partition` may pick `<default>_batch`
+from a read-only, 5s-bounded `sinfo` (and optional `scontrol`) query; any
+missing tool or error leaves the partition to the site default.
+
+Shutdown: every staging directory is tracked from creation until removal and
+every submitted job until it is cancelled, so `cancel_active_jobs()` (watchdog
+and SIGTERM paths, which skip `finally`) cancels all of them and removes every
+staging directory, including one whose `sbatch` had not yet returned. A job
+whose submission races that cleanup finds its staging directory gone and is
+cancelled by its own seat once `sbatch` returns.
+
 Python 3.8+, standard library only. Must never import review.py.
 """
 
@@ -57,9 +72,17 @@ POLL_SECONDS = 1.0
 SQUEUE_SECONDS = 10.0
 GRACE_SECONDS = 15.0
 COMMAND_TIMEOUT = 30.0
+OPTIONAL_TOOLS = ("sacct", "sinfo", "scontrol")
+AGENT_HOST_JOB = "sh_agent"
+SEAT_JOB_PREFIX = "hanig-rev-"
+PARTITION_PROBE_SECONDS = 5.0
 _JOB_ID = re.compile(r"^([0-9]+)(?:;[A-Za-z0-9_.-]+)?$")
+_QOS = re.compile(r"(?:^|\s)QoS=(\S+)")
 _ACTIVE = {}
-_ACTIVE_LOCK = threading.Lock()
+_ACTIVE_STAGES = set()
+# Reentrant: the SIGTERM/watchdog handler runs cancel_active_jobs() on the main
+# thread, which may already hold the lock between two bytecodes.
+_ACTIVE_LOCK = threading.RLock()
 
 
 def _env(environ):
@@ -84,27 +107,49 @@ def _which(name, environ=None):
 
 
 def slurm_tools(environ=None):
-    """{tool: absolute path or None} for sbatch, squeue, scancel and sacct."""
-    return {name: _which(name, environ) for name in TOOLS + ("sacct",)}
+    """{tool: absolute path or None}: required sbatch, squeue and scancel, plus
+    optional sacct, sinfo and scontrol (never needed to submit)."""
+    return {name: _which(name, environ) for name in TOOLS + OPTIONAL_TOOLS}
 
 
 def in_slurm_job(environ=None):
     return bool((_env(environ).get("SLURM_JOB_ID") or "").strip())
 
 
+def is_agent_host_job(environ=None):
+    """Whether this Slurm job is an interactive agent-host allocation.
+
+    True inside a Slurm job named `sh_agent` (or `sh_agent-*`/`sh_agent_*`), or
+    one with a pty (`SLURM_PTY_PORT`) and a Lor session (`LOR_SESSION_ID`)
+    whose name is not an offloaded seat's `hanig-rev-*`. Offloaded seats run
+    with `--export=NONE` under `env -i`, so they never carry LOR_SESSION_ID.
+    """
+    env = _env(environ)
+    if not in_slurm_job(env):
+        return False
+    name = (env.get("SLURM_JOB_NAME") or "").strip().lower()
+    if name == AGENT_HOST_JOB or name.startswith((AGENT_HOST_JOB + "-", AGENT_HOST_JOB + "_")):
+        return True
+    return bool((env.get("SLURM_PTY_PORT") or "").strip()
+                and (env.get("LOR_SESSION_ID") or "").strip()
+                and not name.startswith(SEAT_JOB_PREFIX))
+
+
 def use_slurm_offload(environ=None):
     """Whether claude/codex CLI seats run as Slurm jobs instead of locally.
 
-    auto: sbatch, squeue and scancel are on PATH and this process is not
-    already inside a Slurm job. force: always (a missing tool then fails the
-    seat closed instead of running the CLI on the login node). off: never.
+    auto: sbatch, squeue and scancel are on PATH and this process is either
+    outside any Slurm job or inside an agent-host job (`is_agent_host_job`);
+    inside any other Slurm job (batch work or an offloaded seat) it never
+    offloads again. force: always (a missing tool then fails the seat closed
+    instead of running the CLI on the login node). off: never.
     """
     mode = slurm_mode(environ)
     if mode == "off":
         return False
     if mode == "force":
         return True
-    if in_slurm_job(environ):
+    if in_slurm_job(environ) and not is_agent_host_job(environ):
         return False
     tools = slurm_tools(environ)
     return all(tools[name] for name in TOOLS)
@@ -141,11 +186,17 @@ def _private_dir(root):
     os.makedirs(str(root), mode=0o700, exist_ok=True)
     seat = root / secrets.token_hex(16)
     os.mkdir(str(seat), 0o700)
-    os.chmod(str(seat), 0o700)
-    st = os.lstat(str(seat))
-    if (not os.path.isdir(str(seat)) or os.path.islink(str(seat))
-            or st.st_uid != os.getuid() or st.st_mode & 0o077):
-        raise OSError(f"staging directory {seat} is not a private 0700 directory")
+    with _ACTIVE_LOCK:  # tracked until _release_stage() removes it
+        _ACTIVE_STAGES.add(seat)
+    try:
+        os.chmod(str(seat), 0o700)
+        st = os.lstat(str(seat))
+        if (not os.path.isdir(str(seat)) or os.path.islink(str(seat))
+                or st.st_uid != os.getuid() or st.st_mode & 0o077):
+            raise OSError(f"staging directory {seat} is not a private 0700 directory")
+    except OSError:
+        _release_stage(seat)
+        raise
     return seat
 
 
@@ -224,7 +275,78 @@ def batch_script(cmd, stage, runtime, preflight=None):
     return "\n".join(lines)
 
 
-def sbatch_argv(sbatch, seat, stage, environ=None):
+def explicit_partition(environ=None):
+    """Whether the site already chose a partition: HANIG_REVIEW_SLURM_PARTITION
+    or -p/--partition in HANIG_REVIEW_SLURM_EXTRA_ARGS (never overridden)."""
+    env = _env(environ)
+    if (env.get("HANIG_REVIEW_SLURM_PARTITION") or "").strip():
+        return True
+    try:
+        words = shlex.split(env.get("HANIG_REVIEW_SLURM_EXTRA_ARGS") or "")
+    except ValueError:
+        return True  # unparseable: leave the submission exactly as configured
+    return any(w in ("-p", "--partition") or w.startswith("--partition=")
+               or (w.startswith("-p") and not w.startswith("--")) for w in words)
+
+
+def _sinfo_partitions(text):
+    """(default partition or None, {partition: availability})."""
+    default, states = None, {}
+    for line in (text or "").splitlines():
+        words = line.split()
+        if len(words) < 2:
+            continue
+        name, state = words[0], words[1].strip().lower()
+        if name.endswith("*"):
+            name = name.rstrip("*")
+            default = default or name
+        if name:
+            states[name] = state
+    return default, states
+
+
+def auto_batch_partition(tools, env, cwd, run_env=None):
+    """`<default>_batch` when the default partition is interactive, else None.
+
+    Read-only and bounded (PARTITION_PROBE_SECONDS in total): `sinfo -h -o
+    "%P %a"` names the default partition (`name*`); its `<name>_batch` sibling
+    must be listed `up`. It is chosen when this is an agent-host job on the
+    default partition (or with no job partition), or when `scontrol show
+    partition <default>` reports an interactive QoS. A missing tool, timeout,
+    error or any other shape returns None (no --partition flag). env drives
+    the decision; run_env (default: env without LOR_*) runs the commands.
+    """
+    if not tools.get("sinfo"):
+        return None
+    env = _env(env)
+    if run_env is None:
+        run_env = {k: v for k, v in env.items() if not k.upper().startswith("LOR_")}
+    end = time.monotonic() + PARTITION_PROBE_SECONDS
+    rc, out, _err = _call([tools["sinfo"], "-h", "-o", "%P %a"], run_env, cwd,
+                          PARTITION_PROBE_SECONDS)
+    if rc != 0:
+        return None
+    default, states = _sinfo_partitions(out)
+    if not default:
+        return None
+    batch = f"{default}_batch"
+    if states.get(batch) != "up":
+        return None
+    job_partition = (env.get("SLURM_JOB_PARTITION") or "").strip()
+    if is_agent_host_job(env) and job_partition in ("", default):
+        return batch
+    remaining = end - time.monotonic()
+    if not tools.get("scontrol") or remaining <= 0:
+        return None
+    rc, out, _err = _call([tools["scontrol"], "show", "partition", default], run_env, cwd,
+                          remaining)
+    if rc != 0:
+        return None
+    return batch if any("interact" in qos.lower() for qos in _QOS.findall(out or "")) else None
+
+
+def sbatch_argv(sbatch, seat, stage, environ=None, auto_partition=None):
+    """sbatch argv; auto_partition applies only when none is configured."""
     env = _env(environ)
     name = re.sub(r"[^A-Za-z0-9._-]", "-", str(seat or "seat"))[:40] or "seat"
     argv = [sbatch, "--parsable", "--export=NONE", f"--job-name=hanig-rev-{name}",
@@ -237,6 +359,8 @@ def sbatch_argv(sbatch, seat, stage, environ=None):
         value = (env.get(var) or "").strip()
         if value:
             argv.append(f"{flag}={value}")
+    if auto_partition and not explicit_partition(env):
+        argv.append(f"--partition={auto_partition}")
     argv += shlex.split(env.get("HANIG_REVIEW_SLURM_EXTRA_ARGS") or "")
     argv.append(str(stage / "job.sh"))
     return argv
@@ -295,22 +419,42 @@ def _remove(stage):
     return False
 
 
+def _release_stage(stage):
+    """Remove a staging directory, then stop tracking it."""
+    try:
+        return _remove(stage)
+    finally:
+        with _ACTIVE_LOCK:
+            _ACTIVE_STAGES.discard(stage)
+
+
 def _cancel(tools, job_id, env, cwd):
     _call([tools["scancel"], job_id], env, cwd, seconds=10.0)
 
 
 def cancel_active_jobs():
-    """scancel every submitted, unfinished seat and remove its staging dir.
+    """scancel every submitted, unfinished seat and remove every tracked
+    staging directory, including one whose sbatch has not returned yet.
 
-    For paths that skip `finally` (the review watchdog's os._exit)."""
+    For paths that skip `finally` (the review watchdog's and SIGTERM handler's
+    os._exit). Idempotent: each job and directory is claimed exactly once, and
+    no failure escapes, so it is safe in a signal handler or shutdown path."""
     with _ACTIVE_LOCK:
         active = list(_ACTIVE.items())
+        stages = set(_ACTIVE_STAGES)
         _ACTIVE.clear()
+        _ACTIVE_STAGES.clear()
     for job_id, (tools, env, stage) in active:
+        stages.add(stage)
         try:
-            _cancel(tools, job_id, env, str(stage.parent))
-        finally:
+            _cancel(tools, job_id, env, str(Path(stage).parent))
+        except Exception:  # never let one job stop the rest of the cleanup
+            pass
+    for stage in stages:
+        try:
             _remove(stage)
+        except Exception:
+            pass
 
 
 def run_cli_via_slurm(cmd, stdin_text, *, seat, seconds, strip_key,
@@ -340,14 +484,21 @@ def run_cli_via_slurm(cmd, stdin_text, *, seat, seconds, strip_key,
                     handle.write(text)
         except (OSError, ValueError) as exc:
             return None, None, None, f"Slurm staging failed: {type(exc).__name__}: {exc}", None
-        rc, out, err = _call(sbatch_argv(tools["sbatch"], seat, stage, env), sub_env,
+        partition = (None if explicit_partition(env)
+                     else auto_batch_partition(tools, env, str(stage), run_env=sub_env))
+        rc, out, err = _call(sbatch_argv(tools["sbatch"], seat, stage, env, partition), sub_env,
                              str(stage), min(COMMAND_TIMEOUT, max(1.0, end - time.monotonic())))
         job_id = parse_job_id(out) if rc == 0 else None
         if not job_id:
             detail = (err or out or f"exit {rc}").strip()[:300]
             return None, None, None, f"sbatch submission failed: {detail}", None
         with _ACTIVE_LOCK:
-            _ACTIVE[job_id] = (tools, sub_env, stage)
+            shutting_down = stage not in _ACTIVE_STAGES
+            if not shutting_down:
+                _ACTIVE[job_id] = (tools, sub_env, stage)
+        if shutting_down:  # cancel_active_jobs() ran while sbatch was in flight
+            return (None, None, None,
+                    f"slurm job {job_id} cancelled: shutdown during submission", job_id)
         next_squeue, gone_at = 0.0, None
         while True:
             raw_rc = _read(stage / "rc.txt")
@@ -385,4 +536,4 @@ def run_cli_via_slurm(cmd, stdin_text, *, seat, seconds, strip_key,
                 _ACTIVE.pop(job_id, None)
             _cancel(tools, job_id, sub_env, str(stage.parent))
         if stage is not None:
-            _remove(stage)
+            _release_stage(stage)
