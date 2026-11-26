@@ -17,7 +17,7 @@ import swarm_code_protocol as SCP
 
 DEFINITIONS = (
     "_seed_carry_forward", "_code_completion_protocol", "_dispatch_prompt",
-    "_code_protocol_problem",
+    "_code_protocol_problem", "attempt_context_values", "render_attempt_context",
 )
 CONSTANTS = ("CODE_COMPLETION_PROTOCOL_MARKER",)
 

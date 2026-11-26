@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Wait for a coordinator state event, without inspecting worker liveness."""
+"""Wait for a coordinator state event, without inspecting worker liveness.
+
+With --poll-lor it ALSO polls in-flight native Lor coding attempts (backend
+"lor" in coordinator state) through hanig-swarm's lor_io, because those have
+no detached watcher: it emits `lor_session_finished` once a Lor session
+leaves `running`, and exits EXIT_LOR_AUTH (4, distinct from the timeout/no
+event code 3) when Lor rejects the session token, so token expiry is never
+reported as "still running".
+"""
 import argparse
 import datetime
 import json
@@ -13,6 +21,73 @@ import time
 import orch_env
 
 QUIET = {"UNALLOCATED", "SUBMITTED", "RUNNING", "DONE", "ABANDONED", "SUPERSEDED"}
+EXIT_LOR_AUTH = 4
+LOR_LIVE_STATES = {"ALLOCATED", "SUBMITTED", "RUNNING", "INCOMPLETE"}
+LOR_SNAPSHOT_PREFIX = "lor:"
+
+
+def load_lor_io():
+  """hanig-swarm's Lor adapter, from the installed sibling skill only."""
+  import skill_paths
+  swarm = skill_paths.sibling_skill_root(
+    Path(__file__).absolute().parents[1], "hanig-orchestrate", "hanig-swarm")
+  scripts = str(swarm / "scripts")
+  if scripts not in sys.path:
+    sys.path.insert(0, scripts)
+  import lor_io
+  return lor_io
+
+
+def lor_attempts(directory):
+  """In-flight lor attempts recorded in one state directory: (uid, sid, parent)."""
+  units = json.loads((directory / "swarm-state.json").read_bytes()).get("units") or {}
+  found = []
+  for uid, unit in sorted(units.items()):
+    if not isinstance(unit, dict) or unit.get("state") not in LOR_LIVE_STATES:
+      continue
+    attempt, sid = unit.get("attempt_dir"), unit.get("job_id")
+    if not attempt or not sid:
+      continue
+    intent = (unit.get("attempt_launch_intents") or {}).get(Path(str(attempt)).name) or {}
+    if intent.get("backend") == "lor":
+      found.append((uid, str(sid), intent.get("parent_session_id")))
+  return found
+
+
+def observe_lor(lor_io, directories, snapshot, warned):
+  """Return (events, auth_failures). Bounded: one list call per attempt."""
+  events, auth = [], []
+  for directory in directories:
+    try:
+      attempts = lor_attempts(directory)
+    except (OSError, ValueError, RecursionError, AttributeError, TypeError):
+      continue
+    key = LOR_SNAPSHOT_PREFIX + str(directory)
+    seen = snapshot.setdefault(key, {})
+    for uid, sid, parent in attempts:
+      obs = lor_io.poll_session(sid, parent_session_id=parent)
+      observed = local_time()
+      if obs.get("auth_error"):
+        auth.append(dict(event="lor_auth_error", observed=observed,
+                         directory=directory.name, state_dir=str(directory), unit=uid,
+                         session_id=sid, detail=obs.get("detail")))
+        continue
+      state = obs.get("state")
+      if state == "unknown":
+        if (directory, sid) not in warned:
+          print("LOR UNKNOWN {} {} {}: {}".format(observed, directory.name, uid,
+                " ".join(str(obs.get("detail")).splitlines())), file=sys.stderr, flush=True)
+          warned.add((directory, sid))
+        continue
+      mark = "{}:{}".format(sid, state)
+      if state != "running" and seen.get(uid) != mark:
+        events.append(dict(event="lor_session_finished", observed=observed,
+                           directory=directory.name, state_dir=str(directory),
+                           unit=uid, session_id=sid, lor_state=state,
+                           finish_reason=obs.get("finish_reason"),
+                           previous=seen.get(uid)))
+      seen[uid] = mark
+  return events, auth
 
 
 def local_time():
@@ -127,6 +202,9 @@ def main(argv=None):
   parser.add_argument("--timeout", type=seconds)
   parser.add_argument("--once", action="store_true")
   parser.add_argument("--json", action="store_true")
+  parser.add_argument("--poll-lor", action="store_true",
+                      help="also poll in-flight lor coding attempts at --interval; "
+                           "exit 4 if Lor rejects the session token")
   args = parser.parse_args(argv)
   if args.interval == 0:
     parser.error("--interval must be positive")
@@ -143,10 +221,51 @@ def main(argv=None):
   orch_env.warn_if_declared_mismatch(candidate_plan_paths=plan_candidates)
   deadline = None if args.timeout is None else time.monotonic() + args.timeout
   warned = set()
+  lor_io = None
+  if args.poll_lor:
+    try:
+      lor_io = load_lor_io()
+    except Exception as exc:  # an absent sibling skill is a usage error, not a wait
+      print("wait_event: --poll-lor cannot load hanig-swarm lor_io: {}".format(exc),
+            file=sys.stderr)
+      return 2
   try:
     snapshot = read_snapshot(path)
     while True:
       events, readable = observe(directories, snapshot, warned)
+      lor_events = []
+      if lor_io is not None:
+        lor_events, auth = observe_lor(lor_io, directories, snapshot, warned)
+        if auth:
+          for event in auth:
+            if args.json:
+              print(json.dumps(event), flush=True)
+            else:
+              print("LOR_AUTH_ERROR {} {} {} session {}: {}".format(
+                event["observed"], event["directory"], event["unit"], event["session_id"],
+                " ".join(str(event["detail"]).splitlines())), flush=True)
+          print("wait_event: Lor rejected the session token; this is not 'still "
+                "running'. Re-run from a live Lor session.", file=sys.stderr)
+          return EXIT_LOR_AUTH
+        for event in lor_events:
+          if args.json:
+            print(json.dumps(event), flush=True)
+          else:
+            print("LOR_SESSION_FINISHED {} {} {} session {}: {} [{}]".format(
+              event["observed"], event["directory"], event["unit"], event["session_id"],
+              event["lor_state"], event["state_dir"]), flush=True)
+        if lor_events and not events:
+          end = local_time()
+          if args.json:
+            print(json.dumps(dict(event="END", observed=end, lines=len(lor_events))), flush=True)
+          else:
+            print("(end of pass {}, {} line(s))".format(end, len(lor_events)), flush=True)
+          try:
+            write_snapshot(path, snapshot)
+          except (OSError, ValueError, RecursionError) as exc:
+            print("wait_event: snapshot persistence failed; event may repeat: {}".format(exc), file=sys.stderr)
+            return 2
+          return 0
       if readable and not events:
         write_snapshot(path, snapshot)
       if events:
@@ -160,9 +279,11 @@ def main(argv=None):
                 ("directory", "unit", "previous", "state", "state_dir")]), flush=True)
         end = local_time()
         if args.json:
-          print(json.dumps(dict(event="END", observed=end, lines=len(events))), flush=True)
+          print(json.dumps(dict(event="END", observed=end,
+                                lines=len(events) + len(lor_events))), flush=True)
         else:
-          print("(end of pass {}, {} line(s))".format(end, len(events)), flush=True)
+          print("(end of pass {}, {} line(s))".format(
+            end, len(events) + len(lor_events)), flush=True)
         try:
           write_snapshot(path, snapshot)
         except (OSError, ValueError, RecursionError) as exc:

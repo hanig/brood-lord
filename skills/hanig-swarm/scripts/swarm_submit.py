@@ -3,6 +3,7 @@
 Python 3.8+, standard library only; dependencies never point to the facade.
 """
 
+import json
 import os
 import shlex
 import subprocess
@@ -12,9 +13,11 @@ from pathlib import Path
 import child_environment as CE
 import codex_home as CH
 import coordinator_paths as CP
+import lor_io as LIO
 import unit as U
 import worktree as W
 import swarm_code_launch as SCL
+import swarm_code_protocol as SCP
 import swarm_dispatch as SD
 import swarm_evidence as SE
 import swarm_plan_rules as SPR
@@ -193,8 +196,10 @@ def _prepare_code_worktree(u, unit_dir, state, state_dir, attempt, intent):
     rc, _out, _err = SP._git(
         source_repo, "show-ref", "--verify", "--quiet",
         f"refs/heads/{intent['branch']}")
+    lor = intent.get("backend") == LIO.LOR_BACKEND
     if rc == 0:
-        existing_agent, _note = SW.reconcile_orphan(unit_dir, kind="code")
+        existing_agent, _note = SW.reconcile_orphan(
+            unit_dir, kind="code", intent=intent)
         if existing_agent:
             recovery_error = SW._recover_code_launch(
                 state if state is not None else {}, u, unit_dir,
@@ -220,7 +225,10 @@ def _prepare_code_worktree(u, unit_dir, state, state_dir, attempt, intent):
                 f"one unambiguous worktree that still matches its trusted "
                 f"launch intent")
         reuse_workspace = candidates[0]
-        ownership_problem = SW._paseo_path_ownership_problem(reuse_workspace)
+        # A Lor attempt never touches Paseo: the title lookup above already
+        # established that no Lor session owns this attempt.
+        ownership_problem = (None if lor else
+                             SW._paseo_path_ownership_problem(reuse_workspace))
         if ownership_problem:
             return None, None, (
                 f"attempt {attempt!r} will not launch an agent in "
@@ -356,3 +364,151 @@ def _finalize_code_launch(u, unit_dir, state, state_dir, attempt,
     if state_dir is not None:
         SS.save_state(state_dir, state)
     return str(agent), None
+
+
+def _write_attempt_context(unit_dir, pairs):
+    """Write the allowlisted attempt context, owner-only, beside the attempt.
+
+    It lives in the exclusive attempt directory, never in the git worktree,
+    so the worker's `git status` stays clean. Audit and convenience only.
+    """
+    path = Path(unit_dir) / SCP.ATTEMPT_CONTEXT_FILE
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    record = {"schema_version": 1,
+              "values": {name: value for name, value in pairs},
+              "order": [name for name, _value in pairs]}
+    try:
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            json.dump(record, handle, indent=1, sort_keys=True)
+            handle.write("\n")
+        os.replace(str(tmp), str(path))
+    except OSError as exc:
+        return f"cannot write attempt context {path}: {exc}"
+    return None
+
+
+def _secret_in(text, environ=None):
+    """Name of a coordinator credential whose VALUE appears in ``text``."""
+    source = os.environ if environ is None else environ
+    for name, value in source.items():
+        if not value or len(value) < 12:
+            continue
+        sensitive = (name in CE.DENIED_ENV_NAMES
+                     or name.endswith(("_TOKEN", "_API_KEY", "_SECRET",
+                                       "_SECRET_ACCESS_KEY", "_PROOF",
+                                       "_PASSWORD")))
+        if sensitive and value in text:
+            return name
+    return None
+
+
+def _refuse_lor_workspace(state, state_dir, u, unit_dir, workspace, problem):
+    meta = SCL._register_code_workspace(
+        state, u, unit_dir, workspace, workspace_owner="coordinator")
+    meta["verification"] = "refused"
+    meta["cleanup_pending"] = True
+    meta["verification_problem"] = problem
+    SS.save_state(state_dir, state)
+
+
+def _launch_lor_agent(u, unit_dir, state, state_dir, attempt, intent,
+                      workspace, plan_path=None):
+    """Start a native Lor coding subagent in the verified attempt worktree.
+
+    No CODEX_HOME, no Paseo workspace and no detached watcher holding an
+    expiring token: Lor's parent-session wake and `swarm.py advance` observe
+    it. Context reaches the agent only through an allowlisted prompt block
+    and an owner-only context.json outside the worktree.
+    """
+    try:
+        unit_real = str(Path(unit_dir).resolve())
+        work_real = str(Path(workspace).resolve())
+        if os.path.commonpath((unit_real, work_real)) in (unit_real, work_real):
+            return None, (f"attempt directory {unit_real} and worktree "
+                          f"{work_real} overlap; refusing to write attempt "
+                          f"context where git would see it")
+    except ValueError:
+        pass
+    try:
+        pairs = SCP.attempt_context_values(
+            u["id"], unit_dir, SD._dep_env(u, state or {}))
+    except PlanError as exc:
+        return None, str(exc)
+    prompt_intent = dict(intent)
+    if plan_path is not None:
+        prompt_intent.update(scope_plan=str(Path(plan_path).resolve()),
+                             scope_state_dir=str(Path(state_dir).resolve()))
+    prompt = SCP._dispatch_prompt(
+        u, prompt_intent, attempt_context=SCP.render_attempt_context(pairs))
+    protocol_problem = SCP._code_protocol_problem(prompt, prompt_intent)
+    if protocol_problem:
+        return None, (f"unit {u['id']!r} code prompt has no valid completion "
+                      f"protocol ({protocol_problem}); refusing an unclosable "
+                      f"agent launch")
+    leaked = _secret_in(prompt) or _secret_in(json.dumps(pairs))
+    if leaked:
+        return None, (f"unit {u['id']!r}: the rendered Lor task would contain "
+                      f"the value of {leaked}; refusing to launch")
+    context_err = _write_attempt_context(unit_dir, pairs)
+    if context_err:
+        return None, context_err
+    canonical = intent.get("canonical_model_id")
+    parent = intent.get("parent_session_id")
+    session_id, start_err = LIO.start_session(
+        canonical_model_id=canonical, working_directory=str(workspace),
+        title=f"[swarm] {u['id']} {attempt}", task=prompt,
+        effort=intent.get("effort"))
+    if start_err:
+        _refuse_lor_workspace(state, state_dir, u, unit_dir, workspace,
+                              "lor session start failed")
+        return None, start_err
+    us = SS._unit_state(state, u["id"])
+    us.setdefault("attempt_cleanup_agents", {})[attempt] = session_id
+    # Lor tracks this attempt natively: the parent session is woken when the
+    # subagent finishes, and `swarm.py advance` (or `wait_event.py
+    # --poll-lor`) judges it. Recording this BEFORE any watcher logic runs
+    # means no detached process holding a short-lived LOR_SESSION_TOKEN is
+    # ever spawned for a Lor attempt.
+    us.setdefault("code_terminal_watches", {})[attempt] = {
+        "agent_id": session_id, "backend": LIO.LOR_BACKEND,
+        "parent_session_id": parent, "host": os.uname().nodename,
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "status": "lor_native_parent_wake",
+        "reason": ("no detached watcher: Lor wakes the parent session on "
+                   "finish; run `swarm.py advance` or `wait_event.py "
+                   "--poll-lor` to judge")}
+    SCL._register_code_workspace(state, u, unit_dir, workspace,
+                                 workspace_owner="coordinator")
+    SS.save_state(state_dir, state)
+    facts = SS.trusted_launch_facts(state, u["id"], unit_dir)
+    identity_error = W.workspace_identity_problem(U.run, facts)
+    if not identity_error:
+        obs = LIO.poll_session(session_id, parent_session_id=parent)
+        reported = obs.get("working_directory")
+        if reported and not str(reported).startswith("~"):
+            try:
+                if str(Path(reported).resolve()) != str(Path(workspace).resolve()):
+                    identity_error = (f"Lor started session {session_id} in "
+                                      f"{reported!r}, not authenticated "
+                                      f"worktree {workspace!r}")
+            except OSError as exc:
+                identity_error = f"cannot resolve Lor working directory: {exc}"
+    if identity_error:
+        LIO.stop_session(session_id)
+        _refuse_lor_workspace(state, state_dir, u, unit_dir, workspace,
+                              identity_error)
+        return None, (f"lor session {session_id} was started, but worktree "
+                      f"verification failed and it was stopped: "
+                      f"{identity_error}")
+    complete_err = SCL._complete_code_launch(
+        state, u, unit_dir, workspace, recovery=True,
+        workspace_owner="coordinator")
+    if complete_err:
+        _refuse_lor_workspace(state, state_dir, u, unit_dir, workspace,
+                              complete_err)
+        return None, (f"lor session {session_id} was started, but its "
+                      f"worktree could not be recorded: {complete_err}")
+    SS.save_state(state_dir, state)
+    return session_id, None

@@ -11,6 +11,8 @@ import re
 import sys
 from pathlib import Path
 
+import lor_io as LIO
+
 _HERE = Path(__file__).resolve().parent
 
 # What a `code` unit runs unless it says otherwise, and the reasoning effort
@@ -385,3 +387,216 @@ def default_thinking_for(u, plan=None):
     model = u.get("model")
     key = "%s/%s" % (provider.split("/", 1)[0], model) if model else provider
     return table.get(key, default_thinking)
+
+
+
+# --- effective code agent: backend, provider, model, thinking, mode --------
+# A code attempt runs on exactly one backend, frozen when it is launched:
+# "paseo" (a Paseo agent) or "lor" (a native Lor subagent selected by
+# provider "lor/<canonical_model_id>"). Which one a NEW attempt gets is
+# resolved here, most specific first:
+#   1. per-unit runtime override   (STATE_DIR/agent-overrides.json units[uid])
+#   2. the unit's own provider/model in plan.json (an explicit pin)
+#   3. project runtime override     (agent-overrides.json project)
+#   4. the plan's top-level "code_agent"
+#   5. agents.json default_by_orchestrator / default
+# Runtime overrides never edit plan.json, so the plan digest stays put.
+AGENT_SPEC_KEYS = ("backend", "provider", "model", "thinking", "mode")
+# Modes that would make a Lor coding subagent unable to write. Lor has no
+# permission-mode flag, so such a declaration cannot be honored and is refused
+# rather than silently ignored.
+LOR_REFUSED_MODES = frozenset(("plan", "read-only", "readonly", "read_only",
+                               "readOnly"))
+NO_THINKING = ("none", "null", "")
+
+
+def normalize_agent_spec(spec, where="code_agent"):
+    """Return (normalized spec, problem). Never guesses a missing model.
+
+    Accepts {"provider": "lor/<id>"|"route/model", ...} or
+    {"backend": "lor"|"paseo", "provider"?: ..., "model"?: ...}. The result
+    always names one backend and one complete provider string; ``thinking``
+    and ``mode`` are carried only when declared (``thinking: null`` is an
+    explicit request to send no effort flag).
+    """
+    if not isinstance(spec, dict):
+        return None, f"{where} must be a JSON object"
+    unknown = sorted(set(spec) - set(AGENT_SPEC_KEYS) - {"_comment"})
+    if unknown:
+        return None, (f"{where} has unknown field(s) {', '.join(unknown)}; "
+                      f"allowed: {', '.join(AGENT_SPEC_KEYS)}")
+    backend = spec.get("backend")
+    provider = spec.get("provider")
+    model = spec.get("model")
+    if backend is not None and backend not in LIO.BACKENDS:
+        return None, (f"{where}.backend {backend!r} must be one of "
+                      f"{', '.join(LIO.BACKENDS)}")
+    for key, value in (("provider", provider), ("model", model)):
+        if value is not None and not _routing_token(value):
+            return None, (f"{where}.{key} {value!r} must be a non-empty "
+                          f"string without whitespace")
+    if provider is None and model is None:
+        return None, f"{where} names neither a provider nor a model"
+    if backend == LIO.LOR_BACKEND and provider is not None and not LIO.is_lor_provider(provider):
+        return None, (f"{where} declares backend 'lor' with non-Lor provider "
+                      f"{provider!r}; write provider lor/<canonical_model_id> "
+                      f"or backend 'lor' with model <canonical_model_id>")
+    if backend == LIO.LOR_BACKEND and provider is None:
+        provider = LIO.LOR_BACKEND
+    if provider is not None and LIO.is_lor_provider(provider):
+        if backend == LIO.PASEO_BACKEND:
+            return None, (f"{where} declares backend 'paseo' with Lor provider "
+                          f"{provider!r}")
+        try:
+            canonical = LIO.parse_lor_model(provider, model)
+        except LIO.LorError as exc:
+            return None, f"{where}: {exc}"
+        out = {"backend": LIO.LOR_BACKEND,
+               "provider": LIO.LOR_BACKEND + "/" + canonical}
+    else:
+        if provider is None:
+            return None, (f"{where} names model {model!r} without a provider; "
+                          f"write provider PROVIDER/MODEL or backend 'lor'")
+        route, _sep, embedded = provider.partition("/")
+        chosen = model or embedded
+        if not route or not chosen or chosen.startswith("-") or route.startswith("-"):
+            return None, (f"{where} provider {provider!r} (model {model!r}) "
+                          f"does not name one PROVIDER/MODEL; a runtime agent "
+                          f"must say which model runs")
+        out = {"backend": LIO.PASEO_BACKEND, "provider": route + "/" + chosen}
+    if "thinking" in spec:
+        thinking = spec["thinking"]
+        if thinking is None or (isinstance(thinking, str)
+                                and thinking.strip().lower() in NO_THINKING):
+            out["thinking"] = None
+        elif _routing_token(thinking) and not thinking.startswith("-"):
+            out["thinking"] = thinking
+        else:
+            return None, f"{where}.thinking {thinking!r} is not an effort id"
+    if "mode" in spec:
+        mode = spec["mode"]
+        if not _routing_token(mode) or mode.startswith("-"):
+            return None, (f"{where}.mode {mode!r} must be a non-empty mode "
+                          f"id without whitespace")
+        if out["backend"] == LIO.LOR_BACKEND and mode in LOR_REFUSED_MODES:
+            return None, lor_mode_refusal(where, mode)
+        out["mode"] = mode
+    return out, None
+
+
+def lor_mode_refusal(where, mode):
+    return (f"{where} declares mode {mode!r} for a Lor coding agent. Lor "
+            f"subagents have no permission-mode flag, so a restrictive mode "
+            f"cannot be honored; refusing rather than running it with full "
+            f"tools. Remove 'mode' or choose a Paseo agent.")
+
+
+def _unit_pins_agent(u):
+    return bool(u.get("provider")) or bool(u.get("model"))
+
+
+def plan_code_agent(plan):
+    """The plan's normalized top-level code_agent, or None. Raises nothing."""
+    if not isinstance(plan, dict) or "code_agent" not in plan:
+        return None
+    spec, _problem = normalize_agent_spec(plan["code_agent"], "code_agent")
+    return spec
+
+
+def resolve_effective_agent(plan, u, overrides=None):
+    """Resolve the agent a NEW attempt of code unit ``u`` would run.
+
+    Returns a dict: source, backend, provider, model, thinking,
+    thinking_explicit, mode, override_revision, unit (the effective unit view
+    the launcher consumes). For the unit-pinned and default sources the view
+    IS ``u``, so a plan with no runtime override and no code_agent launches
+    exactly as before.
+    """
+    ov = overrides or {}
+    uid = u.get("id")
+    unit_ov = (ov.get("units") or {}).get(uid) if isinstance(ov.get("units"), dict) else None
+    proj_ov = ov.get("project") if isinstance(ov.get("project"), dict) else None
+    code_agent = plan_code_agent(plan)
+    if unit_ov:
+        source, spec = "unit-override", unit_ov
+    elif _unit_pins_agent(u):
+        source, spec = "unit", None
+    elif proj_ov:
+        source, spec = "project-override", proj_ov
+    elif code_agent:
+        source, spec = "plan-code_agent", code_agent
+    else:
+        source, spec = "default", None
+    fallback_mode = next((s.get("mode") for s in (proj_ov, code_agent)
+                          if isinstance(s, dict) and s.get("mode")), None)
+    if spec is None:
+        view = u
+        provider = u.get("provider") or DEFAULT_AGENT_PROVIDER
+        model = u.get("model")
+        if not u.get("provider"):
+            _route, sep, default_model = provider.partition("/")
+            model = model or (default_model if sep else None)
+        backend = (LIO.LOR_BACKEND if LIO.is_lor_provider(u.get("provider"))
+                   else LIO.PASEO_BACKEND)
+        thinking_explicit = "thinking" in u
+        thinking = u.get("thinking", default_thinking_for(u))
+        mode = u.get("mode") if "mode" in u else fallback_mode
+        if "mode" not in u and mode:
+            view = dict(u, mode=mode)
+    else:
+        view = dict(u)
+        backend = spec["backend"]
+        if backend == LIO.LOR_BACKEND:
+            view["provider"] = spec["provider"]
+            view.pop("model", None)
+            provider, model = spec["provider"], None
+        else:
+            route, _sep, model = spec["provider"].partition("/")
+            view["provider"], view["model"] = route, model
+            provider = spec["provider"]
+        if "thinking" in spec:
+            view["thinking"] = spec["thinking"]
+        elif "thinking" not in u:
+            view.pop("thinking", None)
+        thinking_explicit = "thinking" in view
+        thinking = view.get("thinking", default_thinking_for(view))
+        mode = spec.get("mode") or u.get("mode") or fallback_mode
+        if mode:
+            view["mode"] = mode
+        else:
+            view.pop("mode", None)
+    if backend == LIO.LOR_BACKEND:
+        try:
+            canonical = LIO.parse_lor_model(view.get("provider"), view.get("model"))
+        except LIO.LorError:
+            canonical = None
+    else:
+        canonical = None
+    return {"source": source, "backend": backend, "provider": provider,
+            "model": model, "canonical_model_id": canonical,
+            "thinking": thinking, "thinking_explicit": thinking_explicit,
+            "mode": mode, "override_revision": ov.get("revision"),
+            "unit": view}
+
+
+def effective_agent_problem(plan, agent):
+    """Why a resolved agent cannot be dispatched (backend-independent checks)."""
+    view = agent["unit"]
+    uid = view.get("id", "?")
+    if agent["backend"] == LIO.LOR_BACKEND:
+        if agent["canonical_model_id"] is None:
+            return (f"unit {uid!r}: provider {view.get('provider')!r} names no "
+                    f"valid Lor canonical model id")
+        if agent.get("mode") in LOR_REFUSED_MODES:
+            return lor_mode_refusal(f"unit {uid!r}", agent["mode"])
+    elif (agent["source"] not in ("unit", "default")
+          and not str(agent.get("mode") or "").strip()):
+        # Plan validation already requires 'mode' for a Paseo unit resolved
+        # from the plan alone; only a runtime/code_agent switch can reach
+        # Paseo without one.
+        return (f"unit {uid!r} resolves to Paseo agent {agent['provider']!r} "
+                f"({agent['source']}) but no 'mode' is declared on the unit, "
+                f"the plan's code_agent or the runtime override. Paseo agents "
+                f"under default permissions stall at their first write; set "
+                f"one with `swarm.py set-agent ... --mode MODE`.")
+    return forbid_unit_provider_problem(plan, view)

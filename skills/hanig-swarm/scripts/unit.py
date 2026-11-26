@@ -76,6 +76,7 @@ import os
 import re
 import shutil
 import paseo_io as PIO
+import lor_io as LIO
 import worktree as W
 import isolation as ISO
 import coordinator_paths as CP
@@ -997,15 +998,13 @@ def cmd_bind(args):
     if refused:
         sys.exit(f"error: {refused}")
     # The id's SHAPE depends on the kind. A slurm unit is bound to a numeric
-    # scheduler id; a code unit is bound to a paseo agent UUID. Requiring the
-    # numeric form for every kind meant a code unit could never be bound at
-    # all, so its predicate reported "no agent bound" forever.
-    if spec.get("kind") == "code":
-        if not re.fullmatch(r"[0-9a-fA-F-]{8,64}", str(args.job_id)):
-            sys.exit(f"error: implausible agent id {args.job_id!r} for a "
-                     f"kind=code unit. Pass the agent id paseo printed, as "
-                     f"shown by `paseo ls`.")
-    elif not re.fullmatch(r"\d+(_\d+)?", str(args.job_id)):
+    # scheduler id; a code unit is bound to a paseo agent UUID or, when its
+    # attempt froze backend lor, a Lor session id (lor_io owns both code
+    # rules). Requiring the numeric form for every kind meant a code unit
+    # could never be bound at all, so its predicate reported "no agent bound"
+    # forever. The backend recorded here is frozen with the binding.
+    spec.update(LIO.code_binding(spec.get("kind"), args.job_id, args.backend, args.parent_session_id))
+    if spec.get("kind") != "code" and not re.fullmatch(r"\d+(_\d+)?", str(args.job_id)):
         sys.exit(f"error: implausible job id {args.job_id!r}. Pass the numeric "
                  f"id the scheduler printed.")
     spec["job_id"] = str(args.job_id)
@@ -1272,7 +1271,7 @@ def _pipeline_state(unit_dir, spec, present, missing, notes):
     return "DONE"
 
 
-def _code_state(unit_dir, spec, present, missing, notes, launch_facts=None):
+def _code_state(unit_dir, spec, present, missing, notes, launch_facts=None, settled=None):
     """The done predicate for an agent run by Paseo.
 
     DELEGATES lifecycle, judges artifacts. Paseo knows whether the agent process is still working; it does not know whether the work is right, and
@@ -1291,62 +1290,66 @@ def _code_state(unit_dir, spec, present, missing, notes, launch_facts=None):
                      "an agent ever ran. Dispatch it with `swarm.py advance`.")
         return "INCOMPLETE"
 
-    if not shutil.which("paseo"):
-        notes.append(f"paseo is not on PATH on {os.uname().nodename}, so the "
-                     f"agent's lifecycle cannot be read and this attempt "
-                     f"cannot be judged. Install paseo on this host, or "
-                     f"declare the unit as kind=pipeline and run the tool "
-                     f"directly.")
-        return "INCOMPLETE"
+    # `settled` is a Lor turn that ended normally (check_unit read it through
+    # lor_io); it skips only Paseo's lifecycle read, never the checks below.
+    status = settled
+    if status is None:
+        if not shutil.which("paseo"):
+            notes.append(f"paseo is not on PATH on {os.uname().nodename}, so the "
+                         f"agent's lifecycle cannot be read and this attempt "
+                         f"cannot be judged. Install paseo on this host, or "
+                         f"declare the unit as kind=pipeline and run the tool "
+                         f"directly.")
+            return "INCOMPLETE"
 
-    rc, out, err = run(["paseo", "inspect", "--json", str(agent)], timeout=60)
-    if rc != 0:
-        notes.append(f"paseo could not inspect agent {agent}: "
-                     f"{(err or out).strip()[:160]}. If the agent was deleted, "
-                     f"re-dispatch this unit.")
-        return "INCOMPLETE"
-    # paseo prints human notices before its JSON. swarm.py grew a tolerant
-    # extractor for exactly that and this call site kept using raw json.loads,
-    # so a completed agent with every output present would be reported
-    # INCOMPLETE and stall its dependents. Same input, same parser.
-    rec = _json_object_in(out)
-    if rec is None:
-        notes.append(f"paseo returned no readable JSON for agent {agent}, so "
-                     f"its lifecycle cannot be read. Try `paseo inspect "
-                     f"{agent}` by hand.")
-        return "INCOMPLETE"
+        rc, out, err = run(["paseo", "inspect", "--json", str(agent)], timeout=60)
+        if rc != 0:
+            notes.append(f"paseo could not inspect agent {agent}: "
+                         f"{(err or out).strip()[:160]}. If the agent was deleted, "
+                         f"re-dispatch this unit.")
+            return "INCOMPLETE"
+        # paseo prints human notices before its JSON. swarm.py grew a tolerant
+        # extractor for exactly that and this call site kept using raw json.loads,
+        # so a completed agent with every output present would be reported
+        # INCOMPLETE and stall its dependents. Same input, same parser.
+        rec = _json_object_in(out)
+        if rec is None:
+            notes.append(f"paseo returned no readable JSON for agent {agent}, so "
+                         f"its lifecycle cannot be read. Try `paseo inspect "
+                         f"{agent}` by hand.")
+            return "INCOMPLETE"
 
-    status = str(rec.get("Status") or rec.get("status") or "").lower()
-    if not status:
-        # Falling through an empty status reached DONE on outputs alone,
-        # which throws away the lifecycle half of this predicate entirely.
-        return notes.append(
-            f"paseo returned no lifecycle status for agent {agent}, so "
-            f"whether it has finished cannot be told. Check `paseo inspect "
-            f"{agent}`.") or "INCOMPLETE"
-    pending = rec.get("PendingPermissions") or rec.get("pendingPermissions") or []
-    if pending:
-        # Distinct from every other state: nothing is wrong and nothing will
-        # progress until a person answers. Reporting this as RUNNING hides it
-        # until the settle window turns it into a failure; reporting it as
-        # FAILED is untrue and throws away the agent's context.
-        notes.append(f"agent {agent} is blocked on {len(pending)} pending "
-                     f"permission request(s) and will not progress until a "
-                     f"person answers. Run `paseo inspect {agent}` and "
-                     f"respond, or `paseo permit`.")
-        return "NEEDS_HUMAN"
-    if status not in PASEO_LIFECYCLE:
-        return notes.append(
-            f"agent {agent} reported unrecognised lifecycle status "
-            f"{status!r}. It is not safe to guess whether that means active "
-            f"or terminal; inspect the agent and update the lifecycle "
-            f"mapping before retrying.") or "NEEDS_HUMAN"
-    lifecycle = PASEO_LIFECYCLE[status]
-    if lifecycle is not None:
-        return notes.append(
-            f"agent {agent} status {status!r}: " +
-            ("still working." if lifecycle == "RUNNING" else
-             f"see `paseo logs {agent}`.")) or lifecycle
+        status = str(rec.get("Status") or rec.get("status") or "").lower()
+        if not status:
+            # Falling through an empty status reached DONE on outputs alone,
+            # which throws away the lifecycle half of this predicate entirely.
+            return notes.append(
+                f"paseo returned no lifecycle status for agent {agent}, so "
+                f"whether it has finished cannot be told. Check `paseo inspect "
+                f"{agent}`.") or "INCOMPLETE"
+        pending = rec.get("PendingPermissions") or rec.get("pendingPermissions") or []
+        if pending:
+            # Distinct from every other state: nothing is wrong and nothing will
+            # progress until a person answers. Reporting this as RUNNING hides it
+            # until the settle window turns it into a failure; reporting it as
+            # FAILED is untrue and throws away the agent's context.
+            notes.append(f"agent {agent} is blocked on {len(pending)} pending "
+                         f"permission request(s) and will not progress until a "
+                         f"person answers. Run `paseo inspect {agent}` and "
+                         f"respond, or `paseo permit`.")
+            return "NEEDS_HUMAN"
+        if status not in PASEO_LIFECYCLE:
+            return notes.append(
+                f"agent {agent} reported unrecognised lifecycle status "
+                f"{status!r}. It is not safe to guess whether that means active "
+                f"or terminal; inspect the agent and update the lifecycle "
+                f"mapping before retrying.") or "NEEDS_HUMAN"
+        lifecycle = PASEO_LIFECYCLE[status]
+        if lifecycle is not None:
+            return notes.append(
+                f"agent {agent} status {status!r}: " +
+                ("still working." if lifecycle == "RUNNING" else
+                 f"see `paseo logs {agent}`.")) or lifecycle
     if missing:
         # `idle` is lifecycle, not completion. This is the whole point.
         # The machine-readable reason matters here: "settled and produced
@@ -1422,8 +1425,12 @@ def check_unit(unit_dir, spec, notes, launch_facts=None, artifact_basis=None):
                                  spec["artifact_fingerprints"], notes)
 
     if kind == "code":
-        return judged(_code_state(unit_dir, spec, present, missing, notes,
-                                  launch_facts))
+        # Lifecycle comes from the backend the attempt froze at launch: a Lor
+        # session is observed through lor_io, where anything unestablished is
+        # INCOMPLETE (never DONE/FAILED); Paseo attempts are unchanged.
+        verdict, settled = LIO.code_lifecycle(spec, notes)
+        return judged(verdict or _code_state(unit_dir, spec, present, missing,
+                                             notes, launch_facts, settled))
 
     if kind == "pipeline":
         return judged(_pipeline_state(unit_dir, spec, present, missing, notes))
@@ -1603,6 +1610,7 @@ def main():
     b = sub.add_parser("bind", help="record the scheduler job id")
     b.add_argument("unit_dir")
     b.add_argument("--job-id", required=True)
+    LIO.add_bind_arguments(b)
 
     c = sub.add_parser("check", help="the done predicate")
     c.add_argument("unit_dir")

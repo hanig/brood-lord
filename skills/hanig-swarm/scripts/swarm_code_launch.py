@@ -23,7 +23,8 @@ from swarm_types import PlanError
 LAUNCH_RECORD = "launch.json"
 
 
-def _capture_code_launch(unit_dir, u, dispatch_source=None, unit_state=None):
+def _capture_code_launch(unit_dir, u, dispatch_source=None, unit_state=None,
+                         agent=None):
     """Record immutable input to coordinator worktree creation.
 
     The shared checkout is a SOURCE, not the execution tree. Its dirty index
@@ -142,9 +143,63 @@ def _capture_code_launch(unit_dir, u, dispatch_source=None, unit_state=None):
         "model": u.get("model"),
         "author_history": SA.collect_author_history(u, unit_state, Path(unit_dir).name),
     }
+    if agent is not None:
+        # FROZEN AGENT. The backend and routing this attempt launches with,
+        # resolved once under the project lock. A later `set-agent` changes
+        # only attempts not yet created; status, judging, continuation, stop,
+        # recovery and cleanup of THIS attempt all read these fields.
+        intent.update(_frozen_agent_fields(agent))
     if seed is not None:
         intent["seed"] = dict(seed)
     return None, {"base": head, "intent": intent}
+
+
+def _frozen_agent_fields(agent):
+    """The intent fields that freeze one attempt's resolved coding agent."""
+    fields = {
+        "backend": agent["backend"],
+        "agent_source": agent["source"],
+        "requested_provider": agent["provider"],
+        "requested_model": agent["model"],
+        "effort": agent["thinking"] or None,
+        "mode": agent["mode"],
+        "override_revision": agent["override_revision"],
+        "author_identity": SA.intent_identity(
+            {"provider": agent["unit"].get("provider"),
+             "model": agent["unit"].get("model")}),
+    }
+    if agent["backend"] == "lor":
+        fields["canonical_model_id"] = agent["canonical_model_id"]
+        fields["parent_session_id"] = agent.get("parent_session_id")
+    return fields
+
+
+def _frozen_agent_view(u, intent):
+    """Rebuild the effective unit view a recorded intent launched with.
+
+    Legacy intents (no ``backend``) and intents resolved from the plan alone
+    return ``u`` unchanged, so a re-dispatch of an old or plan-routed
+    attempt builds exactly the argv it always did.
+    """
+    backend = intent.get("backend")
+    if backend is None:
+        return u
+    if intent.get("agent_source") in ("unit", "default"):
+        if "mode" not in u and intent.get("mode"):
+            return dict(u, mode=intent["mode"])
+        return u
+    view = dict(u)
+    view["provider"] = intent.get("provider")
+    if intent.get("model"):
+        view["model"] = intent["model"]
+    else:
+        view.pop("model", None)
+    view["thinking"] = intent.get("effort")
+    if intent.get("mode"):
+        view["mode"] = intent["mode"]
+    else:
+        view.pop("mode", None)
+    return view
 
 
 def _code_launch_intent_problem(intent, u, attempt):
