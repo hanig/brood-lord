@@ -38,6 +38,8 @@ if verb == "watch":
     ev({"metrics": {"usage": {"input_tokens": "7", "output_tokens": "5", "reasoning_tokens": "3"}}})
     if mode == "drop": sys.exit(0)
     if mode == "error": ev({"error": {"message": "router down"}})
+    if mode == "no-newline":
+        sys.stdout.write(json.dumps({"event": {"finish": {"reason": "FINISH_REASON_STOP"}}})); sys.exit(0)
     ev({"finish": {"reason": "FINISH_REASON_CANCELLED" if mode == "cancel" else "FINISH_REASON_STOP"}})
     time.sleep(60)
 if verb == "start" and mode == "sid-fail": sys.exit(1)
@@ -127,6 +129,9 @@ class TestLor(unittest.TestCase):
         self.assertRegex(start["stdin"], r'<turn_[0-9a-f]{8} role="assistant">\na1\n</turn_')
         self.assertIn("LOR_SESSION_TOKEN", start["env"])
         self.assertNotIn("GH_TOKEN", start["env"])
+        self.assert_stopped_and_reaped()
+        self.mode("no-newline")
+        self.assertEqual(R.lor_messages(astra, msgs, "SYS", 20)[0]["text"], "OK")
         self.assert_stopped_and_reaped()
         for mode, want in (("timeout", "timed out"), ("drop", "watch ended"), ("pass", "no content"),
                            ("error", "router down"), ("cancel", "CANCELLED"), ("empty", "no content")):
