@@ -2,13 +2,33 @@
 
 import shlex
 
+import lor_io as LIO
 from swarm_types import PlanError
+
+
+def canonical_identity(identity):
+    """Strip the Lor transport prefix from a maker-qualified identity.
+
+    ``lor/openai/gpt-x`` was authored by ``openai/gpt-x``; the review gate's
+    maker exclusion must see the vendor, not the transport. A single-segment
+    Lor id (``lor/some-model``) names no maker, so it keeps the prefix and
+    stays a well-formed provider/model whose maker the gate cannot resolve
+    (it then fails closed). Every non-Lor identity is returned unchanged.
+    """
+    if (isinstance(identity, str) and LIO.is_lor_provider(identity)
+            and identity.count("/") >= 2):
+        try:
+            return LIO.canonical_author_identity(identity)
+        except LIO.LorError:
+            return identity
+    return identity
 
 
 def _valid_identity(identity):
     """Check exact provider/model bytes before rendering an argument value."""
     if not isinstance(identity, str):
         return False
+    identity = canonical_identity(identity)
     provider, _, model = identity.partition("/")
     return all(part and not part.startswith("-") and not any(
         char.isspace() or ord(char) < 32 or 127 <= ord(char) <= 159
@@ -41,6 +61,13 @@ def declared_author_history(unit):
 def intent_identity(intent):
     """Resolve frozen routing exactly as the completion protocol does."""
     provider_spec = intent.get("provider")
+    if LIO.is_lor_provider(provider_spec):
+        try:
+            identity = LIO.canonical_author_identity(
+                provider_spec, intent.get("model"))
+        except LIO.LorError:
+            return None
+        return identity if "/" in identity else LIO.LOR_BACKEND + "/" + identity
     provider, embedded_model = "", ""
     if isinstance(provider_spec, str):
         provider, _, embedded_model = provider_spec.partition("/")
@@ -80,8 +107,8 @@ def author_instruction(intent):
             invalid = (f" (recorded identity is invalid: {identity!r})"
                        if identity is not None else "")
             unknown.append((record["unit"], record["attempt"], invalid))
-        elif identity not in known:
-            known.append(identity)
+        elif canonical_identity(identity) not in known:
+            known.append(canonical_identity(identity))
     if known:
         flags = " ".join("--author " + shlex.quote(identity) for identity in known)
         subject = ("this unit's own model" if current is not None and len(known) == 1

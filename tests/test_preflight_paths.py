@@ -558,7 +558,7 @@ class TestRefusalIsCarriedNotRederived(unittest.TestCase):
         # No launch record on disk at all: the old classifier read nothing,
         # found no "refused", and charged the unit as a plain failure.
         def stub(u, unit_dir, dry_run, state=None, state_dir=None,
-                 dispatch_source=None):
+                 dispatch_source=None, plan=None):
             refusal = S.PreflightRefusal("dirty at dispatch")
             refusal.workspace = "/checkout"
             refusal.dirty_count = 3
@@ -581,7 +581,7 @@ class TestRefusalIsCarriedNotRederived(unittest.TestCase):
         # The mutation in the other direction: authority is the observation,
         # so a launch record alone must not restore a retry budget.
         def stub(u, unit_dir, dry_run, state=None, state_dir=None,
-                 dispatch_source=None):
+                 dispatch_source=None, plan=None):
             anchor = Path(unit_dir).parent / f"launch-{Path(unit_dir).name}.json"
             anchor.write_text(json.dumps(
                 {"preflight": {"status": "refused"},
