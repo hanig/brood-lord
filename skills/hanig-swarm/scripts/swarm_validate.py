@@ -104,10 +104,18 @@ def _validate_orchestrator(plan, units):
             allowed = ", ".join(sorted(SR.VALID_ORCHESTRATORS))
             raise PlanError(
                 f"plan 'orchestrator' {orch!r} must be one of: {allowed}")
+    if "code_agent" in plan:
+        _spec, problem = SR.normalize_agent_spec(plan["code_agent"], "code_agent")
+        if problem:
+            raise PlanError(f"plan {problem}")
     for u in units:
         if not isinstance(u, dict) or u.get("kind") != "code":
             continue
         problem = SR.forbid_unit_provider_problem(plan, u)
+        if not problem and not SR._unit_pins_agent(u):
+            # The plan-level code_agent is what this unit would run.
+            agent = SR.resolve_effective_agent(plan, u)
+            problem = SR.forbid_unit_provider_problem(plan, agent["unit"])
         if problem:
             raise PlanError(problem)
 
@@ -129,7 +137,12 @@ def _validate_canary(plan, units):
     return SPR._units_with_canary(plan)
 
 
-def _validate_convergence_paseo_promote(units, which=None):
+def _plan_backend(plan, u):
+    """The backend a code unit resolves to from the plan alone (no overrides)."""
+    return SR.resolve_effective_agent(plan or {}, u)["backend"]
+
+
+def _validate_convergence_paseo_promote(units, which=None, plan=None):
     """Validate convergence specs, local paseo availability, and promote_to."""
     for u in units:
         if not isinstance(u, dict):
@@ -139,11 +152,14 @@ def _validate_convergence_paseo_promote(units, which=None):
             raise PlanError(problem)
 
     resolve_bin = shutil.which if which is None else which
-    if any(isinstance(u, dict) and u.get("kind") == "code" for u in units):
+    # Only units that resolve to a Paseo agent need paseo here; a lor/<model>
+    # unit is started through the Lor CLI and checked at dispatch instead.
+    paseo_units = [u for u in units
+                   if isinstance(u, dict) and u.get("kind") == "code"
+                   and _plan_backend(plan, u) == "paseo"]
+    if paseo_units:
         if not resolve_bin("paseo"):
-            ids = ", ".join(sorted(u.get("id", "?") for u in units
-                                   if isinstance(u, dict)
-                                   and u.get("kind") == "code"))
+            ids = ", ".join(sorted(u.get("id", "?") for u in paseo_units))
             raise PlanError(
                 f"unit(s) {ids} are kind=code, which runs a coding agent "
                 f"through paseo, and paseo is not on PATH on "
@@ -624,6 +640,17 @@ def _validate_commands_and_code_units(units, plan=None):
 
         default_provider = SR.effective_default_provider(plan)
         unattended = SP._unattended_mode_example(u.get("provider") or default_provider)
+        agent = SR.resolve_effective_agent(plan or {}, u)
+        if agent["backend"] == "lor":
+            # Lor subagents have no permission-mode flag: 'mode' is optional,
+            # and a restrictive one is refused rather than silently ignored.
+            if agent.get("mode") in SR.LOR_REFUSED_MODES:
+                raise PlanError(SR.lor_mode_refusal(f"unit {uid!r}", agent["mode"]))
+            if agent["canonical_model_id"] is None:
+                raise PlanError(
+                    f"unit {uid!r} selects provider {u.get('provider')!r}, "
+                    f"which names no valid Lor canonical model id; write "
+                    f"lor/<canonical_model_id>")
         if "mode" in u and not str(u.get("mode") or "").strip():
             raise PlanError(
                 f"unit {uid!r} declares mode={u.get('mode')!r}, which is not a "
@@ -633,7 +660,7 @@ def _validate_commands_and_code_units(units, plan=None):
                 f"\"{unattended}\" or \"default\". Modes are "
                 f"provider-specific; `paseo run --help` and the provider name "
                 f"the set it accepts.")
-        if "mode" not in u:
+        if "mode" not in u and agent["backend"] != "lor" and not agent.get("mode"):
             raise PlanError(
                 f"unit {uid!r} is kind=code and declares no 'mode'. An agent "
                 f"under default permissions stops at its first write and "

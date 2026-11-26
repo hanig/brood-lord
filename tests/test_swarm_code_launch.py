@@ -19,6 +19,7 @@ DEFINITIONS = (
     "_capture_code_launch", "_code_launch_intent_problem", "_paseo_workspace_id",
     "_code_launch_record_payload", "_create_code_worktree", "_register_code_workspace",
     "_write_code_launch_record", "_complete_code_launch", "_write_launch_record",
+    "_frozen_agent_fields", "_frozen_agent_view",
 )
 CONSTANTS = ("LAUNCH_RECORD",)
 
@@ -57,7 +58,8 @@ class TestCodeLaunchExtraction(unittest.TestCase):
                      if isinstance(n, ast.Attribute)
                      and isinstance(n.value, ast.Name) and n.value.id == "SCL"}
         self.assertEqual(consumers, set(DEFINITIONS) - {
-            "_code_launch_record_payload", "_write_code_launch_record"})
+            "_code_launch_record_payload", "_write_code_launch_record",
+            "_frozen_agent_fields"})
         self.assertEqual(bare, [], "facade bypasses owner patches")
 
     def test_patch_owners(self):

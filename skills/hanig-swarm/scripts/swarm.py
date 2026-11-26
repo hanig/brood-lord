@@ -54,6 +54,7 @@ sys.path.insert(0, str(_HERE))
 import unit as U  # noqa: E402  same skill, installed together
 import child_environment as CE  # noqa: E402
 import paseo_io as PIO
+import lor_io as LIO
 import worktree as W  # noqa: E402
 import verify as V  # noqa: E402
 import converge as CV  # noqa: E402  the declared-convergence gate
@@ -101,6 +102,8 @@ from swarm_workspaces import (
     _archive_code_worktree,
     _preserve_and_archive_code_worktree,
     reconcile_orphan,
+    _reconcile_lor_orphan,
+    _recover_lor_code_launch,
     WORKTREE_ARCHIVE_MAX_ATTEMPTS,
     WORKTREE_CLEANUP_SUMMARY_PREFIX,
 )
@@ -108,11 +111,12 @@ from swarm_code_launch import (
     LAUNCH_RECORD, _capture_code_launch, _code_launch_intent_problem,
     _paseo_workspace_id, _code_launch_record_payload, _create_code_worktree,
     _register_code_workspace, _write_code_launch_record, _complete_code_launch,
-    _write_launch_record,
+    _write_launch_record, _frozen_agent_fields, _frozen_agent_view,
 )
 from swarm_code_protocol import (
     _seed_carry_forward, _code_completion_protocol, _dispatch_prompt,
     _code_protocol_problem, CODE_COMPLETION_PROTOCOL_MARKER,
+    attempt_context_values, render_attempt_context,
 )
 from swarm_preflight import (
     _git, _unattended_mode_example, _workspace_policy, _requires_clean_workspace,
@@ -314,6 +318,13 @@ from swarm_state import (
     LOCK,
     _LOCK_FDS,
     _LOCK_EPOCHS,
+    empty_agent_overrides,
+    agent_overrides_problem,
+    load_agent_overrides,
+    save_agent_overrides,
+    attempt_launch_intent,
+    attempt_backend,
+    attempt_parent_session,
 )
 from swarm_routing import (
     _routing_token, _routing_model, _orchestrator_token,
@@ -321,7 +332,9 @@ from swarm_routing import (
     _parse_agent_routing, load_agent_routing, _plan_fingerprint,
     _plan_orchestrator, _plan_routing_entry, effective_default_provider,
     forbid_unit_provider_problem, _model_family, apply_agent_resolution,
-    default_thinking_for,
+    default_thinking_for, normalize_agent_spec, lor_mode_refusal,
+    _unit_pins_agent, plan_code_agent, resolve_effective_agent,
+    effective_agent_problem,
 )
 from swarm_types import (
     PlanError, OutboxError, DONE, RUNNING, FAILED, PREEMPTED, INCOMPLETE,
@@ -475,7 +488,7 @@ def validate_plan(plan, survey=None, new_attempts=True):
     SV._validate_unit_fields(units)
     SV._validate_orchestrator(plan, units)
     units = SV._validate_canary(plan, units)
-    SV._validate_convergence_paseo_promote(units, which=shutil.which)
+    SV._validate_convergence_paseo_promote(units, which=shutil.which, plan=plan)
     SV._validate_retry_exposure(
         plan, units,
         charge_metrics=CHARGE_METRICS,
@@ -543,8 +556,25 @@ CHARGE_METRICS = ("gpu_hours", "cpu_hours", "read_bytes", "wall_seconds",
 RETRY_MODES = ("restart", "resume")
 
 # --- dispatch -------------------------------------------------------------
+def _resolve_launch_agent(u, state_dir, plan=None):
+    """Resolve and check the agent a NEW code attempt freezes. (agent, error)."""
+    overrides, problem = SS.load_agent_overrides(state_dir)
+    if problem:
+        return None, f"unit {u['id']!r}: {problem}"
+    agent = SR.resolve_effective_agent(plan, u, overrides)
+    problem = SR.effective_agent_problem(plan, agent)
+    if problem:
+        return None, problem
+    if agent["backend"] == LIO.LOR_BACKEND:
+        problem = LIO.lor_availability()
+        if problem:
+            return None, f"unit {u['id']!r} resolves to {agent['provider']!r}: {problem}"
+        agent["parent_session_id"] = os.environ["LOR_SESSION_ID"].strip()
+    return agent, None
+
+
 def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
-            dispatch_source=None, plan_path=None):
+            dispatch_source=None, plan_path=None, plan=None):
     """Submit, and return (job_id, error). Dispatch differs per kind; judging
     does not.
 
@@ -558,17 +588,34 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
     if problem:
         return None, problem
     anchored_base = None
+    backend = LIO.PASEO_BACKEND
     if kind == "code":
         attempt = Path(unit_dir).name
         existing_intent = ((((state or {}).get("units") or {}).get(u["id"]) or {})
                            .get("attempt_launch_intents") or {}).get(attempt)
         if existing_intent:
+            # The attempt already froze its agent; never re-resolve it.
+            backend = SS.attempt_backend(
+                ((state or {}).get("units") or {}).get(u["id"]), attempt)
+            u = SCL._frozen_agent_view(u, existing_intent)
+            if backend == LIO.LOR_BACKEND:
+                lor_problem = LIO.lor_availability()
+                if lor_problem:
+                    return None, f"unit {u['id']!r}: {lor_problem}"
             anchor_err, anchored_base = SSB._recheck_existing_code_intent(
                 u, attempt, existing_intent, dispatch_source=dispatch_source)
         else:
+            # Resolved once, here, under the project lock, BEFORE any
+            # worktree or agent exists. A Lor agent that cannot be started
+            # from this process is refused now with no side effect.
+            agent, agent_err = _resolve_launch_agent(u, state_dir, plan)
+            if agent_err:
+                return None, agent_err
+            u, backend = agent["unit"], agent["backend"]
             anchor_err, anchored_base = SCL._capture_code_launch(
                 unit_dir, u, dispatch_source=dispatch_source,
-                unit_state=((state or {}).get("units") or {}).get(u["id"]))
+                unit_state=((state or {}).get("units") or {}).get(u["id"]),
+                agent=agent)
         if anchor_err:
             return None, anchor_err
         SP._warn_installed_skill_drift(
@@ -601,6 +648,22 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
             u, unit_dir, state, record_enabled, submission_command)
     if kind == "pipeline":
         return SSB._submit_pipeline(u, unit_dir, state, submission_command)
+    if kind == "code" and backend == LIO.LOR_BACKEND:
+        attempt = Path(unit_dir).name
+        intent = (((state or {}).get("units", {}).get(u["id"], {})
+                   .get("attempt_launch_intents") or {}).get(attempt))
+        intent_err = SCL._code_launch_intent_problem(intent, u, attempt)
+        if intent_err:
+            return None, intent_err
+        recovered_agent, reuse_workspace, wt_err = SSB._prepare_code_worktree(
+            u, unit_dir, state, state_dir, attempt, intent)
+        if wt_err:
+            return None, wt_err
+        if recovered_agent:
+            return recovered_agent, None
+        return SSB._launch_lor_agent(
+            u, unit_dir, state, state_dir, attempt, intent, reuse_workspace,
+            plan_path=plan_path)
     if kind == "code":
         attempt = Path(unit_dir).name
         codex = (u.get("provider") or SR.DEFAULT_AGENT_PROVIDER).split("/", 1)[0] == "codex"
@@ -757,8 +820,16 @@ def maybe_continue(state_dir, uid, u, us, report, state=None):
     entry["active_since_send"] = False
     entry["settled_since_send"] = False
     entry["settle_recovered"] = False
+    backend = SS.attempt_backend(us, us.get("attempt_dir"))
+    entry["backend"] = backend
     SS.save_state(state_dir, state)
-    rc, out, err = U.run(["paseo", "send", str(agent), prompt], timeout=120)
+    if backend == LIO.LOR_BACKEND:
+        # Queued, so a message never interrupts a turn; same bounded,
+        # pending-first bookkeeping as Paseo, different transport.
+        sent, detail = LIO.send_continuation(str(agent), prompt, timeout=120)
+        rc, out, err = (0, detail, "") if sent else (1, "", detail)
+    else:
+        rc, out, err = U.run(["paseo", "send", str(agent), prompt], timeout=120)
     entry["delivery_unacknowledged"] = ambiguous_retry or rc != 0
     entry["sent"] = rc == 0
     entry["status"] = "sent" if rc == 0 else "failed"
@@ -846,7 +917,15 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
                 "plan changed mid-flight")
 
     def _submit_live(*args, **kwargs):
+        kwargs.setdefault("plan", plan)
         return _submit(*args, **kwargs)
+
+    def _agent_preflight(u):
+        attempt_state = SS._unit_state(state, u["id"])
+        if attempt_state.get("attempt_dir"):
+            return None
+        _agent, problem = _resolve_launch_agent(u, state_dir, plan)
+        return problem
 
     SADV._evaluate_deadlines(
         units, state, state_dir, dry_run, advance_observed_at, report)
@@ -940,7 +1019,8 @@ def advance(plan, state, state_dir, root, dry_run, max_new=None,
     # 2 & 3. Enforce budget/concurrency caps and dispatch ready units.
     dispatched, halted, dispatch_refusal = SADV._dispatch_ready_units(
         plan, units, state, state_dir, root, dry_run, max_new, plan_path,
-        dispatch_targets, halted, report, submit_fn=_submit_live)
+        dispatch_targets, halted, report, submit_fn=_submit_live,
+        agent_preflight=_agent_preflight)
 
     # Emit tracker intents from the FINAL state of the advance.
     project = plan.get("name") or "swarm"
@@ -1181,6 +1261,20 @@ def _start_code_terminal_watchers(plan, state, args, report):
         attempt = Path(attempt_dir).name
         watches = us.setdefault("code_terminal_watches", {})
         if isinstance(watches.get(attempt), dict):
+            continue
+        if SS.attempt_backend(us, attempt) == LIO.LOR_BACKEND:
+            # Never a detached process holding a short-lived Lor token: the
+            # Lor parent session is woken natively; advance judges.
+            watches[attempt] = {
+                "agent_id": str(job_id), "backend": LIO.LOR_BACKEND,
+                "parent_session_id": SS.attempt_parent_session(us, attempt),
+                "host": os.uname().nodename,
+                "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "status": "lor_native_parent_wake"}
+            SS.save_state(args.state_dir, state)
+            report.append(f"{uid}: lor session {job_id} is tracked by Lor "
+                          "parent wake + `swarm.py advance`; no watcher "
+                          "process started")
             continue
         log_path = Path(attempt_dir) / CODE_TERMINAL_WATCH_LOG
         # Persist the one watcher intent before starting its process. A crash
@@ -1501,6 +1595,40 @@ def _emit_current_intent(state_dir, project, uid, us, unit, evidence=None):
                           kind=unit.get("kind"), tracker=unit.get("tracker"))
 
 
+def _stop_lor_attempt(state_dir, state, uid, us):
+    """Stop the current attempt's Lor session after a terminal disposition.
+
+    Paseo attempts keep their existing retention semantics. A Lor session is
+    stopped (idempotently) and, only when the CLI confirms, recorded as having
+    released its live resources; a failed stop leaves the attempt retaining
+    them, never presumed dead.
+    """
+    attempt_dir = us.get("attempt_dir")
+    agent = us.get("job_id")
+    if (not attempt_dir or not agent
+            or SS.attempt_backend(us, attempt_dir) != LIO.LOR_BACKEND):
+        return
+    release = us.get("terminal_resource_release") or {}
+    if (release.get("attempt_dir") == attempt_dir
+            and release.get("job_id") == agent):
+        return
+    stopped, detail = LIO.stop_session(str(agent))
+    stops = us.setdefault("attempt_lor_stops", {})
+    stops[Path(attempt_dir).name] = {
+        "session_id": str(agent), "ok": stopped, "detail": detail,
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+    if stopped:
+        us["terminal_resource_release"] = {
+            "attempt_dir": attempt_dir, "job_id": agent,
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "basis": f"lor session stop {agent} succeeded"}
+        print(f"{uid}: stopped lor session {agent}")
+    else:
+        print(f"{uid}: could not stop lor session {agent}: {detail}; the "
+              f"attempt still retains its resources", file=sys.stderr)
+    SS.save_state(state_dir, state)
+
+
 def cmd_stop_unit(args):
     """Record an approver's terminal disposition; preserve every attempt."""
     _d5_refuse('cmd_stop_unit', getattr(args, "state_dir", None), plan=getattr(args, "plan", None))
@@ -1583,6 +1711,7 @@ def cmd_stop_unit(args):
             us["reason"] = args.reason
             us["terminal_decision"] = decision
             SS.save_state(args.state_dir, state)
+        _stop_lor_attempt(args.state_dir, state, args.unit, us)
         _emit_current_intent(args.state_dir, plan.get("name") or "swarm",
                              args.unit, us, units[args.unit])
         print(f"{args.unit}: {target} -- {args.reason}" +
@@ -1603,6 +1732,241 @@ def cmd_stop_unit(args):
 #
 # A unit that declares no `promote_to` never touches a shared path at all.
 PROMOTIONS = "promotions.jsonl"
+
+
+# --- runtime code-agent switching ---------------------------------------
+# NOT a plan edit. plan.json and its digest stay byte-identical; the switch is
+# a revisioned record in coordinator state that applies to attempts created
+# AFTER it. Every existing attempt keeps the backend it froze at launch.
+SET_AGENT_TERMINAL = ("DONE", "FAILED", "FAILED_EVIDENCE", "ABANDONED",
+                      "SUPERSEDED")
+
+
+def _agent_view(agent):
+    return {key: agent.get(key) for key in (
+        "backend", "provider", "model", "canonical_model_id", "thinking",
+        "mode", "source")}
+
+
+def _set_agent_rows(plan, state, overrides, only=None):
+    """Effective agent of every code unit, and what a switch would touch."""
+    rows = []
+    for u in plan.get("units") or []:
+        if not isinstance(u, dict) or u.get("kind") != "code":
+            continue
+        if only is not None and u.get("id") != only:
+            continue
+        us = (state.get("units") or {}).get(u["id"]) or {}
+        attempt = us.get("attempt_dir")
+        st = us.get("state")
+        if st in SET_AGENT_TERMINAL:
+            disposition = "terminal: unchanged"
+        elif attempt and st not in (None, "PREFLIGHT_REFUSED"):
+            disposition = ("in-flight: keeps its frozen backend; only a later "
+                           "fresh attempt would use the new agent")
+        else:
+            disposition = "undispatched: the next attempt uses this agent"
+        current = None
+        if attempt:
+            intent = SS.attempt_launch_intent(us, attempt)
+            current = {"attempt": Path(attempt).name, "state": st,
+                       "backend": SS.attempt_backend(us, attempt),
+                       "provider": intent.get("provider"),
+                       "model": intent.get("model"),
+                       "agent_id": us.get("job_id")}
+        rows.append({"unit": u["id"], "state": st,
+                     "pinned_in_plan": SR._unit_pins_agent(u),
+                     "effective": _agent_view(
+                         SR.resolve_effective_agent(plan, u, overrides)),
+                     "current_attempt": current,
+                     "disposition": disposition})
+    return rows
+
+
+def _set_agent_target(args):
+    """Build the requested override spec from flags. (spec, problem)."""
+    provider, backend, model = args.provider, args.backend, args.model
+    if provider is None and backend is None and model is None:
+        return None, ("set-agent needs --provider PROVIDER, or --backend "
+                      "{lor,paseo} with --model MODEL (or --clear / --show)")
+    if model is not None and backend is None and provider is None:
+        return None, "--model needs --backend (or use --provider)"
+    if backend == LIO.PASEO_BACKEND and provider is None:
+        provider, model = model, None
+    raw = {}
+    if backend is not None:
+        raw["backend"] = backend
+    if provider is not None:
+        raw["provider"] = provider
+    if model is not None:
+        raw["model"] = model
+    if args.thinking is not None:
+        raw["thinking"] = args.thinking
+    if args.mode is not None:
+        raw["mode"] = args.mode
+    return SR.normalize_agent_spec(raw, "set-agent")
+
+
+def _print_set_agent(result, as_json):
+    if as_json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    print(f"agent overrides revision {result['revision']}"
+          + (f" ({result['action']})" if result.get("action") else ""))
+    if result.get("project_override"):
+        print(f"  project override: {result['project_override']}")
+    for uid, spec in sorted((result.get("unit_overrides") or {}).items()):
+        print(f"  unit override {uid}: {spec}")
+    for row in result["units"]:
+        eff = row["effective"]
+        effort = eff["thinking"] if eff["thinking"] else "(none)"
+        print(f"  {row['unit']}: {eff['backend']} {eff['provider']}"
+              + (f" model {eff['model']}" if eff.get("model") else "")
+              + f" effort {effort} mode {eff['mode'] or '-'} "
+              f"[{eff['source']}{', pinned in plan' if row['pinned_in_plan'] else ''}]")
+        print(f"      {row['disposition']}")
+        cur = row.get("current_attempt")
+        if cur:
+            print(f"      current attempt {cur['attempt']} ({cur['state']}): "
+                  f"backend {cur['backend']}, agent {cur['agent_id']}")
+    for line in result.get("notes") or []:
+        print(f"  {line}")
+
+
+def cmd_set_agent(args):
+    """Switch the coding agent for attempts not yet created; plan.json untouched."""
+    plan_path = Path(args.plan)
+    try:
+        plan_bytes = plan_path.read_bytes()
+        plan = json.loads(plan_bytes.decode("utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"error: no readable plan at {args.plan}: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    if not isinstance(plan, dict) or not isinstance(plan.get("units"), list):
+        print(f"error: {args.plan} has no units list", file=sys.stderr)
+        return EXIT_USAGE
+    digest_before = SPR.plan_digest(plan)
+    SR.apply_agent_resolution(args.plan, plan=plan)
+    units = {u.get("id"): u for u in plan["units"] if isinstance(u, dict)}
+    if args.unit is not None:
+        u = units.get(args.unit)
+        if u is None:
+            print(f"error: unknown unit {args.unit!r}", file=sys.stderr)
+            return EXIT_USAGE
+        if u.get("kind") != "code":
+            print(f"error: unit {args.unit!r} is kind={u.get('kind')!r}; "
+                  f"only code units have a coding agent", file=sys.stderr)
+            return EXIT_USAGE
+    _prepare_command_paths(args, plan=plan, read_only=args.show)
+    if args.show:
+        overrides, problem = SS.load_agent_overrides(args.state_dir)
+        if problem:
+            print(f"error: {problem}", file=sys.stderr)
+            return EXIT_USAGE
+        state = SS.load_state(args.state_dir)
+        _print_set_agent({
+            "revision": overrides["revision"], "plan_digest": digest_before,
+            "project_override": overrides.get("project"),
+            "unit_overrides": overrides.get("units") or {},
+            "units": _set_agent_rows(plan, state, overrides, args.unit)},
+            args.json)
+        return EXIT_OK
+    if args.clear and any(v is not None for v in (
+            args.provider, args.backend, args.model, args.thinking, args.mode)):
+        print("error: --clear takes no agent flags", file=sys.stderr)
+        return EXIT_USAGE
+    spec = None
+    if not args.clear:
+        spec, problem = _set_agent_target(args)
+        if problem:
+            print(f"error: {problem}", file=sys.stderr)
+            return EXIT_USAGE
+    ok, holder = SS.acquire_lease(args.state_dir, bump_epoch=False)
+    if not ok:
+        print(f"error: cannot take this project's lock: {holder}", file=sys.stderr)
+        return EXIT_HALTED
+    try:
+        overrides, problem = SS.load_agent_overrides(args.state_dir)
+        if problem:
+            print(f"error: {problem}", file=sys.stderr)
+            return EXIT_USAGE
+        state = SS.load_state(args.state_dir)
+        if args.unit is not None:
+            st = ((state.get("units") or {}).get(args.unit) or {}).get("state")
+            if st in SET_AGENT_TERMINAL:
+                print(f"error: unit {args.unit!r} is {st}; it will not "
+                      f"dispatch again, so an override would never apply",
+                      file=sys.stderr)
+                return EXIT_USAGE
+        scope = f"unit:{args.unit}" if args.unit else "project"
+        previous = ((overrides.get("units") or {}).get(args.unit)
+                    if args.unit else overrides.get("project"))
+        if args.clear and not previous:
+            print(f"no {scope} override to clear; revision "
+                  f"{overrides['revision']} unchanged")
+            return EXIT_OK
+        proposed = json.loads(json.dumps(overrides))
+        if args.unit:
+            if args.clear:
+                proposed["units"].pop(args.unit, None)
+            else:
+                proposed["units"][args.unit] = spec
+        else:
+            proposed["project"] = None if args.clear else spec
+        # FAIL EARLY: every non-terminal code unit must still be
+        # dispatchable under the proposed resolution.
+        problems = []
+        if spec is not None:
+            problem = SR.forbid_unit_provider_problem(
+                plan, {"id": scope, "kind": "code", "provider": spec["provider"]})
+            if problem:
+                problems.append(problem)
+            if spec["backend"] == LIO.LOR_BACKEND:
+                problem = LIO.lor_availability()
+                if problem:
+                    problems.append(problem)
+        for uid, u in sorted(units.items()):
+            if u.get("kind") != "code" or (args.unit and uid != args.unit):
+                continue
+            st = ((state.get("units") or {}).get(uid) or {}).get("state")
+            if st in SET_AGENT_TERMINAL:
+                continue
+            agent = SR.resolve_effective_agent(plan, u, proposed)
+            problem = SR.effective_agent_problem(plan, agent)
+            if problem:
+                problems.append(problem)
+        if problems:
+            for problem in dict.fromkeys(problems):
+                print(f"error: {problem}", file=sys.stderr)
+            print("error: nothing was changed", file=sys.stderr)
+            return EXIT_USAGE
+        proposed["revision"] = int(overrides["revision"]) + 1
+        proposed["history"].append({
+            "revision": proposed["revision"], "scope": scope,
+            "action": "clear" if args.clear else "set",
+            "agent": spec, "previous": previous,
+            "at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "by": os.environ.get("USER", "?")})
+        error = SS.save_agent_overrides(args.state_dir, proposed)
+        if error:
+            print(f"error: {error}", file=sys.stderr)
+            return EXIT_HALTED
+        if (plan_path.read_bytes() != plan_bytes
+                or SPR.plan_digest(plan) != digest_before):
+            print("error: plan.json changed during set-agent; it must not",
+                  file=sys.stderr)
+            return EXIT_CONFLICT
+        _print_set_agent({
+            "revision": proposed["revision"], "plan_digest": digest_before,
+            "action": f"{'cleared' if args.clear else 'set'} {scope}",
+            "project_override": proposed.get("project"),
+            "unit_overrides": proposed.get("units") or {},
+            "units": _set_agent_rows(plan, state, proposed, args.unit),
+            "notes": ["plan.json and its digest are unchanged; in-flight "
+                      "attempts keep their frozen backend."]}, args.json)
+        return EXIT_OK
+    finally:
+        SS.release_lease(args.state_dir)
 
 
 def _append_promotion_receipt(state_dir, record):
@@ -2732,6 +3096,9 @@ def _status_rows(plan, state, state_dir, observed_at=None):
                 state, state_dir, uid, Path(us["attempt_dir"]).name)
                 if u.get("kind") == "code" and us.get("attempt_dir") else None),
             "job_id": us.get("job_id"), "attempt_dir": us.get("attempt_dir"),
+            "backend": (SS.attempt_backend(us, us["attempt_dir"])
+                        if u.get("kind") == "code" and us.get("attempt_dir")
+                        else None),
             "allocated_at": us.get("allocated_at"),
             "state_changed_at": us.get("state_changed_at"),
             "state_changed_at_basis": us.get("state_changed_at_basis"),
@@ -2850,6 +3217,12 @@ def cmd_status(args):
                 print(f"  {'':{w}}    resumed {resume['resumed']}/{resume['max']} "
                       f"after provider error; observed {resume['observed_at']} "
                       f"(delivery unconfirmed, not progress)")
+            if watch and watch.get("status") == "lor_native_parent_wake":
+                print(f"  {'':{w}}    backend lor: session {r['job_id']} is "
+                      f"tracked by Lor parent-session wake + `swarm.py "
+                      f"advance` (no watcher process); `wait_event.py "
+                      f"--poll-lor` waits for it")
+                watch = None
             if watch:
                 process = (watch.get("process_state") if watch.get("status")
                            in ("starting", "waiting") else None)
@@ -3135,6 +3508,33 @@ def main():
     usage.add_argument("--tz", default="UTC")
     usage.add_argument("--json", action="store_true")
     usage.set_defaults(fn=cmd_usage)
+
+    ag = sub.add_parser(
+        "set-agent", help="switch the coding agent for new attempts; "
+                          "plan.json is never edited")
+    ag.add_argument("plan")
+    ag.add_argument("--state-dir", default=None)
+    ag.add_argument("--provider", default=None,
+                    help="PROVIDER/MODEL, e.g. lor/<canonical_model_id> or a "
+                         "Paseo provider/model")
+    ag.add_argument("--backend", choices=LIO.BACKENDS, default=None)
+    ag.add_argument("--model", default=None,
+                    help="with --backend: the Lor canonical model id, or the "
+                         "Paseo PROVIDER/MODEL")
+    ag.add_argument("--thinking", default=None,
+                    help="effort id; 'none' sends no effort flag")
+    ag.add_argument("--mode", default=None,
+                    help="Paseo permission mode (required when switching "
+                         "undispatched units without one to Paseo)")
+    ag.add_argument("--unit", default=None,
+                    help="override one code unit instead of the project")
+    ag.add_argument("--clear", action="store_true",
+                    help="remove the project (or --unit) override")
+    ag.add_argument("--show", action="store_true",
+                    help="read-only: print the effective agent of every "
+                         "code unit and any in-flight attempt's backend")
+    ag.add_argument("--json", action="store_true")
+    ag.set_defaults(fn=cmd_set_agent)
 
     s = sub.add_parser("status", help="what every unit is doing")
     s.add_argument("--json", action="store_true",

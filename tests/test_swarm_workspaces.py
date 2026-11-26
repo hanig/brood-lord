@@ -25,6 +25,7 @@ DEFINITIONS = (
     "_report_retained_worktrees", "_report_would_archive_code_worktree",
     "_worktree_cleanup_failed", "_cleanup_codex_home", "_archive_code_worktree",
     "_preserve_and_archive_code_worktree", "reconcile_orphan",
+    "_reconcile_lor_orphan", "_recover_lor_code_launch",
 )
 CONSTANTS = ("WORKTREE_ARCHIVE_MAX_ATTEMPTS", "WORKTREE_CLEANUP_SUMMARY_PREFIX")
 
