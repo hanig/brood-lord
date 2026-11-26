@@ -186,20 +186,26 @@ def lor_messages(rev, messages, system, timeout, deadline=None, *,
                 "--title", f"hanig-review {rev.get('name')}"[:80], "--task", "@-"]
         rc, out, err, run_err = _run(cmd, body, env, tmp, seconds)
         sid = (_SID.findall(out) or [None])[0]
-        if run_err or rc != 0 or not sid:
-            return None, f"lor session start failed: {run_err or (err or out).strip()[:300]}"
+        # Untruncated: review.py redacts first, so no secret prefix survives a cut.
+        start_err = (run_err or rc != 0) and f"lor session start failed: {run_err or (err or out).strip()}"
+        if not sid:
+            return None, start_err or f"lor session start returned no session id: {out.strip()}"
+        events, watch_err = [], start_err
         try:
-            events, watch_err = _watch(lor, sid, env, tmp, end)
-        finally:
+            if not start_err:
+                events, watch_err = _watch(lor, sid, env, tmp, end)
+        finally:  # any returned id is stopped, whatever happened after start
             rc, _o, err, stop_err = _run([lor, "session", "stop", "--session-id", sid],
                                          "", env, tmp, 15.0)
-    stopped = "" if rc == 0 else f" (lor session stop failed: {stop_err or err.strip()[:200]})"
+    stopped = "" if rc == 0 else f"; lor session stop failed for {sid}: {stop_err or err.strip()}"
     got = parse_lor_events(events, sid)
     reason = got["finish_reason"]
     if watch_err == "timeout":
         return None, f"lor subagent {sid} timed out after {seconds:.1f}s{stopped}"
-    if got["error"] or watch_err or (reason != STOP and reason not in LENGTH):
-        return None, f"lor subagent {sid} failed: {got['error'] or watch_err or reason}"[:400] + stopped
+    if start_err or got["error"] or watch_err or (reason != STOP and reason not in LENGTH):
+        return None, f"lor subagent {sid} failed: {got['error'] or watch_err or reason}{stopped}"
+    if stopped:  # fail closed: never report success for a subagent left running
+        return None, stopped[2:]
     empty = (no_content_error or (lambda *a, **k: None if got["text"].strip() else "no content"))(
         rev, got["text"], finish_reason="length" if reason in LENGTH else None,
         reasoning_tokens=got["reasoning_tokens"], completion_tokens=got["out_tokens"],
