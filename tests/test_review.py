@@ -48,7 +48,7 @@ def copy_review_script(destination):
     """Copy the entry point and its eager shipped dependencies as fixture data."""
     for name in ("review.py", "plan_review.py", "review_panels.py",
                  "review_ledger.py", "review_schema.py", "review_cli.py",
-                 "review_subscriptions.py"):
+                 "review_subscriptions.py", "review_lor.py"):
         (destination.parent / name).write_bytes((SCRIPT.parent / name).read_bytes())
 
 
@@ -152,8 +152,14 @@ def _hard_link_or_skip(test_case, source, destination):
         raise
 
 
+# In a Lor session shipped API seats would reach real `lor` subagents; these
+# tests pin API transports (tests/test_lor_provider.py covers Lor routing).
+_NO_LOR = patch.dict(os.environ, {"HANIG_REVIEW_NO_LOR": "1", "LOR_SESSION_ID": ""})
+
+
 def setUpModule():
     """Install I/O-free wrappers for exactly one unittest module lifecycle."""
+    _NO_LOR.start()
     review.reserve_review_round = lambda args: isolated_reservation(
         review, _ORIGINAL_RESERVE_REVIEW_ROUND, args)
     review.append_review_journal = _isolated_append_review_journal
@@ -162,6 +168,7 @@ def setUpModule():
 
 def tearDownModule():
     global _MODULE_STATE_HOME, _SAVED_MODULE_ENV
+    _NO_LOR.stop()
     review.reserve_review_round = _ORIGINAL_RESERVE_REVIEW_ROUND
     review.append_review_journal = _ORIGINAL_APPEND_REVIEW_JOURNAL
     review.record_review_round = _ORIGINAL_RECORD_REVIEW_ROUND
@@ -2644,7 +2651,7 @@ class TestProtocolIsEnforcedNotRemembered(unittest.TestCase):
             for name in ("review.py", "plan_review.py", "review_panels.py",
                          "review_ledger.py", "review_schema.py",
                          "review_cli.py", "review_subscriptions.py",
-                         "committee.py"):
+                         "review_lor.py", "committee.py"):
                 shutil.copyfile(SCRIPT.parent / name, script.parent / name)
             for first, second, refused in (
                     (("openai", "fixture-a"), ("openai", "fixture-b"), True),

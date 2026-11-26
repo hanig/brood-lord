@@ -178,7 +178,7 @@ def pick_members(explicit, authors=(), profile="committee", *, audit=None):
             reserves, rejected = R.exclude_authors(R._panels.reserve_seats(roster, profile), author_ids)
             result = R._panels.reserve_panel(kept, reserves, len(chosen), lambda panel:
                                      len(R._panels.panel_makers(panel)) >= 2
-                                     and len({r["provider"] for r in panel}) >= 2)
+                                     and len(transports(panel)) >= 2)
         if result is None:
             die(conflict_text(excluded) + ". Name independent members with --member.")
         kept, added = result
@@ -190,8 +190,8 @@ def pick_members(explicit, authors=(), profile="committee", *, audit=None):
             f"{len(chosen)} ({', '.join(r['name'] for r in chosen) or 'none'})"
             f". Name them with --member, or fix the {profile!r} profile in "
             f"reviewers.json.")
-    if len({r["provider"] for r in chosen}) < 2:
-        die(f"every member uses provider {chosen[0]['provider']!r}, so they "
+    if len(transports(chosen)) < 2:
+        die(f"every member uses provider {R.effective_provider(chosen[0])!r}, so they "
             f"can share a failure mode. Contrast is the point of a committee: "
             f"name members from at least two providers.")
     if len(R._panels.panel_makers(chosen)) < 2:
@@ -199,6 +199,10 @@ def pick_members(explicit, authors=(), profile="committee", *, audit=None):
             "mode. Contrast is the point of a committee: name members from at "
             "least two model makers.")
     return chosen
+
+
+def transports(panel):
+    return {R.effective_provider(r) for r in panel}  # two Lor seats share one
 
 
 def response_usage(data, provider):
@@ -243,13 +247,17 @@ def _ask_member(member, history, prompt, timeout, *, system=None,
     exchange, so the member answers WITH its own earlier reasoning in view --
     the property a stateless gate cannot have."""
     msgs = list(history) + [{"role": "user", "content": prompt}]
-    if member["provider"] in ("anthropic", "claude", "codex"):
-        if member["provider"] == "anthropic":
+    provider = R.effective_provider(member)
+    if provider in ("anthropic", "claude", "codex", "lor"):
+        if provider == "anthropic":
             transport = (R._anthropic_messages if preserve_reply else R.anthropic_messages)
             label = "Anthropic"
-        elif member["provider"] == "claude":
+        elif provider == "claude":
             transport = (R._claude_messages if preserve_reply else R.claude_messages)
             label = "Claude CLI"
+        elif provider == "lor":  # fail closed: never falls through to an API key
+            transport = (R._lor_messages if preserve_reply else R.lor_messages)
+            label = "Lor subagent"
         else:
             transport = (R._codex_messages if preserve_reply else R.codex_messages)
             label = "Codex CLI"
@@ -450,7 +458,7 @@ def cmd_open(args):
     if selection:
         session["panel_selection"] = selection
         save_session(args.name, session)
-    names = ", ".join(f"{m['name']} ({m['provider']})" for m in members)
+    names = ", ".join(f"{m['name']} ({R.effective_provider(m)})" for m in members)
     print(f"committee {args.name!r}: {names}\nphase 1 (plan), waiting for "
           f"all members...\n")
     results = run_turn(members, session, phase_prompt(problem), args.timeout,

@@ -21,6 +21,7 @@
    "name": "deepseek-v4-pro",
    "provider": "openrouter",
    "model": "deepseek/deepseek-v4-pro",
+   "lor_model": "deepseek-v4-pro",
    "family": {
     "listing": "openrouter",
     "vendor": "deepseek",
@@ -296,6 +297,7 @@
    "name": "astra",
    "provider": "openai",
    "model": "gpt-6.2-astra",
+   "lor_model": "openai/gpt-6.2-astra",
    "family": {
     "listing": "openai",
     "vendor": "",
@@ -344,6 +346,7 @@
    "name": "sol",
    "provider": "openai",
    "model": "gpt-6.2-sol",
+   "lor_model": "openai/gpt-6.2-sol",
    "family": {
     "listing": "openai",
     "vendor": "",
@@ -404,6 +407,7 @@
    "name": "astra-tiebreak",
    "provider": "openai",
    "model": "gpt-6.2-astra",
+   "lor_model": "openai/gpt-6.2-astra",
    "family": {
     "listing": "openai",
     "vendor": "",
@@ -442,6 +446,7 @@
    "name": "sol-tiebreak",
    "provider": "openai",
    "model": "gpt-6.2-sol",
+   "lor_model": "openai/gpt-6.2-sol",
    "family": {
     "listing": "openai",
     "vendor": "",
@@ -517,6 +522,7 @@
    "name": "gemini-neon",
    "provider": "openrouter",
    "model": "google/gemini-4-neon",
+   "lor_model": "google/gemini-4-neon",
    "effort": "high",
    "max_output_tokens": 128000,
    "enabled": true,
@@ -608,6 +614,7 @@
    "name": "kimi-k3",
    "provider": "openrouter",
    "model": "moonshotai/kimi-k3",
+   "lor_model": "moonshotai/kimi-k3",
    "effort": "xhigh",
    "max_output_tokens": 128000,
    "enabled": true,
@@ -642,6 +649,7 @@
    "name": "muse-wonder",
    "provider": "openrouter",
    "model": "meta/muse-wonder",
+   "lor_model": "meta/muse-wonder-1.0",
    "effort": "high",
    "max_output_tokens": 128000,
    "enabled": true,
