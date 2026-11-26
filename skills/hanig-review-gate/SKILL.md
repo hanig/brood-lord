@@ -78,6 +78,7 @@ python3 "$R" --kind implementation --round 1 --escalate --staged \
 ```
 
 - **Escalation & profiles:** `--escalate` walks `fast` → `standard` → `deep`, calling only newly eligible reviewers and stopping on the first `REVIEW_FAIL` or `REVIEW_CLAIMS_REFUTED` with quorum. Without `--profile`, implementation reviews choose `fast` only when every changed path is documentation (`*.md`, `docs/**`, `examples/**`); paths under `scripts/`, `lib/`, `bin/`, `tests/`, any `reviewers.json`, external/parent `--file` targets, or empty/undeterminable sets choose `standard`. Explicit `--profile plan|fast|standard|deep` wins; `--only a,b` restricts seats and cannot combine with `--escalate`.
+- **Lor sessions:** with `LOR_SESSION_ID` set (opt out: `HANIG_REVIEW_NO_LOR=1`), pinned `openai`/`openrouter` seats declaring `lor_model` run as fail-closed zero-tool Lor subagents (`scripts/review_lor.py`), never falling back to paid APIs; `_resolved_from` upgrades keep their API, `claude`/`codex` seats are unchanged, and committee contrast counts effective providers.
 - **Sizing preflight (offline, no credentials/ledger writes):**
   ```bash
   python3 "$HANIG_REVIEW_GATE_DIR/scripts/review.py" --size --range BASE..HEAD --json

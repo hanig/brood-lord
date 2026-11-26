@@ -134,6 +134,8 @@ _ledger = _load_sibling("_hanig_review_gate_ledger", "review_ledger.py")
 _schema = _load_sibling("_hanig_review_gate_schema", "review_schema.py")
 _cli = _load_sibling("_hanig_review_gate_cli", "review_cli.py")
 _subs = _load_sibling("_hanig_review_gate_subscriptions", "review_subscriptions.py")
+_lor = _load_sibling("_hanig_review_gate_lor", "review_lor.py")
+SECRET_ENV = ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY") + _lor.LOR_SECRET_ENV
 _evidence = None
 
 
@@ -688,7 +690,7 @@ def _run_journal_append(files, line):
     """Shared bounded transport for already-redacted immutable records."""
     payload = json.dumps({"files": files, "record_line": line})
     env = os.environ.copy()
-    for name in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"):
+    for name in SECRET_ENV:
         env.pop(name, None)
     process = subprocess.Popen(
         [sys.executable, str(Path(__file__).resolve()), JOURNAL_CHILD_ARG],
@@ -921,7 +923,7 @@ def redact(text):
     if not text:
         return text
     s = str(text)
-    for var in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"):
+    for var in SECRET_ENV:
         val = os.environ.get(var)
         # Values under 4 characters are not real credentials, and scrubbing
         # them would corrupt ordinary text. Documented limit, not an oversight.
@@ -1223,9 +1225,42 @@ def call_codex(rev, prompt, timeout, deadline=None):
                           SYSTEM, timeout, deadline=deadline)
 
 
+def _lor_messages(rev, messages, system, timeout, deadline=None):
+    return _lor.lor_messages(
+        rev, messages, system, timeout, deadline=deadline,
+        no_content_error=no_content_error,
+        format_messages=_subs.format_messages)
+
+
+@redact_provider_result
+def lor_messages(rev, messages, system, timeout, deadline=None):
+    return _lor_messages(rev, messages, system, timeout, deadline=deadline)
+
+
+def call_lor(rev, prompt, timeout, deadline=None):
+    return lor_messages(rev, [{"role": "user", "content": prompt}],
+                        SYSTEM, timeout, deadline=deadline)
+
+
 PROVIDERS = {"openai": call_openai, "openrouter": call_openrouter,
              "anthropic": call_anthropic, "claude": call_claude,
-             "codex": call_codex}
+             "codex": call_codex, "lor": call_lor}
+
+
+def effective_provider(rev):
+    """`lor` also for pinned (never `_resolved_from`) lor_model seats in Lor."""
+    provider = rev.get("provider")
+    if provider == "lor" or (
+            provider in _lor.LOR_ROUTABLE_PROVIDERS and _lor.lor_model_id(rev)
+            and not rev.get("_resolved_from") and _lor.lor_in_session()):
+        return "lor"
+    return provider
+
+
+def effective_model(rev):
+    if effective_provider(rev) == "lor":
+        return _lor.lor_model_id(rev)
+    return rev["model"]
 
 
 # --- parsing ----------------------------------------------------------------
@@ -1682,6 +1717,11 @@ def load_reviewers():
             config_error(f"codex reviewer {r['name']!r} has unsupported "
                          f"effort {r['effort']!r}; Pass low, medium, high, xhigh, max "
                          f"or omit effort")
+        if (r["provider"] == "lor" and r.get("effort") is not None
+                and r["effort"] not in _lor.LOR_EFFORTS):
+            config_error(f"lor reviewer {r['name']!r} has unsupported effort {r['effort']!r}")
+        if "lor_model" in r and not (isinstance(r["lor_model"], str) and r["lor_model"].strip()):
+            config_error(f"reviewer 'lor_model' must be a non-empty string, got {r['lor_model']!r}")
         if r.get("effort") is not None and not isinstance(r["effort"], str):
             config_error(f"reviewer 'effort' must be a string or null, got "
                          f"{r['effort']!r}")
@@ -1742,17 +1782,22 @@ def availability(rev):
     """Why a reviewer cannot run, or None if it can."""
     if not rev.get("enabled", True):
         return "disabled in reviewers.json"
-    if rev["provider"] == "claude":
+    provider = effective_provider(rev)
+    if provider == "lor":  # ready only through Lor, never an API key
+        if not _lor.lor_in_session():
+            return f"lor provider disabled: needs LOR_SESSION_ID set and {_lor.OPT_OUT} unset"
+        return _lor.lor_availability() or (None if _lor.lor_model_id(rev) else "no lor model")
+    if provider == "claude":
         return _subs.claude_availability()
-    if rev["provider"] == "codex":
+    if provider == "codex":
         return _subs.codex_availability()
     env = {"openai": "OPENAI_API_KEY", "openrouter": "OPENROUTER_API_KEY",
            "anthropic": "ANTHROPIC_API_KEY"}
-    var = env.get(rev["provider"])
+    var = env.get(provider)
     if var and not os.environ.get(var):
         return f"{var} not set"
-    if rev["provider"] not in PROVIDERS:
-        return f"unknown provider {rev['provider']!r}"
+    if provider not in PROVIDERS:
+        return f"unknown provider {provider!r}"
     return None
 
 
@@ -1772,7 +1817,7 @@ def probe_liveness(rev, timeout=30):
     if why:
         return why
     try:
-        _text, err = PROVIDERS[rev["provider"]](rev, "ping", timeout)
+        _text, err = PROVIDERS[effective_provider(rev)](rev, "ping", timeout)
     except Exception as e:                      # never let --list traceback
         return redact(f"{type(e).__name__}: {e}")
     if err:
@@ -1861,8 +1906,8 @@ def _run_one(rev, prompt, timeout, require_claims=0, asserted=None):
                                     f"(reviewer budget of "
                                     f"{int(deadline - t0)}s exhausted)"),
                     "elapsed_s": round(time.time() - t0, 1)}
-        result, err = PROVIDERS[rev["provider"]](rev, attempt_prompt, timeout,
-                                                deadline=deadline)
+        result, err = PROVIDERS[effective_provider(rev)](
+            rev, attempt_prompt, timeout, deadline=deadline)
         elapsed = round(time.time() - t0, 1)
         if err:
             return {"name": rev["name"], "ok": False, "error": err,
@@ -1887,7 +1932,8 @@ def _run_one(rev, prompt, timeout, require_claims=0, asserted=None):
     # containing a quote is JSON-escaped on the way out and stops matching.
     return {"name": rev["name"], "ok": True, "elapsed_s": elapsed,
             "retried": last_why is not None,
-            "model": rev["model"], "effort": rev.get("effort"),
+            "provider": effective_provider(rev),
+            "model": effective_model(rev), "effort": rev.get("effort"),
             "in_tokens": result.get("in_tokens"),
             "out_tokens": result.get("out_tokens"),
             "verdict": verdict.get("verdict"),
@@ -1912,7 +1958,8 @@ def cmd_list(reviewers, probe=True):
             status = "ready" if probe else "key set (UNVERIFIED)"
         else:
             status = f"UNAVAILABLE ({why})"
-        print(f"{rev['name']:<20} {rev['provider']:<12} {rev['model']:<30} "
+        print(f"{rev['name']:<20} {effective_provider(rev):<12} "
+              f"{effective_model(rev):<30} "
               f"{str(rev.get('effort') or '-'):<8} {status}")
     print(f"\n{ready} of {len(reviewers)} reviewers "
           + ("answered a live probe" if probe
