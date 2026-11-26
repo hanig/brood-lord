@@ -156,9 +156,7 @@ def _watch(lor, sid, env, cwd, end):
             if not sel.select(max(0, min(end - time.time(), 1))):
                 continue
             chunk = os.read(proc.stdout.fileno(), 65536)
-            if not chunk:
-                return events, "watch ended before the subagent finished"
-            *lines, buf = (buf + chunk).split(b"\n")
+            *lines, buf = (buf + chunk).split(b"\n") if chunk else (buf, b"")  # EOF: keep the tail
             if len(buf) > 1 << 26:
                 return events, "watch line exceeded 64MB"
             for line in lines:
@@ -168,6 +166,8 @@ def _watch(lor, sid, env, cwd, end):
                     continue
                 if parse_lor_events(events[-1:])["finished"]:
                     return events, ""
+            if not chunk:
+                return events, "watch ended before the subagent finished"
         return events, "timeout"
     except OSError as exc:
         return events, f"lor session watch failed: {exc}"
