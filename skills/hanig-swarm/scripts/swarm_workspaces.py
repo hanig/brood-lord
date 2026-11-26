@@ -152,101 +152,117 @@ def _registered_attempt_workspace(intent):
 
 
 def _recover_lor_code_launch(state, u, unit_dir, agent, intent):
-    """Finish a Lor launch snapshot after a crash between start and bind."""
+    """Resolve the worktree a recovered Lor session works in.
+
+    Returns ``(agent_path, error)``. This only polls Lor and binds the
+    session's reported directory to the coordinator-recorded worktree path;
+    the device/inode identity check, cleanup-agent recording and launch
+    completion are shared with Paseo recovery in ``_recover_code_launch``.
+    """
     attempt = Path(unit_dir).name
     obs = LIO.poll_session(str(agent),
                            parent_session_id=intent.get("parent_session_id"))
     if obs["state"] == "unknown":
-        return f"cannot observe recovered lor session {agent}: {obs['detail']}"
+        return None, (f"cannot observe recovered lor session {agent}: "
+                      f"{obs['detail']}")
     us = ((state.get("units") or {}).get(u["id"]) or {})
     meta = ((us.get("attempt_workspaces") or {}).get(attempt) or {})
     workspace = meta.get("path")
     if not workspace:
-        return (f"recovered lor session {agent} has no coordinator-recorded "
-                f"worktree for attempt {attempt!r}")
+        return None, (f"recovered lor session {agent} has no "
+                      f"coordinator-recorded worktree for attempt {attempt!r}")
     reported = obs.get("working_directory")
     try:
         agent_path = str(Path(workspace).resolve())
         if reported and not str(reported).startswith("~") and (
                 str(Path(reported).resolve()) != agent_path):
-            return (f"recovered lor session {agent} works in {reported!r}, "
-                    f"not recorded worktree {agent_path!r}")
-        agent_st = os.stat(agent_path)
+            return None, (f"recovered lor session {agent} works in "
+                          f"{reported!r}, not recorded worktree "
+                          f"{agent_path!r}")
     except OSError as exc:
-        return f"cannot identify recovered attempt workspace: {exc}"
-    known_facts = ((us.get("attempt_launch_facts") or {}).get(attempt) or {})
-    known_identity = (known_facts.get("workspace_identity")
-                      or meta.get("workspace_identity"))
-    if isinstance(known_identity, dict) and (
-            (known_identity.get("device"), known_identity.get("inode"))
-            != (agent_st.st_dev, agent_st.st_ino)):
-        return (f"recovered lor session {agent} does not own the recorded "
-                f"device/inode for attempt {attempt!r}")
-    state["units"][u["id"]].setdefault(
-        "attempt_cleanup_agents", {})[attempt] = str(agent)
-    return SCL._complete_code_launch(
-        state, u, unit_dir, agent_path, recovery=True,
-        workspace_owner="coordinator")
+        return None, f"cannot identify recovered attempt workspace: {exc}"
+    return agent_path, None
 
 
 def _recover_code_launch(state, u, unit_dir, agent):
-    """Finish a launch snapshot after a crash between Paseo run and bind."""
+    """Finish a launch snapshot after a crash between agent start and bind."""
     attempt = Path(unit_dir).name
     recorded = SS.attempt_launch_intent(
         ((state.get("units") or {}).get(u["id"]) or {}), attempt)
+    workspace_id = None
     if recorded.get("backend") == LIO.LOR_BACKEND:
         problem = SCL._code_launch_intent_problem(recorded, u, attempt)
         problem = problem or W.launch_host_problem(recorded)
         if problem:
             return problem
-        return _recover_lor_code_launch(state, u, unit_dir, agent, recorded)
-    rc, out, err = U.run(["paseo", "inspect", str(agent), "--json"], timeout=60)
-    if rc != 0:
-        return f"cannot inspect recovered agent {agent}: {_paseo_error(out, err)}"
-    rec = _paseo_json(out) or {}
-    workspace = rec.get("Cwd") or rec.get("cwd")
-    if not workspace:
-        return f"recovered agent {agent} reports no cwd"
-    attempt = Path(unit_dir).name
-    intent = (((state.get("units") or {}).get(u["id"]) or {})
-              .get("attempt_launch_intents") or {}).get(attempt)
-    problem = SCL._code_launch_intent_problem(intent, u, attempt)
-    if problem:
-        return problem
-    problem = W.launch_host_problem(intent)
-    if problem:
-        return problem
-    try:
-        agent_path = str(Path(workspace).resolve())
-        agent_st = os.stat(agent_path)
-    except OSError as exc:
-        return f"cannot identify recovered attempt workspace: {exc}"
-    agent_identity = (agent_st.st_dev, agent_st.st_ino)
-    registered = _registered_attempt_workspace(intent)
-    matching_registry = []
-    if registered:
-        for candidate in registered:
-            registered_path = candidate.get("cwd") or candidate.get("Cwd")
-            if not registered_path:
-                continue
-            try:
-                registry_path = str(Path(registered_path).resolve())
-                registry_st = os.stat(registry_path)
-            except OSError:
-                continue
-            if (registry_st.st_dev, registry_st.st_ino) == agent_identity:
-                matching_registry.append(candidate)
-        # One registry claim is unambiguous evidence. If it identifies a
-        # different inode, the title-matched agent is the wrong owner. Zero,
-        # duplicate, or unreadable claims are merely unavailable evidence:
-        # the trusted inode (when present) and Git intent checks below decide.
-        if len(registered) == 1 and not matching_registry:
-            candidate = registered[0]
-            registered_path = candidate.get("cwd") or candidate.get("Cwd")
-            return (f"recovered agent {agent} is attached to worktree "
-                    f"{agent_path!r}, whose device/inode does not match "
-                    f"Paseo's registered workspace for attempt {attempt!r} "
-                    f"at {registered_path!r}")
+        agent_path, problem = _recover_lor_code_launch(
+            state, u, unit_dir, agent, recorded)
+        if problem:
+            return problem
+        try:
+            agent_st = os.stat(agent_path)
+        except OSError as exc:
+            return f"cannot identify recovered attempt workspace: {exc}"
+        agent_identity = (agent_st.st_dev, agent_st.st_ino)
+        agent_label = f"lor session {agent}"
+        complete_options = {"workspace_owner": "coordinator"}
+    else:
+        rc, out, err = U.run(["paseo", "inspect", str(agent), "--json"],
+                             timeout=60)
+        if rc != 0:
+            return (f"cannot inspect recovered agent {agent}: "
+                    f"{_paseo_error(out, err)}")
+        rec = _paseo_json(out) or {}
+        workspace = rec.get("Cwd") or rec.get("cwd")
+        if not workspace:
+            return f"recovered agent {agent} reports no cwd"
+        intent = (((state.get("units") or {}).get(u["id"]) or {})
+                  .get("attempt_launch_intents") or {}).get(attempt)
+        problem = SCL._code_launch_intent_problem(intent, u, attempt)
+        if problem:
+            return problem
+        problem = W.launch_host_problem(intent)
+        if problem:
+            return problem
+        try:
+            agent_path = str(Path(workspace).resolve())
+            agent_st = os.stat(agent_path)
+        except OSError as exc:
+            return f"cannot identify recovered attempt workspace: {exc}"
+        agent_identity = (agent_st.st_dev, agent_st.st_ino)
+        registered = _registered_attempt_workspace(intent)
+        matching_registry = []
+        if registered:
+            for candidate in registered:
+                registered_path = candidate.get("cwd") or candidate.get("Cwd")
+                if not registered_path:
+                    continue
+                try:
+                    registry_path = str(Path(registered_path).resolve())
+                    registry_st = os.stat(registry_path)
+                except OSError:
+                    continue
+                if (registry_st.st_dev, registry_st.st_ino) == agent_identity:
+                    matching_registry.append(candidate)
+            # One registry claim is unambiguous evidence. If it identifies a
+            # different inode, the title-matched agent is the wrong owner.
+            # Zero, duplicate, or unreadable claims are merely unavailable
+            # evidence: the trusted inode (when present) and Git intent
+            # checks below decide.
+            if len(registered) == 1 and not matching_registry:
+                candidate = registered[0]
+                registered_path = candidate.get("cwd") or candidate.get("Cwd")
+                return (f"recovered agent {agent} is attached to worktree "
+                        f"{agent_path!r}, whose device/inode does not match "
+                        f"Paseo's registered workspace for attempt "
+                        f"{attempt!r} at {registered_path!r}")
+        if len(matching_registry) == 1:
+            workspace_id = (matching_registry[0].get("workspaceId")
+                            or matching_registry[0].get("WorkspaceId"))
+        agent_label = f"agent {agent}"
+        complete_options = {"workspace_id": workspace_id}
+    # One coordinator-state identity check for every backend: the recovered
+    # agent must work in the exact inode the coordinator recorded.
     us = ((state.get("units") or {}).get(u["id"]) or {})
     known_facts = ((us.get("attempt_launch_facts") or {}).get(attempt) or {})
     known_meta = ((us.get("attempt_workspaces") or {}).get(attempt) or {})
@@ -255,16 +271,11 @@ def _recover_code_launch(state, u, unit_dir, agent):
     if isinstance(known_identity, dict):
         expected = (known_identity.get("device"), known_identity.get("inode"))
         if expected != agent_identity:
-            return (f"recovered agent {agent} does not own the recorded "
+            return (f"recovered {agent_label} does not own the recorded "
                     f"device/inode for attempt {attempt!r}")
-    workspace_id = None
-    if len(matching_registry) == 1:
-        workspace_id = (matching_registry[0].get("workspaceId")
-                        or matching_registry[0].get("WorkspaceId"))
     us.setdefault("attempt_cleanup_agents", {})[attempt] = str(agent)
     return SCL._complete_code_launch(
-        state, u, unit_dir, agent_path, workspace_id=workspace_id,
-        recovery=True)
+        state, u, unit_dir, agent_path, recovery=True, **complete_options)
 
 
 WORKTREE_CLEANUP_SUMMARY_PREFIX = "NEEDS_HUMAN -- retained worktrees:"

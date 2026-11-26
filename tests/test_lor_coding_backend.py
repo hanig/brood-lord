@@ -689,6 +689,28 @@ class TestLifecycleOps(LorFixture):
         self.assertEqual(len(self.lor_calls("start")), 1)
         self.assertEqual(self.paseo()["calls"], [])
 
+    def test_recovered_lor_session_must_own_the_recorded_inode(self):
+        plan, state = self.launch_lor()
+        us = state["units"]["l"]
+        session, attempt_dir = us["job_id"], us["attempt_dir"]
+        attempt = Path(attempt_dir).name
+        recorded = (us.get("attempt_launch_facts") or {}).get(attempt, {}).get(
+            "workspace_identity") or us["attempt_workspaces"][attempt][
+            "workspace_identity"]
+        self.assertIsInstance(recorded, dict)
+        forged = dict(recorded, inode=int(recorded["inode"]) + 1)
+        us.setdefault("attempt_launch_facts", {}).setdefault(attempt, {})[
+            "workspace_identity"] = forged
+        us["attempt_workspaces"][attempt]["workspace_identity"] = forged
+        us.get("attempt_cleanup_agents", {}).pop(attempt, None)
+        problem = S._recover_code_launch(state, plan["units"][0], attempt_dir,
+                                         session)
+        self.assertIsNotNone(problem)
+        self.assertIn("does not own the recorded device/inode", problem)
+        self.assertIn(f"lor session {session}", problem)
+        self.assertNotIn(attempt, us.get("attempt_cleanup_agents", {}))
+        self.assertEqual(self.paseo()["calls"], [])
+
 
     def test_redispatch_refuses_when_lor_cannot_say_whether_a_session_exists(self):
         lor_unit = self.unit("l", provider=LOR_PROVIDER)
