@@ -458,7 +458,8 @@ def cmd_open(args):
     if selection:
         session["panel_selection"] = selection
         save_session(args.name, session)
-    names = ", ".join(f"{m['name']} ({R.effective_provider(m)})" for m in members)
+    names = ", ".join(f"{m['name']} ({R.effective_provider(m)}/{R.seat_route(m)})"
+                      for m in members)
     print(f"committee {args.name!r}: {names}\nphase 1 (plan), waiting for "
           f"all members...\n")
     results = run_turn(members, session, phase_prompt(problem), args.timeout,

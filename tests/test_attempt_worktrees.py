@@ -409,8 +409,10 @@ class TestPerAttemptWorktrees(unittest.TestCase):
         self.assertIn("into target branch", prompt)
         self.assertIn(intent["base_commit"], prompt)
         self.assertIn("Commit all intended work", prompt)
-        self.assertIn("Open a pull request", prompt)
-        self.assertIn("After opening the pull request, STOP.", prompt)
+        self.assertIn("The orchestrator, not you, opens the pull request", prompt)
+        self.assertNotIn("Open a pull request", prompt)
+        self.assertIn("After pushing your verified head and writing the evidence "
+                      "files, STOP.", prompt)
         self.assertIn("NEVER merge, approve, or enable auto-merge.", prompt)
         self.assertIn("Merge decisions belong to the orchestrator.", prompt)
         self.assertIn(
@@ -425,8 +427,8 @@ class TestPerAttemptWorktrees(unittest.TestCase):
 
     def test_delivered_protocol_overrides_a_task_that_forbids_closure(self):
         attempt = self.attempt("code", "contrary-task")
-        task = ("Make the edits, but do not commit, do not push, and do not "
-                "open a pull request; leave them for a reviewer.")
+        task = ("Make the edits, but do not commit and do not push; "
+                "leave them for a reviewer.")
         unit = code_unit(self.repo)
         unit["prompt"] = task
         state = {"units": {}}
@@ -438,8 +440,8 @@ class TestPerAttemptWorktrees(unittest.TestCase):
         delivered = self.fake.launches[0][-1]
         self.assertTrue(delivered.startswith(task + "\n\n"))
         self.assertIn("overrides any contrary instruction", delivered)
-        self.assertIn("task appears to forbid committing, pushing, or opening",
-                      delivered)
+        self.assertIn("task appears to forbid committing or pushing to the "
+                      "anchored attempt ref", delivered)
         self.assertIn("STOP AND REPORT that conflict", delivered)
 
     def test_target_matching_generated_attempt_branch_is_refused(self):

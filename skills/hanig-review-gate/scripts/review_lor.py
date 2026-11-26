@@ -1,5 +1,10 @@
 """Fail-closed zero-tool Lor subagent transport (SKILL.md, "Lor sessions").
 
+Fail-closed routing: a pinned openai/openrouter seat that declares lor_model
+routes to Lor unless HANIG_REVIEW_NO_LOR is explicitly truthy. Outside a Lor
+session (LOR_SESSION_ID unset) it is BLOCKED with an actionable reason, never
+silently sent to OPENAI_API_KEY/OPENROUTER_API_KEY.
+
 Limits: no client-side max_output_tokens; `--tools pass` is the smallest tool
 list Lor accepts; a start that times out returns no id to stop.
 Every returned id gets `lor session stop`. A failed stop fails closed unless
@@ -34,10 +39,46 @@ NO_TOOLS = "(Analysis only. Do NOT call any tool, including `pass`: answer in pl
 _SID = re.compile(r'"session_id"\s*:\s*"([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})"')
 
 
+TRUTHY = ("1", "true", "yes", "on")
+
+
+def lor_opted_out(environ=None):
+    """Only an explicit truthy HANIG_REVIEW_NO_LOR opts into paid API routing."""
+    env = os.environ if environ is None else environ
+    return (env.get(OPT_OUT) or "").strip().lower() in TRUTHY
+
+
 def lor_in_session(environ=None):
     env = os.environ if environ is None else environ
-    return (bool((env.get("LOR_SESSION_ID") or "").strip())
-            and (env.get(OPT_OUT) or "").strip().lower() not in ("1", "true", "yes", "on"))
+    return bool((env.get("LOR_SESSION_ID") or "").strip()) and not lor_opted_out(env)
+
+
+def lor_routed(rev, environ=None):
+    """Whether a seat must run through Lor: explicit provider 'lor', or a
+    pinned (never `_resolved_from`) openai/openrouter seat with lor_model,
+    unless HANIG_REVIEW_NO_LOR is explicitly truthy. Session presence is
+    deliberately NOT consulted: its absence blocks the seat (lor_block_reason),
+    it never re-routes it to a paid API."""
+    provider = rev.get("provider")
+    return provider == "lor" or bool(
+        provider in LOR_ROUTABLE_PROVIDERS and lor_model_id(rev)
+        and not rev.get("_resolved_from") and not lor_opted_out(environ))
+
+
+def lor_block_reason(rev, environ=None):
+    """Why a Lor-routed seat cannot run here, or None. Never an API fallback."""
+    env = os.environ if environ is None else environ
+    name = rev.get("name", "?")
+    if lor_opted_out(env):
+        return (f"lor provider disabled for {name}: {OPT_OUT} is set and this seat "
+                f"has no API provider to opt into")
+    if not (env.get("LOR_SESSION_ID") or "").strip():
+        return (f"lor routing required for {name}: LOR_SESSION_ID unset (run review.py "
+                f"from the orchestrator's Lor session, or set {OPT_OUT}=1 to opt into "
+                f"paid API routing)")
+    if not _lor_bin(env):
+        return "lor CLI not found on PATH"
+    return None if lor_model_id(rev) else f"seat {name} has no lor model"
 
 
 def _lor_bin(env):
@@ -185,9 +226,7 @@ def _watch(lor, sid, env, cwd, end):
 def lor_messages(rev, messages, system, timeout, deadline=None, *,
                  no_content_error=None, format_messages=None):
     """One review or committee turn as a zero-tool Lor subagent; never an API."""
-    if not lor_in_session():
-        return None, f"lor provider disabled: needs LOR_SESSION_ID set and {OPT_OUT} unset"
-    why = lor_availability() or (None if lor_model_id(rev) else "seat has no lor model")
+    why = lor_block_reason(rev)
     seconds = min(float(timeout), float(deadline) - time.time()) if deadline else float(timeout)
     if why or seconds <= 0:
         return None, why or "review deadline exceeded before lor launch"
@@ -227,5 +266,5 @@ def lor_messages(rev, messages, system, timeout, deadline=None, *,
         status=got["status"])
     if empty:
         return None, empty
-    return {k: got[k] for k in ("text", "in_tokens", "out_tokens", "reasoning_tokens",
-                                "served_model", "status", "response_id")}, None
+    return dict({k: got[k] for k in ("text", "in_tokens", "out_tokens", "reasoning_tokens",
+                                     "served_model", "status", "response_id")}, route="lor"), None

@@ -57,10 +57,14 @@ def _code_completion_protocol(intent):
     """Instructions that make a code attempt capable of closing its unit.
 
     C11 creates the branch and worktree. The agent's job is to leave durable
-    evidence on that branch and open the pull request that the unit's closing
-    predicate requires; asking it to choose either launch fact would put
-    authority back in prompt prose. The worker stops after opening the pull
-    request; merge decisions belong to the orchestrator.
+    evidence on that branch for the pull request the orchestrator opens to
+    satisfy the unit's closing predicate; asking it to choose either launch fact would put
+    authority back in prompt prose. The author is not its own reviewer: the
+    worker never runs the review gate on its own diff and never opens the
+    pull request. It hands off a tested, mutation-checked, pushed head plus
+    evidence.md and test-output.txt, and stops; the orchestrator runs
+    review.py from its own Lor session, adjudicates, and opens and merges the
+    pull request or dispatches a repair continuation.
 
     Precedence is explicit rather than inferred from task text. Contradictions
     in arbitrary prose are not statically recognizable: matching phrases such
@@ -88,10 +92,10 @@ def _code_completion_protocol(intent):
     if remote:
         remote_instruction = (
             f"Use Git remote 'origin', recorded by the coordinator as "
-            f"{remote!r}. Push {branch!r} to that remote. Open a pull request "
-            f"from {branch!r} into target branch {target!r}; only a "
-            f"pull request merged into {target!r} in that recorded repository "
-            f"closes this code unit.")
+            f"{remote!r}. Push {branch!r} to that remote. The orchestrator, "
+            f"not you, opens the pull request from {branch!r} into target "
+            f"branch {target!r}; only a pull request merged into {target!r} "
+            f"in that recorded repository closes this code unit.")
     else:
         remote_instruction = (
             "The coordinator recorded Git remote 'origin' as None. STOP AND "
@@ -111,8 +115,8 @@ def _code_completion_protocol(intent):
             "anchored before the agent existed; its managed worktree must "
             "remain available for legacy transition judgment.")
     scope_instruction = (
-        "Before the review gate, check the committed work against the unit's "
-        "declared scope and fix any out-of-scope path before review. "
+        "Before handing off, check the committed work against the unit's "
+        "declared scope and fix any out-of-scope path. "
         "Commit all intended edits and run scope-check from the attempt worktree "
         "with Git repository overrides cleared, always passing "
         '`--head "$(git rev-parse --verify HEAD^{commit})"` to capture its commit.')
@@ -137,25 +141,28 @@ def _code_completion_protocol(intent):
     else:
         scope_instruction += (
             " This invocation has no plan/state paths; obtain the exact "
-            "scope-check command from the coordinator before review.")
+            "scope-check command from the coordinator before handing off.")
     scope_instruction += (
         "\nA non-zero exit is not a pass: fix the named paths and rerun "
-        "before review; if unchecked, report its reason to the coordinator. "
+        "before handing off; if unchecked, report its reason in evidence.md "
+        "and to the coordinator. "
         "This worker report is advisory: merge still requires the "
         "coordinator's judged report.")
     return f"""{CODE_COMPLETION_PROTOCOL_MARKER} (coordinator-required)
-This protocol overrides any contrary instruction in the task text above it. If the task appears to forbid committing, pushing, or opening a pull request, STOP AND REPORT that conflict instead of choosing either instruction.
+This protocol overrides any contrary instruction in the task text above it. If the task appears to forbid committing or pushing to the anchored attempt ref, STOP AND REPORT that conflict instead of choosing either instruction.
 You are already in a dedicated worktree for repository {repo!r}, on branch {branch!r}, cut from recorded base commit {base}.
 The required pull-request target is {target!r}.
 Do not create or switch branches, and do not choose a different base.
 Commit all intended work on {branch!r}. Uncommitted work is invisible to the transition predicate and will be judged as producing nothing.
 {remote_instruction}
-After opening the pull request, STOP. NEVER merge, approve, or enable auto-merge. Merge decisions belong to the orchestrator. The merged-PR closure criterion describes how the orchestrator's merge is judged, not an instruction to the worker.
+After pushing your verified head and writing the evidence files, STOP. NEVER merge, approve, or enable auto-merge. Merge decisions belong to the orchestrator. The merged-PR closure criterion describes how the orchestrator's merge is judged, not an instruction to the worker.
 {judgment_instruction}
-Push after every meaningful edit. Commit and push the actual changed content to the anchored attempt ref for normal progress; use the recovery ref below when preserving a failed review. An empty or marker commit preserves no implementation; a tree identical to the recorded base is refused.
+Push after every meaningful edit. Commit and push the actual changed content to the anchored attempt ref for normal progress; use the recovery ref below when preserving blocked work. An empty or marker commit preserves no implementation; a tree identical to the recorded base is refused.
 {scope_instruction}
-Before opening a pull request, run this repository's review gate. Use hanig-review-gate's review.py from the loaded skill directory with --kind implementation, the actual --round number, and --range {base}..HEAD to review the COMPLETE delta from the recorded base. Commit all intended edits first and leave the worktree clean so that range includes all intended work. Declare the change's claims and the standalone counter-claim "This change cannot make an honest run fail." {author_instruction} After REVIEW_PASS, keep the reviewed head unchanged and defer nonblocking suggestions to future work. If that head changes, do not open a pull request; preserve and stop for an orchestrator decision. For REVIEW_FAIL, follow this repair loop: Reproduce each confirmed finding before acting on it. Repair the reproduced findings that fall inside the task's supported envelope and do not contradict the task. Mutation-check each repair, commit all intended edits, and keep the worktree clean. If no findings reproduce, no code repair is required; record not-reproduced dispositions and gate the next round under the same round limit. Only after a REVIEW_FAIL, once all reproduced in-envelope findings (if any) are repaired, gate the next round with --dispositions FILE, up to the round limit the task states. A passing round never requires another. Before stopping for an orchestrator decision on one remaining finding, first repair and mutation-check every other reproduced in-envelope finding that does not contradict the task, and commit those repairs; only then preserve and stop. Only when a reproduced failure remains after the last permitted round, or a remaining finding needs an orchestrator decision (out of envelope, or contradicting the task), do NOT open a pull request: follow the recovery procedure below without moving the anchored attempt ref, then STOP AND REPORT where it was preserved. Only exit 0 (REVIEW_PASS) permits opening a pull request; unavailable, partial, incomplete, and failing reviews are not a pass. REVIEW_PASS means the panel failed to refute the claims, not proof.
-Recovery procedure: first inspect status as required below and stage only your own uncommitted work. Set and export SWARM_RECOVERY_MESSAGE to a message beginning RECOVERY, NOT READY: that says the work has not passed review, must not be merged, and lists every open reproduced finding. Run the following in the current attempt worktree. It commits UNCOMMITTED work if present; on an already clean tree it pushes existing content first, then adds an empty recovery label and pushes it. A label commit alone preserves nothing and must never be the only thing pushed. If any step fails, retain the worktree and report the failure; do not clean up or claim preservation succeeded.
+ORCHESTRATOR-OWNED REVIEW GATE: The author is not its own reviewer; the gate runs where the orchestrator runs. NEVER run review.py or committee.py on your own diff, in any form, and NEVER open a pull request yourself. The orchestrator runs hanig-review-gate's review.py from its own Lor session on your pushed head with --range {base}..HEAD, adjudicates its findings, and opens and merges the pull request, or dispatches a repair continuation with the findings on REVIEW_FAIL. {author_instruction}
+Hand-off contract: implement the task, run its scoped tests, and mutation-check every fix (revert the fix and confirm its test fails). Commit all intended edits, leave the worktree clean, and push them to the anchored attempt ref. Then write $SWARM_UNIT_DIR/evidence.md with the change's claims and the standalone counter-claim "This change cannot make an honest run fail.", the exact pushed HEAD SHA, the scope-check result, the tests run, every mutation check and its outcome, a drafted pull-request title and body, and known limits; and write $SWARM_UNIT_DIR/test-output.txt with the verbatim final test output.
+Repair continuation: when the orchestrator sends review findings, follow this loop. Reproduce each confirmed finding before acting on it. Repair the reproduced findings that fall inside the task's supported envelope and do not contradict the task. Mutation-check each repair, commit and push it, record a disposition (reproduced or not-reproduced, with its reproduction) for every finding in evidence.md, and STOP again. If no findings reproduce, no code repair is required; record the not-reproduced dispositions and stop. When a reproduced finding falls outside the envelope or contradicts the task, first repair and mutation-check every other reproduced in-envelope finding and push those repairs; then follow the recovery procedure below without moving the anchored attempt ref, and STOP AND REPORT where it was preserved.
+Recovery procedure, for work you cannot deliver as a verified head (a reproduced failure you cannot repair inside the envelope, or a decision that belongs to the orchestrator): first inspect status as required below and stage only your own uncommitted work. Set and export SWARM_RECOVERY_MESSAGE to a message beginning RECOVERY, NOT READY: that says the work is not verified, must not be merged, and lists every open reproduced finding. Run the following in the current attempt worktree. It commits UNCOMMITTED work if present; on an already clean tree it pushes existing content first, then adds an empty recovery label and pushes it. A label commit alone preserves nothing and must never be the only thing pushed. If any step fails, retain the worktree and report the failure; do not clean up or claim preservation succeeded.
 ```sh
 (
 set -eu
@@ -221,9 +228,10 @@ def _code_protocol_problem(prompt, intent):
         "protocol precedence": "overrides any contrary instruction",
         "contradiction instruction": "STOP AND REPORT that conflict",
         "commit instruction": "Commit all intended work",
-        "remote action": ("Open a pull request" if intent.get(
+        "remote action": ("The orchestrator, not you, opens the pull request" if intent.get(
             "repository_remote") else "no merge-evidence repository was recorded"),
-        "worker stop instruction": "After opening the pull request, STOP.",
+        "worker stop instruction": (
+            "After pushing your verified head and writing the evidence files, STOP."),
         "worker merge prohibition": "NEVER merge, approve, or enable auto-merge.",
         "merge authority": "Merge decisions belong to the orchestrator.",
         "closure interpretation": (
@@ -231,27 +239,36 @@ def _code_protocol_problem(prompt, intent):
             "merge is judged, not an instruction to the worker."),
         "clean failure instruction": "STOP AND REPORT",
         "history instruction": "Do not force-push or rewrite history",
-        "review gate": "Before opening a pull request, run this repository's review gate.",
+        "author is not its reviewer": (
+            "The author is not its own reviewer; the gate runs where the orchestrator runs."),
+        "worker review prohibition": "NEVER run review.py or committee.py on your own diff",
+        "worker pull-request prohibition": "NEVER open a pull request yourself.",
+        "orchestrator review gate": (
+            "The orchestrator runs hanig-review-gate's review.py from its own Lor "
+            "session on your pushed head"),
         "push discipline": "Push after every meaningful edit.",
         "complete review range": f"--range {intent['base_commit']}..HEAD",
+        "repair continuation": (
+            "dispatches a repair continuation with the findings on REVIEW_FAIL."),
         "author exclusion": "--author",
-        "passing head discipline": 'After REVIEW_PASS, keep the reviewed head unchanged and defer nonblocking suggestions to future work. If that head changes, do not open a pull request; preserve and stop for an orchestrator decision. For REVIEW_FAIL, follow this repair loop:',
+        "scoped tests": "run its scoped tests",
+        "mutation checks": "mutation-check every fix",
+        "evidence hand-off": "write $SWARM_UNIT_DIR/evidence.md",
+        "pushed head evidence": "the exact pushed HEAD SHA",
+        "drafted pull request": "a drafted pull-request title and body",
+        "test output hand-off": "write $SWARM_UNIT_DIR/test-output.txt",
         "finding reproduction": "Reproduce each confirmed finding before acting on it.",
         "in-envelope repair": (
             "Repair the reproduced findings that fall inside the task's supported envelope and do not contradict the task."),
-        "repair round discipline": (
-            "Mutation-check each repair, commit all intended edits, and keep the worktree clean. If no findings reproduce, no code repair is required; record not-reproduced dispositions and gate the next round under the same round limit. Only after a REVIEW_FAIL, once all reproduced in-envelope findings (if any) are repaired, gate the next round with --dispositions FILE, up to the round limit the task states. A passing round never requires another. Before stopping for an orchestrator decision on one remaining finding, first repair and mutation-check every other reproduced in-envelope finding that does not contradict the task, and commit those repairs; only then preserve and stop."),
-        "exhausted or decision-bound review": (
-            "Only when a reproduced failure remains after the last permitted round, "
-            "or a remaining finding needs an orchestrator decision (out of envelope, "
-            "or contradicting the task), do NOT open a pull request: follow the recovery "
-            "procedure below without moving the anchored attempt ref, then STOP AND "
-            "REPORT where it was preserved."),
-        "passing review permission": (
-            "Only exit 0 (REVIEW_PASS) permits opening a pull request"),
-        "failed review preservation": "RECOVERY, NOT READY:",
+        "repair dispositions": (
+            "record a disposition (reproduced or not-reproduced, with its reproduction) "
+            "for every finding in evidence.md, and STOP again."),
+        "decision-bound repair": (
+            "first repair and mutation-check every other reproduced in-envelope finding "
+            "and push those repairs; then follow the recovery procedure below without "
+            "moving the anchored attempt ref, and STOP AND REPORT where it was preserved."),
+        "blocked work preservation": "RECOVERY, NOT READY:",
         "clean-tree recovery label": "git commit --allow-empty",
-        "review interpretation": "REVIEW_PASS means the panel failed to refute the claims, not proof.",
         # ARC-243. The prohibition and each substitute are required
         # SEPARATELY and by exact text, so an edit cannot leave the ban
         # standing with nothing to do instead -- which is the state in which

@@ -172,9 +172,10 @@ class TestDispatchedScopeCommand(unittest.TestCase):
         prompt = argv[-1]
         command = next(block for block in re.findall(r"```sh\n(.*?)\n```", prompt, re.S)
                        if " scope-check " in block)
-        self.assertLess(prompt.index(command), prompt.index("Before opening a pull request"))
-        self.assertIn("fix any out-of-scope path before review", prompt)
-        self.assertIn("fix the named paths and rerun before review", prompt)
+        self.assertLess(prompt.index(command), prompt.index("Hand-off contract:"))
+        self.assertIn("Before handing off, check the committed work against the unit's "
+                      "declared scope and fix any out-of-scope path.", prompt)
+        self.assertIn("fix the named paths and rerun before handing off", prompt)
         self.assertIn("merge still requires the coordinator's judged report", prompt)
         state = S.SS.load_state(self.state_dir)
         intent = next(iter(state["units"]["code"]["attempt_launch_intents"].values()))
@@ -242,9 +243,9 @@ class TestDispatchedScopeCommand(unittest.TestCase):
         self.assertIn("obtain the exact scope-check command", prompt)
         self.assertIn('`--head "$(git rev-parse --verify HEAD^{commit})"`', prompt)
         self.assertIn("Git repository overrides cleared", prompt)
-        self.assertIn("fix the named paths and rerun before review", prompt)
+        self.assertIn("fix the named paths and rerun before handing off", prompt)
         self.assertIn("merge still requires the coordinator's judged report", prompt)
-        self.assertLess(prompt.index("--head"), prompt.index("Before opening a pull request"))
+        self.assertLess(prompt.index("--head"), prompt.index("Hand-off contract:"))
 
 
 if __name__ == "__main__":

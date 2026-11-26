@@ -104,19 +104,20 @@ class AuthorHistoryTests(unittest.TestCase):
         old_instruction = (
             "The coordinator-recorded provider/model for this unit is "
             "UNKNOWN. Report the missing identity to the coordinator before "
-            "review; do not invent an author or omit --author. "
+            "handing off; do not invent an author or omit --author. "
             "The recorded lineage is incomplete: unit 'UNKNOWN', attempt 'UNKNOWN'. "
-            "Report these unknown identities to the coordinator before review; "
+            "Report these unknown identities to the coordinator before handing off; "
             "do not guess.")
         new_instruction = (
             "The coordinator-recorded provider/model for this unit is "
             "UNKNOWN. Report the missing identity to the coordinator before "
-            "review; do not invent an author or omit --author. "
-            "Pass --author provider/model --author p/vendor/m on every review.py "
-            "or committee.py run so the gate excludes all known contributing models. "
+            "handing off; do not invent an author or omit --author. "
+            "Record --author provider/model --author p/vendor/m in evidence.md as the "
+            "author flags the orchestrator passes on every review.py "
+            "or committee.py run, so the gate excludes all known contributing models. "
             "The recorded lineage is incomplete: unit 'UNKNOWN', attempt 'UNKNOWN'; "
             "unit 'ancestor', attempt 'a0'. Report these unknown identities to the "
-            "coordinator before review; do not guess.")
+            "coordinator before handing off; do not guess.")
         plain_prompt = S._dispatch_prompt(plain, intent)
         self.assertIn(old_instruction, plain_prompt)
         self.assertEqual(S._dispatch_prompt(unit, dict(intent, author_history=unit["author_history"])),
@@ -138,9 +139,10 @@ class AuthorInstructionTests(unittest.TestCase):
 
     def flags(self, intent):
         prompt = S._code_completion_protocol(intent)
-        if "Pass --author " not in prompt:
+        if "Record --author " not in prompt:
             return []
-        return shlex.split(prompt.split("Pass ", 1)[1].split(" on every ", 1)[0])
+        return shlex.split("--author " + prompt.split("Record --author ", 1)[1].split(
+            " in evidence.md as the author flags", 1)[0])
 
     def test_distinct_authors_current_first_in_history_order(self):
         history = [record(identity="p/second"), record(identity="p/override"),
@@ -159,7 +161,7 @@ class AuthorInstructionTests(unittest.TestCase):
         prompt = S._code_completion_protocol(intent)
         self.assertIn("provider/model for this unit is UNKNOWN", prompt)
         self.assertIn("The recorded lineage is incomplete: unit 'work', attempt 'a3'.", prompt)
-        self.assertIn("Report these unknown identities to the coordinator before review; "
+        self.assertIn("Report these unknown identities to the coordinator before handing off; "
                       "do not guess.", prompt)
         self.assertNotIn("excludes this unit's own model", prompt)
 
@@ -170,7 +172,7 @@ class AuthorInstructionTests(unittest.TestCase):
         prompt = S._code_completion_protocol(intent)
         self.assertIn("The recorded lineage is incomplete: unit 'ancestor', attempt 'a0'; "
                       "unit 'another', attempt 'b2'.", prompt)
-        self.assertIn("Report these unknown identities to the coordinator before review; "
+        self.assertIn("Report these unknown identities to the coordinator before handing off; "
                       "do not guess.", prompt)
 
     def test_nulls_never_render_as_flags(self):
@@ -183,7 +185,8 @@ class AuthorInstructionTests(unittest.TestCase):
             self.assertNotIn("--author UNKNOWN", prompt)
 
     def test_singleton_sentence_is_exact(self):
-        expected = ("Pass --author p/current on every review.py or committee.py run "
+        expected = ("Record --author p/current in evidence.md as the author flags the "
+                    "orchestrator passes on every review.py or committee.py run, "
                     "so the gate excludes this unit's own model.")
         for extra in ({}, {"author_history": []},
                       {"author_history": [record(identity="p/current")]}):
@@ -214,7 +217,7 @@ class AuthorInstructionTests(unittest.TestCase):
                     unit, attempt = ("work", "a3") if current else ("ancestor", "a0")
                     self.assertIn(f"unit {unit!r}, attempt {attempt!r}", incomplete)
                     self.assertIn("recorded identity is invalid", incomplete)
-                    self.assertIn("coordinator before review; do not guess.", incomplete)
+                    self.assertIn("coordinator before handing off; do not guess.", incomplete)
                     self.assertEqual(intent, before)
         # The explicit model wins before validity is decided, just as before.
         self.assertEqual(self.flags(self.intent(provider="p/-embedded", model="valid")),
@@ -263,7 +266,7 @@ class AuthorInstructionTests(unittest.TestCase):
             self.assertIsNone(SA.intent_identity(intent))
             prompt = S._dispatch_prompt(plan_unit, intent)
             self.assertIn("provider/model for this unit is UNKNOWN", prompt)
-            self.assertNotIn("Pass --author", prompt)
+            self.assertNotIn("Record --author", prompt)
 
     def test_rendered_flags_reach_real_parsers_and_committee_binding(self):
         # Stop committee.main at its command handler: parse the real CLI,

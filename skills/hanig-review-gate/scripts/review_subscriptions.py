@@ -29,10 +29,17 @@ Declared limits:
   an event explicitly carries a `model` string (fail-closed for exact-model
   resolution).
 
+Execution-class placement: on a Slurm login node (`review_slurm.use_slurm_offload`)
+both CLIs run as Slurm jobs (`route == "cli_slurm"`), never on the login node:
+availability checks binaries, Slurm tools and credential files without
+spawning either CLI, and the compute job itself runs `claude auth status`
+before `claude -p`. Elsewhere they run locally (`route == "cli_local"`).
+
 Python 3.8+, standard library only. Must never import review.py.
 """
 
 import importlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -44,6 +51,11 @@ import subprocess
 import sys
 import tempfile
 import time
+
+_slurm_spec = importlib.util.spec_from_file_location(
+    "_hanig_review_gate_slurm", Path(__file__).resolve().parent / "review_slurm.py")
+_slurm = importlib.util.module_from_spec(_slurm_spec)
+_slurm_spec.loader.exec_module(_slurm)
 
 STRIPPED_ENV = (
     "ANTHROPIC_API_KEY",
@@ -141,6 +153,25 @@ def _should_strip_env_key(key, explicit_names):
             or any(upper.endswith(s) for s in STRIPPED_ENV_SUFFIXES))
 
 
+def _strip_default_key(key):
+    return _should_strip_env_key(key, set(STRIPPED_ENV))
+
+
+def use_slurm_offload(environ=None):
+    """True when claude/codex CLI seats must run as Slurm jobs (review_slurm)."""
+    return _slurm.use_slurm_offload(environ)
+
+
+def cli_route(environ=None):
+    """Execution class of a claude/codex CLI seat: 'cli_slurm' or 'cli_local'."""
+    return "cli_slurm" if use_slurm_offload(environ) else "cli_local"
+
+
+def cancel_active_slurm_jobs():
+    """scancel unfinished seat jobs and remove their staging (watchdog exit)."""
+    _slurm.cancel_active_jobs()
+
+
 def build_child_env(stripped_env=STRIPPED_ENV, extra_env=None):
     """Build sanitized child env shared by availability probes and CLI calls."""
     explicit = set(stripped_env)
@@ -189,12 +220,15 @@ def _abs_env_override(var_name):
     return {var_name: os.path.abspath(os.path.expanduser(raw))}
 
 
-def claude_availability(timeout=15.0, deadline=None):
+def claude_availability(timeout=15.0, deadline=None, *, offload=None):
     """Check Claude CLI subscription transport (`claude.ai` OAuth only).
 
     Verifies binary presence, config directory existence, and an active
     `authMethod == "claude.ai"` login via `claude auth status` with all API
     and cloud billing env vars stripped (refusing Console / API-key logins).
+    Under Slurm offload the login node never spawns `claude`: it checks the
+    binary, the Slurm tools and the config directory, and the compute job runs
+    `claude auth status` before `claude -p`.
     """
     claude_bin = _resolve_cli_bin("claude")
     if not claude_bin:
@@ -203,6 +237,8 @@ def claude_availability(timeout=15.0, deadline=None):
     if not cfg.is_dir():
         return (f"claude subscription config dir not found at {cfg}; "
                 f"run 'claude auth login'")
+    if use_slurm_offload() if offload is None else offload:
+        return _slurm.tools_problem()
     return _verify_claude_subscription(
         claude_bin, _abs_env_override("CLAUDE_CONFIG_DIR"),
         timeout, deadline=deadline)
@@ -308,35 +344,55 @@ def _verify_codex_keyring_login(codex_bin, home_dir, timeout=10.0, deadline=None
             f"({detail}); run 'codex login' with a ChatGPT account")
 
 
-def codex_availability(timeout=10.0, deadline=None):
-    """Check Codex CLI ChatGPT subscription auth (`auth.json` or keyring)."""
+def _codex_auth_json_problem(auth_path):
+    """Refuse an unreadable, API-key or token-less auth.json (fail closed)."""
+    try:
+        data = json.loads(auth_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return f"codex auth unreadable at {auth_path}: {type(exc).__name__}"
+    if not isinstance(data, dict):
+        return f"codex auth at {auth_path} is not a JSON object"
+    mode = data.get("auth_mode")
+    if mode != "chatgpt":
+        return (f"codex auth_mode is {mode!r}, not 'chatgpt' subscription; "
+                f"run 'codex login' with a ChatGPT account (refusing API-key fallback)")
+    tokens = data.get("tokens")
+    if not isinstance(tokens, dict) or not any(
+            isinstance(tokens.get(k), str) and tokens.get(k).strip()
+            for k in ("access_token", "refresh_token")):
+        return (f"codex auth at {auth_path} has auth_mode='chatgpt' but no "
+                f"active tokens; run 'codex login' with a ChatGPT account")
+    return None
+
+
+def codex_availability(timeout=10.0, deadline=None, *, offload=None):
+    """Check Codex CLI ChatGPT subscription auth (`auth.json` or keyring).
+
+    Under Slurm offload the login node never spawns `codex`: only a
+    ChatGPT-mode `auth.json` with a token is accepted (a keyring login cannot
+    be verified without running the CLI, so it fails closed).
+    """
     codex_bin = _resolve_cli_bin("codex")
     if not codex_bin:
         return "codex CLI not found on PATH"
     home_dir = codex_home_dir()
     auth_path = home_dir / "auth.json"
     store_mode = _codex_credential_store_mode(home_dir)
+    if use_slurm_offload() if offload is None else offload:
+        if store_mode in ("keyring", "auto"):
+            return (f"codex credential store {store_mode!r} cannot be verified for "
+                    f"Slurm offload without running codex on the login node; use a "
+                    f"ChatGPT auth.json (cli_auth_credentials_store = \"file\") or set "
+                    f"{_slurm.MODE_ENV}=off")
+        if not auth_path.is_file():
+            return (f"codex subscription auth not found at {auth_path}; "
+                    f"run 'codex login'")
+        return _codex_auth_json_problem(auth_path) or _slurm.tools_problem()
     if store_mode in ("keyring", "auto"):
         return _verify_codex_keyring_login(
             codex_bin, home_dir, timeout=timeout, deadline=deadline)
     if auth_path.is_file():
-        try:
-            data = json.loads(auth_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            return f"codex auth unreadable at {auth_path}: {type(exc).__name__}"
-        if not isinstance(data, dict):
-            return f"codex auth at {auth_path} is not a JSON object"
-        mode = data.get("auth_mode")
-        if mode != "chatgpt":
-            return (f"codex auth_mode is {mode!r}, not 'chatgpt' subscription; "
-                    f"run 'codex login' with a ChatGPT account (refusing API-key fallback)")
-        tokens = data.get("tokens")
-        if not isinstance(tokens, dict) or not any(
-                isinstance(tokens.get(k), str) and tokens.get(k).strip()
-                for k in ("access_token", "refresh_token")):
-            return (f"codex auth at {auth_path} has auth_mode='chatgpt' but no "
-                    f"active tokens; run 'codex login' with a ChatGPT account")
-        return None
+        return _codex_auth_json_problem(auth_path)
     if home_dir.is_dir() and store_mode != "file":
         return _verify_codex_keyring_login(
             codex_bin, home_dir, timeout=timeout, deadline=deadline)
@@ -504,6 +560,21 @@ def _verify_claude_subscription(claude_bin, extra_env, timeout, deadline=None):
         deadline=deadline, extra_env=extra_env)
     if run_err:
         return f"claude auth status failed: {run_err}"
+    return claude_auth_problem(stdout, stderr, rc)
+
+
+# Compute-node gate over "$stage/preflight.txt" (`claude auth status` output);
+# claude_auth_problem re-checks the same output strictly on the login node.
+CLAUDE_AUTH_GATE = (
+    'p="$stage/preflight.txt"; '
+    'grep -Eq \'"loggedIn"[[:space:]]*:[[:space:]]*true\' "$p" && '
+    'grep -Eq \'"authMethod"[[:space:]]*:[[:space:]]*"claude\\.ai"\' "$p" && '
+    '! grep -Eo \'"apiProvider"[[:space:]]*:[[:space:]]*"[^"]*"\' "$p" '
+    '| grep -Evq \':[[:space:]]*"firstParty"$\'')
+
+
+def claude_auth_problem(stdout, stderr="", rc=0):
+    """Why `claude auth status` output is not an active claude.ai login, or None."""
     data = _parse_json_object(stdout)
     if data is None:
         detail = (stderr or stdout or f"exit {rc}").strip()[:200]
@@ -540,10 +611,34 @@ def _claude_served_model(data, requested):
     return None
 
 
+def _route_fields(offload, job_id):
+    fields = {"route": "cli_slurm" if offload else "cli_local"}
+    if offload:
+        fields["slurm_job_id"] = job_id
+    return fields
+
+
+def _dispatch_cli(rev, cmd, body, timeout, deadline, extra_env, offload,
+                  preflight=None, preflight_check=None):
+    """(rc, stdout, stderr, error, slurm_job_id): Slurm job or local process."""
+    if not offload:
+        return _run_cli(cmd, body, STRIPPED_ENV, timeout, deadline=deadline,
+                        extra_env=extra_env) + (None,)
+    rem, err = _remaining_seconds(timeout, deadline)
+    if err:
+        return None, None, None, err, None
+    return _slurm.run_cli_via_slurm(
+        cmd, body, seat=rev.get("name"), seconds=rem,
+        strip_key=_strip_default_key, managed_env=extra_env,
+        preflight=preflight, preflight_check=preflight_check)
+
+
 def claude_messages(rev, messages, system, timeout, deadline=None,
                     *, no_content_error=None, default_max_output_tokens=64000):
     """Run one review or committee turn via Claude Code OAuth subscription."""
-    why = claude_availability(timeout=min(float(timeout), 15.0), deadline=deadline)
+    offload = use_slurm_offload()
+    why = claude_availability(timeout=min(float(timeout), 15.0), deadline=deadline,
+                              offload=offload)
     if why:
         return None, why
     claude_bin = _resolve_cli_bin("claude")
@@ -571,9 +666,11 @@ def claude_messages(rev, messages, system, timeout, deadline=None,
     budget = rev.get("max_output_tokens", default_max_output_tokens)
     if isinstance(budget, int) and not isinstance(budget, bool) and budget > 0:
         extra_env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(budget)
-    rc, stdout, stderr, run_err = _run_cli(
-        cmd, body, STRIPPED_ENV, timeout, deadline=deadline,
-        extra_env=extra_env)
+    rc, stdout, stderr, run_err, job_id = _dispatch_cli(
+        rev, cmd, body, timeout, deadline, extra_env, offload,
+        preflight=([claude_bin, "auth", "status"], CLAUDE_AUTH_GATE)
+        if offload else None,
+        preflight_check=claude_auth_problem)
     if run_err:
         return None, run_err
     data = _parse_json_object(stdout, allow_event_list=True)
@@ -621,13 +718,16 @@ def claude_messages(rev, messages, system, timeout, deadline=None,
         "served_model": _claude_served_model(data, rev["model"]),
         "status": status,
         "response_id": data.get("uuid") or data.get("session_id"),
+        **_route_fields(offload, job_id),
     }, None
 
 
 def codex_messages(rev, messages, system, timeout, deadline=None,
                    *, no_content_error=None):
     """Run one review or committee turn via Codex CLI ChatGPT subscription."""
-    why = codex_availability(timeout=min(float(timeout), 10.0), deadline=deadline)
+    offload = use_slurm_offload()
+    why = codex_availability(timeout=min(float(timeout), 10.0), deadline=deadline,
+                             offload=offload)
     if why:
         return None, why
     codex_bin = _resolve_cli_bin("codex")
@@ -661,9 +761,8 @@ def codex_messages(rev, messages, system, timeout, deadline=None,
             f"(Analysis only: do not run shell commands or tools; answer "
             f"directly from the provided text.)\n\n---\n\n"
             f"{format_messages(messages)}")
-    rc, stdout, stderr, run_err = _run_cli(
-        cmd, body, STRIPPED_ENV, timeout, deadline=deadline,
-        extra_env=extra_env)
+    rc, stdout, stderr, run_err, job_id = _dispatch_cli(
+        rev, cmd, body, timeout, deadline, extra_env, offload)
     if run_err:
         return None, run_err
     thread_id = None
@@ -732,4 +831,5 @@ def codex_messages(rev, messages, system, timeout, deadline=None,
         "served_model": observed_model,
         "status": status,
         "response_id": thread_id,
+        **_route_fields(offload, job_id),
     }, None
