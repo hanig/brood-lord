@@ -21,6 +21,18 @@ sys.path.insert(0, str(REPO / 'skills' / 'hanig-review-gate' / 'scripts'))
 import committee
 import review
 plan_review = review._load_plan_review()
+# In a Lor session shipped API seats would reach real `lor` subagents; these
+# tests pin API transports (tests/test_lor_provider.py covers Lor routing).
+_NO_LOR = mock.patch.dict(os.environ, {'HANIG_REVIEW_NO_LOR': '1', 'LOR_SESSION_ID': ''})
+
+
+def setUpModule():
+    _NO_LOR.start()
+
+
+def tearDownModule():
+    _NO_LOR.stop()
+
 
 CLAIM = 'The design preserves every input record in its original order.'
 FINDING = {'severity': 'major', 'confidence': 'high', 'file': 'plan.md',

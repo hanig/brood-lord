@@ -27,13 +27,18 @@ spec.loader.exec_module(committee)
 # A real routing snapshot for this checkout (resolve_models.py run here) would
 # otherwise move shipped seats under these roster-exact tests.
 _SNAPSHOTS = os.environ.get("HANIG_ROUTING_SNAPSHOTS")
+# In a Lor session shipped API seats would reach real `lor` subagents; these
+# tests pin API transports (tests/test_lor_provider.py covers Lor routing).
+_NO_LOR = mock.patch.dict(os.environ, {"HANIG_REVIEW_NO_LOR": "1", "LOR_SESSION_ID": ""})
 
 
 def setUpModule():
     os.environ["HANIG_ROUTING_SNAPSHOTS"] = "off"
+    _NO_LOR.start()
 
 
 def tearDownModule():
+    _NO_LOR.stop()
     if _SNAPSHOTS is None:
         os.environ.pop("HANIG_ROUTING_SNAPSHOTS", None)
     else:
