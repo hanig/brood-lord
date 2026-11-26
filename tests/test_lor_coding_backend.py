@@ -711,6 +711,78 @@ class TestLifecycleOps(LorFixture):
         self.assertEqual(job3, job)
         self.assertEqual(len(self.lor_calls("start")), 1)
 
+    def unlaunched_lor_attempt(self):
+        """A Lor attempt whose `lor session start` never returned a session:
+        the frozen intent (parent PARENT) and refused worktree persist, and
+        no attempt_cleanup_agents entry or job_id exists."""
+        lor_unit = self.unit("l", provider=LOR_PROVIDER)
+        plan = self.write_plan({"name": "p", "units": [lor_unit]})
+        directory, error = S._allocate(plan, lor_unit, self.root, self.state_dir)
+        self.assertIsNone(error)
+        state = {"units": {}}
+        with mock.patch.object(LIO, "start_session",
+                               return_value=(None, "lor session start failed: crash")):
+            job, error = S._submit(lor_unit, directory, False, state,
+                                   self.state_dir, plan=plan)
+        self.assertIsNone(job)
+        self.assertIn("lor session start failed", error)
+        us = state["units"]["l"]
+        attempt = Path(directory).name
+        self.assertEqual(us["attempt_launch_intents"][attempt]["parent_session_id"], PARENT)
+        self.assertNotIn(attempt, us.get("attempt_cleanup_agents") or {})
+        self.assertIsNone(us.get("job_id"))
+        meta = us["attempt_workspaces"][attempt]
+        self.assertTrue(meta["cleanup_pending"])
+        self.assertEqual(self.lor_calls("start"), [])
+        return plan, lor_unit, directory, state
+
+    def test_cleanup_of_lor_attempt_with_unknown_agent_retains_worktree(self):
+        # Regression (kimi-k3 R1): a Lor attempt with cleanup_pending and no
+        # recorded agent must be retained as "attempt agent is unknown", never
+        # crash cleanup (NameError on the Lor liveness observation).
+        _plan, lor_unit, directory, state = self.unlaunched_lor_attempt()
+        attempt = Path(directory).name
+        us = state["units"]["l"]
+        us["attempt_dir"] = directory
+        meta = us["attempt_workspaces"][attempt]
+        workspace = Path(meta["path"])
+        self.assertTrue(workspace.is_dir())
+        report = []
+        S._preserve_and_archive_code_worktree(state, lor_unit, directory, report,
+                                              self.state_dir)
+        self.assertTrue(workspace.is_dir())
+        self.assertFalse(meta.get("archived"))
+        self.assertEqual(meta.get("cleanup_liveness"), "attempt agent is unknown")
+        self.assertTrue(any("attempt agent is unknown" in line for line in report), report)
+        self.assertEqual(self.lor_calls("list"), [])
+        self.assertEqual(self.paseo()["calls"], [])
+
+    def test_redispatch_under_a_different_parent_session_refuses_before_start(self):
+        # Regression (terra + sonnet-5.5 R1): an unlaunched intent frozen under
+        # PARENT must not start a subagent under another LOR_SESSION_ID, where
+        # every later poll (which uses the recorded parent) could not see it.
+        plan, lor_unit, directory, state = self.unlaunched_lor_attempt()
+        other = "4ef0c1b2-0000-4000-8000-000000000002"
+        with mock.patch.dict(os.environ, {"LOR_SESSION_ID": other}):
+            job, error = S._submit(lor_unit, directory, False, state,
+                                   self.state_dir, plan=plan)
+        self.assertIsNone(job)
+        self.assertIn("different parent", error)
+        self.assertIn(PARENT, error)
+        self.assertIn(other, error)
+        self.assertIn("fresh attempt", error)
+        self.assertEqual(self.lor_calls("start"), [])
+        self.assertFalse([s for s in self.lor()["sessions"]
+                          if s.get("parent_session_id") == other])
+        # The recorded parent can still launch it, under that same parent.
+        job, error = S._submit(lor_unit, directory, False, state,
+                               self.state_dir, plan=plan)
+        self.assertIsNone(error)
+        (start,) = self.lor_calls("start")
+        (session,) = self.lor()["sessions"]
+        self.assertEqual((session["session_id"], session["parent_session_id"]),
+                         (job, PARENT))
+
 
 class TestSetAgent(LorFixture):
     def plan(self, **extra):
