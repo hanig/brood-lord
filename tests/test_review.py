@@ -48,7 +48,7 @@ def copy_review_script(destination):
     """Copy the entry point and its eager shipped dependencies as fixture data."""
     for name in ("review.py", "plan_review.py", "review_panels.py",
                  "review_ledger.py", "review_schema.py", "review_cli.py",
-                 "review_subscriptions.py", "review_lor.py"):
+                 "review_subscriptions.py", "review_lor.py", "review_slurm.py"):
         (destination.parent / name).write_bytes((SCRIPT.parent / name).read_bytes())
 
 
@@ -2651,7 +2651,7 @@ class TestProtocolIsEnforcedNotRemembered(unittest.TestCase):
             for name in ("review.py", "plan_review.py", "review_panels.py",
                          "review_ledger.py", "review_schema.py",
                          "review_cli.py", "review_subscriptions.py",
-                         "review_lor.py", "committee.py"):
+                         "review_lor.py", "review_slurm.py", "committee.py"):
                 shutil.copyfile(SCRIPT.parent / name, script.parent / name)
             for first, second, refused in (
                     (("openai", "fixture-a"), ("openai", "fixture-b"), True),

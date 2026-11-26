@@ -529,7 +529,8 @@ def review_journal_details(results):
 
 def prepare_review_journal(kind, round_no, effective_panel, verdict, claims,
                            *, panel_policy=None, results=(), reviewed_head=None,
-                           input_redactions=(), plan_exchange=None):
+                           input_redactions=(), plan_exchange=None,
+                           seat_routes=None):
     """Finish record semantics, redaction and serialization before I/O."""
     record = {
         "type": "review_round",
@@ -546,6 +547,13 @@ def prepare_review_journal(kind, round_no, effective_panel, verdict, claims,
         "claims": list(claims),
     }
     record.update(review_journal_details(results))
+    # Where every seat ran or was blocked; completed results always count.
+    routes = build_seat_routes(results)
+    if isinstance(seat_routes, dict):
+        routes.update(seat_routes)
+    elif seat_routes is not None:
+        routes = seat_routes  # malformed: validate_journal_record refuses it below
+    record["seat_routes"] = routes
     if panel_policy is not None:
         record["panel_policy"] = panel_policy
     if input_redactions:
@@ -679,7 +687,8 @@ def _run_journal_child(args, completed, verdict):
         verdict, args.claim, panel_policy=getattr(args, "panel_policy", None),
         results=completed, reviewed_head=getattr(args, "reviewed_head", None),
         input_redactions=getattr(args, "input_redactions", ()),
-        plan_exchange=getattr(args, "plan_exchange", None))
+        plan_exchange=getattr(args, "plan_exchange", None),
+        seat_routes=getattr(args, "seat_routes", None))
     if args.kind == "implementation":
         line = json.dumps(dict(record, **redact_ledger(_cli.premise_journal_fields(args))),
                           sort_keys=True) + "\n"
@@ -1248,13 +1257,52 @@ PROVIDERS = {"openai": call_openai, "openrouter": call_openrouter,
 
 
 def effective_provider(rev):
-    """`lor` also for pinned (never `_resolved_from`) lor_model seats in Lor."""
-    provider = rev.get("provider")
-    if provider == "lor" or (
-            provider in _lor.LOR_ROUTABLE_PROVIDERS and _lor.lor_model_id(rev)
-            and not rev.get("_resolved_from") and _lor.lor_in_session()):
+    """`lor` for pinned (never `_resolved_from`) lor_model seats unless
+    HANIG_REVIEW_NO_LOR is explicitly truthy. Outside a Lor session such a
+    seat stays `lor` and availability() blocks it: no silent paid-API route."""
+    return "lor" if _lor.lor_routed(rev) else rev.get("provider")
+
+
+ROUTES = _ledger.SEAT_ROUTES
+
+
+def seat_route(rev):
+    """Where a seat executes: in-process Lor subagent, claude/codex CLI as a
+    Slurm job or locally, or a direct provider API."""
+    provider = effective_provider(rev)
+    if provider == "lor":
         return "lor"
-    return provider
+    if provider in _subs.SUBSCRIPTION_PROVIDERS:
+        return _subs.cli_route()
+    return "api"
+
+
+def seat_placement(rev):
+    """provider/model/route of a seat, for every receipt entry."""
+    try:
+        model = effective_model(rev)
+    except KeyError:
+        model = rev.get("model")
+    return {"provider": effective_provider(rev), "model": model,
+            "route": seat_route(rev)}
+
+
+def unavailable_entry(rev, reason):
+    return dict({"name": rev["name"], "reason": reason}, **seat_placement(rev))
+
+
+def build_seat_routes(completed=(), failed=(), unavailable=()):
+    """seat name -> {provider, model, route, status[, slurm_job_id]}."""
+    routes = {}
+    for status, entries in (("unavailable", unavailable), ("failed", failed),
+                            ("completed", completed)):
+        for entry in entries:
+            row = {key: entry.get(key) for key in ("provider", "model", "route")}
+            row["status"] = status
+            if entry.get("slurm_job_id") is not None:
+                row["slurm_job_id"] = entry["slurm_job_id"]
+            routes[entry["name"]] = row
+    return routes
 
 
 def effective_model(rev):
@@ -1785,9 +1833,7 @@ def availability(rev):
         return "disabled in reviewers.json"
     provider = effective_provider(rev)
     if provider == "lor":  # ready only through Lor, never an API key
-        if not _lor.lor_in_session():
-            return f"lor provider disabled: needs LOR_SESSION_ID set and {_lor.OPT_OUT} unset"
-        return _lor.lor_availability() or (None if _lor.lor_model_id(rev) else "no lor model")
+        return _lor.lor_block_reason(rev)
     if provider == "claude":
         return _subs.claude_availability()
     if provider == "codex":
@@ -1879,9 +1925,14 @@ def _guarded_run_one(rev, prompt, timeout, require_claims=0, asserted=None):
     try:
         return _run_one(rev, prompt, timeout, require_claims, asserted)
     except Exception as e:
-        return {"name": rev.get("name", "?"), "ok": False,
-                "error": redact(f"reviewer crashed: {type(e).__name__}: {e}"),
-                "elapsed_s": 0}
+        crashed = {"name": rev.get("name", "?"), "ok": False,
+                   "error": redact(f"reviewer crashed: {type(e).__name__}: {e}"),
+                   "elapsed_s": 0}
+        try:
+            crashed.update(seat_placement(rev))
+        except Exception:
+            pass
+        return crashed
 
 
 RETRY_NUDGE = ("\n\nIMPORTANT: your previous reply could not be used: {why}\n"
@@ -1898,22 +1949,23 @@ def _run_one(rev, prompt, timeout, require_claims=0, asserted=None):
     # transport retries or schema retries occur inside that budget.
     deadline = t0 + max(30, timeout * 2)
     attempt_prompt, last_why = prompt, None
+    placement = seat_placement(rev)
     # Two attempts: a malformed reply is retried once with an explicit nudge,
     # so a formatting slip does not drop a reviewer and shrink the quorum.
     for attempt in (1, 2):
         if time.time() >= deadline:
-            return {"name": rev["name"], "ok": False,
-                    "error": redact(f"{last_why or 'no verdict'} "
-                                    f"(reviewer budget of "
-                                    f"{int(deadline - t0)}s exhausted)"),
-                    "elapsed_s": round(time.time() - t0, 1)}
+            return dict({"name": rev["name"], "ok": False,
+                         "error": redact(f"{last_why or 'no verdict'} "
+                                         f"(reviewer budget of "
+                                         f"{int(deadline - t0)}s exhausted)"),
+                         "elapsed_s": round(time.time() - t0, 1)}, **placement)
         result, err = PROVIDERS[effective_provider(rev)](
             rev, attempt_prompt, timeout, deadline=deadline)
         elapsed = round(time.time() - t0, 1)
         if err:
-            return {"name": rev["name"], "ok": False, "error": err,
-                    "incomplete": str(err).lower().startswith("no content"),
-                    "elapsed_s": elapsed}
+            return dict({"name": rev["name"], "ok": False, "error": err,
+                         "incomplete": str(err).lower().startswith("no content"),
+                         "elapsed_s": elapsed}, **placement)
         verdict, perr = parse_verdict(result["text"])
         why = perr
         if not why:
@@ -1925,16 +1977,20 @@ def _run_one(rev, prompt, timeout, require_claims=0, asserted=None):
             break
         last_why = f"{kind}: {why}"
         if attempt == 2:
-            return {"name": rev["name"], "ok": False,
-                    "error": redact(f"{last_why} (after a retry)"),
-                    "elapsed_s": elapsed}
+            return dict({"name": rev["name"], "ok": False,
+                         "error": redact(f"{last_why} (after a retry)"),
+                         "elapsed_s": elapsed}, **placement)
         attempt_prompt = prompt + RETRY_NUDGE.format(why=why)
     # Scrub at ingestion. Redacting the serialized report was not enough: a key
     # containing a quote is JSON-escaped on the way out and stops matching.
+    # The transport's own route is the truth about where the seat ran.
+    route = result.get("route") or placement["route"]
+    job = {"slurm_job_id": result.get("slurm_job_id")} if route == "cli_slurm" else {}
     return {"name": rev["name"], "ok": True, "elapsed_s": elapsed,
             "retried": last_why is not None,
-            "provider": effective_provider(rev),
-            "model": effective_model(rev), "effort": rev.get("effort"),
+            "provider": placement["provider"],
+            "model": placement["model"], "route": route, **job,
+            "effort": rev.get("effort"),
             "in_tokens": result.get("in_tokens"),
             "out_tokens": result.get("out_tokens"),
             "verdict": verdict.get("verdict"),
@@ -1950,7 +2006,8 @@ def cmd_list(reviewers, probe=True):
     a key variable happens to be set: that printed "ready" for an account with
     no credits left, and the real call then failed with HTTP 429. `--no-probe`
     skips the calls and says so."""
-    print(f"{'REVIEWER':<20} {'PROVIDER':<12} {'MODEL':<30} {'EFFORT':<8} STATUS")
+    print(f"{'REVIEWER':<20} {'PROVIDER':<12} {'ROUTE':<10} {'MODEL':<30} "
+          f"{'EFFORT':<8} STATUS")
     ready = 0
     for rev in reviewers:
         why = probe_liveness(rev) if probe else availability(rev)
@@ -1960,7 +2017,7 @@ def cmd_list(reviewers, probe=True):
         else:
             status = f"UNAVAILABLE ({why})"
         print(f"{rev['name']:<20} {effective_provider(rev):<12} "
-              f"{effective_model(rev):<30} "
+              f"{seat_route(rev):<10} {effective_model(rev):<30} "
               f"{str(rev.get('effort') or '-'):<8} {status}")
     print(f"\n{ready} of {len(reviewers)} reviewers "
           + ("answered a live probe" if probe
@@ -2036,6 +2093,10 @@ def arm_watchdog(seconds):
     def _fire(_s, _f):
         print(f"REVIEW_UNAVAILABLE — exceeded the {seconds}s total watchdog "
               f"before any verdict; no review took place.", file=sys.stderr)
+        try:  # os._exit skips every finally: cancel submitted Slurm seats first
+            _subs.cancel_active_slurm_jobs()
+        except Exception:
+            pass
         os._exit(STATES["REVIEW_UNAVAILABLE"])
 
     try:
