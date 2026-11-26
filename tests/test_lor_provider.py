@@ -21,21 +21,24 @@ import json, os, subprocess, sys, time
 d = os.environ["FAKE_LOR"]; mode = open(d + "/mode").read(); verb = sys.argv[2]
 open(d + "/calls", "a").write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "ls": os.listdir("."),
     "env": sorted(os.environ), "stdin": sys.stdin.read() if verb == "start" else ""}) + "\\n")
+BLANK = ("timeout", "drop", "pass", "error", "cancel", "empty")
 ev = lambda e: print(json.dumps({"recorded": {"event": e}}), flush=True)
-if verb == "start" and mode == "start-fail": sys.exit("refused " + os.environ["LOR_SESSION_TOKEN"])
-if verb == "start": print('{\\n  "session_id": "0d6f1c2e-1111-4222-8333-944455556666"\\n}')
+if verb == "start" and mode == "start-fail": sys.exit("refused " + "x" * 290 + os.environ["LOR_SESSION_TOKEN"])
+if verb == "stop" and mode == "stop-fail": sys.exit("stop refused")
+if verb == "start" and mode != "start-fail": print('{\\n  "session_id": "0d6f1c2e-1111-4222-8333-944455556666"\\n}')
 if verb == "watch":
     kid = subprocess.Popen(["sleep", "60"], stdout=subprocess.DEVNULL)
     open(d + "/pids", "w").write("%%d %%d" %% (os.getpid(), kid.pid))
     if mode == "timeout": time.sleep(60)
     ev({"tool_call": {"name": "pass"}} if mode == "pass" else {"model_response_id": "r1",
-       "message": {"role": "MESSAGE_ROLE_ASSISTANT", "content": [{"text": "OK" if mode == "ok" else ""}]},
+       "message": {"role": "MESSAGE_ROLE_ASSISTANT", "content": [{"text": "" if mode in BLANK else "OK"}]},
        "provider_metadata_json": json.dumps({"providerModelId": "served-x"})})
     ev({"metrics": {"usage": {"input_tokens": "7", "output_tokens": "5", "reasoning_tokens": "3"}}})
     if mode == "drop": sys.exit(0)
     if mode == "error": ev({"error": {"message": "router down"}})
     ev({"finish": {"reason": "FINISH_REASON_CANCELLED" if mode == "cancel" else "FINISH_REASON_STOP"}})
     time.sleep(60)
+if verb == "start" and mode == "sid-fail": sys.exit(1)
 '''
 
 
@@ -134,8 +137,14 @@ class TestLor(unittest.TestCase):
     def test_start_failure_and_secret_scrubbing(self):
         self.mode("start-fail")
         self.assertEqual(R.call_lor(seats()["gemini-neon"], "p", 10),
-                         (None, "lor session start failed: refused <LOR_SESSION_TOKEN redacted>"))
+                         (None, "lor session start failed: refused " + "x" * 290 + "<LOR_SESSION_TOKEN redacted>"))
         self.assertEqual(len(self.calls()), 1)
+        for mode, verbs, want in (("sid-fail", ["start", "stop"], "start failed"),
+                                  ("stop-fail", ["start", "watch", "stop"], "stop failed")):
+            self.mode(mode)
+            result, err = R.call_lor(seats()["astra"], "p", 10)
+            self.assertEqual((result, [c["argv"][1] for c in self.calls()]), (None, verbs))
+            self.assertIn(want, err)
         for var in L.LOR_SECRET_ENV:
             self.assertEqual(R.redact(f"x {os.environ[var]}"), f"x <{var} redacted>")
         with mock.patch.object(R.subprocess, "Popen", side_effect=OSError) as popen, \
