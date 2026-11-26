@@ -29,7 +29,8 @@ spec.loader.exec_module(committee)
 _SNAPSHOTS = os.environ.get("HANIG_ROUTING_SNAPSHOTS")
 # In a Lor session shipped API seats would reach real `lor` subagents; these
 # tests pin API transports (tests/test_lor_provider.py covers Lor routing).
-_NO_LOR = mock.patch.dict(os.environ, {"HANIG_REVIEW_NO_LOR": "1", "LOR_SESSION_ID": ""})
+_NO_LOR = mock.patch.dict(os.environ, {"HANIG_REVIEW_NO_LOR": "1", "LOR_SESSION_ID": "",
+                                     "HANIG_REVIEW_SLURM": "off"})
 
 
 def setUpModule():
@@ -225,7 +226,7 @@ class TestCommitteeQuorum(unittest.TestCase):
 class TestCommitteeTiebreak(unittest.TestCase):
     POSITIONS = {
         "luna": "Keep the stable order.\nEvidence: input IDs are already sorted.\n",
-        "kimi-k2.7-code": "Reverse the order.\nEvidence: newest ID should appear first.\n",
+        "kimi-k3": "Reverse the order.\nEvidence: newest ID should appear first.\n",
     }
 
     def setUp(self):
@@ -410,7 +411,7 @@ class TestCommitteeTiebreak(unittest.TestCase):
 
     def test_open_accepts_author_and_prints_followup_instructions(self):
         argv = [str(SCRIPT), "open", "fresh", "--problem", "Which order?",
-                "--member", "luna,kimi-k2.7-code", "--author", "gpt-6.1-sol"]
+                "--member", "luna,kimi-k3", "--author", "gpt-6.1-sol"]
         output = io.StringIO()
         with mock.patch.object(sys, "argv", argv), \
                 mock.patch.object(committee, "ask_member",
@@ -424,7 +425,7 @@ class TestCommitteeTiebreak(unittest.TestCase):
 
     def test_open_padded_astra_author_then_synthesize_refuses(self):
         argv = [str(SCRIPT), "open", "split", "--force", "--problem", "Order?",
-                "--member", "luna,kimi-k2.7-code", "--author", " gpt-6-astra "]
+                "--member", "luna,kimi-k3", "--author", " gpt-6-astra "]
         with mock.patch.object(sys, "argv", argv), \
                 mock.patch.object(committee, "ask_member",
                                   return_value=("Final position", None, None)), \
@@ -546,7 +547,7 @@ class TestCommitteeTiebreak(unittest.TestCase):
     def test_new_member_turn_invalidates_current_resolution(self):
         self.invoke("tiebreak")
         session = committee.load_session("split")
-        members = committee.pick_members(["luna,kimi-k2.7-code"])
+        members = committee.pick_members(["luna,kimi-k3"])
         with mock.patch.object(committee, "ask_member",
                                return_value=("new position", None, None)):
             committee.run_turn(members, session, "new question", 1, "ask")
@@ -844,7 +845,7 @@ class TestCommitteeAuthorMembers(unittest.TestCase):
 
     def test_explicit_sol_author_is_refused_before_session_or_provider(self):
         code, output, calls = self.invoke(
-            "open", "--member", "sol", "--member", "kimi-k2.7-code",
+            "open", "--member", "sol", "--member", "kimi-k3",
             "--author", "codex/gpt-6.1-sol", "--problem", "Which ordering?")
         self.assertNotEqual(code, 0, output)
         self.assertIn("sol refused: authored this change", str(code))
@@ -859,14 +860,14 @@ class TestCommitteeAuthorMembers(unittest.TestCase):
 
     def test_repeated_author_exclusion_is_not_last_flag_wins(self):
         code, _output, calls = self.invoke(
-            "open", "--member", "sol,kimi-k2.7-code", "--problem", "Order?",
+            "open", "--member", "sol,kimi-k3", "--problem", "Order?",
             "--author", "codex/gpt-6.1-sol", "--author", "codex/gpt-6-astra")
         self.assertIn("sol refused: authored this change", str(code))
         self.assertEqual(calls, 0)
 
     def test_model_containing_astra_is_not_astra(self):
         code, output, calls = self.invoke(
-            "open", "--member", "astra,kimi-k2.7-code", "--problem", "Order?",
+            "open", "--member", "astra,kimi-k3", "--problem", "Order?",
             "--author", "codex/my-gpt-6-astra-helper")
         self.assertEqual(code, 0, output)
         self.assertEqual(calls, 2)
@@ -874,7 +875,7 @@ class TestCommitteeAuthorMembers(unittest.TestCase):
     def test_repeated_authors_are_saved_and_checked_on_later_turns(self):
         authors = ["codex/gpt-6.1-sol", "codex/gpt-6-astra"]
         code, output, calls = self.invoke(
-            "open", "--member", "luna,kimi-k2.7-code", "--problem", "Order?",
+            "open", "--member", "luna,kimi-k3", "--problem", "Order?",
             "--author", authors[0], "--author", authors[1])
         self.assertEqual(code, 0, output)
         self.assertEqual(calls, 2)
@@ -899,7 +900,7 @@ class TestCommitteeAuthorMembers(unittest.TestCase):
                         "members": {
                             "sol": {"model": "gpt-6.1-sol", "provider": "openai",
                                     "history": [{"role": "assistant", "content": "A"}]},
-                            "kimi-k2.7-code": {"model": "moonshotai/kimi-k2.7-code",
+                            "kimi-k3": {"model": "moonshotai/kimi-k3",
                                               "provider": "openrouter", "history": []}},
                         "turns": [],
                         "resolution": {"status": "CONVERGED", "plan": "stale"},

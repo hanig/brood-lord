@@ -19,6 +19,18 @@ import model_family as MF
 import resolve_models as RM
 import review as R
 RS = R._subs
+# These tests pin the local-CLI execution class (route "cli_local"); a mocked
+# shutil.which would otherwise also "find" sbatch and select Slurm offload,
+# which tests/test_slurm_review.py covers.
+_LOCAL_CLI = mock.patch.dict(os.environ, {"HANIG_REVIEW_SLURM": "off"})
+
+
+def setUpModule():
+    _LOCAL_CLI.start()
+
+
+def tearDownModule():
+    _LOCAL_CLI.stop()
 
 
 class _FakeProc:
@@ -243,7 +255,7 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertEqual(res, {
             "text": "verdict body", "in_tokens": 14, "out_tokens": 9,
             "reasoning_tokens": 3, "served_model": "claude-sonnet-5-5",
-            "status": "completed", "response_id": "uuid-claude-1",
+            "status": "completed", "response_id": "uuid-claude-1", "route": "cli_local",
         })
         cmd = captured["cmd"]
         self.assertEqual(cmd[:4], ["/bin/claude", "-p", "--model", "claude-sonnet-5-5"])
@@ -421,7 +433,7 @@ class TestSubscriptionTransports(unittest.TestCase):
         self.assertEqual(res, {
             "text": "codex reply", "in_tokens": 20, "out_tokens": 7,
             "reasoning_tokens": 4, "served_model": None,
-            "status": "completed", "response_id": "thr-codex-1",
+            "status": "completed", "response_id": "thr-codex-1", "route": "cli_local",
         })
         cmd = captured["cmd"]
         self.assertEqual(cmd[:2], ["/bin/codex", "exec"])

@@ -413,6 +413,10 @@ def adjudicator_is_author(accepted_by, authors, facade):
     return any(author.partition("/")[2] == accepted_by for author in authors)
 
 
+SEAT_ROUTES = ("lor", "cli_slurm", "cli_local", "api")
+SEAT_STATUSES = ("completed", "failed", "unavailable")
+
+
 def journal_identity_problems(record, allow_unbound, facade):
     """Check every persisted identity without inferring or repairing it."""
     if record.get("type") == "evidence":
@@ -466,6 +470,16 @@ def journal_identity_problems(record, allow_unbound, facade):
                             or not facade.valid_ledger_field("confirmed", finding.get("confirmed"))):
                         problems.append(f"results[{i}].findings[{j}].confirmed "
                                         "is missing or not a boolean")
+        routes = record.get("seat_routes")
+        if routes is not None and not isinstance(routes, dict):
+            problems.append("seat_routes is not an object")
+        for name, row in (routes.items() if isinstance(routes, dict) else ()):
+            if (not isinstance(row, dict) or row.get("status") not in SEAT_STATUSES
+                    or row.get("route") not in SEAT_ROUTES + (None,)
+                    or any(not isinstance(row.get(key), (str, type(None)))
+                           for key in ("provider", "model"))):
+                problems.append(f"seat_routes[{name!r}] needs provider, model, a known "
+                                "route and a completed/failed/unavailable status")
     else:
         problems.append("record type is missing or unknown")
     return problems

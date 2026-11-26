@@ -990,9 +990,11 @@ class TestCandidateReports(StateHome):
             "%-15s %-16s %s  %s\n" % ("CANDIDATE", name, pin, detail)
             for name, pin, detail in (
                 ("deepseek-v4-pro", DEEPSEEK_IDS[0],
-                 "dated snapshot, not adopted: " + DEEPSEEK_IDS[1]),
-                ("kimi-k2.7-code", KIMI_IDS[0],
-                 "newer generation with a different variant, not adopted: " + KIMI_IDS[1]))])
+                 "dated snapshot, not adopted: " + DEEPSEEK_IDS[1]),)])
+        # 2026-11-26: kimi-k2.7-code is disabled (kimi-k3 took its seats), so a
+        # disabled seat reports no candidate; the cross-variant wording stays
+        # covered by test_candidates_follow_all_existing_reports_for_reviewers_and_agent.
+        self.assertFalse(any("kimi-k2.7-code" in line for line in candidate_lines))
         self.assertEqual("".join(line for line in lines if not line.startswith("CANDIDATE")),
                          baseline)
         self.assertEqual(snapshot, old_snapshot)
