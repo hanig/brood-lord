@@ -123,6 +123,34 @@ The worker record and permission events provide evidence that directory timestam
 
 A watcher is armed in the dispatching turn, tested against a condition already present, and its watch set is derived from coordinator state. Arming it later is the same defect as omitting it, because nothing else wakes the session when a worker finishes and `swarm.py status` records neither an observation time nor a unit age. <!-- declaration: watch.proof -->
 
+## Native Lor coding attempts
+
+A `lor` attempt runs as a subagent of the coordinator's own Lor session, so the coordinator starts no detached watcher holding Lor credentials for it. Lor wakes the parent session when the subagent finishes; the next `swarm.py advance` pass judges the attempt from Lor's session record and the coordinator-owned worktree. <!-- declaration: watch.lor-attempts -->
+
+Between passes, wait on coordinator state and Lor together: <!-- declaration: watch.lor-attempts -->
+
+```bash
+"$ORCH_PYTHON" "$HANIG_ORCHESTRATE_DIR/scripts/wait_event.py" --state-dir "$STATE" --poll-lor
+```
+
+`--poll-lor` also polls every live `lor` attempt in coordinator state through the installed `hanig-swarm` Lor adapter and emits `lor_session_finished` once a session leaves `running`. Exit 4 means Lor rejected the session token: report a Lor authentication error that needs the owner, never "still running" and never the no-event exit 3. A Lor session the coordinator cannot observe stays `INCOMPLETE` rather than `DONE` or `FAILED`, and its worktree is kept while the session may still be running. <!-- declaration: watch.lor-attempts -->
+
+## Switching the coding agent mid-project
+
+The plan's `code_agent` records the project-start choice; `swarm.py set-agent` changes it for attempts not yet dispatched without touching `plan.json` or `plan_digest`. Inspect first, then switch, then confirm: <!-- declaration: code.agent-switch -->
+
+```bash
+SWARM="$HANIG_SWARM_DIR/scripts/swarm.py"
+"$ORCH_PYTHON" "$SWARM" set-agent plan.json --state-dir "$STATE" --show
+"$ORCH_PYTHON" "$SWARM" set-agent plan.json --state-dir "$STATE" --backend lor --model CANONICAL_MODEL_ID --thinking high
+"$ORCH_PYTHON" "$SWARM" set-agent plan.json --state-dir "$STATE" --backend paseo --model claude/MODEL --thinking high --mode MODE --unit UNIT
+"$ORCH_PYTHON" "$SWARM" set-agent plan.json --state-dir "$STATE" --clear --unit UNIT
+```
+
+Each successful switch bumps the revision of `STATE_DIR/agent-overrides.json`, written under the project lock, and prints every code unit's effective agent with its disposition: undispatched units take the new agent on their next attempt, in-flight attempts keep the backend frozen in their launch intent, and terminal units are unchanged. A run can therefore hold `paseo` and `lor` attempts at once; servicing, judging, continuation, stop, and cleanup each follow the attempt's own frozen backend, so a switch never interrupts work already running. <!-- declaration: code.agent-switch -->
+
+A unit that pins `provider` or `model` in the plan outranks a project-wide switch; move it with `--unit`. A refused switch prints why and writes nothing, for example a Paseo target with no mode or a Lor target without `LOR_SESSION_ID` and `lor` on PATH. <!-- declaration: code.agent-switch -->
+
 ## Owner-facing report times
 
 Validate `HANIG_REPORT_TZ` against the host's IANA zone database: `date` can silently accept invalid `TZ`. Use UTC and announce the fallback once per session when unset or invalid. Quotes keep their timestamps; conversions belong outside quotations. <!-- declaration: report.timezone -->

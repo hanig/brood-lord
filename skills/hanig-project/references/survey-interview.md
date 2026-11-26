@@ -104,6 +104,46 @@ ARC-691's clock rather than a sentence in a skill. <!-- declaration: interview.r
 
 `survey.py` records `machine.python_env` (conda/venv/system, `shared_risk`; unactivated custom-named conda prefixes without active `CONDA_DEFAULT_ENV=base` or standard conda root names report their directory basename) and repo lock files (`requirements*.lock`, `uv.lock`, collected within the bounded `MAX_DEPTH` walk up to 200 files). Ask once where orchestration's dedicated stdlib-only env lives, recommending `~/.local/state/PROJECT/orch-venv` (`uv`, Python 3.12), and record `environments.orchestration` in `plan.json` so cron and helpers never use shared personal envs. <!-- declaration: interview.orchestration-env -->
 
+## Coding backend and model
+
+The coding backend is one owner decision taken once, near the start, because
+both backends drive the same coordinator-owned Git worktree and differ in who
+runs the agent and what it costs. `paseo` launches a Claude or Codex agent
+through `paseo run` and suits models served through an enterprise Claude or
+Codex seat. `lor` starts the agent as a native subagent of the coordinator's
+own Lor session with `lor session start` and suits Lor-served models. <!-- declaration: interview.code-agent -->
+
+Inspection settles what is available, so read it before asking. When
+`LOR_SESSION_ID` is set, `lor model list` names the canonical model ids the
+session can serve; offer those for `lor/CANONICAL_MODEL_ID`. A planning
+session without `LOR_SESSION_ID` or `lor` on PATH cannot vouch for a Lor <!-- declaration: interview.code-agent -->
+backend, because Lor dispatch is refused before any attempt exists when the <!-- declaration: interview.code-agent -->
+coordinator runs outside a Lor session; say so and recommend Paseo unless the
+owner will run the coordinator from a Lor session. <!-- declaration: interview.code-agent -->
+
+Ask for the model and the effort together, then record one top-level object
+in `plan.json`, for example:
+
+```json
+{"code_agent": {"provider": "lor/CANONICAL_MODEL_ID", "thinking": "high"}}
+```
+
+```json
+{"code_agent": {"provider": "claude/MODEL", "thinking": "high", "mode": "MODE"}}
+```
+
+A Paseo choice also carries the explicit mode that code.configuration asks
+for, spelled as the provider spells it; a Lor choice may omit mode, and a
+restrictive Lor mode is refused at validation. `code_agent` applies to code <!-- declaration: interview.code-agent -->
+units that pin no `provider` or `model`, so a unit that pins its own agent
+keeps it. Leaving `code_agent` out keeps the `hanig-swarm` routing default. <!-- declaration: interview.code-agent -->
+
+The answer is a starting point, not a commitment. `code_agent` is part of
+`plan_digest`, so changing the backend later goes through `swarm.py set-agent`,
+which writes coordinator state and leaves `plan.json` and `plan_digest`
+untouched; attempts already running keep the backend they started with. The
+switching workflow belongs to `hanig-orchestrate`. <!-- declaration: interview.code-agent -->
+
 For a half-finished repository, the initial draft must be based on its project <!-- declaration: adoption.context -->
 documents, architecture decisions, recent commits, and outputs already on
 disk. <!-- declaration: adoption.context -->
