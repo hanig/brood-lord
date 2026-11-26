@@ -10,7 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
-import select
+import selectors
 import shutil
 import subprocess
 import tempfile
@@ -122,28 +122,38 @@ def _reap(proc):
 
 
 def _run(cmd, stdin_text, env, cwd, seconds):
-    """(returncode, stdout, stderr, error); kills the group on any exit."""
-    proc = None
+    """(returncode, stdout, stderr, error); kills the group on any exit and
+    keeps output printed before a timeout (a session id still to stop)."""
+    proc, out, err, error = None, b"", b"", None
     try:
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, cwd=cwd, env=env, start_new_session=True)
         out, err = proc.communicate(stdin_text.encode("utf-8"), timeout=seconds)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return None, "", "", f"lor {cmd[2]} failed: {type(exc).__name__}: {exc}"
+    except subprocess.TimeoutExpired:
+        error = f"lor {cmd[2]} timed out after {seconds:.1f}s"
+        _reap(proc)
+        try:
+            out, err = proc.communicate(timeout=5)
+        except Exception:
+            pass
+    except OSError as exc:
+        return None, "", "", f"lor {cmd[2]} failed: {exc}"
     finally:
         _reap(proc)
-    return proc.returncode, out.decode("utf-8", "replace"), err.decode("utf-8", "replace"), None
+    rc = None if error else proc.returncode
+    return rc, (out or b"").decode("utf-8", "replace"), (err or b"").decode("utf-8", "replace"), error
 
 
 def _watch(lor, sid, env, cwd, end):
     """Committed events until the first finish ('' error), EOF, or deadline."""
-    events, buf, proc = [], b"", None
+    events, buf, proc, sel = [], b"", None, selectors.DefaultSelector()
     try:
         proc = subprocess.Popen([lor, "session", "watch", "--session-id", sid, "--committed-only"],
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, cwd=cwd, env=env, start_new_session=True)
+        sel.register(proc.stdout, selectors.EVENT_READ)  # no FD_SETSIZE cap, unlike select()
         while time.time() < end:
-            if not select.select([proc.stdout], [], [], max(0, min(end - time.time(), 1)))[0]:
+            if not sel.select(max(0, min(end - time.time(), 1))):
                 continue
             chunk = os.read(proc.stdout.fileno(), 65536)
             if not chunk:
@@ -162,6 +172,7 @@ def _watch(lor, sid, env, cwd, end):
     except OSError as exc:
         return events, f"lor session watch failed: {exc}"
     finally:
+        sel.close()
         _reap(proc)
         if proc is not None:
             proc.stdout.close()

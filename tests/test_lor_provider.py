@@ -25,7 +25,9 @@ BLANK = ("timeout", "drop", "pass", "error", "cancel", "empty")
 ev = lambda e: print(json.dumps({"recorded": {"event": e}}), flush=True)
 if verb == "start" and mode == "start-fail": sys.exit("refused " + "x" * 290 + os.environ["LOR_SESSION_TOKEN"])
 if verb == "stop" and mode == "stop-fail": sys.exit("stop refused")
-if verb == "start" and mode != "start-fail": print('{\\n  "session_id": "0d6f1c2e-1111-4222-8333-944455556666"\\n}')
+if verb == "start" and mode != "start-fail":
+    print('{\\n  "session_id": "0d6f1c2e-1111-4222-8333-944455556666"\\n}', flush=True)
+    time.sleep(60 if mode == "start-hang" else 0)
 if verb == "watch":
     kid = subprocess.Popen(["sleep", "60"], stdout=subprocess.DEVNULL)
     open(d + "/pids", "w").write("%%d %%d" %% (os.getpid(), kid.pid))
@@ -140,9 +142,10 @@ class TestLor(unittest.TestCase):
                          (None, "lor session start failed: refused " + "x" * 290 + "<LOR_SESSION_TOKEN redacted>"))
         self.assertEqual(len(self.calls()), 1)
         for mode, verbs, want in (("sid-fail", ["start", "stop"], "start failed"),
+                                  ("start-hang", ["start", "stop"], "start timed out"),
                                   ("stop-fail", ["start", "watch", "stop"], "stop failed")):
             self.mode(mode)
-            result, err = R.call_lor(seats()["astra"], "p", 10)
+            result, err = R.call_lor(seats()["astra"], "p", 2)
             self.assertEqual((result, [c["argv"][1] for c in self.calls()]), (None, verbs))
             self.assertIn(want, err)
         for var in L.LOR_SECRET_ENV:
@@ -151,6 +154,18 @@ class TestLor(unittest.TestCase):
                 self.assertRaises(OSError):
             R._run_journal_append([], "{}\n")
         self.assertFalse(set(R.SECRET_ENV) & set(popen.call_args[1]["env"]))
+
+    def test_watch_survives_descriptors_beyond_fd_setsize(self):
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if hard != resource.RLIM_INFINITY and hard < 1200:
+            self.skipTest("host cannot hold 1100 descriptors")
+        resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, 1200) if hard == resource.RLIM_INFINITY
+                                                    else min(max(soft, 1200), hard), hard))
+        self.addCleanup(resource.setrlimit, resource.RLIMIT_NOFILE, (soft, hard))
+        held = [os.open(os.devnull, os.O_RDONLY) for _ in range(1100)]
+        self.addCleanup(lambda: [os.close(fd) for fd in held])
+        self.assertEqual(R.call_lor(seats()["astra"], "p", 20)[0]["text"], "OK")
 
     def test_routing_inside_outside_and_resolved(self):
         lor_seats = {n for n, r in seats().items() if r.get("lor_model")}
