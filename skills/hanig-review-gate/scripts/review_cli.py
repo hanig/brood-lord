@@ -378,6 +378,40 @@ def decide_state(n_completed, n_failed, confirmed, refuted_claims,
     return "REVIEW_PASS"
 
 
+def _slurm_job_in_error(error):
+    """The job id in a transport error's `slurm job <digits>`, or None."""
+    text = str(error or "")
+    start = text.find("slurm job ")
+    while start != -1:
+        digits = ""
+        for ch in text[start + len("slurm job "):]:
+            if not ch.isdigit() or not ch.isascii():
+                break
+            digits += ch
+        if digits and (start == 0 or not text[start - 1].isalnum()):
+            return digits
+        start = text.find("slurm job ", start + 1)
+    return None
+
+
+def plan_slurm_job_ids(answers):
+    """Ordered unique Slurm job ids across one plan seat's turns.
+
+    A turn's usage carries slurm_job_id when its CLI ran as a job; a turn that
+    failed after submission names its job only in the transport error."""
+    job_ids = []
+    for answer in answers or ():
+        if not isinstance(answer, dict):
+            continue
+        usage = answer.get("usage") if isinstance(answer.get("usage"), dict) else {}
+        job_id = usage.get("slurm_job_id")
+        if not (isinstance(job_id, str) and job_id.strip()):
+            job_id = _slurm_job_in_error(answer.get("error"))
+        if job_id and job_id.strip() not in job_ids:
+            job_ids.append(job_id.strip())
+    return job_ids
+
+
 def cmd_plan_review(args, members, prompt, label, truncated, profile_reason,
                     excluded, facade):
     """Public plan-review entry."""
@@ -414,7 +448,13 @@ def cmd_plan_review(args, members, prompt, label, truncated, profile_reason,
         status = ("unavailable" if unavailable else
                   "completed" if completed and not any(a.get("error") for a in answers)
                   else "failed")
-        rows[status].append(dict(facade.seat_placement(m), name=m["name"]))
+        row = dict(facade.seat_placement(m), name=m["name"])
+        job_ids = plan_slurm_job_ids(answers)
+        if job_ids:
+            row["slurm_job_id"] = job_ids[-1]
+            if len(job_ids) > 1:
+                row["slurm_job_ids"] = job_ids
+        rows[status].append(row)
     args.seat_routes = facade.build_seat_routes(**rows)
     facade.disarm_watchdog()
     journal = facade.record_review_round(args, completed, state)

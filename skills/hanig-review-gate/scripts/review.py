@@ -1292,7 +1292,10 @@ def unavailable_entry(rev, reason):
 
 
 def build_seat_routes(completed=(), failed=(), unavailable=()):
-    """seat name -> {provider, model, route, status[, slurm_job_id]}."""
+    """seat name -> {provider, model, route, status[, slurm_job_id[, slurm_job_ids]]}.
+
+    slurm_job_ids lists every job of a multi-turn (plan) seat in order; its
+    last entry is slurm_job_id."""
     routes = {}
     for status, entries in (("unavailable", unavailable), ("failed", failed),
                             ("completed", completed)):
@@ -1301,6 +1304,8 @@ def build_seat_routes(completed=(), failed=(), unavailable=()):
             row["status"] = status
             if entry.get("slurm_job_id") is not None:
                 row["slurm_job_id"] = entry["slurm_job_id"]
+            if isinstance(entry.get("slurm_job_ids"), (list, tuple)) and entry["slurm_job_ids"]:
+                row["slurm_job_ids"] = list(entry["slurm_job_ids"])
             routes[entry["name"]] = row
     return routes
 
@@ -2083,10 +2088,68 @@ def escalate(all_reviewers, prompt, args, truncated, label, body_len):
         all_reviewers, prompt, args, truncated, label, body_len, _SELF)
 
 
+_SIGTERM_UNSET = object()
+_SIGTERM_PREVIOUS = _SIGTERM_UNSET
+
+
+def _on_sigterm(signum, _frame):
+    """Cancel every in-flight Slurm seat and its staging, then exit 128+15.
+
+    os._exit skips every finally and never waits on executor worker threads,
+    so the cleanup runs here, once: alarms are cleared and further SIGTERMs
+    ignored while the bounded scancel calls run."""
+    try:
+        if hasattr(signal, "SIGALRM"):
+            signal.alarm(0)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    except (OSError, ValueError):
+        pass
+    try:
+        print("REVIEW_INTERRUPTED — SIGTERM: cancelling in-flight Slurm seats; "
+              "no verdict.", file=sys.stderr)
+    except Exception:
+        pass
+    try:
+        _subs.cancel_active_slurm_jobs()
+    except Exception:
+        pass
+    os._exit(128 + int(signum or signal.SIGTERM))
+
+
+def _install_sigterm():
+    """Install _on_sigterm once; disarm restores. signal.signal raises
+    ValueError off the main thread, so a worker thread installs nothing."""
+    global _SIGTERM_PREVIOUS
+    if _SIGTERM_PREVIOUS is not _SIGTERM_UNSET:
+        return
+    try:
+        previous = signal.getsignal(signal.SIGTERM)
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except (OSError, ValueError, TypeError):
+        return
+    _SIGTERM_PREVIOUS = previous
+
+
+def _restore_sigterm():
+    global _SIGTERM_PREVIOUS
+    previous, _SIGTERM_PREVIOUS = _SIGTERM_PREVIOUS, _SIGTERM_UNSET
+    if previous is _SIGTERM_UNSET:
+        return
+    try:
+        signal.signal(signal.SIGTERM, signal.SIG_DFL if previous is None else previous)
+    except (OSError, ValueError, TypeError):
+        pass
+
+
 def arm_watchdog(seconds):
     """Bound total runtime. urlopen's timeout is per-read: a response that
     trickles one byte below the idle timeout forever never trips it, and the
-    executor waits indefinitely without emitting a verdict."""
+    executor waits indefinitely without emitting a verdict.
+
+    Also installs the SIGTERM handler (main thread only, even with the
+    watchdog disabled) that cancels in-flight Slurm seats; disarm restores
+    the previous handler."""
+    _install_sigterm()
     if not hasattr(signal, "SIGALRM") or seconds <= 0:
         return
 
@@ -2113,6 +2176,7 @@ def disarm_watchdog():
             signal.alarm(0)
         except (OSError, ValueError, OverflowError, TypeError):
             pass
+    _restore_sigterm()
 
 
 decide_state = _cli.decide_state

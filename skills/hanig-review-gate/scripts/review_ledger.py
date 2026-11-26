@@ -417,6 +417,27 @@ SEAT_ROUTES = ("lor", "cli_slurm", "cli_local", "api")
 SEAT_STATUSES = ("completed", "failed", "unavailable")
 
 
+def _job_id(value):
+    return isinstance(value, str) and bool(value.strip())
+
+
+def seat_job_problems(name, row):
+    """slurm_job_id is a non-empty string; slurm_job_ids, when present, is a
+    non-empty list of non-empty strings ending with slurm_job_id."""
+    problems = []
+    if "slurm_job_id" in row and not _job_id(row["slurm_job_id"]):
+        problems.append(f"seat_routes[{name!r}].slurm_job_id is not a non-empty string")
+    if "slurm_job_ids" in row:
+        ids = row["slurm_job_ids"]
+        if not (isinstance(ids, list) and ids and all(_job_id(i) for i in ids)):
+            problems.append(f"seat_routes[{name!r}].slurm_job_ids is not a non-empty "
+                            "list of non-empty strings")
+        elif row.get("slurm_job_id") != ids[-1]:
+            problems.append(f"seat_routes[{name!r}].slurm_job_ids does not end with "
+                            "its slurm_job_id")
+    return problems
+
+
 def journal_identity_problems(record, allow_unbound, facade):
     """Check every persisted identity without inferring or repairing it."""
     if record.get("type") == "evidence":
@@ -480,6 +501,8 @@ def journal_identity_problems(record, allow_unbound, facade):
                            for key in ("provider", "model"))):
                 problems.append(f"seat_routes[{name!r}] needs provider, model, a known "
                                 "route and a completed/failed/unavailable status")
+                continue
+            problems.extend(seat_job_problems(name, row))
     else:
         problems.append("record type is missing or unknown")
     return problems
