@@ -198,6 +198,10 @@ def batch_script(cmd, stage, runtime, preflight=None):
         "trap 'rm -rf \"$work\"' EXIT",
         "trap 'exit 143' TERM INT HUP",
         'cd "$work" || { finish 125; exit 125; }',
+        # A symlinked temp root (macOS /tmp -> /private/tmp) would leave TMPDIR,
+        # -C and the EXIT trap on the unresolved path while getcwd() reports the
+        # physical one; canonicalize once so every consumer sees the same path.
+        'work=$(pwd -P) || { finish 125; exit 125; }',
         f'run() {{ env -i {env_words} TMPDIR="$work" "$@"; }}',
     ]
     if preflight:

@@ -50,8 +50,11 @@ if mode == "submit-fail":
     sys.exit("sbatch: error: invalid partition")
 n = len(open(d + "/sbatch.log").read().splitlines())
 jid = str(4000 + n)
+job_env = {"SLURM_JOB_ID": jid, "PATH": "/usr/bin:/bin"}
+if os.path.exists(d + "/slurm-tmpdir"):  # node-local scratch the scheduler exports
+    job_env["SLURM_TMPDIR"] = open(d + "/slurm-tmpdir").read()
 if mode == "ok":
-    p = subprocess.Popen(["bash", script], env={"SLURM_JOB_ID": jid, "PATH": "/usr/bin:/bin"},
+    p = subprocess.Popen(["bash", script], env=job_env,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True)
     open(d + "/pid-" + jid, "w").write(str(p.pid))
@@ -262,6 +265,37 @@ class TestSlurmExecution(SlurmHost):
         codex = next(c for c in clis if c["cli"] == "codex")
         self.assertEqual(codex["argv"][codex["argv"].index("-C") + 1], codex["cwd"])
         self.assert_cleaned([results[n]["slurm_job_id"] for n in ("sonnet-5.5", "terra")])
+
+    def test_symlinked_node_tmpdir_yields_one_canonical_work_path(self):
+        # macOS /tmp -> /private/tmp reproduced on any host: the scheduler's
+        # node-local scratch is a symlink, so mktemp returns an unresolved path.
+        real = self.d.parent / "node-scratch-real"
+        real.mkdir()
+        link = self.d.parent / "node-scratch-link"
+        link.symlink_to(real, target_is_directory=True)
+        (self.d / "slurm-tmpdir").write_text(str(link))
+        roster = seats()
+        for name in ("sonnet-5.5", "terra"):
+            got = R.run_one(roster[name], "review this", 30, 1, ["c"])
+            self.assertTrue(got["ok"], got)
+            self.assertEqual(got["route"], "cli_slurm")
+        clis = self.log("cli.log")
+        self.assertEqual(sorted({c["cli"] for c in clis}), ["claude", "codex"])
+        for call in clis:
+            with self.subTest(cli=call["cli"], argv=call["argv"][:2]):
+                cwd = call["cwd"]
+                self.assertTrue(os.path.isabs(cwd), cwd)
+                self.assertEqual(Path(cwd).parent, real)  # physical, not via the link
+                self.assertTrue(Path(cwd).name.startswith("hanig-review-seat."), cwd)
+                self.assertEqual(call["env"]["TMPDIR"], cwd)
+                if call["cli"] == "codex":
+                    self.assertEqual(call["argv"][call["argv"].index("-C") + 1], cwd)
+        for _ in range(100):  # the job's EXIT trap may still be running
+            if not any(real.iterdir()):
+                break
+            time.sleep(0.02)
+        self.assertEqual(list(real.iterdir()), [], "node-local work dir not removed on exit")
+        self.assertTrue(link.is_symlink())  # the trap removed the work dir, not the link
 
     def test_submission_never_carries_secrets_and_stage_is_private_shared_state(self):
         result, err = R.call_claude(seats()["sonnet-5.5"], "review", 30)
