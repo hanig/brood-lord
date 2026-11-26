@@ -433,6 +433,40 @@ class TestFailClosedLaunch(LorFixture):
         self.assertEqual(self.paseo()["calls"], [])
 
 
+class TestLorChildEnvironment(LorFixture):
+    def test_the_lor_child_receives_exactly_the_lor_filtered_environment(self):
+        """Read the environment the `lor` process actually got, not a helper's
+        return value: child_env() is the spawn env, and the Lor-only prefixes
+        and suffixes it does not cover must still never reach the CLI."""
+        planted = {
+            "LOR_EXTRA_FLAG": "kept",
+            "OPENROUTER_BASE": "x", "ANTHROPIC_FOO": "x", "OPENAI_ORG_ID": "x",
+            "SOME_API_KEY": "x", "VENDOR_SECRET_ACCESS_KEY": "x",
+            "GITHUB_TOKEN": "x", "AWS_SECRET_ACCESS_KEY": "x",
+            "SSH_AUTH_SOCK": "/tmp/agent.sock",
+            "SWARM_UNIT_DIR": "x", "SWARM_DEP_UP": "x",
+            "HF_TOKEN": "hf_kept", "CUSTOM_RUNTIME": "kept"}
+        with mock.patch.dict(os.environ, planted):
+            expected = sorted(LIO.build_lor_env())
+            ok, detail = LIO.stop_session("51a0b2c3-0000-4000-8000-000000000001")
+        self.assertTrue(ok, detail)
+        (stop,) = self.lor_calls("stop")
+        received = set(stop["env"])
+        for name in ("OPENROUTER_BASE", "ANTHROPIC_FOO", "OPENAI_ORG_ID",
+                     "SOME_API_KEY", "VENDOR_SECRET_ACCESS_KEY", "GITHUB_TOKEN",
+                     "AWS_SECRET_ACCESS_KEY", "SSH_AUTH_SOCK", "SWARM_UNIT_DIR",
+                     "SWARM_DEP_UP", "OPENAI_API_KEY"):
+            self.assertNotIn(name, received)
+        for name in ("LOR_SESSION_ID", "LOR_SESSION_TOKEN", "LOR_EXTRA_FLAG",
+                     "HF_TOKEN", "CUSTOM_RUNTIME", "PATH", "HOME"):
+            self.assertIn(name, received)
+        # Python may add LC_CTYPE when it coerces a C locale; nothing else.
+        self.assertEqual(sorted(received - {"LC_CTYPE"}),
+                         sorted(set(expected) - {"LC_CTYPE"}))
+        self.assertEqual(stop["argv"], ["session", "stop", "--session-id",
+                                        "51a0b2c3-0000-4000-8000-000000000001"])
+
+
 class TestLorLaunch(LorFixture):
     def test_isolated_launch_with_allowlisted_context_and_no_secret(self):
         up_dir = str(self.tmp / "runs" / "up" / "up-attempt")

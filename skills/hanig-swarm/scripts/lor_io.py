@@ -164,17 +164,55 @@ def _auth_error(text):
     return bool(_AUTH_ERROR.search(text or ""))
 
 
-def _run(args, stdin_text=None, timeout=60, environ=None):
-    """Run `lor ARGS`; return (rc or None, stdout, stderr)."""
-    env = build_lor_env(environ)
-    binary = shutil.which("lor", path=env.get("PATH") or os.defpath)
+def _lor_only_stripped_names(contained):
+    """Names ``child_env()`` keeps that a `lor` CLI child must still not get.
+
+    ``child_env()`` removes only the exact shared denylist. The Lor CLI
+    authenticates with LOR_* alone, so the broader third-party prefixes and
+    suffixes in ``build_lor_env`` are also withheld from it. Names only, never
+    values: they are passed to ``env -u`` on the command line.
+    """
+    keep = build_lor_env(contained)
+    return sorted(name for name in contained if name not in keep)
+
+
+def _env_binary(path):
+    found = shutil.which("env", path=path)
+    if found:
+        return found
+    return "/usr/bin/env" if os.access("/usr/bin/env", os.X_OK) else None
+
+
+def _run(args, stdin_text=None, timeout=60):
+    """Run `lor ARGS`; return (rc or None, stdout, stderr).
+
+    The child environment is ``child_env()`` passed directly, so the shared
+    containment denylist applies (tests/test_environment_containment.py).
+    The Lor-specific names it does not cover are unset with ``env -u`` before
+    `lor` executes, so `lor` receives exactly ``build_lor_env(os.environ)``.
+    If `env` cannot be found while such names are present, nothing is run.
+    """
+    contained = CE.child_env()
+    path = contained.get("PATH") or os.defpath
+    binary = shutil.which("lor", path=path)
     if not binary:
         return None, "", "lor CLI is not on PATH"
+    argv = [binary] + list(args)
+    stripped = _lor_only_stripped_names(contained)
+    if stripped:
+        env_binary = _env_binary(path)
+        if not env_binary:
+            return None, "", (f"lor {' '.join(args[:2])} was not run: `env` is "
+                              f"unavailable to withhold non-Lor credentials")
+        unset = []
+        for name in stripped:
+            unset += ["-u", name]
+        argv = [env_binary] + unset + argv
     try:
         proc = subprocess.run(
-            [binary] + list(args), input=stdin_text if stdin_text is not None else "",
+            argv, input=stdin_text if stdin_text is not None else "",
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            universal_newlines=True, timeout=timeout, env=env)
+            universal_newlines=True, timeout=timeout, env=CE.child_env())
     except subprocess.TimeoutExpired:
         return None, "", f"lor {' '.join(args[:2])} timed out after {timeout}s"
     except OSError as exc:
@@ -196,7 +234,7 @@ def _detail(rc, out, err):
 
 
 def start_session(*, canonical_model_id, working_directory, title, task,
-                  effort=None, timeout=180, environ=None):
+                  effort=None, timeout=180):
     """Start a Lor subagent; return (session_id, error).
 
     No ``--tools`` (it inherits the parent's full sandbox tools), no
@@ -214,7 +252,7 @@ def start_session(*, canonical_model_id, working_directory, title, task,
         args += ["--effort", effort]
     args += ["--working-directory", working_directory, "--title", str(title),
              "--task", "@-"]
-    rc, out, err = _run(args, stdin_text=str(task), timeout=timeout, environ=environ)
+    rc, out, err = _run(args, stdin_text=str(task), timeout=timeout)
     if rc != 0:
         return None, f"lor session start failed: {_detail(rc, out, err)}"
     rec = _first_json(out) or {}
@@ -227,8 +265,7 @@ def start_session(*, canonical_model_id, working_directory, title, task,
     return sid, None
 
 
-def _list_children(parent_session_id, title_pattern=None, timeout=60,
-                   environ=None):
+def _list_children(parent_session_id, title_pattern=None, timeout=60):
     """Return (sessions, problem, auth_error) for one parent, bounded pages."""
     if not valid_session_id(parent_session_id):
         return None, f"invalid parent session id {parent_session_id!r}", False
@@ -240,7 +277,7 @@ def _list_children(parent_session_id, title_pattern=None, timeout=60,
             args += ["--title-pattern", title_pattern]
         if token:
             args += ["--page-token", token]
-        rc, out, err = _run(args, timeout=timeout, environ=environ)
+        rc, out, err = _run(args, timeout=timeout)
         if rc != 0:
             detail = _detail(rc, out, err)
             return None, f"lor session list failed: {detail}", _auth_error(
@@ -312,8 +349,7 @@ def poll_session(session_id, *, parent_session_id=None, timeout=60, environ=None
     if not parent:
         return _unknown("no parent Lor session is recorded and LOR_SESSION_ID is "
                         "unset, so the subagent cannot be listed")
-    sessions, problem, auth = _list_children(parent, timeout=timeout,
-                                             environ=environ)
+    sessions, problem, auth = _list_children(parent, timeout=timeout)
     if problem:
         return _unknown(problem, auth)
     matches = [s for s in sessions if s.get("session_id") == session_id]
@@ -331,7 +367,7 @@ def find_session_by_title(title, *, parent_session_id=None, timeout=60,
         return None, "no parent Lor session to search"
     pattern = "^" + re.escape(str(title)) + "$"
     sessions, problem, _auth = _list_children(
-        parent, title_pattern=pattern, timeout=timeout, environ=environ)
+        parent, title_pattern=pattern, timeout=timeout)
     if problem:
         return None, problem
     matches = [s for s in sessions if s.get("title") == title
@@ -342,24 +378,24 @@ def find_session_by_title(title, *, parent_session_id=None, timeout=60,
     return (matches[0] if matches else None), None
 
 
-def stop_session(session_id, timeout=60, environ=None):
+def stop_session(session_id, timeout=60):
     """Stop a Lor subagent; return (ok, detail). Idempotent on the CLI side."""
     if not valid_session_id(session_id):
         return False, f"invalid Lor session id {session_id!r}"
     rc, out, err = _run(["session", "stop", "--session-id", session_id],
-                        timeout=timeout, environ=environ)
+                        timeout=timeout)
     if rc == 0:
         return True, "stopped"
     return False, f"lor session stop failed: {_detail(rc, out, err)}"
 
 
-def send_continuation(session_id, text, timeout=60, environ=None):
+def send_continuation(session_id, text, timeout=60):
     """Queue a continuation message; return (ok, detail)."""
     if not valid_session_id(session_id):
         return False, f"invalid Lor session id {session_id!r}"
     rc, out, err = _run(["session", "send", "--recipient-session-id", session_id,
                          "--delivery", "queue", "--text", "@-"],
-                        stdin_text=str(text), timeout=timeout, environ=environ)
+                        stdin_text=str(text), timeout=timeout)
     if rc == 0:
         return True, "queued"
     return False, f"lor session send failed: {_detail(rc, out, err)}"
