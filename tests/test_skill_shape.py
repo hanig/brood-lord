@@ -1108,7 +1108,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
                 "Other providers retain their existing waiting instructions.",
                 "For Codex code agents only, use `python3 scripts/run_tests.py MODULE…`",
                 "`--fast` is allowed between repairs only.",
-                "The final full scoped run, without `--fast`, must happen before review and before opening the PR",
+                "The final full scoped run, without `--fast`, must happen before each hand-off to the orchestrator's review",
                 "Supervised review-worker modules retain the serialized launcher rule below",
                 "Other providers retain their existing test commands."):
             with self.subTest(sentence=sentence):
