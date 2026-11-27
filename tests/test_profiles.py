@@ -197,6 +197,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
             "haiku-5.5": ("claude", "claude-haiku-5-5", "high"),
             "astra": ("openai", "gpt-6.2-astra", "xhigh"),
             "kimi-k3": ("openrouter", "moonshotai/kimi-k3", "xhigh"),
+            "fern-0.1": ("lor", "fern-0.1", "xhigh"),
             "gemini-argon": ("openrouter", "google/gemini-4-argon", "xhigh"),
             "gemini-neon": ("openrouter", "google/gemini-4-neon", "high"),
             "muse-wonder": ("openrouter", "meta/muse-wonder", "high"),

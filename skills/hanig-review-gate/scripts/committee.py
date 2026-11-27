@@ -175,7 +175,12 @@ def pick_members(explicit, authors=(), profile="committee", *, audit=None):
     if excluded:
         result = None
         if not explicit and MIN_MEMBERS <= len(chosen) <= MAX_MEMBERS:
-            reserves, rejected = R.exclude_authors(R._panels.reserve_seats(roster, profile), author_ids)
+            occupied = {r["name"] for r in kept}
+            reserves = R._lor.resolve_lor_substitutions(
+                R._panels.reserve_seats(roster, profile), roster,
+                excluded_check=lambda r: r["name"] in occupied
+                or R._panels.seat_identity(r) in author_ids | {None})
+            reserves, rejected = R.exclude_authors(reserves, author_ids)
             result = R._panels.reserve_panel(kept, reserves, len(chosen), lambda panel:
                                      len(R._panels.panel_makers(panel)) >= 2
                                      and len(transports(panel)) >= 2)
@@ -700,12 +705,19 @@ def tiebreak(args, session, inputs):
     maker = R._panels.panel_makers([primary])
     excluded = []
     for member in [primary] + R._panels.reserve_seats(roster, "tiebreak"):
+        reserve = member is not primary
+        if reserve:
+            member, = R._lor.resolve_lor_substitutions(
+                [member], roster, excluded_check=lambda r:
+                r["name"] == primary["name"] or None in voters
+                or R._panels.seat_identity(r) in authors | voters | {None}
+                or not maker or maker == R._panels.panel_makers([r]))
         kept, rejected = R.exclude_authors([member], authors)
         if rejected:
             excluded += rejected
         elif None in voters or R._panels.seat_identity(member) in voters:
             excluded.append(R._panels.seat_exclusion(member, "model voted or voter unknown"))
-        elif member is not primary and (not maker or maker == R._panels.panel_makers([member])):
+        elif reserve and (not maker or maker == R._panels.panel_makers([member])):
             excluded.append(R._panels.seat_exclusion(member, "reserve needs a different maker"))
         else:
             if excluded:

@@ -37,7 +37,7 @@ These observations track `skills/hanig-review-gate/reviewers.json` after the 202
 
 `deep`: terra, sonnet-5.5, kimi-k3, sol, astra.
 
-Owner decision 2026-10-28 replaces Luna with Terra in standard/deep; its price is unknown. Owner decision 2026-11-26 replaces kimi-k2.7-code (disabled) with Lor-served kimi-k3 in standard/deep, so the default profiles route only through Lor or the Claude/Codex subscriptions. Plan stays Luna/Kimi K3 (OpenAI/Moonshot). Escalation retains Luna and Haiku from fast, adds the standard seats, then Sol and Astra (2026-11-06: Sol now writes code; author exclusion applies). Declare authors with repeatable `--author PROVIDER/MODEL` for exclusion. Keep review identity stable; advance `--round N` with `--dispositions FILE` after round 1. <!-- declaration: review.panel-source -->
+Owner decision 2026-10-28 replaces Luna with Terra in standard/deep; its price is unknown. Owner decision 2026-11-26 replaces kimi-k2.7-code (disabled) with Lor-served kimi-k3 in standard/deep, so the default profiles route only through Lor or the Claude/Codex subscriptions. Plan keeps Luna and the same Lor-routed seat. In a Lor session, `fern-0.1` at `xhigh` substitutes for `kimi-k3` when advertised by `lor model list` and eligible under author exclusion; the lists above show configured profile membership. Escalation retains Luna and Haiku from fast, adds the standard seats, then Sol and Astra (2026-11-06: Sol now writes code; author exclusion applies). Declare authors with repeatable `--author PROVIDER/MODEL` for exclusion. Keep review identity stable; advance `--round N` with `--dispositions FILE` after round 1. <!-- declaration: review.panel-source -->
 
 `committee`: deepseek-v4-pro, gemini-neon, sonnet-5.5.
 

@@ -35,7 +35,8 @@ LOR_SECRET_ENV = ("LOR_SESSION_TOKEN", "LOR_ROUTER_TOKEN", "LOR_SESSION_REFRESH_
 LOR_ROUTABLE_PROVIDERS = ("openai", "openrouter")
 LOR_EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
 STOP, LENGTH = "FINISH_REASON_STOP", ("FINISH_REASON_LENGTH", "FINISH_REASON_MAX_TOKENS")
-NO_TOOLS = "(Analysis only. Do NOT call any tool, including `pass`: answer in plain text.)"
+NO_TOOLS = ("(Do NOT call any tool, including `pass`: reply directly in your assistant "
+            "message following the exact output format requested above.)")
 _SID = re.compile(r'"session_id"\s*:\s*"([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})"')
 
 
@@ -187,6 +188,59 @@ def _run(cmd, stdin_text, env, cwd, seconds):
         _reap(proc)
     rc = None if error else proc.returncode
     return rc, (out or b"").decode("utf-8", "replace"), (err or b"").decode("utf-8", "replace"), error
+
+
+def lor_available_models(environ=None, timeout=10.0):
+    """Read advertised canonical model IDs, or None if discovery fails."""
+    env = os.environ if environ is None else environ
+    if not lor_in_session(env) or not (lor := _lor_bin(env)):
+        return None
+    rc, out, _, error = _run([lor, "model", "list"], "", build_lor_child_env(env),
+                             cwd=tempfile.gettempdir(), seconds=timeout)
+    if rc != 0 or error:
+        return None
+    try:
+        data = json.loads(out)
+    except (ValueError, RecursionError):
+        return None
+    models = data.get("models") if isinstance(data, dict) else None
+    if not isinstance(models, list):
+        return None
+    return frozenset(cid for entry in models if isinstance(entry, dict)
+                     and isinstance(cid := entry.get("canonical_model_id"), str)
+                     and cid.strip())
+
+
+def resolve_lor_substitutions(selected, all_reviewers, *, explicit_only=False,
+                              excluded_check=None, available_models=None,
+                              environ=None):
+    """Replace profile seats only with advertised, eligible Lor alternatives."""
+    selected = list(selected)
+    if explicit_only or not lor_in_session(environ):
+        return selected
+    replacements = {r["lor_replaces"]: r for r in all_reviewers
+                    if r.get("enabled", True) and r.get("lor_replaces")
+                    and lor_routed(r, environ)}
+    if not any(r.get("enabled", True) and r["name"] in replacements for r in selected):
+        return selected
+    avail = available_models if available_models is not None else lor_available_models(environ)
+    if not avail:
+        return selected
+    names = {r["name"] for r in selected}
+    result = []
+    for rev in selected:
+        sub = replacements.get(rev["name"])
+        if (rev.get("enabled", True) and sub and lor_model_id(sub) in avail
+                and sub["name"] not in names and not (excluded_check and excluded_check(sub))):
+            names.add(sub["name"])
+            sub = dict(sub, profiles=list(rev.get("profiles") or []),
+                       _lor_replaced=rev["name"])
+            if "_reserve_order" in rev:
+                sub["_reserve_order"] = dict(rev["_reserve_order"])
+            result.append(sub)
+        else:
+            result.append(rev)
+    return result
 
 
 def _watch(lor, sid, env, cwd, end):
