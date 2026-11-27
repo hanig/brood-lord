@@ -811,11 +811,11 @@ class SettledNeedsEverySeat(unittest.TestCase):
                     json.dumps({"positions": []}))
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                C.main(["status", str(board)])
+                guarded_main(functools.partial(C.main, ["status", str(board)]))
             self.assertNotIn("SETTLED", out.getvalue())
             self.assertIn("3 missing", out.getvalue())
             with contextlib.redirect_stdout(io.StringIO()):
-                C.main(["cruxes", str(board)])
+                guarded_main(functools.partial(C.main, ["cruxes", str(board)]))
             carried = json.loads((board / "r2-cruxes.json").read_text())
             self.assertEqual([c["id"] for c in carried["cruxes"]], ["C1"])
             self.assertEqual(carried["cruxes"][0]["for"], ["a"])
@@ -827,7 +827,7 @@ class TallyNeedsEveryVote(unittest.TestCase):
         code = None
         with contextlib.redirect_stdout(out):
             try:
-                C.main(["tally", str(board)])
+                guarded_main(functools.partial(C.main, ["tally", str(board)]))
             except SystemExit as exc:
                 code = exc.code
         return code, out.getvalue()
