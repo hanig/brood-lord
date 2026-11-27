@@ -21,9 +21,11 @@ The workers do the work. This file says what the orchestrator may decide alone.
 A NEW grant requires fresh owner confirmation after cutover. Read the current
 mandate and show its complete `Granted, without asking`, `Bounded by`, and
 `Always stop and ask` sections verbatim, with the exact plan, repository,
-state directory, actions, tracker scope and UTC expiry. Preserve the exact
-response and displayed bounds in coordinator authority state.
-No default or override: issue time < expiry <= issue time + 24 hours.
+state directory, actions, tracker scope and UTC expiry, or that none was
+chosen. Preserve the exact response and displayed bounds in coordinator
+authority state.
+No default: the owner chooses either a UTC expiry after issue time, with no
+ceiling, or no expiry, which lasts until revoked or the mandate bytes change.
 The session cap is exactly one operating orchestrator. Existing confirmations
 are not leases: no receipt import, automatic renewal or silent grandfathering.
 
