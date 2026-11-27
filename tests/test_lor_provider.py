@@ -12,6 +12,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
 from unittest import mock
 
+from tests.watchdog_guard import guarded_main
+
 SCRIPTS = Path(__file__).resolve().parents[1] / "skills/hanig-review-gate/scripts"
 sys.path.insert(0, str(SCRIPTS))
 import committee as C  # noqa: E402
@@ -272,7 +274,7 @@ class TestLor(unittest.TestCase):
                 mock.patch.object(R, "reserve_review_round"), \
                 mock.patch.object(R, "prior_evidence", return_value=None), \
                 mock.patch.object(R, "release_round"), self.assertRaises(SystemExit) as exit_:
-            R.main()
+            guarded_main(R.main)
         self.assertEqual(exit_.exception.code, code, out.getvalue() + err.getvalue())
         report = json.loads(out.getvalue())
         self.assertTrue(report["journal"]["written"], err.getvalue())
@@ -357,7 +359,7 @@ class TestLor(unittest.TestCase):
         with mock.patch.object(sys, "argv", ["review.py", "--list", "--profile", "standard"]), \
                 mock.patch.object(R, "probe_liveness", return_value=None) as probe, \
                 redirect_stdout(out), self.assertRaises(SystemExit) as exit_:
-            R.main()
+            guarded_main(R.main)
         self.assertEqual(exit_.exception.code, 0)
         self.assertRegex(out.getvalue(), r"fern-0\.1.*UNAVAILABLE \(not in lor model list\)")
         self.assertRegex(out.getvalue(), r"kimi-k3.*ready")
