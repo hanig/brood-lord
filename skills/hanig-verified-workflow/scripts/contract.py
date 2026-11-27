@@ -1010,7 +1010,9 @@ def scontrol_state(job_id, declared_at=None, bound_at=None,
       - Retention. The controller forgets a finished job after MinJobAge.
         "Invalid job id specified", any other nonzero exit (controller
         unreachable), and an empty listing are all absent evidence: none of
-        them is a failure verdict, and none proves the job never ran.
+        them is a failure verdict, and none proves the job never ran. This
+        holds for the grouped-line refinement query too, since the job can be
+        forgotten between the two calls.
       - Arrays by master id. `scontrol show job <array id>` lists every task;
         more than one record is refused rather than reduced to one.
     Malformed output, a different JobId, an unparseable SubmitTime or an
@@ -1037,7 +1039,21 @@ def scontrol_state(job_id, declared_at=None, bound_at=None,
     if fields is None:
         rc, out, err = run(["scontrol", "show", "job", str(job_id)],
                            timeout=20)
-        fields = scontrol_fields(out, multiline=True) if rc == 0 else None
+        # The controller can forget the job (MinJobAge) or become unreachable
+        # between the two queries. That is the same absent evidence as on the
+        # first query, not a parse refusal.
+        if rc != 0:
+            if "Invalid job id specified" in (err or out):
+                note_out.append(f"scontrol no longer retains job {job_id} "
+                                f"(past MinJobAge); no controller evidence")
+            else:
+                note_out.append(f"scontrol grouped-line query for job "
+                                f"{job_id} failed; controller evidence "
+                                f"unavailable")
+            return empty
+        if out.strip() in SCONTROL_NO_JOBS:
+            return empty
+        fields = scontrol_fields(out, multiline=True)
         if fields is None:
             return (None, None, None,
                     "the controller record could not be parsed unambiguously "

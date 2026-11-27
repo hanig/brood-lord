@@ -2142,9 +2142,10 @@ class TestScontrolFallbackDuringAccountingOutage(unittest.TestCase):
         return out
 
     def env(self, sacct=None, scontrol=None, scontrol_rc=0,
-            scontrol_err="", grouped=None):
+            scontrol_err="", grouped=None, grouped_rc=0, grouped_err=""):
         """sacct=None emulates the outage: nonzero exit with an error, which
-        is what sacct does while slurmdbd is unreachable."""
+        is what sacct does while slurmdbd is unreachable. grouped_rc fails
+        only the second (grouped-line) query, after a one-line answer."""
         b = self.tmp / f"bin{len(list(self.tmp.glob('bin*')))}"
         b.mkdir()
         if sacct is None:
@@ -2165,7 +2166,9 @@ class TestScontrolFallbackDuringAccountingOutage(unittest.TestCase):
             + (f"echo '{scontrol_err}' >&2\nexit {scontrol_rc}\n"
                if scontrol_rc else
                f"if [ \"$3\" = \"-o\" ]; then cat '{oneline}'; "
-               f"else cat '{multi}'; fi\n"))
+               + (f"else echo '{grouped_err}' >&2; exit {grouped_rc}; fi\n"
+                  if grouped_rc else
+                  f"else cat '{multi}'; fi\n")))
         for n in ("sacct", "squeue", "scontrol"):
             (b / n).chmod(0o755)
         return dict(os.environ, PATH=f"{b}:{os.environ['PATH']}")
@@ -2314,6 +2317,45 @@ class TestScontrolFallbackDuringAccountingOutage(unittest.TestCase):
                                                grouped=listing))
                 self.assertEqual(r.returncode, INCOMPLETE, r.stdout)
                 self.assertIsNone(sched["state"])
+
+    def test_job_forgotten_before_the_grouped_query_is_absent_evidence(self):
+        """The one-line answer is ambiguous, so a second grouped-line query
+        runs; the controller forgets the job (MinJobAge) or drops out before
+        it answers. That is absent evidence, exactly as on the first query,
+        never a stale parse refusal."""
+        import importlib.util as u
+        spec = u.spec_from_file_location("contract_under_test", SCRIPT)
+        m = u.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        ambiguous = self.record("FAILED", "1:0",
+                                comment="x JobState=COMPLETED ExitCode=0:0")
+        cases = (
+            ("invalid-id", dict(grouped_rc=1, grouped_err="slurm_load_jobs "
+                                "error: Invalid job id specified")),
+            ("unreachable", dict(grouped_rc=1, grouped_err="slurm_load_jobs "
+                                 "error: Unable to contact slurm controller")),
+            ("empty", dict(grouped="")),
+            ("no-jobs", dict(grouped="No jobs in the system")),
+        )
+        for name, kw in cases:
+            with self.subTest(case=name):
+                env = self.env(scontrol=ambiguous, **kw)
+                old = os.environ["PATH"]
+                os.environ["PATH"] = env["PATH"]
+                try:
+                    self.assertEqual(
+                        m.scontrol_state(self.JOB, self.decl, self.decl),
+                        (None, None, None, None))
+                finally:
+                    os.environ["PATH"] = old
+                r, sched = self.check(env)
+                self.assertEqual(r.returncode, INCOMPLETE,
+                                 r.stdout + r.stderr)
+                self.assertEqual(sched, {"state": None, "exit_code": None,
+                                         "submit": None, "source": None})
+                self.assertFalse(sched.get("stale"))
+                self.assertNotIn("could not be parsed", r.stdout)
+                self.assertNotIn("discarded", r.stdout)
 
     def test_absent_evidence_unit_level_is_all_none(self):
         """The function contract the caller keys on: a forgotten job returns
