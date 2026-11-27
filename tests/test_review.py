@@ -551,11 +551,25 @@ class TestParsing(unittest.TestCase):
                 json.dumps({"analysis": f"Noted.\n```json\n{payload}\n```"}),
                 json.dumps({"analysis": verdict}),
                 '{"analysis": ' + payload,
-                '{\n  "analysis omitted per instructions; see findings below}\nPLACEHOLDER\n' + payload,
-                '{"analysis": null}\n' + payload):
+                '{\n  "analysis omitted per instructions; see findings below}\nPLACEHOLDER\n' + payload):
             with self.subTest(response=response):
                 self.assertEqual(review.parse_verdict(response), (verdict, None))
                 self.assertIsNone(review.verdict_schema_error(verdict))
+
+    def test_valid_non_verdict_object_does_not_promote_nested_or_later_verdict(self):
+        payload = '{"verdict":"upheld","findings":[],"claims":[],"notes":"Checked."}'
+        for outer, suffix in (('{"example":' + payload + '}', ""),
+                              ('{"analysis": null}', '\n' + payload)):
+            with self.subTest(outer=outer):
+                value, error = review.parse_verdict(outer + suffix)
+                self.assertIsNone(error)
+                self.assertEqual(value, json.loads(outer))
+                self.assertIsNotNone(review.verdict_schema_error(value))
+
+    def test_malformed_wrapper_recovers_past_many_balanced_objects(self):
+        verdict = {"verdict": "upheld", "findings": [], "claims": [], "notes": "Checked."}
+        response = '{ "invalid" ' + '{} ' * 70 + '}\n' + json.dumps(verdict)
+        self.assertEqual(review.parse_verdict(response), (verdict, None))
 
     def test_recovery_keeps_schema_validation_and_primary_precedence(self):
         stub = {"verdict": "upheld"}

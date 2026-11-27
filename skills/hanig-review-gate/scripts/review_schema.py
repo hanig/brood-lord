@@ -39,7 +39,6 @@ def parse_verdict(text, _depth=0):
             if depth == 0 and start is not None:
                 found = s[start:i + 1]
                 break
-    obj, error = None, None
     if found:
         try:
             obj = json.loads(found)
@@ -54,27 +53,32 @@ def parse_verdict(text, _depth=0):
                     analysis, _ = parse_verdict(analysis, _depth=1)
                 if isinstance(analysis, dict) and "verdict" in analysis:
                     return analysis, None
+            # A valid object is the reply, not a search space for example verdicts.
+            return obj, None
     elif start is not None:
         error = ("response truncated mid-JSON (raise max_output_tokens "
                  f"for this reviewer); {len(s)} chars received")
     else:
-        error = f"no JSON object found in: {text[:150]}"
+        return None, f"no JSON object found in: {text[:150]}"
 
     # A malformed wrapper can hide a complete verdict inside or after it.
-    # Cap decode attempts since each can read the rest of the response.
+    # Decoded objects are disjoint; cap failed decodes, which can reread text.
     decoder = json.JSONDecoder()
-    pos = -1
-    for _ in range(64):
-        pos = s.find("{", pos + 1)
+    pos = failures = 0
+    while failures < 64:
+        pos = s.find("{", pos)
         if pos == -1:
             break
         try:
-            candidate, _ = decoder.raw_decode(s, pos)
+            candidate, end = decoder.raw_decode(s, pos)
         except (ValueError, RecursionError):
+            failures += 1
+            pos += 1
             continue
-        if isinstance(candidate, dict) and "verdict" in candidate:
+        if "verdict" in candidate:
             return candidate, None
-    return obj, error
+        pos = end
+    return None, error
 
 
 def norm(v):
