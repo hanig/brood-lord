@@ -25,7 +25,7 @@ DEFINITIONS = (
     "_occupies_live_resources", "trusted_launch_facts", "trusted_launch_host_anchor",
     "empty_agent_overrides", "agent_overrides_problem", "load_agent_overrides",
     "save_agent_overrides", "attempt_launch_intent", "attempt_backend",
-    "attempt_parent_session",
+    "attempt_parent_session", "attempt_cli_run_dir",
 )
 DATA = (
     "STATE_FILE", "STATE_EPOCH_FILE", "LEASE", "LOCK",

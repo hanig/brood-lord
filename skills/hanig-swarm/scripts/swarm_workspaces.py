@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 
 import codex_home as CH
+import cli_adapters as CA
+import cli_io as CIO
 import lor_io as LIO
 import paseo_io as PIO
 import recovery as R
@@ -184,13 +186,61 @@ def _recover_lor_code_launch(state, u, unit_dir, agent, intent):
     return agent_path, None
 
 
+def _recover_cli_code_launch(state, u, unit_dir, agent, intent):
+    """Resolve the worktree a recovered direct-CLI run works in.
+
+    Returns ``(agent_path, error)``. The run record must exist under the
+    frozen run root and name the coordinator-recorded worktree; the shared
+    identity check in ``_recover_code_launch`` then decides.
+    """
+    attempt = Path(unit_dir).name
+    if str(agent) != attempt:
+        return None, (f"recovered direct-CLI run {agent!r} is not attempt "
+                      f"{attempt!r}")
+    rdir = Path(str(intent.get("cli_runs_root") or "")) / attempt
+    run = CIO._read_json(rdir / CIO.RUN_RECORD) if intent.get("cli_runs_root") else None
+    if run is None:
+        return None, f"recovered direct-CLI run has no readable record at {rdir}"
+    us = ((state.get("units") or {}).get(u["id"]) or {})
+    meta = ((us.get("attempt_workspaces") or {}).get(attempt) or {})
+    workspace = meta.get("path")
+    if not workspace:
+        return None, (f"recovered direct-CLI run {agent} has no "
+                      f"coordinator-recorded worktree for attempt {attempt!r}")
+    try:
+        agent_path = str(Path(workspace).resolve())
+        if str(Path(str(run.get("worktree"))).resolve()) != agent_path:
+            return None, (f"recovered direct-CLI run {agent} works in "
+                          f"{run.get('worktree')!r}, not recorded worktree "
+                          f"{agent_path!r}")
+    except OSError as exc:
+        return None, f"cannot identify recovered attempt workspace: {exc}"
+    return agent_path, None
+
+
 def _recover_code_launch(state, u, unit_dir, agent):
     """Finish a launch snapshot after a crash between agent start and bind."""
     attempt = Path(unit_dir).name
     recorded = SS.attempt_launch_intent(
         ((state.get("units") or {}).get(u["id"]) or {}), attempt)
     workspace_id = None
-    if recorded.get("backend") == LIO.LOR_BACKEND:
+    if CA.is_cli_backend(recorded.get("backend")):
+        problem = SCL._code_launch_intent_problem(recorded, u, attempt)
+        problem = problem or W.launch_host_problem(recorded)
+        if problem:
+            return problem
+        agent_path, problem = _recover_cli_code_launch(
+            state, u, unit_dir, agent, recorded)
+        if problem:
+            return problem
+        try:
+            agent_st = os.stat(agent_path)
+        except OSError as exc:
+            return f"cannot identify recovered attempt workspace: {exc}"
+        agent_identity = (agent_st.st_dev, agent_st.st_ino)
+        agent_label = f"{recorded.get('backend')} run {agent}"
+        complete_options = {"workspace_owner": "coordinator"}
+    elif recorded.get("backend") == LIO.LOR_BACKEND:
         problem = SCL._code_launch_intent_problem(recorded, u, attempt)
         problem = problem or W.launch_host_problem(recorded)
         if problem:
@@ -449,6 +499,7 @@ def _preserve_and_archive_code_worktree(state, u, unit_dir, report, state_dir=No
         SS.save_state(state_dir, state)
         return
     lor_attempt = intent.get("backend") == LIO.LOR_BACKEND
+    cli_attempt = CA.is_cli_backend(intent.get("backend"))
 
     def safe_to_remove(check_digest=True):
         agents = us.setdefault("attempt_cleanup_agents", {})
@@ -460,7 +511,15 @@ def _preserve_and_archive_code_worktree(state, u, unit_dir, report, state_dir=No
         reason = "attempt agent is unknown"
         status, rc = None, None
         if agent:
-            if lor_attempt:
+            if cli_attempt:
+                # A direct-CLI worktree is never removed while its turn may
+                # still run: only an established terminal observation settles
+                # it; "unknown" retains it.
+                obs = CIO.inspect_run_dir(Path(str(intent.get("cli_runs_root") or "")) / attempt)
+                status = obs["state"]
+                rc = 0 if status != "unknown" else 1
+                settled = status in CIO.TERMINAL_STATES
+            elif lor_attempt:
                 # A Lor worktree is NEVER removed while its session may still
                 # be working: only an established non-running observation
                 # settles it; "unknown" (CLI/auth/transport) retains it.
@@ -519,6 +578,10 @@ def _preserve_and_archive_code_worktree(state, u, unit_dir, report, state_dir=No
                         SS.save_state(state_dir, state)
                         return False
                 return True
+            elif cli_attempt:
+                reason = (f"{intent.get('backend')} run status unknown: " + obs["detail"]
+                          if rc != 0 else
+                          f"{intent.get('backend')} turn is still {status}")
             elif lor_attempt:
                 reason = ("Lor session status unknown: " + obs["detail"]
                           if rc != 0 else
@@ -639,12 +702,13 @@ def _preserve_and_archive_code_worktree(state, u, unit_dir, report, state_dir=No
             f"{workspace_path}; branch {meta.get('branch')} remains")
         return
 
-    if lor_attempt:
-        # Lor attempts run only in coordinator-owned worktrees; there is no
-        # Paseo workspace to archive and none may be guessed from the path.
+    if lor_attempt or cli_attempt:
+        # Lor and direct-CLI attempts run only in coordinator-owned
+        # worktrees; there is no Paseo workspace to archive and none may be
+        # guessed from the path.
         _worktree_cleanup_failed(
             state, u, meta, report,
-            f"lor attempt {attempt} worktree has owner "
+            f"{intent.get('backend')} attempt {attempt} worktree has owner "
             f"{meta.get('workspace_owner')!r}, not 'coordinator'; refusing "
             f"Paseo archive")
         SS.save_state(state_dir, state)
@@ -705,6 +769,23 @@ def _reconcile_lor_orphan(unit_dir, intent):
     return None, None
 
 
+def _reconcile_cli_orphan(unit_dir, intent):
+    """Find a direct-CLI run started for this attempt but never bound."""
+    attempt_id = Path(unit_dir).name
+    root = intent.get("cli_runs_root")
+    if not root:
+        return None, "UNKNOWN"
+    rdir = Path(str(root)) / attempt_id
+    if (rdir / CIO.RUN_RECORD).is_file():
+        return attempt_id, (f"recovered {intent.get('backend')} run {attempt_id}: "
+                            f"it had been started but was never bound. Not re-run.")
+    if rdir.exists():
+        # A run directory without a record is a launch interrupted between
+        # mkdir and the first record write: never start a second run there.
+        return None, "UNKNOWN"
+    return None, None
+
+
 def reconcile_orphan(unit_dir, allocated_at=None, kind=None, intent=None):
     """Did a job for this attempt reach the scheduler even though we never
     recorded its id? Returns (job_id, note).
@@ -716,6 +797,9 @@ def reconcile_orphan(unit_dir, allocated_at=None, kind=None, intent=None):
     if (kind == "code" and isinstance(intent, dict)
             and intent.get("backend") == LIO.LOR_BACKEND):
         return _reconcile_lor_orphan(unit_dir, intent)
+    if (kind == "code" and isinstance(intent, dict)
+            and CA.is_cli_backend(intent.get("backend"))):
+        return _reconcile_cli_orphan(unit_dir, intent)
     if kind == "code":
         # Same question, different registry: paseo knows whether an agent was
         # created for this attempt.

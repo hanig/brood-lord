@@ -171,6 +171,15 @@ def _frozen_agent_fields(agent):
     if agent["backend"] == "lor":
         fields["canonical_model_id"] = agent["canonical_model_id"]
         fields["parent_session_id"] = agent.get("parent_session_id")
+    if agent["backend"] in ("claude", "codex", "pi"):
+        # Direct CLI: the adapter, model and run root this attempt runs
+        # under, so status, judging, resume, cancel and recovery never
+        # re-resolve them from a plan or override that may have moved on.
+        fields["cli_model"] = agent["cli_model"]
+        fields["cli_runs_root"] = agent.get("cli_runs_root")
+        fields["cli_placement"] = agent.get("cli_placement")
+        fields["author_identity"] = SA.intent_identity(
+            {"backend": agent["backend"], "provider": agent["provider"]})
     return fields
 
 

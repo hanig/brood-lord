@@ -999,11 +999,11 @@ def cmd_bind(args):
         sys.exit(f"error: {refused}")
     # The id's SHAPE depends on the kind. A slurm unit is bound to a numeric
     # scheduler id; a code unit is bound to a paseo agent UUID or, when its
-    # attempt froze backend lor, a Lor session id (lor_io owns both code
-    # rules). Requiring the numeric form for every kind meant a code unit
+    # attempt froze backend lor, a Lor session id, or for claude/codex/pi the
+    # attempt's cli-runs id (lor_io routes every code rule). Requiring the numeric form for every kind meant a code unit
     # could never be bound at all, so its predicate reported "no agent bound"
     # forever. The backend recorded here is frozen with the binding.
-    spec.update(LIO.code_binding(spec.get("kind"), args.job_id, args.backend, args.parent_session_id))
+    spec.update(LIO.code_binding(spec.get("kind"), args.job_id, args.backend, args.parent_session_id, args.cli_run_dir))
     if spec.get("kind") != "code" and not re.fullmatch(r"\d+(_\d+)?", str(args.job_id)):
         sys.exit(f"error: implausible job id {args.job_id!r}. Pass the numeric "
                  f"id the scheduler printed.")
@@ -1290,8 +1290,8 @@ def _code_state(unit_dir, spec, present, missing, notes, launch_facts=None, sett
                      "an agent ever ran. Dispatch it with `swarm.py advance`.")
         return "INCOMPLETE"
 
-    # `settled` is a Lor turn that ended normally (check_unit read it through
-    # lor_io); it skips only Paseo's lifecycle read, never the checks below.
+    # `settled` is a Lor or direct-CLI turn that ended normally (read through
+    # lor_io/cli_io); it skips only Paseo's lifecycle read, never the checks below.
     status = settled
     if status is None:
         if not shutil.which("paseo"):
@@ -1426,8 +1426,8 @@ def check_unit(unit_dir, spec, notes, launch_facts=None, artifact_basis=None):
 
     if kind == "code":
         # Lifecycle comes from the backend the attempt froze at launch: a Lor
-        # session is observed through lor_io, where anything unestablished is
-        # INCOMPLETE (never DONE/FAILED); Paseo attempts are unchanged.
+        # session (lor_io) or a direct-CLI turn receipt (cli_io), where
+        # anything unestablished is INCOMPLETE (never DONE); Paseo unchanged.
         verdict, settled = LIO.code_lifecycle(spec, notes)
         return judged(verdict or _code_state(unit_dir, spec, present, missing,
                                              notes, launch_facts, settled))

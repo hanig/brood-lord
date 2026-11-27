@@ -55,6 +55,8 @@ import unit as U  # noqa: E402  same skill, installed together
 import child_environment as CE  # noqa: E402
 import paseo_io as PIO
 import lor_io as LIO
+import cli_adapters as CA
+import cli_io as CIO
 import worktree as W  # noqa: E402
 import verify as V  # noqa: E402
 import converge as CV  # noqa: E402  the declared-convergence gate
@@ -104,6 +106,8 @@ from swarm_workspaces import (
     reconcile_orphan,
     _reconcile_lor_orphan,
     _recover_lor_code_launch,
+    _reconcile_cli_orphan,
+    _recover_cli_code_launch,
     WORKTREE_ARCHIVE_MAX_ATTEMPTS,
     WORKTREE_CLEANUP_SUMMARY_PREFIX,
 )
@@ -325,6 +329,7 @@ from swarm_state import (
     attempt_launch_intent,
     attempt_backend,
     attempt_parent_session,
+    attempt_cli_run_dir,
 )
 from swarm_routing import (
     _routing_token, _routing_model, _orchestrator_token,
@@ -334,7 +339,7 @@ from swarm_routing import (
     forbid_unit_provider_problem, _model_family, apply_agent_resolution,
     default_thinking_for, normalize_agent_spec, lor_mode_refusal,
     _unit_pins_agent, plan_code_agent, resolve_effective_agent,
-    effective_agent_problem,
+    effective_agent_problem, _spec_options, unit_agent_spec,
 )
 from swarm_types import (
     PlanError, OutboxError, DONE, RUNNING, FAILED, PREEMPTED, INCOMPLETE,
@@ -570,6 +575,15 @@ def _resolve_launch_agent(u, state_dir, plan=None):
         if problem:
             return None, f"unit {u['id']!r} resolves to {agent['provider']!r}: {problem}"
         agent["parent_session_id"] = os.environ["LOR_SESSION_ID"].strip()
+    elif CA.is_cli_backend(agent["backend"]):
+        # Direct CLI: binary, key (pi+openrouter) and placement are checked
+        # before any attempt directory, worktree or claim exists.
+        problem = CIO.availability(agent["backend"], agent["cli_model"])
+        if problem:
+            return None, f"unit {u['id']!r} resolves to {agent['provider']!r}: {problem}"
+        agent["cli_placement"] = CIO.placement()[0]
+        agent["cli_runs_root"] = (str(Path(state_dir).absolute() / CIO.RUNS_DIR)
+                                  if state_dir is not None else None)
     return agent, None
 
 
@@ -602,6 +616,10 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
                 lor_problem = LIO.lor_availability()
                 if lor_problem:
                     return None, f"unit {u['id']!r}: {lor_problem}"
+            elif CA.is_cli_backend(backend):
+                cli_problem = CIO.availability(backend, existing_intent.get("cli_model"))
+                if cli_problem:
+                    return None, f"unit {u['id']!r}: {cli_problem}"
             anchor_err, anchored_base = SSB._recheck_existing_code_intent(
                 u, attempt, existing_intent, dispatch_source=dispatch_source)
         else:
@@ -648,7 +666,7 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
             u, unit_dir, state, record_enabled, submission_command)
     if kind == "pipeline":
         return SSB._submit_pipeline(u, unit_dir, state, submission_command)
-    if kind == "code" and backend == LIO.LOR_BACKEND:
+    if kind == "code" and backend in LIO.NATIVE_BACKENDS:
         attempt = Path(unit_dir).name
         intent = (((state or {}).get("units", {}).get(u["id"], {})
                    .get("attempt_launch_intents") or {}).get(attempt))
@@ -661,7 +679,9 @@ def _submit(u, unit_dir, dry_run, state=None, state_dir=None,
             return None, wt_err
         if recovered_agent:
             return recovered_agent, None
-        return SSB._launch_lor_agent(
+        launcher = (SSB._launch_lor_agent if backend == LIO.LOR_BACKEND
+                    else SSB._launch_cli_agent)
+        return launcher(
             u, unit_dir, state, state_dir, attempt, intent, reuse_workspace,
             plan_path=plan_path)
     if kind == "code":
@@ -828,6 +848,12 @@ def maybe_continue(state_dir, uid, u, us, report, state=None):
         # pending-first bookkeeping as Paseo, different transport.
         sent, detail = LIO.send_continuation(str(agent), prompt, timeout=120)
         rc, out, err = (0, detail, "") if sent else (1, "", detail)
+    elif CA.is_cli_backend(backend):
+        # A direct-CLI continuation is turn N+1 of the same session in the
+        # same worktree; cli_io refuses while a turn is still running.
+        run, detail = CIO.resume(state_dir, Path(us["attempt_dir"]).name, prompt)
+        rc, out, err = ((0, f"turn {run['turn']}", "") if run is not None
+                        else (1, "", detail))
     else:
         rc, out, err = U.run(["paseo", "send", str(agent), prompt], timeout=120)
     entry["delivery_unacknowledged"] = ambiguous_retry or rc != 0
@@ -1276,6 +1302,19 @@ def _start_code_terminal_watchers(plan, state, args, report):
                           "parent wake + `swarm.py advance`; no watcher "
                           "process started")
             continue
+        if CA.is_cli_backend(SS.attempt_backend(us, attempt)):
+            # No watcher process: the turn wrapper's atomic exit receipt is
+            # the terminal signal; advance (or wait_event --poll-cli) reads it.
+            watches[attempt] = {
+                "agent_id": str(job_id), "backend": SS.attempt_backend(us, attempt),
+                "host": os.uname().nodename,
+                "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "status": "cli_turn_receipt"}
+            SS.save_state(args.state_dir, state)
+            report.append(f"{uid}: {SS.attempt_backend(us, attempt)} run {job_id} "
+                          "is tracked by its turn receipt + `swarm.py "
+                          "advance`; no watcher process started")
+            continue
         log_path = Path(attempt_dir) / CODE_TERMINAL_WATCH_LOG
         # Persist the one watcher intent before starting its process. A crash
         # after spawn must not make the next advance launch an unbounded set
@@ -1605,26 +1644,33 @@ def _stop_lor_attempt(state_dir, state, uid, us):
     """
     attempt_dir = us.get("attempt_dir")
     agent = us.get("job_id")
+    backend = SS.attempt_backend(us, attempt_dir) if attempt_dir else None
     if (not attempt_dir or not agent
-            or SS.attempt_backend(us, attempt_dir) != LIO.LOR_BACKEND):
+            or backend not in LIO.NATIVE_BACKENDS):
         return
     release = us.get("terminal_resource_release") or {}
     if (release.get("attempt_dir") == attempt_dir
             and release.get("job_id") == agent):
         return
-    stopped, detail = LIO.stop_session(str(agent))
-    stops = us.setdefault("attempt_lor_stops", {})
-    stops[Path(attempt_dir).name] = {
-        "session_id": str(agent), "ok": stopped, "detail": detail,
-        "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+    if backend == LIO.LOR_BACKEND:
+        stopped, detail = LIO.stop_session(str(agent))
+        stops, label = us.setdefault("attempt_lor_stops", {}), "lor session"
+        record = {"session_id": str(agent)}
+    else:
+        stopped, detail = CIO.cancel(state_dir, Path(attempt_dir).name)
+        stops, label = us.setdefault("attempt_cli_stops", {}), f"{backend} run"
+        record = {"run_id": str(agent), "backend": backend}
+    record.update(ok=stopped, detail=detail,
+                  at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+    stops[Path(attempt_dir).name] = record
     if stopped:
         us["terminal_resource_release"] = {
             "attempt_dir": attempt_dir, "job_id": agent,
             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "basis": f"lor session stop {agent} succeeded"}
-        print(f"{uid}: stopped lor session {agent}")
+            "basis": f"{label} stop {agent} succeeded"}
+        print(f"{uid}: stopped {label} {agent}")
     else:
-        print(f"{uid}: could not stop lor session {agent}: {detail}; the "
+        print(f"{uid}: could not stop {label} {agent}: {detail}; the "
               f"attempt still retains its resources", file=sys.stderr)
     SS.save_state(state_dir, state)
 
@@ -1788,7 +1834,8 @@ def _set_agent_target(args):
     provider, backend, model = args.provider, args.backend, args.model
     if provider is None and backend is None and model is None:
         return None, ("set-agent needs --provider PROVIDER, or --backend "
-                      "{lor,paseo} with --model MODEL (or --clear / --show)")
+                      "{lor,paseo,claude,codex,pi} with --model MODEL (or "
+                      "--clear / --show)")
     if model is not None and backend is None and provider is None:
         return None, "--model needs --backend (or use --provider)"
     if backend == LIO.PASEO_BACKEND and provider is None:
@@ -1923,6 +1970,11 @@ def cmd_set_agent(args):
                 problems.append(problem)
             if spec["backend"] == LIO.LOR_BACKEND:
                 problem = LIO.lor_availability()
+                if problem:
+                    problems.append(problem)
+            elif CA.is_cli_backend(spec["backend"]):
+                problem = CIO.availability(
+                    spec["backend"], CA.parse_provider(spec["backend"], spec["provider"]))
                 if problem:
                     problems.append(problem)
         for uid, u in sorted(units.items()):
@@ -2349,6 +2401,12 @@ SCHEMA_FIELDS = [
      "default is agents.json default_by_orchestrator[orchestrator] when plan "
      "declares orchestrator, else agents.json default.provider"),
     ("model", "code", "optional", "overrides the provider's default"),
+    ("backend", "code", "optional",
+     "paseo, lor, claude, codex or pi. A direct CLI (claude/codex/pi) is "
+     "selected only here, in code_agent or by set-agent --backend: provider "
+     "claude/<m> alone stays Paseo. pi takes model <provider>/<model>; "
+     "provider openrouter needs OPENROUTER_API_KEY coordinator-side. 'mode' "
+     "is optional and a restrictive one is refused"),
     ("author_history", "code", "optional",
      "JSON list of objects with exactly unit, attempt (non-empty strings), "
      "and identity (provider/model or null). Coordinator-recorded potential "
@@ -3223,6 +3281,12 @@ def cmd_status(args):
                       f"advance` (no watcher process); `wait_event.py "
                       f"--poll-lor` waits for it")
                 watch = None
+            if watch and watch.get("status") == "cli_turn_receipt":
+                print(f"  {'':{w}}    backend {r.get('backend')}: run "
+                      f"{r['job_id']} is judged from its turn receipt by "
+                      f"`swarm.py advance` (no watcher process); "
+                      f"`wait_event.py --poll-cli` waits for it")
+                watch = None
             if watch:
                 process = (watch.get("process_state") if watch.get("status")
                            in ("starting", "waiting") else None)
@@ -3516,11 +3580,12 @@ def main():
     ag.add_argument("--state-dir", default=None)
     ag.add_argument("--provider", default=None,
                     help="PROVIDER/MODEL, e.g. lor/<canonical_model_id> or a "
-                         "Paseo provider/model")
+                         "Paseo provider/model; a direct CLI needs --backend")
     ag.add_argument("--backend", choices=LIO.BACKENDS, default=None)
     ag.add_argument("--model", default=None,
-                    help="with --backend: the Lor canonical model id, or the "
-                         "Paseo PROVIDER/MODEL")
+                    help="with --backend: the Lor canonical model id, the "
+                         "Paseo PROVIDER/MODEL, the claude/codex model, or "
+                         "pi's <provider>/<model>")
     ag.add_argument("--thinking", default=None,
                     help="effort id; 'none' sends no effort flag")
     ag.add_argument("--mode", default=None,
