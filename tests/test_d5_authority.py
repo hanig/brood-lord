@@ -69,6 +69,8 @@ class TestD5Authority(unittest.TestCase):
         for key in ("schema_version", "issued_at", "confirmed_at", "expires_at",
                     "session_cap"):
             for value in (None, True, False, 1.0, "1", []):
+                if key == "expires_at" and value is None:
+                    continue  # null is the indefinite lease; see test_indefinite_*
                 with self.subTest(key=key, value=value):
                     r = grant()
                     r[key] = value
@@ -154,7 +156,7 @@ class TestD5Authority(unittest.TestCase):
         self.assertEqual(r, grant())
 
     def test_expiry_bounds(self):
-        for duration in (-1, 0, 86401):
+        for duration in (-1, 0, -100):
             r = grant()
             r["expires_at"] = r["issued_at"] + duration
             self.refuses("expires_at", A.validate, r)
@@ -600,6 +602,132 @@ class TestD5Authority(unittest.TestCase):
             pair = json.dumps(key) + ": " + json.dumps(value)
             duplicate = raw.replace(pair, pair + ", " + pair, 1).encode()
             self.refuses("duplicate JSON field", A.decode, duplicate)
+
+    # Owner decision 2026-11-26: no 24-hour ceiling. Expiry is an owner-chosen
+    # UTC time after issue, or null for indefinite until revoked or the
+    # mandate changes.
+
+    def test_owner_chosen_multi_day_expiry(self):
+        day = 86400
+        for duration in (day + 1, 7 * day, 30 * day, 365 * day, 2**63 - 1 - 100):
+            with self.subTest(duration=duration):
+                r = grant()
+                r["expires_at"] = r["issued_at"] + duration
+                A.validate(r)
+                self.assertEqual(A.decode(A.encode(r)), r)
+                expiry = r["expires_at"]
+                for now in (101, 100 + day, expiry - 1):
+                    self.assertEqual(A.evaluate(r, now, MANDATE), ("valid", None))
+                self.assertEqual(A.evaluate(r, expiry, MANDATE), ("expired", None))
+                if expiry < 2**63 - 1:
+                    self.assertEqual(A.evaluate(r, expiry + 1, MANDATE), ("expired", None))
+                claimed = A.claimed(r, "native", 42, 9000001, expiry - 1, "dead")
+                self.assertEqual(claimed["custody"]["generation"], 1)
+                self.refuses("expired", A.claimed, r, "native", 42, 9000001, expiry, "dead")
+                changed = A.evaluate(r, 100 + day, b"other")
+                self.assertEqual(changed[0], "mandate_changed")
+                stopped = A.revoked(r, 100 + day, "stop")
+                self.assertEqual(A.evaluate(stopped, 101, MANDATE), ("invalidated", None))
+
+    def test_indefinite_expiry_is_valid_at_any_time(self):
+        r = grant()
+        r["expires_at"] = None
+        A.validate(r)
+        raw = A.encode(r)
+        self.assertIn(b'"expires_at":null', raw)
+        self.assertEqual(A.decode(raw), r)
+        for now in (1, 100, 101, 86500, 30 * 86400, 2**62, 2**63 - 1):
+            with self.subTest(now=now):
+                self.assertEqual(A.evaluate(r, now, MANDATE), ("valid", None))
+        for now in (0, -1, 2**63, True, 1.0, None):
+            self.refuses("now", A.evaluate, r, now, MANDATE)
+
+    def test_indefinite_expiry_still_invalidated(self):
+        r = grant()
+        r["expires_at"] = None
+        state, invalidation = A.evaluate(r, 2**62, b"changed mandate")
+        self.assertEqual(state, "mandate_changed")
+        self.assertEqual(invalidation, {"at": 2**62, "kind": "mandate_changed",
+                                        "reason": "mandate byte digest changed"})
+        changed = copy.deepcopy(r)
+        changed["invalidation"] = invalidation
+        A.validate(changed)
+        for now in (101, 2**63 - 1):
+            self.assertEqual(A.evaluate(changed, now, MANDATE), ("invalidated", None))
+        stopped = A.revoked(r, 2**62, "owner said stop")
+        self.assertEqual(stopped["expires_at"], None)
+        self.assertEqual(stopped["invalidation"]["kind"], "revoked")
+        for now in (101, 2**63 - 1):
+            self.assertEqual(A.evaluate(stopped, now, MANDATE), ("invalidated", None))
+        self.assertEqual(A.decode(A.encode(stopped)), stopped)
+        for invalid in (changed, stopped):
+            self.refuses("invalidated", A.claimed,
+                         invalid, "native", 42, 9000001, 2**63 - 1, "dead")
+        self.assertIsNone(r["invalidation"])
+
+    def test_indefinite_expiry_keeps_custody_rules(self):
+        r = held()
+        r["expires_at"] = None
+        late = 2**63 - 1
+        self.assertEqual(A.claimed(r, "native", 42, 9000001, late, "alive"), r)
+        for holder in ("alive", "unknown"):
+            self.refuses("dead holder", A.claimed, r, "other", 43, 9000002, late, holder)
+        successor = A.claimed(r, "other", 43, 9000002, late, "dead")
+        self.assertEqual(successor["custody"]["generation"], 2)
+        self.assertIsNone(successor["expires_at"])
+        released = A.relinquished(r, "native", 42, 9000001, late)
+        self.refuses("custody relinquished", A.claimed,
+                     released, "native", 42, 9000001, late, "dead")
+        self.assertEqual(r["session_cap"], 1)
+        bad = copy.deepcopy(r)
+        bad["session_cap"] = 2
+        self.refuses("session_cap", A.validate, bad)
+
+    def test_indefinite_replacement_needs_consent_to_extend(self):
+        finite = grant()
+        new = self.successor(finite)
+        new["expires_at"] = None
+        self.refuses("expires_at", A.replacement_allowed, finite, new)
+        fresh = self.successor(finite, fresh=True)
+        fresh["expires_at"] = None
+        self.assertIs(A.replacement_allowed(finite, fresh), True)
+        indefinite = grant()
+        indefinite["expires_at"] = None
+        for expires in (None, 101, 30 * 86400):
+            with self.subTest(expires=expires):
+                new = self.successor(indefinite)
+                new["expires_at"] = expires
+                self.assertIs(A.replacement_allowed(indefinite, new), True)
+        new = self.successor(indefinite)
+        new["scope"]["plans"].append("additional")
+        self.refuses("scope.plans", A.replacement_allowed, indefinite, new)
+        revoked = A.revoked(indefinite, 101, "stop")
+        self.refuses("invalidated consent", A.replacement_allowed,
+                     revoked, self.successor(revoked))
+
+    def test_expiry_rejections(self):
+        for issued in (100, 2**62):
+            for delta in (0, -1, -99):
+                with self.subTest(issued=issued, delta=delta):
+                    r = grant()
+                    r.update(issued_at=issued, confirmed_at=issued, expires_at=issued + delta)
+                    self.refuses("expires_at", A.validate, r)
+                    self.refuses("expires_at", A.decode,
+                                 json.dumps(r).encode())
+        for value in (True, False, "200", "null", "", 200.0, 1e30, float("inf"),
+                      0, -1, 2**63, 2**64, 1 << 16384, [], {}, [200]):
+            with self.subTest(value=value):
+                self.bad_field("expires_at", value)
+        raw = A.encode(grant())
+        for literal in (b'"200"', b'"null"', b'200.0', b'2e2', b'true', b'false',
+                        b'9223372036854775808', b'0', b'-1', b'[]', b'{}'):
+            with self.subTest(literal=literal):
+                self.refuses("expires_at", A.decode,
+                             raw.replace(b'"expires_at":86500', b'"expires_at":' + literal, 1))
+        r = grant()
+        del r["expires_at"]
+        self.refuses("expires_at", A.validate, r)
+        self.refuses("expires_at", A.decode, json.dumps(r).encode())
 
 
 if __name__ == "__main__":

@@ -73,7 +73,8 @@ class TestU8Policy(unittest.TestCase):
      "ancestor's PID and kernel start identity",
      'only after verified predecessor death',
      'There is no\nsupervisor wrapper',
-     'issue time < expiry <= issue time + 24 hours',
+     'No default: the owner chooses either a UTC expiry after issue time, with no\n'
+     'ceiling, or no expiry, which lasts until revoked or the mandate bytes change.',
      'The session cap is exactly one',
      'D5-OD1 means no new outward-action admissions',
      'Already-submitted effects may finish',
@@ -195,11 +196,12 @@ class TestU8Wiring(unittest.TestCase):
    self.assertFalse((directory / store.RECORD_NAME).exists())
   for changes in ({'owner_response': ''}, {'displayed_bounds': ''}, {'owner_response': ' \t\n'},
       {'displayed_bounds': ' \t\n'},
-      {'expires_at': 100 + 86401}):
+      {'expires_at': 100}, {'expires_at': 99}, {'expires_at': True},
+      {'expires_at': '200'}, {'expires_at': 200.0}, {'expires_at': 2**63}):
    with self.subTest(changes=changes), self.assertRaises(authority.AuthorityError):
     fixture.grant(**changes)
    self.assertFalse((directory / store.RECORD_NAME).exists())
-  record = fixture.grant(expires_at=100 + 86400)
+  record = fixture.grant(expires_at=100 + 30 * 86400)
   self.assertEqual(store.read(directory), record)
   self.assertEqual(record['session_cap'], 1)
   self.assertEqual(record['confirmation']['owner_response'], fixture.args['owner_response'])

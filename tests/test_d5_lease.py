@@ -118,16 +118,56 @@ class TestD5Lease(unittest.TestCase):
         self.assertEqual(record, expected)
         self.assertRegex(record["grant_id"], r"\A[0-9a-f]{32}\Z")
 
-    def test_expiry_beyond_24_hours_validates_before_any_write(self):
+    def test_invalid_expiry_validates_before_any_write(self):
         self.register()
         before = self.tree()
-        with nullcontext(), \
-                mock.patch.object(registry, "lookup", side_effect=AssertionError("lookup")), \
-                mock.patch.object(authority, "validate", wraps=authority.validate) as validate:
-            with self.assertRaisesRegex(registry.AuthorityError, "expires_at"):
-                self.grant(expires_at=100 + 86401)
-            validate.assert_called_once()
-        self.assertEqual(self.tree(), before)
+        for expires in (100, 99, True, "200", 200.0, 0, 2**63):
+            with self.subTest(expires=expires), nullcontext(), \
+                    mock.patch.object(registry, "lookup", side_effect=AssertionError("lookup")), \
+                    mock.patch.object(authority, "validate", wraps=authority.validate) as validate:
+                with self.assertRaisesRegex(registry.AuthorityError, "expires_at"):
+                    self.grant(expires_at=expires)
+                validate.assert_called_once()
+            self.assertEqual(self.tree(), before)
+
+    def test_owner_chosen_multi_day_expiry(self):
+        entry = self.register()
+        expiry = 100 + 30 * 86400
+        with nullcontext():
+            record = self.grant(expires_at=expiry)
+        self.assertEqual(store.read(Path(entry["record_dir"])), record)
+        self.assertEqual(record["expires_at"], expiry)
+        self.assertEqual(self.status(now=100 + 29 * 86400)["record_state"], "valid")
+        self.assertEqual(self.status(now=expiry)["record_state"], "expired")
+
+    def test_indefinite_expiry_until_revoked(self):
+        entry = self.register()
+        directory = Path(entry["record_dir"])
+        with nullcontext():
+            record = self.grant(expires_at=None)
+        self.assertIsNone(record["expires_at"])
+        self.assertIn(b'"expires_at":null', (directory / store.RECORD_NAME).read_bytes())
+        self.assertEqual(store.read(directory), record)
+        for now in (150, 100 + 365 * 86400, 2**63 - 1):
+            self.assertEqual(self.status(now=now)["record_state"], "valid")
+        self.assertEqual(self.status(mandate_bytes=b"changed")["record_state"],
+                         "mandate_changed")
+        with nullcontext():
+            lease.revoke(self.repo, "p", self.state, 2**62, "owner said stop")
+        self.assertEqual(self.status(now=2**63 - 1)["record_state"], "invalidated")
+        self.assertEqual(store.read(directory)["invalidation"]["kind"], "revoked")
+
+    def test_indefinite_replacement_keeps_consent_rules(self):
+        self.register()
+        with nullcontext():
+            self.grant()
+            before = self.tree()
+            with self.assertRaisesRegex(registry.AuthorityError, "fresh confirmation"):
+                self.grant(expires_at=None)
+            self.assertEqual(self.tree(), before)
+            second = self.grant(expires_at=None, confirmed_at=102,
+                                owner_response="Indefinite, confirmed\n")
+        self.assertIsNone(second["expires_at"])
 
     def test_second_grant_replaces_and_archives_first(self):
         entry = self.register()

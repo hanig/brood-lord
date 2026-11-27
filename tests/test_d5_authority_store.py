@@ -489,6 +489,37 @@ class TestD5AuthorityStore(unittest.TestCase):
             values.append("additional")
         self.eq(A.replace(self.d, new), new)
 
+    def test_indefinite_record_is_persisted_and_still_invalidated(self):
+        r = grant()
+        r["expires_at"] = None
+        self.eq(A.create(self.d, r), r)
+        self.assertIn(b'"expires_at":null', self.path.read_bytes())
+        for now in (101, 30 * 86400, 2**63 - 1):
+            self.eq(A.check(self.d, now, MANDATE), "valid")
+        self.stored(r)
+        self.eq(A.check(self.d, 2**62, b"changed"), "mandate_changed")
+        self.eq(A.read(self.d)["invalidation"]["kind"], "mandate_changed")
+        self.eq(A.check(self.d, 2**63 - 1, MANDATE), "invalidated")
+        with tempfile.TemporaryDirectory() as d:
+            A.create(d, r)
+            old = A.revoke(d, 2**62, "owner said stop")
+            self.eq(old["invalidation"]["kind"], "revoked")
+            self.eq(A.check(d, 2**63 - 1, MANDATE), "invalidated")
+
+    def test_indefinite_extension_needs_consent(self):
+        self.create()
+        new = self.successor()
+        new["expires_at"] = None
+        self.refuses("expires_at", A.replace, self.d, new)
+        self.stored(grant())
+        new = self.successor(fresh=True)
+        new["expires_at"] = None
+        self.eq(A.replace(self.d, new), new)
+        narrower = self.successor(new)
+        narrower["grant_id"] = "c" * 32
+        narrower["expires_at"] = 30 * 86400
+        self.eq(A.replace(self.d, narrower), narrower)
+
     def test_same_id_refused(self):
         self.create()
         self.refuses("grant_id", A.replace, self.d, grant())
