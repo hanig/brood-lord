@@ -121,6 +121,12 @@ class _ModuleProxy:
 _SELF = _ModuleProxy(globals())
 
 
+def _setting(legacy_name, default=None):
+    """BROOD_<X> when set non-blank, else the legacy HANIG_<X> (rename shim)."""
+    primary = os.environ.get("BROOD_" + legacy_name[len("HANIG_"):])
+    return primary if (primary or "").strip() else os.environ.get(legacy_name, default)
+
+
 def _load_sibling(module_name, filename):
     import importlib.util
 
@@ -585,7 +591,7 @@ def _write_review_journal(path, line):
     and are never canonical history.
     """
     path = Path(path)
-    test_root = os.environ.get(JOURNAL_TEST_MARKER)
+    test_root = _setting(JOURNAL_TEST_MARKER)
     if test_root is not None:
         raw_root = Path(test_root)
         if not test_root or not raw_root.is_absolute():
@@ -1258,7 +1264,7 @@ PROVIDERS = {"openai": call_openai, "openrouter": call_openrouter,
 
 def effective_provider(rev):
     """`lor` for pinned (never `_resolved_from`) lor_model seats unless
-    HANIG_REVIEW_NO_LOR is explicitly truthy. Outside a Lor session such a
+    the BROOD_/HANIG_REVIEW_NO_LOR opt-out is truthy. Outside a Lor session such a
     seat stays `lor` and availability() blocks it: no silent paid-API route."""
     return "lor" if _lor.lor_routed(rev) else rev.get("provider")
 
@@ -1796,10 +1802,10 @@ def load_effective_reviewers(start=None):
     resolve_models.py replaces a seat's model and budget record only when it
     matches this project and the exact installed routing config, and only
     after model_family re-checks the entry against the live seat. Anything
-    else leaves the pin. HANIG_ROUTING_SNAPSHOTS=off disables snapshots.
+    else leaves the pin. [BROOD|HANIG]_ROUTING_SNAPSHOTS=off disables snapshots.
     """
     reviewers = load_reviewers()
-    if os.environ.get("HANIG_ROUTING_SNAPSHOTS") == "off":
+    if _setting("HANIG_ROUTING_SNAPSHOTS") == "off":
         return reviewers
     try:
         import model_family as MF

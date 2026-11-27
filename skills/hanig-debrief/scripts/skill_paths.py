@@ -20,6 +20,23 @@ class SkillPathError(ValueError):
     """A loaded skill or one of its declared installed siblings is invalid."""
 
 
+# The hanig -> brood rename honours both spellings of every HANIG_<X> setting.
+DEP_ROOTS_ENV = ("BROOD_SKILL_DEP_ROOTS", "HANIG_SKILL_DEP_ROOTS")
+
+
+def env_setting(legacy_name, default=None, environ=None):
+    """Return BROOD_<X> when set non-blank, else the legacy HANIG_<X> value.
+
+    A blank BROOD_<X> never masks a configured HANIG_<X>, and the legacy
+    value (including its default) is returned exactly as before the rename.
+    """
+    if not legacy_name.startswith("HANIG_"):
+        raise ValueError(f"not a legacy HANIG_ setting name: {legacy_name!r}")
+    env = os.environ if environ is None else environ
+    primary = env.get("BROOD_" + legacy_name[len("HANIG_"):])
+    return primary if (primary or "").strip() else env.get(legacy_name, default)
+
+
 def _logical_skill_root(directory):
     """Keep the loader's spelling so a link store keeps its sibling parent."""
     root = Path(directory).expanduser()
@@ -51,9 +68,9 @@ def loaded_skill_root(directory, expected_name):
 
 def _configured_roots(explicit_roots, loaded_root):
     """Return only caller-declared additional parents; never glob a home tree."""
-    configured = os.environ.get("HANIG_SKILL_DEP_ROOTS", "")
     roots = list(explicit_roots or [])
-    roots.extend(p for p in configured.split(os.pathsep) if p)
+    for name in DEP_ROOTS_ENV:  # BROOD_ parents first, then legacy HANIG_
+        roots.extend(p for p in os.environ.get(name, "").split(os.pathsep) if p)
     expanded = [Path(p).expanduser() for p in roots]
     # Collapse relative '..' lexically before touching the filesystem, so a
     # linked loaded skill keeps its installed parent rather than its target.
@@ -81,8 +98,8 @@ def sibling_skill_root(directory, loaded_name, sibling_name, explicit_roots=()):
     raise SkillPathError(
         f"missing declared installed dependency {sibling_name!r}; searched "
         f"only these explicit skill parents: {roots}. Install it beside "
-        f"{logical_root} (including with --only), or set HANIG_SKILL_DEP_ROOTS "
-        f"or pass --root for its known parent, then retry. Relative dependency "
+        f"{logical_root} (including with --only), or set BROOD_SKILL_DEP_ROOTS "
+        f"(legacy HANIG_SKILL_DEP_ROOTS) or pass --root for its known parent, then retry. Relative dependency "
         f"roots are anchored to the loaded skill directory {logical_root}; "
         f"use an absolute path to select a parent independently of that anchor.")
 

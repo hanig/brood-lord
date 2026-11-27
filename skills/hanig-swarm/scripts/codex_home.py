@@ -22,16 +22,22 @@ class HomeError(ValueError):
     pass
 
 
+def _setting(legacy_name, default):
+    """BROOD_<X> when set non-blank, else the legacy HANIG_<X> (rename shim)."""
+    primary = os.environ.get("BROOD_" + legacy_name[len("HANIG_"):])
+    return primary if (primary or "").strip() else os.environ.get(legacy_name, default)
+
+
 def source_home():
-    return Path(os.environ.get("HANIG_SWARM_CODEX_AUTH_HOME",
-                               str(Path.home() / ".codex-api"))).expanduser().absolute()
+    return Path(_setting("HANIG_SWARM_CODEX_AUTH_HOME",
+                         str(Path.home() / ".codex-api"))).expanduser().absolute()
 
 
 def operator_home():
     # Deliberately independent of inherited CODEX_HOME (possibly this agent's
     # private home). This override also keeps tests off the operator's files.
-    return Path(os.environ.get("HANIG_SWARM_CODEX_OPERATOR_HOME",
-                               str(Path.home() / ".codex"))).expanduser().absolute()
+    return Path(_setting("HANIG_SWARM_CODEX_OPERATOR_HOME",
+                         str(Path.home() / ".codex"))).expanduser().absolute()
 
 
 def validate_source(source=None):

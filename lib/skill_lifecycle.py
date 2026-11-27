@@ -354,6 +354,32 @@ def _record_matches_link(destination: Path, record: Provenance) -> bool:
         return False
 
 
+def _ownership_refusal(dest: Path, record: Provenance | None, repository: str) -> str | None:
+    """Why ``record`` does not prove exact ownership of ``dest``, or None."""
+    if not record or record.repository != repository:
+        return "no matching recorded ownership"
+    if not record.destination or not _destinations_match(record.destination, dest):
+        return "recorded destination does not match this path"
+    if record.mode == "link" and not _record_matches_link(dest, record):
+        return "link no longer matches its recorded target"
+    return None
+
+
+def ownership_refusal(destination: Path | str, *, repository: str = REPOSITORY_ID,
+                      provenance_file: Path | str | None = None) -> str | None:
+    """Read-only: the reason ``uninstall`` would refuse ``destination``, or None.
+
+    None means an existing destination carries this repository's exact
+    recorded ownership (same proof ``uninstall`` applies under its lock).
+    """
+    dest = _canonical_destination(destination)
+    explicit = _canonical_destination(provenance_file) if provenance_file else None
+    if not (dest.exists() or dest.is_symlink()):
+        return "destination is already absent"
+    record, _ = _record_location(dest, explicit)
+    return _ownership_refusal(dest, record, repository)
+
+
 def _owned_by(record: Provenance | None, target: LifecycleTarget) -> bool:
     if not record or record.repository != target.repository:
         return False
@@ -700,14 +726,9 @@ def uninstall(destinations: Iterable[Path | str], *, consumers: Iterable[str] = 
             if not (dest.exists() or dest.is_symlink()):
                 results.append(UninstallResult(dest, "retained", "destination is already absent"))
                 continue
-            if not record or record.repository != repository:
-                results.append(UninstallResult(dest, "blocked", "no matching recorded ownership"))
-                continue
-            if not record.destination or not _destinations_match(record.destination, dest):
-                results.append(UninstallResult(dest, "blocked", "recorded destination does not match this path"))
-                continue
-            if record.mode == "link" and not _record_matches_link(dest, record):
-                results.append(UninstallResult(dest, "blocked", "link no longer matches its recorded target"))
+            refusal = _ownership_refusal(dest, record, repository)
+            if refusal:
+                results.append(UninstallResult(dest, "blocked", refusal))
                 continue
             if wanted_consumers:
                 if not record.consumers:

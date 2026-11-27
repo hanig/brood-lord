@@ -16,7 +16,7 @@ from pathlib import Path
 import skill_paths
 
 
-_PROJECT_DIR = os.environ.get("HANIG_PROJECT_DIR") or Path(__file__).parents[1]
+_PROJECT_DIR = skill_paths.env_setting("HANIG_PROJECT_DIR") or Path(__file__).parents[1]
 _SWARM_DIR = skill_paths.sibling_skill_root(
     _PROJECT_DIR, "hanig-project", "hanig-swarm")
 sys.path.insert(0, str(_SWARM_DIR / "scripts"))

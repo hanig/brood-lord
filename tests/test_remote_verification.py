@@ -541,6 +541,7 @@ class TestRemoteVerification(unittest.TestCase):
                     'import os, subprocess, sys\n'
                     'expected = %r\nassert os.path.realpath(sys.executable) == expected, sys.executable\n'
                     'assert "HANIG_VERIFICATION_PYTHON" not in os.environ\n'
+                    'assert "BROOD_VERIFICATION_PYTHON" not in os.environ\n'
                     'for name in ("python3", "python"):\n'
                     '    child = subprocess.check_output([name, "-c", "import os, sys; print(os.path.realpath(sys.executable))"], text=True)\n'
                     '    assert child.strip() == expected, child\n'
@@ -572,6 +573,7 @@ class TestRemoteVerification(unittest.TestCase):
             'import json, os, subprocess, sys\n'
             'assert os.path.samefile(sys.executable, %r), sys.executable\n'
             'assert "HANIG_VERIFICATION_PYTHON" not in os.environ\n'
+            'assert "BROOD_VERIFICATION_PYTHON" not in os.environ\n'
             'child = subprocess.check_output(["python3", "-c", "import sys; print(sys.executable)"], text=True)\n'
             'assert os.path.samefile(child.strip(), %r), child\n'
             'print(json.dumps([sys.executable, child]))\n' % (str(python), str(python)))
@@ -652,10 +654,11 @@ class TestRemoteVerification(unittest.TestCase):
                         'assert "REMOVE_FOR_VERIFIER" not in os.environ\n'
                         'assert os.environ["VERIFIER_VALUE"] == "two words"\n'
                         'assert os.environ["HANIG_VERIFICATION_GIT"] == %r\n'
+                        'assert os.environ["BROOD_VERIFICATION_GIT"] == %r\n'
                         'child = subprocess.check_output(["python3", "-c", "import os,sys;print(os.path.realpath(sys.executable))"], text=True)\n'
                         'assert child.strip() == %r, child\n'
                         % (os.path.realpath(sys.executable), str((self.f.bin / 'git').resolve()),
-                           os.path.realpath(sys.executable)))
+                           str((self.f.bin / 'git').resolve()), os.path.realpath(sys.executable)))
                     result = self.verify()
                     self.assert_ok(result)
                     self.assertEqual(self.rows()[-1]['result'], 'pass')
@@ -754,10 +757,13 @@ class TestRemoteVerification(unittest.TestCase):
             'assert os.getcwd() == %r\n'
             'assert os.environ["VERIFIER_VALUE"] == "two  words"\n'
             'assert os.environ["HANIG_VERIFICATION_GIT"] == %r\n'
+            'assert os.environ["BROOD_VERIFICATION_GIT"] == %r\n'
             'assert os.path.realpath(os.environ["HANIG_VERIFICATION_PYTHON"]) == %r\n'
+            'assert os.path.realpath(os.environ["BROOD_VERIFICATION_PYTHON"]) == %r\n'
             'child=subprocess.check_output(["python3","-c","import os,sys;print(os.path.realpath(sys.executable))"],text=True)\n'
             'assert child.strip() == %r\n'
-            % (str(cwd), str((self.f.bin / 'git').resolve()), os.path.realpath(sys.executable),
+            % (str(cwd), str((self.f.bin / 'git').resolve()), str((self.f.bin / 'git').resolve()),
+               os.path.realpath(sys.executable), os.path.realpath(sys.executable),
                os.path.realpath(sys.executable)))
         result = self.verify()
         self.assert_ok(result)

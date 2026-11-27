@@ -29,7 +29,7 @@ from urllib.parse import quote, urlsplit
 import orch_env
 import skill_paths
 
-_ORCHESTRATE_DIR = os.environ.get("HANIG_ORCHESTRATE_DIR") or Path(__file__).parents[1]
+_ORCHESTRATE_DIR = skill_paths.env_setting("HANIG_ORCHESTRATE_DIR") or Path(__file__).parents[1]
 _SWARM_DIR = skill_paths.sibling_skill_root(
     _ORCHESTRATE_DIR, "hanig-orchestrate", "hanig-swarm")
 sys.path.insert(0, str(_SWARM_DIR / "scripts"))
@@ -990,7 +990,7 @@ def _merge_child_env():
     env = CE.child_env()
     env.update((name, os.environ[name]) for name in FORGE_AUTH_ENV if name in os.environ)
     return {name: value for name, value in env.items()
-            if not name.startswith(("D5_", "HANIG_D5_"))
+            if not name.startswith(("D5_", "BROOD_D5_", "HANIG_D5_"))
             and name not in HOST_ENV_NAMES}
 
 

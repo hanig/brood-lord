@@ -262,12 +262,15 @@ def _model_family():
     """The review gate's network-free model_family module, or None.
 
     Loaded by file path from the sibling hanig-review-gate skill (or
-    HANIG_REVIEW_GATE_DIR), never through review.py or committee.py, which
-    are network-capable and must not enter this process. Absent means no
-    resolution: the pins in agents.json apply.
+    BROOD_REVIEW_GATE_DIR, then legacy HANIG_REVIEW_GATE_DIR), never through
+    review.py or committee.py, which are network-capable and must not enter
+    this process. Absent means no resolution: the pins in agents.json apply.
     """
     import importlib.util
-    root = os.environ.get("HANIG_REVIEW_GATE_DIR") or str(
+    root = os.environ.get("BROOD_REVIEW_GATE_DIR")  # rename shim: BROOD_ wins when non-blank
+    if not (root or "").strip():
+        root = os.environ.get("HANIG_REVIEW_GATE_DIR")
+    root = root or str(
         _HERE.parent.parent / "hanig-review-gate")
     path = Path(root) / "scripts" / "model_family.py"
     if not path.is_file():

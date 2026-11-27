@@ -715,6 +715,160 @@ class TestPublicCli(unittest.TestCase):
             self.assertIn("consumers=pi", (stale / ".installed-by-multi-agent-skills").read_text())
 
 
+class TestLegacyRetirement(unittest.TestCase):
+    """brood-<suffix> retires an owned hanig-<suffix> only after it publishes."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name)
+        self.repo = self.base / "repo"
+        self.prefix = self.base / "prefix"
+        self.home = self.base / "home"
+        self.home.mkdir()
+        self.skill(self.repo / "skills", "brood-demo")
+        discovery = installer._load_discovery(ROOT)
+        patcher = mock.patch.object(installer, "_load_discovery", return_value=discovery)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def skill(self, parent, name, body="new", declared=None):
+        path = parent / name
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "SKILL.md").write_text(
+            f"---\nname: {declared or name}\ndescription: demo\n---\n{body}\n")
+        return path
+
+    def legacy(self, *, owned=True, mode="copy"):
+        from lib.skill_lifecycle import LifecycleTarget, install
+        destination = self.prefix / "hanig-demo"
+        if not owned:
+            self.skill(self.prefix, "hanig-demo", body="foreign")
+            return destination
+        source = self.skill(self.base / "old-checkout", "hanig-demo", body="old")
+        result = install([LifecycleTarget(
+            name="hanig-demo", source=source, destination=destination,
+            origin="authored", consumers=("prefix",), mode=mode, source_version="old")])
+        self.assertEqual(result[0].status, "installed")
+        return destination
+
+    def run_installer(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = installer.run(["--prefix", str(self.prefix), "--json", *args],
+                                 repo=self.repo, env={"HOME": str(self.home)})
+        return code, json.loads(out.getvalue()), err.getvalue()
+
+    def statuses(self, document, name):
+        return [a["status"] for a in document["actions"] if a["skill"] == name]
+
+    def test_legacy_name_mapping_is_data_driven_and_never_self(self):
+        self.assertEqual(installer.retired_legacy_name("brood-swarm"), "hanig-swarm")
+        for name in ("hanig-swarm", "brood-", "paseo", "brood", "xbrood-swarm"):
+            with self.subTest(name=name):
+                self.assertIsNone(installer.retired_legacy_name(name))
+        self.assertEqual(installer.selected_sources(self.repo, ("brood-demo",))[0][2], "authored")
+
+    def test_owned_legacy_is_planned_then_retired_after_publish(self):
+        for mode in ("copy", "link"):
+            with self.subTest(legacy_mode=mode):
+                legacy = self.legacy(mode=mode)
+                self.assertEqual(bool(list(self.prefix.glob(".*/hanig-demo-*"))), mode == "link")
+                code, dry, _ = self.run_installer("--only", "brood-demo", "--dry-run")
+                self.assertEqual(code, 0)
+                self.assertEqual(self.statuses(dry, "hanig-demo"), ["would-retire-legacy"])
+                self.assertTrue(legacy.exists() or legacy.is_symlink())
+                self.assertFalse((self.prefix / "brood-demo").exists())
+                code, done, err = self.run_installer("--only", "brood-demo")
+                self.assertEqual(code, 0, err)
+                self.assertEqual(self.statuses(done, "brood-demo"), ["installed"])
+                self.assertEqual(self.statuses(done, "hanig-demo"), ["removed"])
+                self.assertFalse(legacy.exists() or legacy.is_symlink())
+                self.assertEqual(sorted(p.name for p in self.prefix.iterdir()
+                                        if not p.name.startswith(".")), ["brood-demo"])
+                self.assertEqual(list(self.prefix.glob(".*/hanig-demo-*")), [])
+                shutil.rmtree(self.prefix)
+
+    def test_unowned_legacy_is_left_untouched_with_a_warning(self):
+        legacy = self.legacy(owned=False)
+        for extra in (("--dry-run",), ()):
+            with self.subTest(args=extra):
+                code, document, err = self.run_installer("--only", "brood-demo", *extra)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(self.statuses(document, "hanig-demo"), ["retained"])
+                self.assertIn("warning: legacy skill left untouched: " + str(legacy), err)
+                self.assertEqual((legacy / "SKILL.md").read_text().splitlines()[-1], "foreign")
+        self.assertTrue((self.prefix / "brood-demo" / "SKILL.md").is_file())
+
+    def test_legacy_survives_when_the_renamed_skill_fails(self):
+        legacy = self.legacy()
+        before = (legacy / "SKILL.md").read_bytes()
+        bad = self.repo / "skills" / "brood-demo"
+        (bad / "SKILL.md").write_text("---\nname: brood-other\ndescription: d\n---\n")
+        code, document, _ = self.run_installer("--only", "brood-demo")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.statuses(document, "brood-demo"), ["blocked"])
+        self.assertEqual((legacy / "SKILL.md").read_bytes(), before)
+        self.skill(self.repo / "skills", "brood-demo")
+        from lib import skill_lifecycle
+        with mock.patch.object(skill_lifecycle, "_stage", side_effect=OSError("disk full")):
+            code, document, _ = self.run_installer("--only", "brood-demo")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.statuses(document, "brood-demo"), ["failed"])
+        self.assertEqual(self.statuses(document, "hanig-demo"), ["retained"])
+        self.assertEqual((legacy / "SKILL.md").read_bytes(), before)
+        self.assertFalse((self.prefix / "brood-demo").exists())
+
+    def test_a_still_shipped_legacy_name_is_never_retired(self):
+        legacy = self.legacy()
+        self.skill(self.repo / "skills", "hanig-demo")
+        code, document, err = self.run_installer("--only", "brood-demo")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.statuses(document, "hanig-demo"), [])
+        self.assertTrue(legacy.is_dir())
+
+    def test_full_install_retires_once_and_prune_does_not_repeat_it(self):
+        legacy = self.legacy()
+        code, dry, _ = self.run_installer("--dry-run")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.statuses(dry, "hanig-demo"), ["would-retire-legacy"])
+        code, done, err = self.run_installer()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.statuses(done, "hanig-demo"), ["removed"])
+        self.assertFalse(legacy.exists())
+
+    def test_uninstalling_the_renamed_skill_leaves_legacy_alone(self):
+        code, _, err = self.run_installer("--only", "brood-demo")
+        self.assertEqual(code, 0, err)
+        legacy = self.legacy()
+        code, document, err = self.run_installer("--uninstall", "--only", "brood-demo")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.statuses(document, "brood-demo"), ["removed"])
+        self.assertEqual(self.statuses(document, "hanig-demo"), [])
+        self.assertTrue((legacy / "SKILL.md").is_file())
+
+    def test_retirement_detaches_only_the_renamed_skills_consumers(self):
+        from lib.skill_lifecycle import InstallResult, LifecycleTarget, install
+        root = self.base / "shared"
+        old = self.skill(self.base / "old-checkout", "hanig-demo", body="old")
+        install([LifecycleTarget(name="hanig-demo", source=old, destination=root / "hanig-demo",
+                                 origin="authored", consumers=("opencode", "pi"),
+                                 source_version="old")])
+        target = LifecycleTarget(name="brood-demo", source=self.repo / "skills" / "brood-demo",
+                                 destination=root / "brood-demo", origin="authored",
+                                 consumers=("opencode",), source_version="new")
+        (retirement,) = installer.plan_legacy_retirements([target], ("brood-demo",))
+        self.assertIsNone(retirement.refusal)
+        options = installer.parse_options(["--agent", "opencode"])
+        actions, warnings, failed = installer._retire_legacy(
+            [retirement], [InstallResult(target, "installed", "ok")], options,
+            installer._legacy_prefix_plan(root, installer.parse_options(["--prefix", str(root)])))
+        self.assertEqual(([a["status"] for a in actions], warnings, failed),
+                         (["retained-shared"], [], []))
+        marker = (root / "hanig-demo" / ".installed-by-multi-agent-skills").read_text()
+        self.assertIn("consumers=pi\n", marker)
+
+
 class TestLiveCertificationPlan(unittest.TestCase):
     LIVE_VERSIONS = {"claude": "2.1.282", "codex": "0.154.0",
                      "opencode": "1.18.29", "pi": "0.86.1"}

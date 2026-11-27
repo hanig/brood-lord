@@ -53,8 +53,7 @@ NO_EDITS = ("\n\nThis is analysis only. Do NOT edit, create, or delete any "
             "files. Do NOT write code unless the prompt explicitly asks for a "
             "specification.")
 
-SESSIONS = Path(os.environ.get("HANIG_COMMITTEE_DIR",
-                               Path.home() / ".hanig-committee"))
+SESSIONS = Path(R._setting("HANIG_COMMITTEE_DIR", Path.home() / ".hanig-committee"))
 
 STATES = {"COMMITTEE_OK": 0, "DIVERGED": 1, "NO_SESSION": 2, "UNAVAILABLE": 3}
 USAGE_ERROR = 64

@@ -289,6 +289,12 @@ def write_snapshot(project_dir, snapshot):
     return target
 
 
+def _setting(legacy_name, default=None):
+    """BROOD_<X> when set non-blank, else the legacy HANIG_<X> (rename shim)."""
+    primary = os.environ.get("BROOD_" + legacy_name[len("HANIG_"):])
+    return primary if (primary or "").strip() else os.environ.get(legacy_name, default)
+
+
 def find_snapshot(start=None):
     """Nearest snapshot for start or a parent, up to the Git top-level.
 
@@ -296,7 +302,7 @@ def find_snapshot(start=None):
     unreadable or malformed file is treated as absent: readers fall back to
     the pins.
     """
-    if os.environ.get("HANIG_ROUTING_SNAPSHOTS") == "off":
+    if _setting("HANIG_ROUTING_SNAPSHOTS") == "off":
         return None, None, None
     here = Path(os.path.realpath(str(start or os.getcwd())))
     top = git_toplevel(here)

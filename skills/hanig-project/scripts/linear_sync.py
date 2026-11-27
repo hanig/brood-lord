@@ -532,7 +532,7 @@ def audit(args, client, filing=None):
             try:
                 if raw[str((Path(args.state_dir) / 'swarm-state.json').absolute())] is None:
                     raise ValueError('coordinator state absent')
-                project_dir = os.environ.get('HANIG_PROJECT_DIR') or Path(__file__).parents[1]
+                project_dir = skill_paths.env_setting('HANIG_PROJECT_DIR') or Path(__file__).parents[1]
                 swarm_dir = skill_paths.sibling_skill_root(project_dir, 'hanig-project', 'hanig-swarm')
                 env = {k: v for k, v in os.environ.items() if k != API.KEY_ENV}
                 result = subprocess.run([sys.executable, str(swarm_dir / 'scripts' / 'swarm.py'),
