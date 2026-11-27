@@ -568,8 +568,32 @@ class TestParsing(unittest.TestCase):
 
     def test_malformed_wrapper_recovers_past_many_balanced_objects(self):
         verdict = {"verdict": "upheld", "findings": [], "claims": [], "notes": "Checked."}
-        response = '{ "invalid" ' + '{} ' * 70 + '}\n' + json.dumps(verdict)
+        response = '{ "invalid"\n' + '  {}\n' * 70 + '}\n' + json.dumps(verdict)
         self.assertEqual(review.parse_verdict(response), (verdict, None))
+
+    def test_malformed_prefix_prefers_trailing_verdict_over_nested_example(self):
+        prefix = ('{"example": {"verdict":"upheld","findings":[],"claims":[],'
+                  '"notes":"example"}, "broken": }\n')
+        actual = '{"verdict":"refuted","findings":[],"claims":[],"notes":"actual"}'
+        for tail in (actual, f"```json\n  {actual}\n```\n"):
+            with self.subTest(tail=tail):
+                self.assertEqual(review.parse_verdict(prefix + tail), (json.loads(actual), None))
+
+    def test_trailing_line_does_not_promote_unclosed_non_analysis_value(self):
+        example = '{"verdict":"upheld","findings":[],"claims":[],"notes":"example"}'
+        for prefix in ('{"example":\n', '{"example":[\n', '{"example":[{},\n'):
+            with self.subTest(prefix=prefix):
+                value, error = review.parse_verdict(prefix + example)
+                self.assertIsNone(value)
+                self.assertIn("response truncated mid-JSON", error)
+
+    def test_truncated_analysis_string_does_not_promote_quoted_example(self):
+        example = '{"verdict":"upheld","findings":[],"claims":[],"notes":"x"}'
+        for quoted in (example, json.dumps(example)[1:-1]):
+            with self.subTest(quoted=quoted):
+                value, error = review.parse_verdict('{"analysis": "example: ' + quoted + ' trailing text')
+                self.assertIsNone(value)
+                self.assertIn("response truncated mid-JSON", error)
 
     def test_recovery_keeps_schema_validation_and_primary_precedence(self):
         stub = {"verdict": "upheld"}

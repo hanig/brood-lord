@@ -61,23 +61,39 @@ def parse_verdict(text, _depth=0):
     else:
         return None, f"no JSON object found in: {text[:150]}"
 
-    # A malformed wrapper can hide a complete verdict inside or after it.
-    # Decoded objects are disjoint; cap failed decodes, which can reread text.
     decoder = json.JSONDecoder()
-    pos = failures = 0
-    while failures < 64:
-        pos = s.find("{", pos)
-        if pos == -1:
-            break
+    wrapper = re.match(r'\A\{\s*"analysis"\s*:\s*(?=\{)', s)
+    if wrapper:
+        # Recover only an analysis object missing the outer closing brace.
+        try:
+            candidate, end = decoder.raw_decode(s, wrapper.end())
+        except (ValueError, RecursionError):
+            pass
+        else:
+            if isinstance(candidate, dict) and "verdict" in candidate and not s[end:].strip():
+                return candidate, None
+
+    # Otherwise recover only a standalone trailing verdict. Compute the suffix
+    # boundary once, skip decoded objects, and bound failed decodes that reread text.
+    reply_end = len(s.rstrip())
+    if s.endswith("```", 0, reply_end):
+        reply_end = len(s[:reply_end - 3].rstrip())
+    end = failures = 0
+    for line in re.finditer(r"(?m)^[ \t]*\{", s):
+        pos = line.end() - 1
+        if pos < end:
+            continue
         try:
             candidate, end = decoder.raw_decode(s, pos)
         except (ValueError, RecursionError):
             failures += 1
-            pos += 1
+            if failures >= 64:
+                break
             continue
-        if "verdict" in candidate:
+        if end == reply_end and isinstance(candidate, dict) and "verdict" in candidate:
+            if s[:pos].rstrip().endswith((":", "[", ",")):
+                break  # A JSON value continued on the next line isn't standalone.
             return candidate, None
-        pos = end
     return None, error
 
 
