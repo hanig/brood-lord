@@ -25,7 +25,6 @@ import datetime
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import urllib.error
@@ -97,11 +96,11 @@ def _paseo(argv, timeout, cwd=None):
     A non-zero exit still carries any JSON it printed, so a run that created
     an agent and then failed can have that agent archived.
     """
-    if shutil.which("paseo") is None:
-        raise PaseoAbsent(PASEO_ABSENT)
     try:
         done = subprocess.run(["paseo"] + argv, capture_output=True, text=True,
                               timeout=timeout, cwd=cwd)
+    except FileNotFoundError as exc:
+        raise PaseoAbsent(PASEO_ABSENT) from exc
     except subprocess.TimeoutExpired as exc:
         partial = exc.stdout or exc.output or ""
         if isinstance(partial, bytes):

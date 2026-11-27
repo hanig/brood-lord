@@ -1180,10 +1180,18 @@ class TestResolveEndToEnd(StateHome):
         empty.mkdir()
         (empty / "git").symlink_to(shutil.which("git"))
         real_run = subprocess.run
+        absent = []
 
         def run(argv, *args, **kwargs):
-            self.assertNotEqual(Path(argv[0]).name, "paseo", "paseo was executed")
-            return real_run(argv, *args, **kwargs)
+            if Path(argv[0]).name != "paseo":
+                return real_run(argv, *args, **kwargs)
+            # The real exec must fail to find paseo; nothing may be spawned.
+            try:
+                done = real_run(argv, *args, **kwargs)
+            except FileNotFoundError:
+                absent.append(argv)
+                raise
+            self.fail("paseo was executed: %r" % (done,))
         with mock.patch.object(sys, "argv", argv), \
                 mock.patch.dict(os.environ, {"PATH": str(empty), "OPENAI_API_KEY": "k"}), \
                 mock.patch.object(RM, "_get_json", return_value={"data": []}), \
@@ -1194,6 +1202,7 @@ class TestResolveEndToEnd(StateHome):
             with self.assertRaises(SystemExit) as stopped:
                 RM.main()
         self.assertEqual(stopped.exception.code, 0)
+        self.assertTrue(absent, "the absent-paseo path was never exercised")
         report = json.loads(out.getvalue())
         rows = {(l["seat"], l["status"]) for l in report["seats"]}
         for name in ["agent-default"] + ["agent-default:" + orch for orch in
