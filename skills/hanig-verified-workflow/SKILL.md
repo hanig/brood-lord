@@ -140,6 +140,9 @@ Measured 2026-08-25 on all three; `contract.py` passes its suite on each.
   as primary terminal-state evidence, with predicates as the fallback that
   catches exit-0-with-no-output — which `sacct` structurally cannot see.
 - Missing accounting data is treated as *absent evidence*, never as failure.
+  When `sacct` returns nothing (an accounting outage), `scontrol show job` is
+  consulted as a fallback under the same `SubmitTime` ownership window; a job
+  the controller has forgotten (`MinJobAge`) stays absent evidence.
 - **No `nextflow` or `snakemake` is installed system-wide on any login node.**
   Locate them per-project (usually a conda env); never assume a global binary.
 - Usernames differ: `hani` on chimera and lambda, `hgoodarzi` on andromeda.

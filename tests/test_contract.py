@@ -2073,5 +2073,304 @@ class TestProductionEvidence(Base):
         self.assertIn("your", src)
 
 
+
+class TestScontrolFallbackDuringAccountingOutage(unittest.TestCase):
+    """Issue #183: contract.py had no controller evidence path, so while
+    accounting was unreachable every contract over a finished job sat at
+    absent evidence. PR #181 gave hanig-swarm that path and its twin here was
+    not changed.
+
+    The controller is a FALLBACK: consulted only when sacct returns nothing,
+    ownership-tested on SubmitTime exactly as an accounting row is, and a
+    forgotten job (MinJobAge) is absent evidence, never failure.
+
+    Every fixture puts sacct, squeue AND scontrol stubs first on PATH, so a
+    host scheduler binary is never reached."""
+
+    JOB = "4242"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.run_dir = self.tmp / "run"
+        self.out = self.tmp / "o.tsv"
+        self.marker = self.tmp / "scontrol-called"
+        r = contract("init", str(self.run_dir), "--command", "echo hi",
+                     "--output", str(self.out))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        c = json.loads((self.run_dir / "contract.json").read_text())
+        self.decl = c["created_at_epoch"]
+        self.out.write_text("result\n")
+        os.utime(self.out, (self.decl + 2, self.decl + 2))
+        # The attempt `submit` writes, bound at the declaration instant.
+        (self.run_dir / "attempts.jsonl").write_text(json.dumps({
+            "contract_id": c["contract_id"], "attempt": 1, "job_id": self.JOB,
+            "submitted_at": self.stamp(0), "sbatch_args": [],
+            "host": "x"}) + "\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def stamp(self, off):
+        return time.strftime("%Y-%m-%dT%H:%M:%S",
+                             time.localtime(self.decl + off))
+
+    def record(self, state="COMPLETED", exit_code="0:0", submit_off=0,
+               end_off=5, job_id=None, comment=None):
+        """One scontrol record in the one-line (-o) rendering."""
+        rec = (f"JobId={job_id or self.JOB} JobName=x UserId=u(1) "
+               f"GroupId=g(1) Priority=1 Nice=0 JobState={state} "
+               f"Reason=None Dependency=(null) Requeue=1 Restarts=0 "
+               f"BatchFlag=1 Reboot=0 ExitCode={exit_code} "
+               f"DerivedExitCode=0:0 RunTime=00:00:05 TimeLimit=01:00:00 "
+               f"SubmitTime={self.stamp(submit_off)} "
+               f"EligibleTime={self.stamp(submit_off)} "
+               f"StartTime={self.stamp(submit_off + 1)} "
+               f"EndTime={self.stamp(end_off)} Deadline=N/A")
+        if comment is not None:
+            rec += f" Comment={comment}"
+        return rec
+
+    @staticmethod
+    def grouped(one_line):
+        """The same record in scontrol's multi-line rendering: each native
+        group heading starts its own line. First occurrence only: the real
+        field precedes any Comment text that repeats it."""
+        out = one_line
+        for heading in ("JobState=", "Requeue=", "SubmitTime=", "StartTime=",
+                        "Comment="):
+            out = out.replace(" " + heading, "\n   " + heading, 1)
+        return out
+
+    def env(self, sacct=None, scontrol=None, scontrol_rc=0,
+            scontrol_err="", grouped=None):
+        """sacct=None emulates the outage: nonzero exit with an error, which
+        is what sacct does while slurmdbd is unreachable."""
+        b = self.tmp / f"bin{len(list(self.tmp.glob('bin*')))}"
+        b.mkdir()
+        if sacct is None:
+            sacct_body = ('echo "sacct: error: Problem talking to the '
+                          'database: Connection refused" >&2\nexit 1')
+        else:
+            sacct_body = "\n".join(f"echo '{row}'" for row in sacct)
+        (b / "sacct").write_text(f"#!/bin/sh\n{sacct_body}\n")
+        (b / "squeue").write_text("#!/bin/sh\nexit 0\n")
+        oneline = b / "scontrol.oneline"
+        multi = b / "scontrol.multi"
+        oneline.write_text((scontrol or "") + "\n")
+        multi.write_text((grouped if grouped is not None
+                          else self.grouped(scontrol or "")) + "\n")
+        (b / "scontrol").write_text(
+            "#!/bin/sh\n"
+            f"echo \"$@\" >> '{self.marker}'\n"
+            + (f"echo '{scontrol_err}' >&2\nexit {scontrol_rc}\n"
+               if scontrol_rc else
+               f"if [ \"$3\" = \"-o\" ]; then cat '{oneline}'; "
+               f"else cat '{multi}'; fi\n"))
+        for n in ("sacct", "squeue", "scontrol"):
+            (b / n).chmod(0o755)
+        return dict(os.environ, PATH=f"{b}:{os.environ['PATH']}")
+
+    def sacct_row(self, state, code, off=0):
+        return f"{state}|{code}|{self.stamp(off)}|{self.stamp(off + 5)}"
+
+    def check(self, env):
+        r = subprocess.run([sys.executable, str(SCRIPT), "check",
+                            str(self.run_dir)], capture_output=True,
+                           text=True, env=env)
+        receipt = json.loads((self.run_dir / "verification.json").read_text())
+        return r, receipt["evidence"].get("scheduler")
+
+    # --- the outage itself ---------------------------------------------------
+
+    def test_outage_then_controller_completed_clean_passes(self):
+        r, sched = self.check(self.env(scontrol=self.record()))
+        self.assertEqual(r.returncode, PASS, r.stdout + r.stderr)
+        self.assertEqual(sched["state"], "COMPLETED")
+        self.assertEqual(sched["exit_code"], "0:0")
+        self.assertEqual(sched["source"], "scontrol")
+        self.assertIn("read from the controller", r.stdout)
+
+    def test_outage_then_controller_failed_nonzero_is_failed(self):
+        r, sched = self.check(self.env(
+            scontrol=self.record("FAILED", "1:0")))
+        self.assertEqual(r.returncode, FAILED, r.stdout + r.stderr)
+        self.assertEqual(sched["state"], "FAILED")
+        self.assertEqual(sched["exit_code"], "1:0")
+
+    def test_outage_then_controller_timeout_or_cancelled_is_failed(self):
+        for state, code in (("TIMEOUT", "0:15"), ("CANCELLED", "0:15"),
+                            ("OUT_OF_MEMORY", "0:125")):
+            with self.subTest(state=state):
+                r, sched = self.check(self.env(
+                    scontrol=self.record(state, code)))
+                self.assertEqual(r.returncode, FAILED, r.stdout + r.stderr)
+                self.assertEqual(sched["state"], state)
+
+    def test_controller_completed_with_unclean_exit_is_not_a_pass(self):
+        """exit_code_is_clean judges the controller's ExitCode exactly as it
+        judges an accounting row's: COMPLETED beside 1:0, or no usable code,
+        is not terminal success."""
+        for code in ("1:0", "0:9", "", ":"):
+            with self.subTest(code=code):
+                r, sched = self.check(self.env(
+                    scontrol=self.record("COMPLETED", code)))
+                self.assertNotEqual(r.returncode, PASS, r.stdout)
+                self.assertEqual(r.returncode, INCOMPLETE, r.stdout)
+
+    def test_controller_preempted_is_preempted(self):
+        r, _ = self.check(self.env(scontrol=self.record("PREEMPTED", "0:0")))
+        self.assertEqual(r.returncode, PREEMPTED, r.stdout + r.stderr)
+
+    def test_an_active_controller_state_from_a_race_reads_as_running(self):
+        """squeue said "not queued" and the controller then said active: a
+        race or a requeue. Never terminal, never a pass."""
+        for state in ("RUNNING", "PENDING", "COMPLETING"):
+            with self.subTest(state=state):
+                r, sched = self.check(self.env(
+                    scontrol=self.record(state, "0:0")))
+                self.assertEqual(r.returncode, RUNNING, r.stdout + r.stderr)
+                self.assertEqual(sched["state"], state)
+
+    # --- ownership: the same window as sacct_row_is_ours ---------------------
+
+    def test_a_recycled_id_outside_the_window_is_refused(self):
+        """A clean COMPLETED record whose SubmitTime is before the declaration
+        (an earlier job) or after the binding (a later reuse, or a requeue
+        that reset SubmitTime) cannot certify this contract."""
+        for off, word in ((-7200, "before"), (7200, "after")):
+            with self.subTest(offset=off):
+                r, sched = self.check(self.env(scontrol=self.record(
+                    submit_off=off, end_off=off + 5)))
+                self.assertEqual(r.returncode, INCOMPLETE, r.stdout)
+                self.assertIsNone(sched["state"])
+                self.assertTrue(sched.get("stale"))
+                self.assertIn("scontrol record for job 4242 discarded", r.stdout)
+                self.assertIn(f"submitted {word}", r.stdout)
+
+    def test_the_window_slack_matches_sacct(self):
+        """One second of slack on each bound, exactly as for an accounting
+        row; two seconds outside is refused."""
+        r, _ = self.check(self.env(scontrol=self.record(submit_off=-1)))
+        self.assertEqual(r.returncode, PASS, r.stdout)
+        r, _ = self.check(self.env(scontrol=self.record(submit_off=2)))
+        self.assertEqual(r.returncode, INCOMPLETE, r.stdout)
+
+    def test_an_unparseable_submit_time_fails_closed(self):
+        rec = self.record().replace(f"SubmitTime={self.stamp(0)}",
+                                    "SubmitTime=Unknown")
+        r, sched = self.check(self.env(scontrol=rec))
+        self.assertEqual(r.returncode, INCOMPLETE, r.stdout)
+        self.assertIsNone(sched["state"])
+
+    def test_a_different_job_id_is_refused(self):
+        r, sched = self.check(self.env(scontrol=self.record(job_id="4243")))
+        self.assertEqual(r.returncode, INCOMPLETE, r.stdout)
+        self.assertIsNone(sched["state"])
+        self.assertIn("different job id", r.stdout)
+
+    def test_several_records_for_one_id_are_refused(self):
+        """An array master id lists every task; one is not chosen for us."""
+        two = self.record() + "\n" + self.record(job_id="4244")
+        r, sched = self.check(self.env(scontrol=two, grouped=two))
+        self.assertEqual(r.returncode, INCOMPLETE, r.stdout)
+        self.assertIsNone(sched["state"])
+
+    def test_field_text_inside_a_comment_cannot_forge_the_state(self):
+        """One-line output cannot tell JobState= inside Comment from the real
+        field, so the parser refines through the grouped rendering, where the
+        real JobState is on its own line."""
+        rec = self.record("FAILED", "1:0",
+                          comment="x JobState=COMPLETED ExitCode=0:0")
+        r, sched = self.check(self.env(scontrol=rec))
+        self.assertEqual(r.returncode, FAILED, r.stdout + r.stderr)
+        self.assertEqual(sched["state"], "FAILED")
+        self.assertIn("grouped-line", r.stdout)
+
+    # --- the controller forgot the job: absent, never failure ----------------
+
+    def test_minjobage_invalid_job_id_is_absent_evidence(self):
+        r, sched = self.check(self.env(
+            scontrol_rc=1,
+            scontrol_err="slurm_load_jobs error: Invalid job id specified"))
+        self.assertEqual(r.returncode, INCOMPLETE, r.stdout + r.stderr)
+        self.assertEqual(sched, {"state": None, "exit_code": None,
+                                 "submit": None, "source": None})
+        self.assertIn("MinJobAge", r.stdout)
+        self.assertNotIn("discarded", r.stdout)
+
+    def test_controller_unreachable_is_absent_evidence(self):
+        r, sched = self.check(self.env(
+            scontrol_rc=1,
+            scontrol_err="slurm_load_jobs error: Unable to contact slurm "
+                         "controller (connect failure)"))
+        self.assertEqual(r.returncode, INCOMPLETE, r.stdout + r.stderr)
+        self.assertIsNone(sched["state"])
+        self.assertIsNone(sched["source"])
+
+    def test_an_empty_controller_listing_is_absent_evidence(self):
+        for listing in ("", "No jobs in the system"):
+            with self.subTest(listing=listing):
+                r, sched = self.check(self.env(scontrol=listing,
+                                               grouped=listing))
+                self.assertEqual(r.returncode, INCOMPLETE, r.stdout)
+                self.assertIsNone(sched["state"])
+
+    def test_absent_evidence_unit_level_is_all_none(self):
+        """The function contract the caller keys on: a forgotten job returns
+        exactly (None, None, None, None)."""
+        import importlib.util as u
+        spec = u.spec_from_file_location("contract_under_test", SCRIPT)
+        m = u.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        env = self.env(scontrol_rc=1,
+                       scontrol_err="Invalid job id specified")
+        old = os.environ["PATH"]
+        os.environ["PATH"] = env["PATH"]
+        try:
+            self.assertEqual(m.scontrol_state(self.JOB, self.decl, self.decl),
+                             (None, None, None, None))
+        finally:
+            os.environ["PATH"] = old
+
+    # --- sacct stays primary -------------------------------------------------
+
+    def test_healthy_sacct_is_primary_and_the_controller_is_not_asked(self):
+        """sacct FAILED while the controller would say COMPLETED: sacct
+        decides, and scontrol is never run."""
+        r, sched = self.check(self.env(
+            sacct=[self.sacct_row("FAILED", "1:0")],
+            scontrol=self.record()))
+        self.assertEqual(r.returncode, FAILED, r.stdout + r.stderr)
+        self.assertEqual(sched["source"], "sacct")
+        self.assertFalse(self.marker.exists(),
+                         "scontrol was consulted although sacct answered")
+
+    def test_healthy_sacct_pass_is_not_overridden_by_the_controller(self):
+        r, sched = self.check(self.env(
+            sacct=[self.sacct_row("COMPLETED", "0:0")],
+            scontrol=self.record("FAILED", "1:0")))
+        self.assertEqual(r.returncode, PASS, r.stdout + r.stderr)
+        self.assertEqual(sched["source"], "sacct")
+        self.assertFalse(self.marker.exists())
+
+    def test_sacct_rows_that_are_not_ours_do_not_fall_back(self):
+        """Accounting answered, and every row was a recycled id. That is an
+        answer, not an outage: the controller must not get a second vote."""
+        r, sched = self.check(self.env(
+            sacct=[self.sacct_row("COMPLETED", "0:0", -7200)],
+            scontrol=self.record()))
+        self.assertEqual(r.returncode, INCOMPLETE, r.stdout)
+        self.assertIn("sacct row(s) for job 4242 discarded", r.stdout)
+        self.assertFalse(self.marker.exists())
+
+    def test_sacct_empty_output_falls_back(self):
+        """rc 0 with no rows (the job not yet, or no longer, in accounting) is
+        absent evidence, so the controller is consulted."""
+        r, sched = self.check(self.env(sacct=[], scontrol=self.record()))
+        self.assertEqual(r.returncode, PASS, r.stdout + r.stderr)
+        self.assertEqual(sched["source"], "scontrol")
+        self.assertTrue(self.marker.exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
