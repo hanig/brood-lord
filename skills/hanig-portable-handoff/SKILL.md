@@ -22,7 +22,9 @@ host may consume a handoff; `capture`, `resume`, and factual `MEMORY.md`
 refresh require usable local Python, Git, and referenced paths.  If one is
 unavailable, report that bounded limit and retain the handoff unchanged; never
 copy credentials, provision services, or alter approvals to make a resume
-appear clean.  See `docs/agent-compatibility.md` for the shared contract.
+appear clean.  The shared contract is in the repository's
+[agent compatibility notes](https://github.com/hanig/brood-lord/blob/main/docs/agent-compatibility.md)
+(not shipped with installs).
 
 Context switching between institutions and clusters loses two things: which
 code was running, and which of your runs were unfinished. Both are recoverable
@@ -123,7 +125,8 @@ For an audited trail of why decisions were made, use `hanig-debrief`'s
 
 ## Design record
 
-`docs/plan-portable-handoff.md` carries the plan and the thirteen acceptance
+The repository's [portable handoff plan](https://github.com/hanig/brood-lord/blob/main/docs/plan-portable-handoff.md)
+(not shipped with installs) carries the plan and the thirteen acceptance
 criteria, plus what three plan reviews rejected before any code was written.
 Worth reading before changing this: one review found a defect in two already
 shipped skills, and two others caught contradictions introduced while fixing the

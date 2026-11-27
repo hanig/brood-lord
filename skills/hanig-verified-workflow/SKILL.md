@@ -20,7 +20,9 @@ actually available.  A missing program or denied approval is absent evidence:
 state the blocked check and the resulting incomplete/unverified limit instead
 of fabricating output or changing the host's permissions.  Paseo and the agent
 bus are optional services, not prerequisites that this skill installs; their
-portable fallback is documented in `docs/agent-compatibility.md`.
+portable fallback is documented in the repository's
+[agent compatibility notes](https://github.com/hanig/brood-lord/blob/main/docs/agent-compatibility.md)
+(not shipped with installs).
 
 The hanig-wandb-logging skill describes run presentation.
 
