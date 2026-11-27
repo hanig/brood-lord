@@ -82,15 +82,19 @@ def validate(record):
     for field in ("schema_version", "session_cap"):
         _integer(record[field], field)
         _require(record[field] == 1, field, "must equal 1")
-    for field in ("issued_at", "confirmed_at", "expires_at"):
+    for field in ("issued_at", "confirmed_at"):
         _timestamp(record[field], field)
+    if record["expires_at"] is not None:
+        _timestamp(record["expires_at"], "expires_at")
     for field, width in (("grant_id", 32), ("mandate_sha256", 64)):
         value = record[field]
         _require(type(value) is str and
                 re.fullmatch("[0-9a-f]{%d}" % width, value) is not None,
                 field, "expected lowercase hex of length {}".format(width))
-    _require(0 < record["expires_at"] - record["issued_at"] <= 86400,
-            "expires_at", "must be after issued_at and within 86400 seconds")
+    # Owner-chosen expiry, or null for indefinite until revoked or the mandate
+    # changes. There is no ceiling and no default.
+    _require(record["expires_at"] is None or record["expires_at"] > record["issued_at"],
+            "expires_at", "must be after issued_at or null")
     _keys(record["scope"], _SCOPES, "scope")
     for key, values in record["scope"].items():
         field = "scope." + key
@@ -150,7 +154,8 @@ def _pairs(pairs):
 def evaluate(record, now, mandate_bytes):
     """Return state and the mandate-change invalidation a caller must persist.
 
-    Precedence: invalidated, mandate_changed, expired, valid. This function
+    Precedence: invalidated, mandate_changed, expired, valid. A null expiry
+    never expires by time. This function
     does not modify the record; callers must retain the returned invalidation
     before relying on a later evaluation of the same grant.
     """
@@ -162,7 +167,9 @@ def evaluate(record, now, mandate_bytes):
     if record["mandate_sha256"] != digest:
         return "mandate_changed", {"at": now, "kind": "mandate_changed",
                                    "reason": "mandate byte digest changed"}
-    return ("expired" if now >= record["expires_at"] else "valid"), None
+    if record["expires_at"] is not None and now >= record["expires_at"]:
+        return "expired", None
+    return "valid", None
 
 
 def revoked(record, now, reason):
@@ -189,7 +196,8 @@ def claimed(record, session_id, anchor_pid, anchor_start_us, now, holder, *, hos
     _require(type(holder) is str and holder in ("alive", "dead", "unknown"),
              "holder", "expected alive, dead or unknown")
     _require(record["invalidation"] is None, "invalidation", "invalidated")
-    _require(now < record["expires_at"], "expires_at", "expired")
+    _require(record["expires_at"] is None or now < record["expires_at"],
+             "expires_at", "expired")
     custody = record["custody"]
     if custody is not None:
         if _same_holder(custody, session_id, anchor_pid, anchor_start_us, host):
@@ -231,7 +239,8 @@ def replacement_allowed(old, new):
     _require(new["grant_id"] != old["grant_id"], "grant_id", "must be fresh")
     if new["confirmation"] == old["confirmation"]:
         _require(old["invalidation"] is None, "confirmation", "invalidated consent")
-        _require(new["expires_at"] <= old["expires_at"],
+        _require(old["expires_at"] is None or
+                 (new["expires_at"] is not None and new["expires_at"] <= old["expires_at"]),
                  "expires_at", "extension requires fresh confirmation")
         for key in _SCOPES:
             _require(set(new["scope"][key]) <= set(old["scope"][key]),

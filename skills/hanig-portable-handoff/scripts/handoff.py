@@ -7,7 +7,8 @@ Three commands:
     handoff.py resume  handoff.json [--base DIR]
     handoff.py memory  PROJECT_DIR
 
-Design and its thirteen acceptance criteria: docs/plan-portable-handoff.md.
+Design and its thirteen acceptance criteria (repository doc, not installed):
+https://github.com/hanig/brood-lord/blob/main/docs/plan-portable-handoff.md
 Three plan reviews preceded any of this code; the findings that shaped it are
 named at the rules they produced.
 
