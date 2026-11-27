@@ -1,0 +1,38 @@
+{
+  "_comment": "Seats for brood-conclave. One seat per family. `lines` are the family's product lines, best first: the resolver takes the newest version of the first line the OpenRouter catalog carries (so Opus 6 replaces Opus 5.5 inside the claude-opus line without an edit). A line it has never seen (say a new Gemini flagship) is adopted automatically when it was released after the current pick and is priced at least `adopt_ratio` of it; `lower_lines` never trigger that. `variants` are name tokens that mark a variant of a line rather than a line (gpt-6-astra-pro), and such ids are never picked. `pin` (an OpenRouter-style id) overrides everything. `routes` are harnesses tried in order when Lor-only mode is disabled (`--no-lor`); every route runs with web search on, and `conclave doctor` proves it. `opencode` goes through OpenRouter; `opencode-direct` uses the vendor's own API key (no OpenRouter, so no OpenRouter ZDR refusal) with Exa search. No script names a model: ids come from the catalogs. `lor` runs the seat as a Lor subagent on the Lor router with full sandbox tools and `lor web search`/`lor web fetch`, only inside a Lor session (LOR_SESSION_ID set); top-level `lor` defaults to true so all seats run exclusively through Lor subagents unless `--no-lor`, `CONCLAVE_LOR=0`, or `\"lor\": false` is set. `lor_ids` maps a catalog id to the Lor router id where the two differ beyond dots becoming dashes.",
+  "effort": "xhigh",
+  "adopt_ratio": 0.5,
+  "max_rounds": 3,
+  "lor": true,
+  "lor_ids": {"meta/muse-wonder": "meta/muse-wonder-1.0"},
+  "families": {
+    "openai": {
+      "vendor": "openai",
+      "lines": ["gpt-astra"],
+      "lower_lines": ["gpt-sol", "gpt-luna", "gpt-terra", "gpt-chat", "gpt-reserve", "gpt-rosalind"],
+      "variants": ["pro"],
+      "routes": ["codex", "pi", "opencode", "opencode-direct", "lor"]
+    },
+    "google": {
+      "vendor": "google",
+      "lines": ["gemini-carbon", "gemini-argon", "gemini-pro"],
+      "lower_lines": ["gemini-flash", "gemini-flash-lite", "gemini-nano-banana", "gemma"],
+      "variants": [],
+      "routes": ["agy", "pi", "opencode", "lor"]
+    },
+    "anthropic": {
+      "vendor": "anthropic",
+      "lines": ["claude-opus"],
+      "lower_lines": ["claude-fable", "claude-mythos", "claude-sonnet", "claude-haiku"],
+      "variants": [],
+      "routes": ["claude", "opencode-direct", "pi", "opencode", "lor"]
+    },
+    "meta": {
+      "vendor": "meta",
+      "lines": ["muse-wonder"],
+      "lower_lines": ["muse-spark", "muse-spark-open", "muse-glimmer-30b"],
+      "variants": [],
+      "routes": ["pi", "opencode", "lor"]
+    }
+  }
+}

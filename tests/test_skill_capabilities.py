@@ -22,6 +22,7 @@ SKILLS = ROOT / "skills"
 COMPATIBILITY = ROOT / "docs" / "agent-compatibility.md"
 AUTHORED = {
     "brood-wandb-logging",
+    "brood-conclave",
     "brood-debrief",
     "brood-hillclimb",
     "brood-orchestrate",
@@ -220,6 +221,7 @@ class TestSkillCapabilities(unittest.TestCase):
     def test_authored_skills_state_their_host_safe_boundaries(self):
         expected = {
             "brood-wandb-logging": "Host capability boundary",
+            "brood-conclave": "Host capability boundary",
             "brood-debrief": (
                 "Drafting is offline; only debrief_file.py reaches the network, "
                 "after one named approval of the exact packet."

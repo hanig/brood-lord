@@ -28,8 +28,9 @@ class TestSelectionBeforeWrites(unittest.TestCase):
         authored = {name for name, _path, origin in installer.selected_sources(ROOT, ())
                     if origin == "authored"}
         self.assertEqual(authored, {
-            "brood-wandb-logging", "brood-debrief", "brood-hillclimb", "brood-orchestrate", "brood-project", "brood-swarm",
-            "brood-review-gate", "brood-verified-workflow", "brood-portable-handoff",
+            "brood-wandb-logging", "brood-conclave", "brood-debrief", "brood-hillclimb", "brood-orchestrate",
+            "brood-project", "brood-swarm", "brood-review-gate", "brood-verified-workflow",
+            "brood-portable-handoff",
         })
         self.assertEqual(installer.selected_sources(ROOT, ("brood-debrief",)), [
             ("brood-debrief", ROOT / "skills" / "brood-debrief", "authored"),

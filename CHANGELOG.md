@@ -2,6 +2,20 @@
 
 ## Unreleased — 2026-11-22
 
+### Added — `brood-conclave`, the tenth authored skill (2026-11-27)
+
+- **Multi-model panel:** folds the standalone `hanig-conclave` repository in as
+  `skills/brood-conclave/` (model-invocable; not in `EXPLICIT_ONLY_SKILLS`, no
+  `agents/openai.yaml`). One seat per model family from `families.json`, Lor subagents by
+  default (`"lor": true`), blind round 0, anonymized cross-examination on moderator-listed
+  cruxes, and a ratification vote. `scripts/conclave.py` names no model id.
+- **Portable paths:** commands run as `python3 "$BROOD_CONCLAVE_DIR/scripts/conclave.py"`;
+  `scripts/allow.py` writes allow rules for the installed copy it sits in, and `--remove`
+  also takes out rules for the old `~/.claude/skills/hanig-conclave` path. Live state stays
+  in `~/.local/state/hanig-conclave`, and `CONCLAVE_LOR` keeps its meaning. Reinstalling
+  retires an owned `hanig-conclave` copy; the standalone repository's own symlink install
+  is not owned, so it stays with a warning.
+
 ### Changed — Authored skills renamed from `hanig-*` to `brood-*`
 
 - **Skill names (PR 2/2 of the brood rename):** the nine authored bundles now ship as
