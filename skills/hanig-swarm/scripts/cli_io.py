@@ -24,8 +24,8 @@ never reaches a log or the exit receipt. Every CLI child, however the wrapper
 was started, runs behind `env -u` for each adapter-withheld name.
 
 PLACEMENT. On a Slurm login or agent host (sbatch, squeue and scancel on
-PATH and not inside a compute-node batch job; ``HANIG_SWARM_CLI_SLURM`` =
-auto|on|off) a turn is submitted with ``sbatch --export=NONE`` and the
+PATH and not inside a compute-node batch job; ``BROOD_SWARM_CLI_SLURM``, or
+legacy ``HANIG_SWARM_CLI_SLURM``, = auto|on|off) a turn is submitted with ``sbatch --export=NONE`` and the
 wrapper runs under ``env -i`` on a compute node. A failed submission FAILS
 CLOSED: a heavy CLI is never run on a login node as a fallback. An agent-host
 job missing a Slurm tool refuses rather than running locally, and a resume
@@ -116,6 +116,12 @@ def _now():
 
 def _env(environ):
     return os.environ if environ is None else environ
+
+
+def setting(env, legacy_name, default=None):
+    """BROOD_<X> when set non-blank, else the legacy HANIG_<X> (rename shim)."""
+    primary = env.get("BROOD_" + legacy_name[len("HANIG_"):])
+    return primary if (primary or "").strip() else env.get(legacy_name, default)
 
 
 def valid_attempt_id(value):
@@ -265,7 +271,7 @@ def _which(name, environ=None):
 # --- placement -----------------------------------------------------------
 
 def slurm_mode(environ=None):
-    value = (_env(environ).get(MODE_ENV) or "").strip().lower()
+    value = (setting(_env(environ), MODE_ENV) or "").strip().lower()
     return "off" if value in OFF else "on" if value in ON else "auto"
 
 
@@ -323,10 +329,10 @@ def placement(environ=None):
 
 
 def _explicit_partition(env):
-    if (env.get("HANIG_SWARM_CLI_SLURM_PARTITION") or "").strip():
+    if (setting(env, "HANIG_SWARM_CLI_SLURM_PARTITION") or "").strip():
         return True
     try:
-        words = shlex.split(env.get("HANIG_SWARM_CLI_SLURM_EXTRA_ARGS") or "")
+        words = shlex.split(setting(env, "HANIG_SWARM_CLI_SLURM_EXTRA_ARGS") or "")
     except ValueError:
         return True
     return any(w in ("-p", "--partition") or w.startswith("--partition=")
@@ -382,17 +388,17 @@ def sbatch_argv(sbatch, attempt_id, rdir, turn, script, environ=None,
     log = f"{rdir}/turn-{turn}.slurm.out"
     argv = [sbatch, "--parsable", "--export=NONE", "--no-requeue",
             f"--job-name={JOB_PREFIX}{name}",
-            f"--cpus-per-task={(env.get('HANIG_SWARM_CLI_SLURM_CPUS') or DEFAULTS['cpus']).strip()}",
-            f"--mem={(env.get('HANIG_SWARM_CLI_SLURM_MEM') or DEFAULTS['mem']).strip()}",
-            f"--time={(env.get('HANIG_SWARM_CLI_SLURM_TIME') or DEFAULTS['time']).strip()}",
+            f"--cpus-per-task={(setting(env, 'HANIG_SWARM_CLI_SLURM_CPUS') or DEFAULTS['cpus']).strip()}",
+            f"--mem={(setting(env, 'HANIG_SWARM_CLI_SLURM_MEM') or DEFAULTS['mem']).strip()}",
+            f"--time={(setting(env, 'HANIG_SWARM_CLI_SLURM_TIME') or DEFAULTS['time']).strip()}",
             f"--chdir={rdir}", f"--output={log}", f"--error={log}"]
     for var, flag in OPTION_ENV:
-        value = (env.get(var) or "").strip()
+        value = (setting(env, var) or "").strip()
         if value:
             argv.append(f"{flag}={value}")
     if auto_partition and not _explicit_partition(env):
         argv.append(f"--partition={auto_partition}")
-    argv += shlex.split(env.get("HANIG_SWARM_CLI_SLURM_EXTRA_ARGS") or "")
+    argv += shlex.split(setting(env, "HANIG_SWARM_CLI_SLURM_EXTRA_ARGS") or "")
     argv.append(str(script))
     return argv
 

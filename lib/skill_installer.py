@@ -39,6 +39,11 @@ WORKFLOW_DEPENDENCIES = {
         "hanig-portable-handoff",
     ),
 }
+# Authored bundles are being renamed hanig-<suffix> -> brood-<suffix>.  Both
+# prefixes are authored; (current, retired) pairs drive legacy retirement.
+AUTHORED_PREFIXES = ("brood-", "hanig-")
+RETIRED_PREFIXES = (("brood-", "hanig-"),)
+LEGACY_WARNING = "legacy skill left untouched: "
 MAX_FRONTMATTER_BYTES = 64 * 1024
 _FRONTMATTER_KEY = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):(?:[ \t]*(.*))?$")
 _BLOCK_SCALARS = frozenset((">", ">-", ">+", "|", "|-", "|+"))
@@ -56,6 +61,34 @@ _NON_STRING = object()
 
 class InstallRequestError(ValueError):
     """A command line request which must fail before writes."""
+
+
+def retired_legacy_name(skill_name: str) -> str | None:
+    """The pre-rename name an authored skill replaces, e.g. brood-x -> hanig-x.
+
+    None for every other name, including a hanig-* skill itself, so a skill
+    can never retire its own destination.
+    """
+    for current, retired in RETIRED_PREFIXES:
+        suffix = skill_name[len(current):]
+        if skill_name.startswith(current) and suffix:
+            return retired + suffix
+    return None
+
+
+@dataclass(frozen=True)
+class LegacyRetirement:
+    """One existing legacy destination beside a renamed skill's target."""
+
+    target: Any                 # the renamed LifecycleTarget that replaces it
+    legacy: Path                # canonical sibling destination, e.g. <root>/hanig-x
+    refusal: str | None         # None: exact recorded ownership; else why it stays
+
+
+@dataclass(frozen=True)
+class _Entry:
+    destination: Path
+    name: str
 
 
 @dataclass(frozen=True)
@@ -517,7 +550,8 @@ def selected_sources(repo: Path, only: Sequence[str]) -> list[tuple[str, Path, s
             "; include the dependency explicitly"
         )
     names = list(only) if only else sorted(available)
-    return [(name, available[name], "authored" if name.startswith("hanig-") else "vendored")
+    return [(name, available[name],
+             "authored" if name.startswith(AUTHORED_PREFIXES) else "vendored")
             for name in names]
 
 
@@ -736,6 +770,80 @@ def _lifecycle_targets(plan: InstallPlan, sources: Sequence[tuple[str, Path, str
     return targets
 
 
+def plan_legacy_retirements(targets: Sequence[Any], shipped: Iterable[str]) -> list[LegacyRetirement]:
+    """Read-only: legacy siblings an authored renamed install would retire.
+
+    A legacy name this checkout still ships is never retired, and ownership
+    is lifecycle's exact proof; any other existing entry is reported with the
+    reason it must stay untouched.
+    """
+    from lib.skill_lifecycle import ownership_refusal
+    shipped = set(shipped)
+    plans = []
+    for target in targets:
+        legacy_name = retired_legacy_name(target.name)
+        if target.origin != "authored" or legacy_name is None or legacy_name in shipped:
+            continue
+        legacy = _direct_child(target.destination.parent, legacy_name)
+        if legacy.exists() or legacy.is_symlink():
+            plans.append(LegacyRetirement(target, legacy, ownership_refusal(legacy)))
+    return plans
+
+
+def _retirement_consumers(retirement: LegacyRetirement, options: InstallOptions) -> tuple[str, ...]:
+    # Detach exactly the loaders that now receive the renamed skill; any other
+    # recorded consumer keeps the legacy payload (retained-shared).
+    return () if options.prefix else tuple(retirement.target.consumers)
+
+
+def _legacy_warning(retirement: LegacyRetirement) -> str:
+    return (f"{LEGACY_WARNING}{retirement.legacy} ({retirement.refusal}); "
+            f"{retirement.target.name} is installed beside it and both may be visible")
+
+
+def _preview_retirements(retirements: Sequence[LegacyRetirement], options: InstallOptions,
+                         plan: InstallPlan) -> tuple[list[dict[str, Any]], list[str]]:
+    actions, warnings = [], []
+    for item in retirements:
+        entry = _Entry(item.legacy, item.legacy.name)
+        if item.refusal:
+            warnings.append(_legacy_warning(item))
+            actions.append(_action(entry, "retained", item.refusal, plan))
+            continue
+        ((_path, status, detail),) = _preview_uninstall(
+            [item.legacy], consumers=_retirement_consumers(item, options),
+            include_vendored=False)
+        if status == "would-remove":
+            status = "would-retire-legacy"
+        actions.append(_action(entry, status, f"replaced by {item.target.name}: {detail}", plan))
+    return actions, warnings
+
+
+def _retire_legacy(retirements: Sequence[LegacyRetirement], results: Sequence[Any],
+                   options: InstallOptions, plan: InstallPlan):
+    """Uninstall owned legacy siblings whose replacement was published."""
+    from lib.skill_lifecycle import uninstall
+    published = {item.target.destination for item in results
+                 if item.status in ("installed", "upgraded")}
+    actions, warnings, failed = [], [], []
+    for item in retirements:
+        entry = _Entry(item.legacy, item.legacy.name)
+        if item.refusal:
+            warnings.append(_legacy_warning(item))
+            actions.append(_action(entry, "retained", item.refusal, plan))
+            continue
+        if item.target.destination not in published:
+            actions.append(_action(entry, "retained",
+                                   f"{item.target.name} was not published; legacy kept", plan))
+            continue
+        (result,) = uninstall([item.legacy], consumers=_retirement_consumers(item, options))
+        actions.append(_action(entry, result.status,
+                               f"replaced by {item.target.name}: {result.detail}", plan))
+        if result.status == "blocked":
+            failed.append(result)
+    return actions, warnings, failed
+
+
 def _action(target, status: str, detail: str, plan: InstallPlan) -> dict[str, Any]:
     root = _canonical_root(target.destination.parent)
     destination = next(
@@ -787,6 +895,9 @@ def _print(document: Mapping[str, Any], options: InstallOptions, plan: InstallPl
         print(json.dumps(document, sort_keys=True))
         for warning in plan.certification_warnings:
             print("warning: " + warning, file=sys.stderr)
+        for diagnostic in document["diagnostics"]:
+            if diagnostic.startswith(LEGACY_WARNING):
+                print("warning: " + diagnostic, file=sys.stderr)
         return
     print(render_plan(plan, options, version))
     for action in document["actions"]:
@@ -802,7 +913,8 @@ def _print(document: Mapping[str, Any], options: InstallOptions, plan: InstallPl
         if unowned:
             print(f"left {unowned} skill(s) without this repository's recorded ownership")
     for diagnostic in document["diagnostics"]:
-        label = "warning: " if diagnostic in plan.certification_warnings else "note: "
+        label = ("warning: " if diagnostic in plan.certification_warnings or
+                 diagnostic.startswith(LEGACY_WARNING) else "note: ")
         print(label + diagnostic, file=sys.stderr)
     for conflict in document["conflicts"]:
         print("conflict: " + conflict, file=sys.stderr)
@@ -962,10 +1074,17 @@ def run(argv: Sequence[str], *, repo: Path | None = None,
         (target.destination.exists() or target.destination.is_symlink())
     ]
     prune_consumers = () if options.prefix else tuple(target.name for target in plan.selected)
-    stale = _stale_candidates(plan, sources) if not options.only else []
+    retirements = plan_legacy_retirements(
+        targets, (name for name, _path, _origin in selected_sources(repo, ())))
+    retiring = {item.legacy for item in retirements}
+    # A retired legacy sibling is decided once, by retirement, never also pruned.
+    stale = ([path for path in _stale_candidates(plan, sources)
+              if _canonical_destination(path) not in retiring] if not options.only else [])
     if options.dry_run or blocked:
-        prune_actions = []
+        prune_actions, legacy_warnings = [], []
         if options.dry_run:
+            retire_actions, legacy_warnings = _preview_retirements(retirements, options, plan)
+            prune_actions.extend(retire_actions)
             for candidate, status, detail in _preview_uninstall(
                     stale, consumers=prune_consumers,
                     include_vendored=options.include_vendored):
@@ -976,6 +1095,7 @@ def run(argv: Sequence[str], *, repo: Path | None = None,
         document = _document(operation="install", dry_run=options.dry_run, plan=plan,
                              actions=inspected + prune_actions,
                              diagnostics=(["dry run — no destination or source files changed"] + shadow_notes + takeovers
+                                          + legacy_warnings
                                           if options.dry_run else takeovers),
                              conflicts=blocked, mode=options.mode, version=version)
         _print(document, options, plan, version)
@@ -985,6 +1105,13 @@ def run(argv: Sequence[str], *, repo: Path | None = None,
     actions = [_action(item.target, item.status, item.detail, plan) for item in results]
     failed = [item for item in results if item.status not in ("installed", "upgraded")]
     diagnostics = shadow_notes + takeovers
+    # Only after each renamed skill is staged, validated and published does
+    # its owned legacy sibling go; anything unowned stays with a warning.
+    retire_actions, legacy_warnings, retire_failed = _retire_legacy(
+        retirements, results, options, plan)
+    actions.extend(retire_actions)
+    diagnostics.extend(legacy_warnings)
+    failed.extend(retire_failed)
     if not failed and not options.only:
         # A removed source must not remain live forever, but lifecycle's exact
         # ownership proof remains the only authority to delete it.

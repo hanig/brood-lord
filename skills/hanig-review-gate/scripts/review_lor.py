@@ -1,7 +1,8 @@
 """Fail-closed zero-tool Lor subagent transport (SKILL.md, "Lor sessions").
 
 Fail-closed routing: a pinned openai/openrouter seat that declares lor_model
-routes to Lor unless HANIG_REVIEW_NO_LOR is explicitly truthy. Outside a Lor
+routes to Lor unless the opt-out is explicitly truthy (BROOD_REVIEW_NO_LOR
+when set non-blank, else legacy HANIG_REVIEW_NO_LOR). Outside a Lor
 session (LOR_SESSION_ID unset) it is BLOCKED with an actionable reason, never
 silently sent to OPENAI_API_KEY/OPENROUTER_API_KEY.
 
@@ -30,7 +31,8 @@ _spec = importlib.util.spec_from_file_location(
 _subs = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_subs)
 
-OPT_OUT = "HANIG_REVIEW_NO_LOR"
+OPT_OUT = "HANIG_REVIEW_NO_LOR"          # legacy name; still honoured
+OPT_OUT_PRIMARY = "BROOD_REVIEW_NO_LOR"  # wins whenever set non-blank
 LOR_SECRET_ENV = ("LOR_SESSION_TOKEN", "LOR_ROUTER_TOKEN", "LOR_SESSION_REFRESH_PROOF")
 LOR_ROUTABLE_PROVIDERS = ("openai", "openrouter")
 LOR_EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
@@ -44,9 +46,10 @@ TRUTHY = ("1", "true", "yes", "on")
 
 
 def lor_opted_out(environ=None):
-    """Only an explicit truthy HANIG_REVIEW_NO_LOR opts into paid API routing."""
+    """Only an explicit truthy opt-out (BROOD_ over HANIG_REVIEW_NO_LOR) opts
+    into paid API routing, so BROOD_REVIEW_NO_LOR=0 overrides a legacy =1."""
     env = os.environ if environ is None else environ
-    return (env.get(OPT_OUT) or "").strip().lower() in TRUTHY
+    return (_subs._slurm.setting(env, OPT_OUT) or "").strip().lower() in TRUTHY
 
 
 def lor_in_session(environ=None):
@@ -57,7 +60,7 @@ def lor_in_session(environ=None):
 def lor_routed(rev, environ=None):
     """Whether a seat must run through Lor: explicit provider 'lor', or a
     pinned (never `_resolved_from`) openai/openrouter seat with lor_model,
-    unless HANIG_REVIEW_NO_LOR is explicitly truthy. Session presence is
+    unless the BROOD_/HANIG_REVIEW_NO_LOR opt-out is truthy. Session presence is
     deliberately NOT consulted: its absence blocks the seat (lor_block_reason),
     it never re-routes it to a paid API."""
     provider = rev.get("provider")
@@ -71,12 +74,12 @@ def lor_block_reason(rev, environ=None):
     env = os.environ if environ is None else environ
     name = rev.get("name", "?")
     if lor_opted_out(env):
-        return (f"lor provider disabled for {name}: {OPT_OUT} is set and this seat "
-                f"has no API provider to opt into")
+        return (f"lor provider disabled for {name}: {OPT_OUT_PRIMARY} or {OPT_OUT} "
+                f"is set and this seat has no API provider to opt into")
     if not (env.get("LOR_SESSION_ID") or "").strip():
         return (f"lor routing required for {name}: LOR_SESSION_ID unset (run review.py "
-                f"from the orchestrator's Lor session, or set {OPT_OUT}=1 to opt into "
-                f"paid API routing)")
+                f"from the orchestrator's Lor session, or set {OPT_OUT_PRIMARY}=1 "
+                f"(legacy {OPT_OUT}=1) to opt into paid API routing)")
     if not _lor_bin(env):
         return "lor CLI not found on PATH"
     return None if lor_model_id(rev) else f"seat {name} has no lor model"

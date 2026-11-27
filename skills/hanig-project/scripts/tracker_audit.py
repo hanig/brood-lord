@@ -17,8 +17,9 @@ def operation_directory(workspace, project):
     if any(not isinstance(v, str) or not re.fullmatch('[A-Za-z0-9-]+', v)
            for v in (workspace, project)):
         raise ValueError('invalid operation workspace or project id')
-    root = Path(os.environ.get('HANIG_LINEAR_OPS_DIR',
-                               str(Path.home() / '.local/state/hanig-swarm/linear-ops')))
+    primary = os.environ.get('BROOD_LINEAR_OPS_DIR')  # rename shim: BROOD_ wins when non-blank
+    root = Path(primary if (primary or '').strip() else os.environ.get(
+        'HANIG_LINEAR_OPS_DIR', str(Path.home() / '.local/state/hanig-swarm/linear-ops')))
     return root / workspace / project
 
 

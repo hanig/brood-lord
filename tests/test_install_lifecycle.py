@@ -542,6 +542,32 @@ class LifecycleTest(unittest.TestCase):
         self.assertEqual(lifecycle.preflight([target])[0].action, "blocked")
         self.assertEqual(lifecycle.uninstall([target.destination])[0].status, "blocked")
 
+    def test_ownership_refusal_is_read_only_and_agrees_with_uninstall(self):
+        owned = self.target()
+        lifecycle.install([owned])
+        moved = self.home / "moved"
+        shutil.copytree(owned.destination, moved)
+        foreign = self.home / ".claude" / "skills" / "foreign"
+        foreign.mkdir()
+        (foreign / "SKILL.md").write_text("foreign\n")
+        replaced = self.target("beta", mode="link")
+        lifecycle.install([replaced])
+        replaced.destination.unlink()
+        replaced.destination.symlink_to(self.source("other"), target_is_directory=True)
+        cases = ((owned.destination, None), (foreign, "no matching recorded ownership"),
+                 (moved, "recorded destination does not match this path"),
+                 (replaced.destination, "link no longer matches its recorded target"),
+                 (self.home / "absent", "destination is already absent"))
+        for path, want in cases:
+            with self.subTest(path=path.name):
+                before = sorted(str(p) for p in self.home.rglob("*"))
+                self.assertEqual(lifecycle.ownership_refusal(path), want)
+                self.assertEqual(sorted(str(p) for p in self.home.rglob("*")), before)
+                if want and want != "destination is already absent":
+                    self.assertEqual(lifecycle.uninstall([path])[0].detail, want)
+        self.assertEqual(lifecycle.ownership_refusal(owned.destination, repository="other"),
+                         "no matching recorded ownership")
+
     def test_migration_plan_is_dry_run_and_never_deletes_legacy_copy(self):
         legacy = self.home / ".claude" / "skills" / "alpha"
         legacy.mkdir(parents=True)

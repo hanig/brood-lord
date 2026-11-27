@@ -20,7 +20,8 @@ Design E (secrets never reach compute nodes):
   `finally`, so no prompt bytes stay on disk after the seat completes.
 
 Declared limits: the staging root must be on a filesystem the compute nodes
-see (override with HANIG_REVIEW_SLURM_STAGE_DIR); the CLI binaries and their
+see (override with BROOD_REVIEW_SLURM_STAGE_DIR, or legacy
+HANIG_REVIEW_SLURM_STAGE_DIR); the CLI binaries and their
 subscription credentials must be reachable from compute nodes; an explicitly
 configured stage directory is trusted as given; a process killed by SIGKILL
 cannot run `scancel`, so `--time` bounds any such orphan.
@@ -39,6 +40,9 @@ and SIGTERM paths, which skip `finally`) cancels all of them and removes every
 staging directory, including one whose `sbatch` had not yet returned. A job
 whose submission races that cleanup finds its staging directory gone and is
 cancelled by its own seat once `sbatch` returns.
+
+Every HANIG_REVIEW_SLURM* setting is read through `setting()`: a non-blank
+BROOD_<X> wins, otherwise the legacy HANIG_<X> applies unchanged.
 
 Python 3.8+, standard library only. Must never import review.py.
 """
@@ -89,9 +93,15 @@ def _env(environ):
     return os.environ if environ is None else environ
 
 
+def setting(env, legacy_name, default=None):
+    """BROOD_<X> when set non-blank, else the legacy HANIG_<X> (rename shim)."""
+    primary = env.get("BROOD_" + legacy_name[len("HANIG_"):])
+    return primary if (primary or "").strip() else env.get(legacy_name, default)
+
+
 def slurm_mode(environ=None):
-    """'off', 'force' or 'auto' from HANIG_REVIEW_SLURM (unknown values are auto)."""
-    value = (_env(environ).get(MODE_ENV) or "").strip().lower()
+    """'off', 'force' or 'auto' from BROOD_/HANIG_REVIEW_SLURM (unknown values are auto)."""
+    value = (setting(_env(environ), MODE_ENV) or "").strip().lower()
     return "off" if value in OFF else "force" if value in FORCE else "auto"
 
 
@@ -169,7 +179,7 @@ def tools_problem(environ=None):
 def stage_root(environ=None):
     """Shared-state staging root; never derived from TMPDIR or /tmp."""
     env = _env(environ)
-    explicit = (env.get(STAGE_ENV) or "").strip()
+    explicit = (setting(env, STAGE_ENV) or "").strip()
     if explicit:
         return Path(os.path.abspath(os.path.expanduser(explicit)))
     state = (env.get("XDG_STATE_HOME") or "").strip()
@@ -276,13 +286,13 @@ def batch_script(cmd, stage, runtime, preflight=None):
 
 
 def explicit_partition(environ=None):
-    """Whether the site already chose a partition: HANIG_REVIEW_SLURM_PARTITION
-    or -p/--partition in HANIG_REVIEW_SLURM_EXTRA_ARGS (never overridden)."""
+    """Whether the site already chose a partition: [BROOD|HANIG]_REVIEW_SLURM_PARTITION
+    or -p/--partition in [BROOD|HANIG]_REVIEW_SLURM_EXTRA_ARGS (never overridden)."""
     env = _env(environ)
-    if (env.get("HANIG_REVIEW_SLURM_PARTITION") or "").strip():
+    if (setting(env, "HANIG_REVIEW_SLURM_PARTITION") or "").strip():
         return True
     try:
-        words = shlex.split(env.get("HANIG_REVIEW_SLURM_EXTRA_ARGS") or "")
+        words = shlex.split(setting(env, "HANIG_REVIEW_SLURM_EXTRA_ARGS") or "")
     except ValueError:
         return True  # unparseable: leave the submission exactly as configured
     return any(w in ("-p", "--partition") or w.startswith("--partition=")
@@ -350,18 +360,18 @@ def sbatch_argv(sbatch, seat, stage, environ=None, auto_partition=None):
     env = _env(environ)
     name = re.sub(r"[^A-Za-z0-9._-]", "-", str(seat or "seat"))[:40] or "seat"
     argv = [sbatch, "--parsable", "--export=NONE", f"--job-name=hanig-rev-{name}",
-            f"--cpus-per-task={(env.get('HANIG_REVIEW_SLURM_CPUS') or DEFAULTS['cpus']).strip()}",
-            f"--mem={(env.get('HANIG_REVIEW_SLURM_MEM') or DEFAULTS['mem']).strip()}",
-            f"--time={(env.get('HANIG_REVIEW_SLURM_TIME') or DEFAULTS['time']).strip()}",
+            f"--cpus-per-task={(setting(env, 'HANIG_REVIEW_SLURM_CPUS') or DEFAULTS['cpus']).strip()}",
+            f"--mem={(setting(env, 'HANIG_REVIEW_SLURM_MEM') or DEFAULTS['mem']).strip()}",
+            f"--time={(setting(env, 'HANIG_REVIEW_SLURM_TIME') or DEFAULTS['time']).strip()}",
             f"--chdir={stage}", f"--output={stage}/slurm.out",
             f"--error={stage}/slurm.out"]
     for var, flag in OPTION_ENV:
-        value = (env.get(var) or "").strip()
+        value = (setting(env, var) or "").strip()
         if value:
             argv.append(f"{flag}={value}")
     if auto_partition and not explicit_partition(env):
         argv.append(f"--partition={auto_partition}")
-    argv += shlex.split(env.get("HANIG_REVIEW_SLURM_EXTRA_ARGS") or "")
+    argv += shlex.split(setting(env, "HANIG_REVIEW_SLURM_EXTRA_ARGS") or "")
     argv.append(str(stage / "job.sh"))
     return argv
 

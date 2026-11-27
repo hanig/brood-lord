@@ -996,9 +996,12 @@ def _observe_execution(argv, timeout, cwd, launch_config=None, launch_prefix=(),
                 "import os, sys\n"
                 "fd = int(sys.argv[1]); os.set_inheritable(fd, False)\n"
                 "os.environ['PATH'] = sys.argv[2] + os.pathsep + os.environ.get('PATH', os.defpath)\n"
-                "os.environ['HANIG_VERIFICATION_GIT'] = sys.argv[3]\n"
-                "if sys.argv[4]: os.environ['HANIG_VERIFICATION_PYTHON'] = sys.argv[4]\n"
-                "else: os.environ.pop('HANIG_VERIFICATION_PYTHON', None)\n"
+                # Publish BROOD_* and legacy HANIG_* names with one value,
+                # so an ambient BROOD_* can never shadow the coordinator's.
+                "for p in ('BROOD', 'HANIG'):\n"
+                "    os.environ[p + '_VERIFICATION_GIT'] = sys.argv[3]\n"
+                "    if sys.argv[4]: os.environ[p + '_VERIFICATION_PYTHON'] = sys.argv[4]\n"
+                "    else: os.environ.pop(p + '_VERIFICATION_PYTHON', None)\n"
                 "try: os.execv(sys.argv[5], sys.argv[6:])\n"
                 "except OSError as error:\n"
                 "    os.write(fd, (str(error) or type(error).__name__).encode('utf-8', 'replace')[:1000])\n"

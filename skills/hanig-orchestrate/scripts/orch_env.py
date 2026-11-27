@@ -97,6 +97,11 @@ def _dir_case_insensitive(d):
     except _ERR: pass
     return False
 
+def _orch_python_var(em):
+    """(name, value): BROOD_ORCH_PYTHON when set non-blank, else legacy HANIG_ORCH_PYTHON."""
+    b = em.get("BROOD_ORCH_PYTHON")
+    return ("BROOD_ORCH_PYTHON", b) if (b or "").strip() else ("HANIG_ORCH_PYTHON", em.get("HANIG_ORCH_PYTHON"))
+
 def _is_exec(p):
     try: return bool(p) and P.isfile(p) and os.access(p, os.X_OK)
     except _ERR: return False
@@ -341,12 +346,13 @@ def declared_orchestration_env(plan_path=None, plan=None, env=None):
                 o.update(declared=True, source="plan", env_id=sid, env_path=norm, raw_plan_env_path=raw, plan_env_path=norm, expected_python=P.join(norm, "bin", "python"))
         elif "environments" in po: o["plan_error"] = "plan 'environments' is not an object"
     elif po is not None: o["plan_error"] = "plan is not a JSON object"
-    ep = (em.get("HANIG_ORCH_PYTHON") or "").strip()
+    ev_name, ev_raw = _orch_python_var(em)
+    ep = (ev_raw or "").strip()
     if ep:
         cpy = _canon_interp(ep); o.update(declared=True, env_var_python=cpy)
-        if o["source"] == "plan": o["source"] = "plan+HANIG_ORCH_PYTHON"
+        if o["source"] == "plan": o["source"] = "plan+" + ev_name
         else:
-            o["source"], o["expected_python"] = "HANIG_ORCH_PYTHON", cpy
+            o["source"], o["expected_python"] = ev_name, cpy
             if cpy and cpy.startswith("/") and P.basename(P.dirname(cpy)).lower() in ("bin", "scripts"): o["env_path"] = P.dirname(P.dirname(cpy))
     return o
 
@@ -409,11 +415,12 @@ def _conflicts(d, em, env_was_none=False):
         for v in (d["raw_plan_env_path"], d["plan_env_path"] or d["env_path"]):
             r = shared_env_reason(v, True, hm) or _shared_conda_dir(v)
             if r: w.append(f"orchestration env not dedicated: {r}"); break
-        raw_ev, ev = _raw_interp(em.get("HANIG_ORCH_PYTHON")), d["env_var_python"]
+        ev_name, ev_raw = _orch_python_var(em)
+        raw_ev, ev = _raw_interp(ev_raw), d["env_var_python"]
         er = (shared_env_reason(raw_ev, False, hm) if raw_ev else None) or (shared_env_reason(ev, False, hm) if ev else None) or _interp_conda_reason(raw_ev) or _interp_conda_reason(ev)
-        if er: w.append(f"HANIG_ORCH_PYTHON not dedicated: {er}")
-        if d["plan_env_path"] and ev and not _belongs(d["plan_env_path"], ev): w.append(f"HANIG_ORCH_PYTHON ({ev}) outside {d['plan_env_path']}")
-        if ev and not _is_exec(ev): w.append(f"HANIG_ORCH_PYTHON ({ev}) missing/non-executable")
+        if er: w.append(f"{ev_name} not dedicated: {er}")
+        if d["plan_env_path"] and ev and not _belongs(d["plan_env_path"], ev): w.append(f"{ev_name} ({ev}) outside {d['plan_env_path']}")
+        if ev and not _is_exec(ev): w.append(f"{ev_name} ({ev}) missing/non-executable")
     return w
 
 def _conda_warn(d, em, rpy, spy=None, req_s=False, env_was_none=False):

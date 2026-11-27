@@ -198,7 +198,7 @@ class SlurmHost(unittest.TestCase):
         self.mode("ok")
         (self.d / "claude-auth").write_text(CLAUDE_AI)
         env = {k: v for k, v in os.environ.items()
-               if not k.startswith(("LOR_", "HANIG_REVIEW_", "SLURM_")) and not RS._strip_default_key(k)}
+               if not k.startswith(("LOR_", "BROOD_REVIEW_", "HANIG_REVIEW_", "SLURM_")) and not RS._strip_default_key(k)}
         env.update(SECRETS, PATH=f"{self.bin}{os.pathsep}/usr/bin{os.pathsep}/bin",
                    HOME=str(self.home), XDG_STATE_HOME=str(self.state), TMPDIR=str(self.node_tmp),
                    USER="tester", LOR_SESSION_ID="parent", FAKE_LOR=str(self.d),

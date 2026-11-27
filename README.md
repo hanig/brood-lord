@@ -1344,6 +1344,20 @@ example, with a loaded skill at `/opt/skills/hanig-project` and dependencies in
 `/opt/deps`, use `/opt/deps` or `../../deps`. Plan, state, input and output paths
 remain relative to the project directory.
 
+### The brood rename (BROOD_* settings, retired hanig-* installs)
+
+Every `HANIG_<X>` setting the authored scripts read also has a `BROOD_<X>`
+spelling. A non-blank `BROOD_<X>` wins; otherwise `HANIG_<X>` applies exactly
+as before, so `BROOD_REVIEW_NO_LOR=0` overrides `HANIG_REVIEW_NO_LOR=1`.
+`BROOD_SKILL_DEP_ROOTS` parents are searched before `HANIG_SKILL_DEP_ROOTS`
+parents. Runtime state paths (`~/.local/state/hanig-*`, `~/.hanig-committee`,
+`.hanig/`) are unchanged. When the installer publishes an authored
+`brood-<suffix>` skill, it then uninstalls a sibling `hanig-<suffix>` only if
+that sibling carries this repository's exact recorded ownership and is no
+longer shipped. An unowned sibling stays untouched with a warning, and a failed
+`brood-<suffix>` install never retires anything. `--dry-run` reports the plan as
+`would-retire-legacy`.
+
 ### Dated agent compatibility
 
 The **ARC-281 live run** (2026-09-25) checked native skill discovery,

@@ -17,7 +17,7 @@ import time
 
 sys.dont_write_bytecode = True
 import orch_env
-from skill_paths import sibling_skill_root
+from skill_paths import env_setting, sibling_skill_root
 
 TERMINAL = {"DONE", "ABANDONED", "SUPERSEDED"}
 ACTIVE = {"SUBMITTED", "RUNNING"}
@@ -318,7 +318,7 @@ def tracker(args):
     return b"Tracker: UNAVAILABLE (no binding configured)\n", False
   observed = local_time()
   try:
-    loaded = os.environ.get("HANIG_ORCHESTRATE_DIR", str(Path(__file__).absolute().parent.parent))
+    loaded = env_setting("HANIG_ORCHESTRATE_DIR", str(Path(__file__).absolute().parent.parent))
     sibling = sibling_skill_root(loaded, "hanig-orchestrate", "hanig-project")
     for path in (args.binding, args.audit, sibling / "scripts" / "linear_sync.py"):
       if not path.is_file():
