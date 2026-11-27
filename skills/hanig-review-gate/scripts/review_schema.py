@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 
-def parse_verdict(text, _depth=0):
+def parse_verdict(text):
     """Models sometimes wrap JSON in fences or prose. Recover the object."""
     if not text or not text.strip():
         return None, "empty response"
@@ -39,62 +39,15 @@ def parse_verdict(text, _depth=0):
             if depth == 0 and start is not None:
                 found = s[start:i + 1]
                 break
-    if found:
-        try:
-            obj = json.loads(found)
-        except (ValueError, RecursionError) as exc:
-            error = f"malformed JSON: {exc}"
-        else:
-            if "verdict" in obj:
-                return obj, None
-            if _depth == 0:
-                analysis = obj.get("analysis")
-                if isinstance(analysis, str):
-                    analysis, _ = parse_verdict(analysis, _depth=1)
-                if isinstance(analysis, dict) and "verdict" in analysis:
-                    return analysis, None
-            # A valid object is the reply, not a search space for example verdicts.
-            return obj, None
-    elif start is not None:
-        error = ("response truncated mid-JSON (raise max_output_tokens "
-                 f"for this reviewer); {len(s)} chars received")
-    else:
+    if not found:
+        if start is not None:
+            return None, ("response truncated mid-JSON (raise max_output_tokens "
+                          f"for this reviewer); {len(s)} chars received")
         return None, f"no JSON object found in: {text[:150]}"
-
-    decoder = json.JSONDecoder()
-    wrapper = re.match(r'\A\{\s*"analysis"\s*:\s*(?=\{)', s)
-    if wrapper:
-        # Recover only an analysis object missing the outer closing brace.
-        try:
-            candidate, end = decoder.raw_decode(s, wrapper.end())
-        except (ValueError, RecursionError):
-            pass
-        else:
-            if isinstance(candidate, dict) and "verdict" in candidate and not s[end:].strip():
-                return candidate, None
-
-    # Otherwise recover only a standalone trailing verdict. Compute the suffix
-    # boundary once, skip decoded objects, and bound failed decodes that reread text.
-    reply_end = len(s.rstrip())
-    if s.endswith("```", 0, reply_end):
-        reply_end = len(s[:reply_end - 3].rstrip())
-    end = failures = 0
-    for line in re.finditer(r"(?m)^[ \t]*\{", s):
-        pos = line.end() - 1
-        if pos < end:
-            continue
-        try:
-            candidate, end = decoder.raw_decode(s, pos)
-        except (ValueError, RecursionError):
-            failures += 1
-            if failures >= 64:
-                break
-            continue
-        if end == reply_end and isinstance(candidate, dict) and "verdict" in candidate:
-            if s[:pos].rstrip().endswith((":", "[", ",")):
-                break  # A JSON value continued on the next line isn't standalone.
-            return candidate, None
-    return None, error
+    try:
+        return json.loads(found), None
+    except json.JSONDecodeError as e:
+        return None, f"malformed JSON: {e}"
 
 
 def norm(v):
