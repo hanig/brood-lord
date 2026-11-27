@@ -450,8 +450,8 @@ def machine():
         "cpus": os.cpu_count(),
     }
     tools = ("sbatch", "squeue", "sacct", "sinfo", "nextflow", "snakemake",
-             "paseo", "claude", "git", "docker", "apptainer", "singularity",
-             "conda", "micromamba", "uv")
+             "lor", "claude", "codex", "pi", "opencode", "git", "docker",
+             "apptainer", "singularity", "conda", "micromamba", "uv")
     # A non-interactive PATH is not the PATH a person gets. `claude` lives in
     # ~/.local/bin on the clusters, which ssh-without-a-login-shell does not
     # include, so `which` alone reported it missing on a host where it is

@@ -253,6 +253,10 @@ def _on_path(name: str, env: Mapping[str, str]) -> Optional[str]:
     return None
 
 
+# Direct coding backends hanig-swarm can dispatch without any daemon.
+CODING_CLIS = ("lor", "claude", "codex", "pi")
+
+
 def _workflow(env: Mapping[str, str], roots: list[dict[str, Any]]) -> dict[str, Any]:
     """Report baseline and optional workflow evidence without probing agents."""
     home = Path(env.get("HOME", str(Path.home())))
@@ -274,6 +278,8 @@ def _workflow(env: Mapping[str, str], roots: list[dict[str, Any]]) -> dict[str, 
         bus = _state("absent", "models.json is absent", path=str(registry))
     paseo, bus_helper, git = (_on_path("paseo", env), _on_path("bus", env),
                                _on_path("git", env))
+    coding = {name: path for name in CODING_CLIS
+              for path in (_on_path(name, env),) if path}
     baseline = {
         "python": _state("ready", path=sys.executable),
         "git": _state("ready", path=git) if git else _state("absent", "git is not on PATH"),
@@ -282,6 +288,10 @@ def _workflow(env: Mapping[str, str], roots: list[dict[str, Any]]) -> dict[str, 
         # An executable on PATH is not proof that its daemon/service is up.
         "paseo_executable": _state("found", path=paseo) if paseo else _state("absent", "paseo is not on PATH"),
         "paseo_service": _state("unverified", "no service health probe was run"),
+        # hanig-swarm starts code units through one of these CLIs directly;
+        # being on PATH is not proof that its login or Lor session works.
+        "coding_cli": (_state("found", backends=coding) if coding else
+                       _state("absent", "none of " + ", ".join(CODING_CLIS) + " is on PATH")),
         # The registry is input data, not a successful `bus models` run.
         "agent_bus_registry": bus,
         "agent_bus_helper": (_state("found", path=bus_helper) if bus_helper else
@@ -295,8 +305,10 @@ def _workflow(env: Mapping[str, str], roots: list[dict[str, Any]]) -> dict[str, 
     for payload in payloads:
         name = payload["name"]
         requirements = ["python", "git"]
-        if name.startswith(("paseo", "hanig-swarm", "pi-fleet")):
+        if name.startswith(("paseo", "pi-fleet")):
             requirements.extend(("paseo_executable", "paseo_service"))
+        if name.startswith("hanig-swarm"):
+            requirements.append("coding_cli")
         if name in ("paseo", "paseo-loop", "paseo-committee", "agent-bus", "pi-fleet"):
             requirements.extend(("agent_bus_registry", "agent_bus_helper"))
         if name.startswith(("hanig-project", "hanig-swarm", "start-a-sprint")):

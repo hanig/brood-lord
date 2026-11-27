@@ -195,6 +195,7 @@ class TestTheRefusalWhenPaseoIsAbsent(unittest.TestCase):
         msg = str(c.exception)
         self.assertIn(os.uname().nodename, msg)
         self.assertIn("kind=pipeline", msg)
+        self.assertIn("code_agent", msg, "name the daemonless backends")
 
     def test_a_slurm_unit_is_not_refused_for_a_missing_paseo(self):
         with paseo_absent():

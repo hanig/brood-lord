@@ -111,7 +111,10 @@ def _validate_orchestrator(plan, units):
     for u in units:
         if not isinstance(u, dict) or u.get("kind") != "code":
             continue
-        problem = SR.forbid_unit_provider_problem(plan, u)
+        # A declared unit backend is checked before anything resolves it, so
+        # a retired 'paseo' is refused here, not reported as a missing binary.
+        _spec, problem = SR.unit_agent_spec(u)
+        problem = problem or SR.forbid_unit_provider_problem(plan, u)
         if not problem and (not SR._unit_pins_agent(u) or "backend" in u):
             # The plan-level code_agent is what this unit would run.
             agent = SR.resolve_effective_agent(plan, u)
@@ -162,13 +165,13 @@ def _validate_convergence_paseo_promote(units, which=None, plan=None):
         if not resolve_bin("paseo"):
             ids = ", ".join(sorted(u.get("id", "?") for u in paseo_units))
             raise PlanError(
-                f"unit(s) {ids} are kind=code, which runs a coding agent "
-                f"through paseo, and paseo is not on PATH on "
-                f"{os.uname().nodename}. Either run this plan from a machine "
-                f"where you run agents, or declare the work as kind=pipeline "
-                f"or kind=slurm and invoke the tool directly. Installing "
-                f"paseo on a shared login node is usually the wrong answer: "
-                f"it would run the agent processes there.")
+                f"unit(s) {ids} are kind=code and name no coding backend, "
+                f"so they take the legacy Paseo route, and paseo is not on "
+                f"PATH on {os.uname().nodename}. Paseo is retired: declare "
+                f"top-level code_agent (or the unit's own backend) as lor, "
+                f"claude, codex or pi, which need no daemon; or declare the "
+                f"work as kind=pipeline or kind=slurm and invoke the tool "
+                f"directly.")
 
     for u in units:
         if isinstance(u, dict) and u.get("promote_to"):

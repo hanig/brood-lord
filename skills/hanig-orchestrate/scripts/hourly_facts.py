@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import shutil
 import stat
 from pathlib import Path
 import subprocess
@@ -65,6 +66,41 @@ def atomic_write(path, data):
   finally:
     if os.path.exists(name):
       os.unlink(name)
+
+
+def cli_run_status(state_dir, run_id):
+  """(flag, text) for one direct-CLI run from its files alone, or None.
+
+  Reads STATE_DIR/cli-runs/<run_id>/run.json and the current turn's exit
+  receipt; never probes a process or the scheduler, so a missing receipt is
+  reported as no receipt yet, not as a verdict on liveness.
+  """
+  if not isinstance(run_id, str) or not run_id or os.sep in run_id or run_id in (".", ".."):
+    return None
+  rdir = state_dir / "cli-runs" / run_id
+  if not rdir.is_dir():
+    return None
+  try:
+    run = read_json(rdir / "run.json")
+    turn = run["turn"]
+    if not isinstance(turn, int) or isinstance(turn, bool):
+      raise ValueError("turn is not an integer")
+  except (OSError, ValueError, RecursionError, KeyError, TypeError) as exc:
+    return True, "cli run {}: unreadable run.json: {}".format(run_id, one_line(exc))
+  adapter = run.get("adapter") or "cli"
+  try:
+    receipt = read_json(rdir / "turn-{}.exit.json".format(turn))
+  except FileNotFoundError:
+    receipt = None
+  except (OSError, ValueError, RecursionError) as exc:
+    return True, "cli run {} ({}): unreadable turn {} receipt: {}".format(
+      run_id, adapter, turn, one_line(exc))
+  if isinstance(receipt, dict) and isinstance(receipt.get("returncode"), int):
+    return True, "cli run {} ({}): turn {} exited {}".format(
+      run_id, adapter, turn, receipt["returncode"])
+  if run.get("status") == "launch_failed":
+    return True, "cli run {} ({}): launch failed".format(run_id, adapter)
+  return False, "cli run {} ({}): turn {} has no exit receipt yet".format(run_id, adapter, turn)
 
 
 def state_facts(root, live_hours, agents, bound_agents=None):
@@ -195,7 +231,11 @@ def state_facts(root, live_hours, agents, bound_agents=None):
           active = True
           agent_id = units[uid].get("job_id")
           note = "; job id {}".format(agent_id if agent_id is not None else "none")
-          if kinds.get(uid) == "code":
+          cli_run = cli_run_status(sf.parent, agent_id) if kinds.get(uid) == "code" else None
+          if cli_run is not None:
+            flag, cli_note = cli_run
+            note = "; bound " + cli_note
+          elif kinds.get(uid) == "code":
             agent = (agents or {}).get(str(agent_id), {})
             agent_status = agent.get("status", "UNKNOWN" if agents is None and agent_id else "ABSENT")
             flag = (agents is not None or not agent_id) and str(agent_status).lower() not in RUNNING_AGENTS
@@ -345,11 +385,17 @@ def collect(args):
 
   agent_obs = local_time()
   agent_error = None
-  try:
-    agent_rows = list_source([args.paseo, "ls", "--json"], args.repo)
-    agents = {str(a["id"]): a for a in agent_rows}
-  except (OSError, ValueError, RecursionError, KeyError, TypeError, subprocess.SubprocessError) as exc:
-    agent_rows, agents, agent_error = [], None, exc
+  # Paseo is optional: direct-CLI and Lor workers need no daemon, so a host
+  # without the executable is a fact to note, not an operational error.
+  paseo = shutil.which(args.paseo or "paseo")
+  if paseo is None:
+    agent_rows, agents = [], None
+  else:
+    try:
+      agent_rows = list_source([paseo, "ls", "--json"], args.repo)
+      agents = {str(a["id"]): a for a in agent_rows}
+    except (OSError, ValueError, RecursionError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+      agent_rows, agents, agent_error = [], None, exc
   bound_agents = set()
   lines, ready, leftovers, live, active = (state_facts(
     args.state_root, args.live_hours, agents, bound_agents) if args.state_root is not None
@@ -360,6 +406,8 @@ def collect(args):
   foreign_count = len(agent_rows) - len(project_rows)
   state_obs = local_time()
   body = ["## 1. Running work", "", "Agents observed {} (liveness only; no progress inference):".format(agent_obs)]
+  if paseo is None:
+    body.append(render(False, "paseo not on PATH; Paseo agents not listed"))
   if agent_error is not None:
     body.append(render(True, "paseo ls unavailable: {}".format(agent_error)))
   if foreign_count:
@@ -446,7 +494,8 @@ def main(argv=None):
             help="include agents whose resolved cwd is in DIR (repeatable)")
   for name in ("status-file", "attention-status", "terminal-status"):
     parser.add_argument("--" + name, action="append", default=[])
-  parser.add_argument("--paseo", default="paseo")
+  parser.add_argument("--paseo", default=None,
+            help="optional legacy Paseo executable; skipped when not found")
   parser.add_argument("--gh", default="gh")
   parser.add_argument("--branch", default="main")
   parser.add_argument("--live-hours", type=positive, default=72)

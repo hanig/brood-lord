@@ -361,6 +361,18 @@ class TestPrecedenceAndPlan(LorFixture):
         self.assertEqual((agent["unit"]["provider"], agent["unit"]["model"]),
                          ("claude", "claude-sonnet-5-5"))
 
+    def test_plan_refuses_a_declared_paseo_backend(self):
+        paseo = {"backend": "paseo", "provider": "claude/claude-sonnet-5-5", "mode": "bypass"}
+        for plan in ({"units": [self.unit("p", mode="full-access")], "code_agent": paseo},
+                     {"units": [self.unit("p", **paseo)]}):
+            with self.subTest(plan=plan), mock.patch.dict(
+                    os.environ, {"PATH": str(self.tmp / "nothing")}):
+                with self.assertRaises(S.PlanError) as caught:
+                    S.validate_plan(plan)
+                self.assertIn(SR.PASEO_RETIRED, str(caught.exception))
+        agent = SR.resolve_effective_agent({}, self.unit("p", **paseo))
+        self.assertIn(SR.PASEO_RETIRED, SR.effective_agent_problem({}, agent))
+
     def test_plan_digest_includes_code_agent_only_when_present(self):
         plan = {"units": [{"id": "u", "kind": "code", "prompt": "p", "mode": "full-access",
                            "repo": "/r", "target_branch": "main"}],
@@ -601,6 +613,10 @@ class TestMixedBackends(LorFixture):
         self.assertNotIn("backend", a_spec)
         rows = {r["id"]: r for r in S.status_report(plan, state, self.state_dir)["units"]}
         self.assertEqual((rows["a"]["backend"], rows["b"]["backend"]), ("paseo", "lor"))
+        # A recorded Paseo attempt still renders, read-only, with paseo gone.
+        with mock.patch.dict(os.environ, {"PATH": str(self.tmp / "nothing")}):
+            absent = {r["id"]: r for r in S.status_report(plan, state, self.state_dir)["units"]}
+        self.assertEqual((absent["a"]["backend"], absent["a"]["job_id"]), ("paseo", paseo_agent))
         self.assertEqual(rows["b"]["terminal_watch"]["status"], "lor_native_parent_wake")
 
         # Lor turn ends without outputs: INCOMPLETE with the NO_OUTPUTS reason;
@@ -868,12 +884,17 @@ class TestSetAgent(LorFixture):
         self.assertTrue(rows["pinned"]["pinned_in_plan"])
 
         rc, out, err = self.set_agent(backend="paseo", model="claude/claude-sonnet-5-5",
+                                      unit="b", thinking="none", mode="bypass")
+        self.assertNotEqual(rc, 0)
+        self.assertIn(SR.PASEO_RETIRED, err)
+        self.assertEqual(self.overrides()["revision"], 1)
+        rc, out, err = self.set_agent(backend="lor", model=LOR_MODEL,
                                       unit="b", thinking="none")
         self.assertEqual(rc, 0, err)
         rows = {r["unit"]: r for r in json.loads(out)["units"]}
         self.assertEqual((rows["b"]["effective"]["backend"], rows["b"]["effective"]["source"],
                           rows["b"]["effective"]["thinking"]),
-                         ("paseo", "unit-override", None))
+                         ("lor", "unit-override", None))
         rc, out, err = self.set_agent(backend="lor", model="google/gemini-4-neon", unit="pinned")
         self.assertEqual(rc, 0, err)
         rows = {r["unit"]: r for r in json.loads(out)["units"]}
@@ -921,19 +942,37 @@ class TestSetAgent(LorFixture):
         self.assertIn("restrictive mode", err)
         self.assertFalse((Path(self.state_dir) / S.SS.AGENT_OVERRIDES_FILE).exists())
 
-    def test_switching_to_paseo_requires_a_mode(self):
+    def test_switching_to_paseo_is_refused(self):
         self.write_plan({"name": "m", "units": [self.unit("a")],
                          "code_agent": {"provider": LOR_PROVIDER}})
-        rc, _out, err = self.set_agent(backend="paseo", model="claude/claude-sonnet-5-5")
-        self.assertNotEqual(rc, 0)
-        self.assertIn("no 'mode'", err)
-        self.assertFalse((Path(self.state_dir) / S.SS.AGENT_OVERRIDES_FILE).exists())
-        rc, out, err = self.set_agent(backend="paseo", model="claude/claude-sonnet-5-5",
-                                      mode="bypass")
+        for flags in ({"backend": "paseo", "model": "claude/claude-sonnet-5-5"},
+                      {"backend": "paseo", "model": "claude/claude-sonnet-5-5",
+                       "mode": "bypass"},
+                      {"provider": "claude/claude-sonnet-5-5", "mode": "bypass"},
+                      {"backend": "paseo", "provider": "codex/gpt-6.2-sol",
+                       "mode": "bypass", "unit": "a"}):
+            with self.subTest(flags=flags):
+                rc, _out, err = self.set_agent(**flags)
+                self.assertEqual(rc, S.EXIT_USAGE)
+                self.assertIn(SR.PASEO_RETIRED, err)
+                self.assertFalse((Path(self.state_dir) / S.SS.AGENT_OVERRIDES_FILE).exists())
+
+    def test_recorded_paseo_override_still_reads(self):
+        # A historical override written before the retirement is state, not
+        # a new selection: it is never re-normalized and keeps resolving.
+        self.write_plan({"name": "m", "units": [self.unit("a")],
+                         "code_agent": {"provider": LOR_PROVIDER}})
+        record = S.SS.empty_agent_overrides()
+        record.update(revision=1, project={"backend": "paseo",
+                                           "provider": "claude/claude-sonnet-5-5",
+                                           "mode": "bypass"})
+        self.assertIsNone(S.SS.save_agent_overrides(self.state_dir, record))
+        with mock.patch.dict(os.environ, {"PATH": str(self.tmp / "nothing")}):
+            rc, out, err = self.set_agent(show=True)
         self.assertEqual(rc, 0, err)
         row = json.loads(out)["units"][0]
-        self.assertEqual((row["effective"]["backend"], row["effective"]["mode"]),
-                         ("paseo", "bypass"))
+        self.assertEqual((row["effective"]["backend"], row["effective"]["source"]),
+                         ("paseo", "project-override"))
 
     def test_terminal_unit_override_is_refused(self):
         self.plan()

@@ -7,6 +7,7 @@ writes the real ~/.local/state.
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1171,6 +1172,48 @@ class TestResolveEndToEnd(StateHome):
                          ("claude", candidate))
         self.assertEqual(resolved["_resolved_from"], "claude-sonnet-5-5")
         self.assertFalse(diagnostics)
+
+    def test_absent_paseo_skips_its_listings_and_keeps_every_pin(self):
+        argv = ["resolve_models.py", "--project", str(self.project), "--json"]
+        # A PATH holding only git: paseo is absent, project discovery works.
+        empty = Path(self.tmp.name) / "git-only-bin"
+        empty.mkdir()
+        (empty / "git").symlink_to(shutil.which("git"))
+        real_run = subprocess.run
+        absent = []
+
+        def run(argv, *args, **kwargs):
+            if Path(argv[0]).name != "paseo":
+                return real_run(argv, *args, **kwargs)
+            # The real exec must fail to find paseo; nothing may be spawned.
+            try:
+                done = real_run(argv, *args, **kwargs)
+            except FileNotFoundError:
+                absent.append(argv)
+                raise
+            self.fail("paseo was executed: %r" % (done,))
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.dict(os.environ, {"PATH": str(empty), "OPENAI_API_KEY": "k"}), \
+                mock.patch.object(RM, "_get_json", return_value={"data": []}), \
+                mock.patch.object(RM.subprocess, "run", side_effect=run), \
+                mock.patch.object(RM, "probe_agent",
+                                  side_effect=AssertionError("canary ran")), \
+                redirect_stdout(io.StringIO()) as out:
+            with self.assertRaises(SystemExit) as stopped:
+                RM.main()
+        self.assertEqual(stopped.exception.code, 0)
+        self.assertTrue(absent, "the absent-paseo path was never exercised")
+        report = json.loads(out.getvalue())
+        rows = {(l["seat"], l["status"]) for l in report["seats"]}
+        for name in ["agent-default"] + ["agent-default:" + orch for orch in
+                                         shipped()[1].get("default_by_orchestrator", {})]:
+            self.assertIn((name, "LISTING_SKIPPED"), rows)
+        skipped = [l for l in report["seats"] if l["status"] == "LISTING_SKIPPED"]
+        self.assertTrue(all(l["detail"] == RM.PASEO_ABSENT for l in skipped))
+        self.assertNotIn("LISTING_FAILED", {status for _seat, status in rows})
+        snapshot = json.loads(Path(report["snapshot"]).read_text())
+        self.assertIsNone(snapshot["agent_default"])
+        self.assertEqual(snapshot["agent_defaults_by_orchestrator"], {})
 
     def test_a_malformed_listing_keeps_the_pin(self):
         argv = ["resolve_models.py", "--project", str(self.project), "--json"]

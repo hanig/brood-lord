@@ -757,6 +757,39 @@ class HourlyFacts(unittest.TestCase):
     self.responses["agents"] = {"error": "daemon down"}
     self.assertIn(b"ATTENTION paseo ls unavailable", self.collect())
 
+  def test_missing_paseo_is_not_an_error(self):
+    (self.tools / "paseo").unlink()
+    self.plan(units={"u": {"state": "RUNNING", "job_id": "a"}})
+    base = list(self.args)
+    for extra in ([], ["--paseo", "paseo"], ["--paseo", str(self.root / "nowhere")]):
+      with self.subTest(extra=extra):
+        self.args = base + extra
+        report = self.collect()
+        self.assertIn(b"- paseo not on PATH; Paseo agents not listed", report)
+        self.assertNotIn(b"paseo ls unavailable", report)
+        self.assertIn(b"bound agent a: UNKNOWN", report)
+        self.assertNotIn(b"ATTENTION wave", report)
+
+  def test_direct_cli_runs_are_read_from_state(self):
+    (self.tools / "paseo").unlink()
+    sf = self.plan(units={"r": {"state": "RUNNING", "job_id": "run-r"},
+                          "e": {"state": "RUNNING", "job_id": "run-e"},
+                          "b": {"state": "RUNNING", "job_id": "run-b"}})
+    runs = sf.parent / "cli-runs"
+    for rid, turn in (("run-r", 2), ("run-e", 1), ("run-b", "x")):
+      (runs / rid).mkdir(parents=True)
+      (runs / rid / "run.json").write_text(json.dumps({"turn": turn, "adapter": "claude"}))
+    (runs / "run-r" / "turn-1.exit.json").write_text(json.dumps({"turn": 1, "returncode": 0}))
+    (runs / "run-e" / "turn-1.exit.json").write_text(json.dumps({"turn": 1, "returncode": 3}))
+    report = self.collect()
+    self.assertRegex(report, rb"(?m)^- wave .*/r: RUNNING; bound cli run run-r \(claude\): "
+                             rb"turn 2 has no exit receipt yet$")
+    self.assertRegex(report, rb"(?m)^ATTENTION wave .*/e: RUNNING; bound cli run run-e "
+                             rb"\(claude\): turn 1 exited 3$")
+    self.assertRegex(report, rb"(?m)^ATTENTION wave .*/b: RUNNING; bound cli run run-b: "
+                             rb"unreadable run.json")
+    self.assertNotIn(b"bound agent run-", report)
+
   def test_implicit_units(self):
     sf = self.plan(units={"gate": {"state": "ABANDONED"}},
            plan=[{"id": "gate"}, {"id": "work", "needs": ["gate"]}])

@@ -1242,9 +1242,9 @@ class TestSwarmIntegration(SwarmCliFixture):
         self.assertIn("nothing was changed", err)
         self.assertFalse((Path(self.state_dir) / "agent-overrides.json").exists())
         rc, _out, err = self.set_agent(provider="claude/" + CLAUDE_MODEL, mode="full-access")
-        self.assertEqual(rc, 0, err)
-        record, _problem = S.SS.load_agent_overrides(self.state_dir)
-        self.assertEqual(record["project"]["backend"], "paseo")
+        self.assertEqual(rc, S.EXIT_USAGE)
+        self.assertIn("paseo backend is retired; use --backend lor, claude, codex, or pi", err)
+        self.assertFalse((Path(self.state_dir) / "agent-overrides.json").exists())
 
     def test_plan_validation_for_direct_cli_units(self):
         ok = {"name": "p", "units": [self.unit("c", backend="claude", model=CLAUDE_MODEL)]}
