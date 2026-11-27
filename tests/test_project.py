@@ -228,6 +228,34 @@ class TestSurveyIsBounded(unittest.TestCase):
                          "output's parent: %s" % targets)
 
 
+class TestSurveyFindsDirectCodingClis(unittest.TestCase):
+    """Host discovery lists the daemonless coding CLIs and never needs paseo."""
+
+    def test_direct_clis_are_discovered_without_paseo(self):
+        import importlib
+        from unittest import mock
+        survey = importlib.import_module("survey")
+        with tempfile.TemporaryDirectory() as d:
+            tools, home = Path(d) / "bin", Path(d) / "home"
+            tools.mkdir()
+            home.mkdir()
+            for name in ("lor", "claude", "codex", "pi", "opencode"):
+                (tools / name).write_text("#!/bin/sh\nexit 0\n")
+                (tools / name).chmod(0o755)
+            with mock.patch.dict(os.environ, {"PATH": str(tools), "HOME": str(home)}):
+                found = survey.machine()["tools"]
+        for name in ("lor", "claude", "codex", "pi", "opencode"):
+            self.assertEqual(found.get(name), str(tools / name))
+        self.assertNotIn("paseo", found)
+
+    def test_code_ticket_basis_is_backend_neutral(self):
+        plan = {"name": "p", "units": [{"id": "c", "kind": "code", "prompt": "x",
+                                        "outputs": ["out.txt"]}]}
+        body = T.draft(plan)["issues"][0]["body"]
+        self.assertIn("the coding agent is idle", body)
+        self.assertNotIn("paseo", body.lower())
+
+
 class TestTicketsMapBothWays(unittest.TestCase):
     """Plan step 6(c): every issue maps to a unit predicate and every unit maps
     back to one issue, so neither drifts silently from the other."""

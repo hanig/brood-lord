@@ -107,19 +107,21 @@ ARC-691's clock rather than a sentence in a skill. <!-- declaration: interview.r
 ## Coding backend and model
 
 The coding backend is one owner decision taken once, near the start, because
-both backends drive the same coordinator-owned Git worktree and differ in who
-runs the agent and what it costs. `paseo` launches a Claude or Codex agent
-through `paseo run` and suits models served through an enterprise Claude or
-Codex seat. `lor` starts the agent as a native subagent of the coordinator's
-own Lor session with `lor session start` and suits Lor-served models. <!-- declaration: interview.code-agent -->
+every backend drives the same coordinator-owned Git worktree and they differ
+in who runs the agent and what it costs. `lor` starts the agent as a native
+subagent of the coordinator's own Lor session with `lor session start` and
+suits Lor-served models. `claude`, `codex` and `pi` run headless turns of that
+CLI with no daemon and suit models served through a Claude or Codex
+subscription login, or through `pi`. Paseo is retired and is not offered. <!-- declaration: interview.code-agent -->
 
-Inspection settles what is available, so read it before asking. When
-`LOR_SESSION_ID` is set, `lor model list` names the canonical model ids the
-session can serve; offer those for `lor/CANONICAL_MODEL_ID`. A planning
-session without `LOR_SESSION_ID` or `lor` on PATH cannot vouch for a Lor <!-- declaration: interview.code-agent -->
+Inspection settles what is available, so read it before asking. The survey's
+`machine.tools` lists which of `lor`, `claude`, `codex`, `pi` and `opencode`
+the host has. When `LOR_SESSION_ID` is set, `lor model list` names the
+canonical model ids the session can serve; offer those for
+`lor/CANONICAL_MODEL_ID`. A planning session without `LOR_SESSION_ID` or `lor` on PATH cannot vouch for a Lor <!-- declaration: interview.code-agent -->
 backend, because Lor dispatch is refused before any attempt exists when the <!-- declaration: interview.code-agent -->
-coordinator runs outside a Lor session; say so and recommend Paseo unless the
-owner will run the coordinator from a Lor session. <!-- declaration: interview.code-agent -->
+coordinator runs outside a Lor session; say so and recommend a direct CLI the
+survey found unless the owner will run the coordinator from a Lor session. <!-- declaration: interview.code-agent -->
 
 Ask for the model and the effort together, then record one top-level object
 in `plan.json`, for example:
@@ -129,14 +131,14 @@ in `plan.json`, for example:
 ```
 
 ```json
-{"code_agent": {"provider": "claude/MODEL", "thinking": "high", "mode": "MODE"}}
+{"code_agent": {"backend": "claude", "model": "MODEL", "thinking": "high"}}
 ```
 
-A Paseo choice also carries the explicit mode that code.configuration asks
-for, spelled as the provider spells it; a Lor choice may omit mode, and a
-restrictive Lor mode is refused at validation. `code_agent` applies to code <!-- declaration: interview.code-agent -->
+`pi` takes model `PROVIDER/MODEL`; provider `openrouter` reads
+`OPENROUTER_API_KEY` on the coordinator side. These backends take no
+mode, and a restrictive mode is refused at validation. `code_agent` applies to code <!-- declaration: interview.code-agent -->
 units that pin no `provider` or `model`, so a unit that pins its own agent
-keeps it. Leaving `code_agent` out keeps the `hanig-swarm` routing default. <!-- declaration: interview.code-agent -->
+keeps it. Leaving `code_agent` out keeps the `hanig-swarm` routing default, which is the legacy Paseo route. <!-- declaration: interview.code-agent -->
 
 The answer is a starting point, not a commitment. `code_agent` is part of
 `plan_digest`, so changing the backend later goes through `swarm.py set-agent`,

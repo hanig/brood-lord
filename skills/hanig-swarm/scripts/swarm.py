@@ -1834,12 +1834,10 @@ def _set_agent_target(args):
     provider, backend, model = args.provider, args.backend, args.model
     if provider is None and backend is None and model is None:
         return None, ("set-agent needs --provider PROVIDER, or --backend "
-                      "{lor,paseo,claude,codex,pi} with --model MODEL (or "
+                      "{lor,claude,codex,pi} with --model MODEL (or "
                       "--clear / --show)")
     if model is not None and backend is None and provider is None:
         return None, "--model needs --backend (or use --provider)"
-    if backend == LIO.PASEO_BACKEND and provider is None:
-        provider, model = model, None
     raw = {}
     if backend is not None:
         raw["backend"] = backend
@@ -1851,7 +1849,12 @@ def _set_agent_target(args):
         raw["thinking"] = args.thinking
     if args.mode is not None:
         raw["mode"] = args.mode
-    return SR.normalize_agent_spec(raw, "set-agent")
+    spec, problem = SR.normalize_agent_spec(raw, "set-agent")
+    if spec is not None and spec["backend"] == LIO.PASEO_BACKEND:
+        # A bare route/model provider (no --backend) is the legacy Paseo
+        # spelling; a new switch may not select it either.
+        return None, f"set-agent --provider {provider}: {SR.PASEO_RETIRED}"
+    return spec, problem
 
 
 def _print_set_agent(result, as_json):
@@ -2402,9 +2405,10 @@ SCHEMA_FIELDS = [
      "declares orchestrator, else agents.json default.provider"),
     ("model", "code", "optional", "overrides the provider's default"),
     ("backend", "code", "optional",
-     "paseo, lor, claude, codex or pi. A direct CLI (claude/codex/pi) is "
-     "selected only here, in code_agent or by set-agent --backend: provider "
-     "claude/<m> alone stays Paseo. pi takes model <provider>/<model>; "
+     "lor, claude, codex or pi; paseo is retired and refused. A direct CLI "
+     "(claude/codex/pi) is selected only here, in code_agent or by set-agent "
+     "--backend: provider claude/<m> alone is the legacy Paseo route. pi "
+     "takes model <provider>/<model>; "
      "provider openrouter needs OPENROUTER_API_KEY coordinator-side. 'mode' "
      "is optional and a restrictive one is refused"),
     ("author_history", "code", "optional",
@@ -3579,18 +3583,18 @@ def main():
     ag.add_argument("plan")
     ag.add_argument("--state-dir", default=None)
     ag.add_argument("--provider", default=None,
-                    help="PROVIDER/MODEL, e.g. lor/<canonical_model_id> or a "
-                         "Paseo provider/model; a direct CLI needs --backend")
+                    help="lor/<canonical_model_id>; a direct CLI (claude, "
+                         "codex, pi) needs --backend")
     ag.add_argument("--backend", choices=LIO.BACKENDS, default=None)
     ag.add_argument("--model", default=None,
                     help="with --backend: the Lor canonical model id, the "
-                         "Paseo PROVIDER/MODEL, the claude/codex model, or "
-                         "pi's <provider>/<model>")
+                         "claude/codex model, or pi's <provider>/<model>; "
+                         "--backend paseo is retired and refused")
     ag.add_argument("--thinking", default=None,
                     help="effort id; 'none' sends no effort flag")
     ag.add_argument("--mode", default=None,
-                    help="Paseo permission mode (required when switching "
-                         "undispatched units without one to Paseo)")
+                    help="permission mode; lor and direct CLIs refuse a "
+                         "restrictive one")
     ag.add_argument("--unit", default=None,
                     help="override one code unit instead of the project")
     ag.add_argument("--clear", action="store_true",

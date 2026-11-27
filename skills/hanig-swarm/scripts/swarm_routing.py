@@ -413,14 +413,21 @@ AGENT_SPEC_KEYS = ("backend", "provider", "model", "thinking", "mode")
 LOR_REFUSED_MODES = frozenset(("plan", "read-only", "readonly", "read_only",
                                "readOnly"))
 NO_THINKING = ("none", "null", "")
+# Paseo is retired as a target for NEW selections: a plan's code_agent, a
+# unit's declared backend and every set-agent switch must name lor, claude,
+# codex or pi. Recorded state (attempt launch intents, stored overrides) is
+# never re-normalized, so it still reads as Paseo, and a unit or plan that
+# names no agent keeps the legacy default route.
+PASEO_RETIRED = "paseo backend is retired; use --backend lor, claude, codex, or pi"
 
 
 def normalize_agent_spec(spec, where="code_agent"):
     """Return (normalized spec, problem). Never guesses a missing model.
 
     Accepts {"provider": "lor/<id>"|"route/model", ...} or
-    {"backend": "lor"|"paseo"|"claude"|"codex"|"pi", "provider"?: ...,
-    "model"?: ...}. The result
+    {"backend": "lor"|"claude"|"codex"|"pi", "provider"?: ...,
+    "model"?: ...}; backend "paseo" is refused (PASEO_RETIRED), while a bare
+    route/model provider still normalizes to the legacy Paseo route. The result
     always names one backend and one complete provider string; ``thinking``
     and ``mode`` are carried only when declared (``thinking: null`` is an
     explicit request to send no effort flag).
@@ -437,6 +444,8 @@ def normalize_agent_spec(spec, where="code_agent"):
     if backend is not None and backend not in LIO.BACKENDS:
         return None, (f"{where}.backend {backend!r} must be one of "
                       f"{', '.join(LIO.BACKENDS)}")
+    if backend == LIO.PASEO_BACKEND:
+        return None, f"{where}: {PASEO_RETIRED}"
     for key, value in (("provider", provider), ("model", model)):
         if value is not None and not _routing_token(value):
             return None, (f"{where}.{key} {value!r} must be a non-empty "
@@ -457,9 +466,6 @@ def normalize_agent_spec(spec, where="code_agent"):
     if backend == LIO.LOR_BACKEND and provider is None:
         provider = LIO.LOR_BACKEND
     if provider is not None and LIO.is_lor_provider(provider):
-        if backend == LIO.PASEO_BACKEND:
-            return None, (f"{where} declares backend 'paseo' with Lor provider "
-                          f"{provider!r}")
         try:
             canonical = LIO.parse_lor_model(provider, model)
         except LIO.LorError as exc:
@@ -508,11 +514,11 @@ def lor_mode_refusal(where, mode, backend=LIO.LOR_BACKEND):
                 f"coding agent, which runs with approvals bypassed in its "
                 f"coordinator worktree, so a restrictive mode cannot be "
                 f"honored; refusing rather than running it with full tools. "
-                f"Remove 'mode' or choose a Paseo agent.")
+                f"Remove 'mode'.")
     return (f"{where} declares mode {mode!r} for a Lor coding agent. Lor "
             f"subagents have no permission-mode flag, so a restrictive mode "
             f"cannot be honored; refusing rather than running it with full "
-            f"tools. Remove 'mode' or choose a Paseo agent.")
+            f"tools. Remove 'mode'.")
 
 
 def _unit_pins_agent(u):

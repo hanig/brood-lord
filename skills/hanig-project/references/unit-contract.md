@@ -23,15 +23,15 @@ job with no attempt binding while the outer job can exit successfully before
 the real work runs. The command must never invoke `sbatch` or `srun`; scheduler <!-- declaration: slurm.command-boundary -->
 flags belong in the unit's `sbatch` list. <!-- declaration: slurm.command-boundary -->
 
-For code, `prompt` becomes the last positional argument to the agent runner.
-A coordinator dispatches that runner through `paseo run`. <!-- declaration: code.prompt-boundary -->
+For code, `prompt` is the task text the coordinator hands the agent runner.
+A coordinator dispatches that runner through the unit's backend: `lor session start`, or a headless `claude`, `codex` or `pi` turn (`paseo run` only on the legacy route). <!-- declaration: code.prompt-boundary -->
 A provider flag placed there is a sentence for the agent to read, not runner
 configuration. Provider, mode, model, thinking, and environment must remain <!-- declaration: code.prompt-boundary -->
 unit fields. <!-- declaration: code.prompt-boundary -->
 
 The default agent comes from `hanig-swarm/agents.json` (`default_by_orchestrator[orchestrator]` when top-level `orchestrator` is declared, otherwise failing closed to `default`, with any valid project snapshot applied). <!-- declaration: code.default-agent -->
 That file records the owner's choice, the live-agent check behind it, and any `forbid_when_orchestrator` constraints. <!-- declaration: code.default-agent -->
-An explicit mode <!-- declaration: code.configuration -->
+A `lor`, `claude`, `codex` or `pi` backend needs no mode and refuses a restrictive one; a code unit that names no backend takes the legacy Paseo route, where an explicit mode <!-- declaration: code.configuration -->
 is still required because provider vocabularies differ and default permissions <!-- declaration: code.configuration -->
 can stop unattended work at its first write. The owner chooses unattended <!-- declaration: code.configuration -->
 autonomy or a deliberate permission stall; the planner confirms the selected <!-- declaration: code.configuration -->

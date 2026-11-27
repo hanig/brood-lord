@@ -167,6 +167,37 @@ class TestAgentDiagnostics(unittest.TestCase):
         self.assertEqual(workflow["optional_dependencies"]["paseo_executable"]["state"], "absent")
         self.assertIn("agent_bus_registry", workflow["skills"]["paseo"]["requirements"])
 
+    def test_hanig_swarm_needs_a_direct_coding_cli_not_paseo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "skills"
+            for name in ("hanig-swarm", "paseo"):
+                (root / name).mkdir(parents=True)
+                (root / name / "SKILL.md").write_text("ok\n")
+            tools = Path(tmp) / "bin"
+            tools.mkdir()
+            for name in ("git", "claude"):
+                (tools / name).write_text("#!/bin/sh\nexit 0\n")
+                (tools / name).chmod(0o755)
+            env = dict(self._env(Path(tmp)), PATH=str(tools))
+            install = [D._installation(
+                {"id": "fixture", "kind": "native", "preferred": True,
+                 "logical_path": str(root), "physical_path": str(root), "override": None})]
+            workflow = D._workflow(env, install)
+            (tools / "claude").unlink()
+            bare = D._workflow(env, install)
+        optional = workflow["optional_dependencies"]
+        self.assertEqual(optional["paseo_executable"]["state"], "absent")
+        self.assertEqual(optional["coding_cli"]["backends"], {"claude": str(tools / "claude")})
+        swarm = workflow["skills"]["hanig-swarm"]
+        self.assertNotIn("paseo_executable", swarm["requirements"])
+        self.assertNotIn("paseo_service", swarm["requirements"])
+        self.assertIn("coding_cli", swarm["requirements"])
+        self.assertNotEqual(swarm["state"], "unready")
+        # The vendored paseo payload keeps its own Paseo checks.
+        self.assertEqual(workflow["skills"]["paseo"]["state"], "unready")
+        self.assertEqual(bare["skills"]["hanig-swarm"]["state"], "unready")
+        self.assertIn("coding_cli", bare["skills"]["hanig-swarm"]["next_step"])
+
     def test_foreign_marker_is_not_promoted_to_owned(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "foreign"

@@ -155,9 +155,9 @@ def lor_availability(environ=None):
                 "a subagent of the coordinator's Lor session, so it can only "
                 "be dispatched by swarm.py running inside an active Lor "
                 "session. Run the coordinator from a Lor session shell, or "
-                "switch this work to Paseo with `swarm.py set-agent ... "
-                "--backend paseo --model PROVIDER/MODEL`. No Paseo fallback "
-                "was attempted.")
+                "switch this work to a direct CLI with `swarm.py set-agent "
+                "... --backend claude|codex|pi --model MODEL`. No Paseo "
+                "fallback was attempted.")
     if not lor_binary(source):
         return ("the `lor` CLI is not on PATH, so a lor/<model> code agent "
                 "cannot be started or observed from this host. No Paseo "

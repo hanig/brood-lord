@@ -219,7 +219,7 @@
     },
     {
       "id": "interview.code-agent",
-      "normative_text": "Ask once at project start which default coding backend, model, and effort (`thinking`) code units use: `paseo` (`claude/MODEL` or `codex/MODEL`, recommended for models served through an enterprise Claude or Codex seat) or `lor` (`lor/CANONICAL_MODEL_ID`, recommended for Lor-served models). When `LOR_SESSION_ID` is set, run `lor model list` and offer its canonical model ids. A Lor backend dispatches only from a coordinator running inside a Lor session with `lor` on PATH, so when the session has neither, say so and recommend Paseo unless the owner will run the coordinator from a Lor session. Record the answer as top-level `code_agent` in `plan.json`, for example `{\"provider\": \"lor/CANONICAL_MODEL_ID\", \"thinking\": \"high\"}` or `{\"provider\": \"claude/MODEL\", \"thinking\": \"high\", \"mode\": \"MODE\"}`; a Paseo `code_agent` carries the explicit mode code.configuration requires, and a Lor one may omit mode. `code_agent` enters `plan_digest` and applies only to code units that pin no `provider` or `model`; omitting it keeps the code.default-agent default. The owner can change the backend at any time mid-project with `swarm.py set-agent`, which edits neither `plan.json` nor `plan_digest`.",
+      "normative_text": "Ask once at project start which default coding backend, model, and effort (`thinking`) code units use: `lor` (`lor/CANONICAL_MODEL_ID`, recommended for Lor-served models) or a direct CLI, `claude`, `codex` or `pi` (`backend` plus `model`, recommended for models served through a Claude or Codex subscription login, or through `pi`). None of them needs a daemon. When `LOR_SESSION_ID` is set, run `lor model list` and offer its canonical model ids. A Lor backend dispatches only from a coordinator running inside a Lor session with `lor` on PATH, so when the session has neither, say so and recommend a direct CLI that the survey found on PATH unless the owner will run the coordinator from a Lor session. Paseo is retired and is not offered. Record the answer as top-level `code_agent` in `plan.json`, for example `{\"provider\": \"lor/CANONICAL_MODEL_ID\", \"thinking\": \"high\"}` or `{\"backend\": \"claude\", \"model\": \"MODEL\", \"thinking\": \"high\"}`; these backends need no mode and refuse a restrictive one. `code_agent` enters `plan_digest` and applies only to code units that pin no `provider` or `model`; omitting it keeps the code.default-agent default, which is the legacy Paseo route, so record one whenever the plan has code units. The owner can change the backend at any time mid-project with `swarm.py set-agent`, which edits neither `plan.json` nor `plan_digest`.",
       "references": [
         "references/survey-interview.md"
       ]
@@ -241,7 +241,7 @@
     },
     {
       "id": "code.configuration",
-      "normative_text": "Ask for and declare `provider` and an explicit `mode` for every code unit, on the unit or through the plan's top-level `code_agent` (interview.code-agent); a `lor/CANONICAL_MODEL_ID` provider may omit mode and refuses a restrictive one. The owner must choose unattended autonomy or deliberate default-permission stalling; confirm the selected provider's exact mode spelling from `paseo run --help` or the provider before writing the plan, record the choice, and pass it verbatim. Mode has no portable or exhaustive positive set; the coordinator does not validate the mode against an exhaustive provider set, so clean validation is no evidence the value is supported and an unsupported value may fail only at provider dispatch. Permission bypass must never be chosen silently, and `bypass` is Claude's spelling and Codex rejects it.",
+      "normative_text": "Ask for and declare the coding agent for every code unit, on the unit or through the plan's top-level `code_agent` (interview.code-agent): `lor/CANONICAL_MODEL_ID`, or `backend` `claude`, `codex` or `pi` with `model`. These backends may omit `mode` and refuse a restrictive one, because each runs with full tools in its coordinator-owned worktree. A code unit that names no backend takes the legacy Paseo route and still needs an explicit `mode`: the owner must choose unattended autonomy or deliberate default-permission stalling; confirm the selected provider's exact mode spelling before writing the plan, record the choice, and pass it verbatim. Mode has no portable or exhaustive positive set; the coordinator does not validate the mode against an exhaustive provider set, so clean validation is no evidence the value is supported and an unsupported value may fail only at provider dispatch. Permission bypass must never be chosen silently, and `bypass` is Claude's spelling and Codex rejects it.",
       "references": [
         "references/unit-contract.md"
       ]
@@ -321,7 +321,7 @@
     },
     {
       "id": "code.prompt-boundary",
-      "normative_text": "The coordinator submits a code unit through `paseo run`, or `lor session start` for a `lor/CANONICAL_MODEL_ID` provider; the unit uses `prompt`, never `command`, and provider, mode, model, thinking, and environment are fields rather than flags embedded in the prompt.",
+      "normative_text": "The coordinator submits a code unit through its backend's own CLI: `lor session start` for a `lor/CANONICAL_MODEL_ID` provider, or a headless `claude`, `codex` or `pi` turn for a direct CLI backend (`paseo run` only on the legacy route); the unit uses `prompt`, never `command`, and provider, mode, model, thinking, and environment are fields rather than flags embedded in the prompt.",
       "references": [
         "references/unit-contract.md"
       ]
@@ -436,7 +436,7 @@
     },
     {
       "id": "dispatch.sequence",
-      "normative_text": "Run `swarm.py run plan.json --dry-run` before live dispatch, then schedule `advance` with cron or a Paseo schedule; overlapping advances rely on the coordinator's OS lock."
+      "normative_text": "Run `swarm.py run plan.json --dry-run` before live dispatch, then schedule `advance` with cron or another deterministic host scheduler; overlapping advances rely on the coordinator's OS lock."
     },
     {
       "id": "drain.authority",

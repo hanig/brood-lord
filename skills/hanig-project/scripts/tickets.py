@@ -183,7 +183,7 @@ def issue_for_unit(u, plan_name):
                  "output is present. The status is written by the launcher "
                  "wrapper, NOT attested by a scheduler")
     else:
-        basis = ("the agent is idle in paseo AND every declared output is "
+        basis = ("the coding agent is idle AND every declared output is "
                  "present. `idle` is a lifecycle state, not a claim of "
                  "success, and the agent's own report is not an input")
 

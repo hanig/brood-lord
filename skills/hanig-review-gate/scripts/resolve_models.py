@@ -25,6 +25,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -70,6 +71,15 @@ class PaseoError(RuntimeError):
         self.payload = payload
 
 
+class PaseoAbsent(PaseoError):
+    """paseo is not installed here: its listings are skipped, never failed."""
+
+
+# Paseo is optional: the coding backends run without it, so a host without
+# the executable keeps every Paseo-listed seat on its shipped pin.
+PASEO_ABSENT = "paseo is not on PATH; listing skipped, pin kept"
+
+
 def _json_after_banner(text):
     start = min([i for i in (text.find("{"), text.find("[")) if i >= 0],
                 default=-1)
@@ -87,6 +97,8 @@ def _paseo(argv, timeout, cwd=None):
     A non-zero exit still carries any JSON it printed, so a run that created
     an agent and then failed can have that agent archived.
     """
+    if shutil.which("paseo") is None:
+        raise PaseoAbsent(PASEO_ABSENT)
     try:
         done = subprocess.run(["paseo"] + argv, capture_output=True, text=True,
                               timeout=timeout, cwd=cwd)
@@ -476,6 +488,8 @@ def resolve(args):
         if listing not in listings:
             try:
                 listings[listing] = (list_ids(listing, args.timeout), None)
+            except PaseoAbsent:
+                listings[listing] = (None, PASEO_ABSENT)
             except Exception as exc:  # any listing failure keeps the pins
                 listings[listing] = (None, R.redact(
                     "%s: %s" % (type(exc).__name__, exc))[:200])
@@ -532,7 +546,7 @@ def _resolve_reviewer(seat, listed, report, snapshot, args):
     family = seat["family"]
     ids, error = listed(family["listing"])
     if error:
-        report("LISTING_FAILED", seat["name"], seat["model"], error)
+        report(_listing_status(error), seat["name"], seat["model"], error)
         return
     chosen, newer = MF.select(ids, family, seat["model"])
     if newer:
@@ -554,6 +568,10 @@ def _resolve_reviewer(seat, listed, report, snapshot, args):
     _report_candidates(ids, family, seat["model"], seat["name"], seat["model"], report)
 
 
+def _listing_status(error):
+    return "LISTING_SKIPPED" if error == PASEO_ABSENT else "LISTING_FAILED"
+
+
 def _report_candidates(ids, family, pinned, name, display_pin, report):
     snapshots, cross_variant = MF.candidates(ids, family, pinned)
     for models, label in ((snapshots, "dated snapshot"),
@@ -570,7 +588,7 @@ def _resolve_agent_seat(seat_name, orchestrator, default, agents, listed,
     table = (agents or {}).get("thinking_by_model") or {}
     ids, error = listed(family["listing"])
     if error:
-        report("LISTING_FAILED", seat_name, default["provider"], error)
+        report(_listing_status(error), seat_name, default["provider"], error)
     else:
         forbid_map = (agents or {}).get("forbid_when_orchestrator")
         rule = (forbid_map.get(orchestrator)

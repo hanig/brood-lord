@@ -40,6 +40,11 @@ with its mtime. Exact values in repeatable `--attention-status awaiting_coordina
 and `--terminal-status done` control attention and liveness; other values are live.
 File sources allow omission of --state-root; agent scope then uses --repo
 and --agent-root. Reads use at most the last 1 MiB.
+Paseo is optional: `--paseo PATH` lists legacy Paseo agents when that
+executable resolves, and a host without it gets a plain `paseo not on PATH`
+line, not an ATTENTION. A running code unit bound to a direct-CLI run is read
+from `STATE_DIR/cli-runs/ATTEMPT/` (`run.json` and the current turn's exit
+receipt), without probing a process or the scheduler.
 Substitute operator paths in these direct-command scheduler examples.
 
 macOS launchd example (`hourly_facts.py`): bootstrap the edited plist with
@@ -61,7 +66,6 @@ interpreter, never bare `python3` from PATH. <!-- declaration: env.dedicated -->
     <string>--repo</string><string>/checkout</string>
     <string>--binding</string><string>/binding.json</string>
     <string>--audit</string><string>/audit.json</string>
-    <string>--paseo</string><string>/bin/paseo</string>
     <string>--gh</string><string>/bin/gh</string>
   </array>
   <key>StartCalendarInterval</key><dict><key>Minute</key><integer>55</integer></dict>
@@ -73,7 +77,7 @@ orchestration interpreter): <!-- declaration: env.dedicated -->
 
 ```cron
 */5 * * * * ORCH_PYTHON="/home/USER/.local/state/PROJECT/orch-venv/bin/python" HANIG_ORCH_PYTHON="/home/USER/.local/state/PROJECT/orch-venv/bin/python" "/skills/hanig-swarm/scripts/swarm-cron.sh" "/coordinator/PROJECT"
-55 * * * * HANIG_ORCHESTRATE_DIR="/skills/hanig-orchestrate" HANIG_ORCH_PYTHON="/home/USER/.local/state/PROJECT/orch-venv/bin/python" "/home/USER/.local/state/PROJECT/orch-venv/bin/python" "/skills/hanig-orchestrate/scripts/hourly_facts.py" --state-root "/coordinator" --output-dir "/reports" --repo "/checkout" --binding "/binding.json" --audit "/audit.json" --paseo "/bin/paseo" --gh "/bin/gh"
+55 * * * * HANIG_ORCHESTRATE_DIR="/skills/hanig-orchestrate" HANIG_ORCH_PYTHON="/home/USER/.local/state/PROJECT/orch-venv/bin/python" "/home/USER/.local/state/PROJECT/orch-venv/bin/python" "/skills/hanig-orchestrate/scripts/hourly_facts.py" --state-root "/coordinator" --output-dir "/reports" --repo "/checkout" --binding "/binding.json" --audit "/audit.json" --gh "/bin/gh"
 ```
 
 If any substituted path contains `%`, escape it as `\%` in crontab entries (cron treats unescaped `%` as a command/input split even inside quotes).
@@ -143,13 +147,15 @@ The plan's `code_agent` records the project-start choice; `swarm.py set-agent` c
 SWARM="$HANIG_SWARM_DIR/scripts/swarm.py"
 "$ORCH_PYTHON" "$SWARM" set-agent plan.json --state-dir "$STATE" --show
 "$ORCH_PYTHON" "$SWARM" set-agent plan.json --state-dir "$STATE" --backend lor --model CANONICAL_MODEL_ID --thinking high
-"$ORCH_PYTHON" "$SWARM" set-agent plan.json --state-dir "$STATE" --backend paseo --model claude/MODEL --thinking high --mode MODE --unit UNIT
+"$ORCH_PYTHON" "$SWARM" set-agent plan.json --state-dir "$STATE" --backend claude --model MODEL --thinking high --unit UNIT
+"$ORCH_PYTHON" "$SWARM" set-agent plan.json --state-dir "$STATE" --backend codex --model MODEL --thinking xhigh
+"$ORCH_PYTHON" "$SWARM" set-agent plan.json --state-dir "$STATE" --backend pi --model PROVIDER/MODEL --unit UNIT
 "$ORCH_PYTHON" "$SWARM" set-agent plan.json --state-dir "$STATE" --clear --unit UNIT
 ```
 
-Each successful switch bumps the revision of `STATE_DIR/agent-overrides.json`, written under the project lock, and prints every code unit's effective agent with its disposition: undispatched units take the new agent on their next attempt, in-flight attempts keep the backend frozen in their launch intent, and terminal units are unchanged. A run can therefore hold `paseo` and `lor` attempts at once; servicing, judging, continuation, stop, and cleanup each follow the attempt's own frozen backend, so a switch never interrupts work already running. <!-- declaration: code.agent-switch -->
+Each successful switch bumps the revision of `STATE_DIR/agent-overrides.json`, written under the project lock, and prints every code unit's effective agent with its disposition: undispatched units take the new agent on their next attempt, in-flight attempts keep the backend frozen in their launch intent, and terminal units are unchanged. A run can therefore hold attempts on several backends at once, including legacy `paseo` attempts dispatched before the retirement; servicing, judging, continuation, stop, and cleanup each follow the attempt's own frozen backend, so a switch never interrupts work already running. <!-- declaration: code.agent-switch -->
 
-A unit that pins `provider` or `model` in the plan outranks a project-wide switch; move it with `--unit`. A refused switch prints why and writes nothing, for example a Paseo target with no mode or a Lor target without `LOR_SESSION_ID` and `lor` on PATH. <!-- declaration: code.agent-switch -->
+A unit that pins `provider` or `model` in the plan outranks a project-wide switch; move it with `--unit`. A refused switch prints why and writes nothing, for example any Paseo target (`paseo backend is retired`), a Lor target without `LOR_SESSION_ID` and `lor` on PATH, or a direct-CLI target whose binary is not on PATH. On a Slurm login host the coordinator submits each `claude`, `codex` or `pi` turn with `sbatch --export=NONE`; a `lor` worker sends heavy work through `sbatch` itself. <!-- declaration: code.agent-switch -->
 
 ## Owner-facing report times
 
