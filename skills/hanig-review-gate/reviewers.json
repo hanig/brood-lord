@@ -8,10 +8,10 @@
  "_comment": "Routing config only \u2014 endpoint, model id, reasoning effort, profile membership. Carries NO quality scores: a stale ranking is worse than none. Availability is MEASURED by `review.py --list`, which probes each provider live; a key being set is not availability. All reviewers use DEFAULT_MAX_OUTPUT_TOKENS (64000) unless they set max_output_tokens: reasoning tokens come out of the answer's budget, and at 16000 a large review returned no content at all. Prices in _cost are per-million-token budgeting hints, not routing inputs; later owner decisions and unmeasured prices are noted on the seats.",
  "default_profile": "standard",
  "_profiles": {
-  "plan": "Two contrasting model makers, never escalated. For acceptance criteria and designs, before code exists. Ordered plan reserves can restore quorum and maker contrast after author exclusion. Owner decision 2026-10-19: luna and kimi-k3, OpenAI and Moonshot, chosen by the spec-case benchmark tie rule because the candidate pairs were not separated and Luna had 33% measured code-review recall.",
+  "plan": "Two contrasting model makers, never escalated. For acceptance criteria and designs, before code exists. Ordered plan reserves can restore quorum and maker contrast after author exclusion. Owner decision 2026-10-19: luna and kimi-k3, OpenAI and Moonshot, chosen by the spec-case benchmark tie rule because the candidate pairs were not separated and Luna had 33% measured code-review recall. On Lor, fern-0.1 (xhigh) substitutes for kimi-k3 when advertised.",
   "fast": "luna and haiku-5.5; cheapest implementation panel, the first tier of --escalate (owner decision 2026-10-12).",
-  "standard": "terra, kimi-k3 and sonnet-5.5; the usual fixed implementation panel (owner decision 2026-11-26: Lor-served kimi-k3 replaces kimi-k2.7-code, so no seat spends OpenRouter/OpenAI API credit). Escalating from fast retains its verdicts and adds these three seats.",
-  "deep": "2026-11-06: standard + sol + astra. 2026-11-26: standard now carries kimi-k3 in place of kimi-k2.7-code. Final --escalate tier or fixed --profile deep. Sol now writes the code; an author does not review or tiebreak its own work, so author exclusion removes sol on Sol-authored units.",
+  "standard": "terra, kimi-k3 and sonnet-5.5; the usual fixed implementation panel (owner decision 2026-11-26: Lor-served kimi-k3 replaces kimi-k2.7-code, so no seat spends OpenRouter/OpenAI API credit). Escalating from fast retains its verdicts and adds these three seats. On Lor, fern-0.1 (xhigh) substitutes for kimi-k3 when advertised.",
+  "deep": "2026-11-06: standard + sol + astra. 2026-11-26: standard now carries kimi-k3 in place of kimi-k2.7-code. Final --escalate tier or fixed --profile deep. Sol now writes the code; an author does not review or tiebreak its own work, so author exclusion removes sol on Sol-authored units. On Lor, fern-0.1 (xhigh) substitutes for kimi-k3 when advertised.",
   "committee": "committee.py members, separate from gate profiles. Owner decision 2026-10-13: deepseek-v4-pro, gemini-argon and sonnet-5.5, three model makers. DeepSeek sits in no gate profile.\n2026-11-18: deepseek-v4-pro, gemini-neon and sonnet-5.5.",
   "tiebreak": "2026-11-06: astra-tiebreak took the primary tiebreak seat. The primary is the one enabled reviewer whose profiles are exactly [\"tiebreak\"]. Selected by profile, never name or model. Sol became the code author on 2026-11-06, and sol-tiebreak was disabled. Authors and prior voters are excluded by canonical model identity. When the primary is excluded, an eligible ordered reserve must have a different maker from the primary.",
   "planning": "2026-11-06: gemini-argon, muse-wonder and terra (orchestrator amendment: OpenRouter and OpenAI providers). Astra left planning and gained deep and tiebreak seats as Sol took over code authoring. A model that voted on the committee cannot tiebreak its split.\n2026-11-18: gemini-neon, muse-wonder and terra."
@@ -642,6 +642,29 @@
     "reasoning_tokens": 52,
     "response_id": "gen-1791859813-xrI8OCVHzGCdAcPB7khK",
     "observed_in": "g1-panel-roster live preflight via zsh -ic and review.PROVIDERS; observed 2026-10-13T02:50:16.279896+00:00"
+   }
+  },
+  {
+   "name": "fern-0.1",
+   "provider": "lor",
+   "model": "fern-0.1",
+   "effort": "xhigh",
+   "max_output_tokens": 128000,
+   "enabled": true,
+   "profiles": [],
+   "lor_replaces": "kimi-k3",
+   "_note": "Owner decision 2026-11-26: replaces kimi-k3 at xhigh in profile selection inside Lor when fern-0.1 is listed by lor model list. Otherwise keeps kimi-k3 on its normal route; explicit --only kimi-k3 bypasses substitution.",
+   "_max_output_tokens": "MEASURED 2026-11-26 via review_lor.py at effort xhigh on frozen corpus-v2 (56/57 completed, median 22996 output tokens, max 67200 output tokens, zero FINISH_REASON_LENGTH). Lor CLI exposes no client-side max_output_tokens flag; 128000 records the verified usable ceiling.",
+   "_max_output_tokens_accepted": {
+    "date": "2026-11-26",
+    "max_output_tokens": 128000,
+    "provider": "lor",
+    "model": "fern-0.1",
+    "effort": "xhigh",
+    "outcome": "completed",
+    "output_tokens": 22996,
+    "completed_replies": 56,
+    "observed_in": "corpus-v2 fern-20261126-v3 bench via review_lor.py at effort xhigh (56/57 completed, max 67200 out, 0 FINISH_REASON_LENGTH)"
    }
   },
   {

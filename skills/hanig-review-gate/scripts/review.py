@@ -1774,8 +1774,9 @@ def load_reviewers():
                 and r["effort"] not in _lor.LOR_EFFORTS):
             config_error(f"lor reviewer {r['name']!r} has unsupported effort {r['effort']!r}; "
                          f"Pass {', '.join(_lor.LOR_EFFORTS)} or omit effort")
-        if "lor_model" in r and not (isinstance(r["lor_model"], str) and r["lor_model"].strip()):
-            config_error(f"reviewer 'lor_model' must be a non-empty string, got {r['lor_model']!r}")
+        for field in ("lor_model", "lor_replaces"):
+            if field in r and not (isinstance(r[field], str) and r[field].strip()):
+                config_error(f"reviewer '{field}' must be a non-empty string, got {r[field]!r}")
         if r.get("effort") is not None and not isinstance(r["effort"], str):
             config_error(f"reviewer 'effort' must be a string or null, got "
                          f"{r['effort']!r}")
@@ -2014,8 +2015,15 @@ def cmd_list(reviewers, probe=True):
     print(f"{'REVIEWER':<20} {'PROVIDER':<12} {'ROUTE':<10} {'MODEL':<30} "
           f"{'EFFORT':<8} STATUS")
     ready = 0
+    replacements = {r["name"] for r in reviewers if _lor.lor_in_session()
+                    and r.get("enabled", True) and r.get("lor_replaces") and _lor.lor_routed(r)}
+    models = _lor.lor_available_models() if replacements else None
     for rev in reviewers:
-        why = probe_liveness(rev) if probe else availability(rev)
+        if rev["name"] in replacements and _lor.lor_model_id(rev) not in (models or ()):
+            why = _lor.lor_block_reason(rev) or (
+                "lor model list unavailable" if models is None else "not in lor model list")
+        else:
+            why = probe_liveness(rev) if probe else availability(rev)
         if why is None:
             ready += 1
             status = "ready" if probe else "key set (UNVERIFIED)"
@@ -2374,9 +2382,17 @@ def _main():
     if not args.json:
         print(tier_text)
     if not args.only and not args.escalate:
-        reviewers = [r for r in reviewers if in_profile(r, profile)]
+        reviewers = [r for r in roster if in_profile(r, profile)]
         if not reviewers:
             config_error(f"no reviewers in profile {profile!r}")
+        if args.list:
+            # Show both the configured profile seats and their alternatives.
+            names = {r["name"] for r in reviewers}
+            reviewers += [r for r in roster if r.get("lor_replaces") in names
+                          and r["name"] not in names]
+    elif args.escalate and not (args.only or args.list):
+        tiers = validate_escalation_panel(roster, args)
+        reviewers = [r for r in roster if any(in_profile(r, tier) for tier in tiers)]
     if args.only:
         wanted = [n.strip() for spec in args.only for n in spec.split(",")
                   if n.strip()]

@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 
-def parse_verdict(text):
+def parse_verdict(text, _depth=0):
     """Models sometimes wrap JSON in fences or prose. Recover the object."""
     if not text or not text.strip():
         return None, "empty response"
@@ -39,15 +39,42 @@ def parse_verdict(text):
             if depth == 0 and start is not None:
                 found = s[start:i + 1]
                 break
-    if not found:
-        if start is not None:
-            return None, ("response truncated mid-JSON (raise max_output_tokens "
-                          f"for this reviewer); {len(s)} chars received")
-        return None, f"no JSON object found in: {text[:150]}"
-    try:
-        return json.loads(found), None
-    except json.JSONDecodeError as e:
-        return None, f"malformed JSON: {e}"
+    obj, error = None, None
+    if found:
+        try:
+            obj = json.loads(found)
+        except (ValueError, RecursionError) as exc:
+            error = f"malformed JSON: {exc}"
+        else:
+            if "verdict" in obj:
+                return obj, None
+            if _depth == 0:
+                analysis = obj.get("analysis")
+                if isinstance(analysis, str):
+                    analysis, _ = parse_verdict(analysis, _depth=1)
+                if isinstance(analysis, dict) and "verdict" in analysis:
+                    return analysis, None
+    elif start is not None:
+        error = ("response truncated mid-JSON (raise max_output_tokens "
+                 f"for this reviewer); {len(s)} chars received")
+    else:
+        error = f"no JSON object found in: {text[:150]}"
+
+    # A malformed wrapper can hide a complete verdict inside or after it.
+    # Cap decode attempts since each can read the rest of the response.
+    decoder = json.JSONDecoder()
+    pos = -1
+    for _ in range(64):
+        pos = s.find("{", pos + 1)
+        if pos == -1:
+            break
+        try:
+            candidate, _ = decoder.raw_decode(s, pos)
+        except (ValueError, RecursionError):
+            continue
+        if isinstance(candidate, dict) and "verdict" in candidate:
+            return candidate, None
+    return obj, error
 
 
 def norm(v):

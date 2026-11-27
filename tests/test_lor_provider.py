@@ -8,7 +8,8 @@ import sys
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
+from types import SimpleNamespace
 from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "skills/hanig-review-gate/scripts"
@@ -24,6 +25,12 @@ open(d + "/calls", "a").write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd
     "env": sorted(os.environ), "stdin": sys.stdin.read() if verb == "start" else ""}) + "\\n")
 BLANK = ("timeout", "drop", "pass", "error", "cancel", "empty")
 ev = lambda e: print(json.dumps({"recorded": {"event": e}}), flush=True)
+if verb == "list":
+    if mode == "list-hang": time.sleep(60)
+    if mode == "list-fail": sys.exit(1)
+    if mode == "list-malformed": print("{ not JSON")
+    else: print(json.dumps({"models": [{"canonical_model_id": "unrelated"}]
+         + ([] if mode == "list-absent" else [{"canonical_model_id": "fern-0.1"}])}))
 if verb == "start" and mode == "start-fail": sys.exit("refused " + "x" * 290 + os.environ["LOR_SESSION_TOKEN"])
 if verb == "stop" and stop_fail: sys.exit("stop refused")
 if verb == "start" and mode != "start-fail":
@@ -55,7 +62,7 @@ class TestLor(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.d = Path(tmp.name)
+        self.d = Path(tmp.name).resolve()
         (self.d / "lor").write_text(FAKE % sys.executable)
         (self.d / "lor").chmod(0o755)
         self.mode("ok")
@@ -123,9 +130,11 @@ class TestLor(unittest.TestCase):
         start = self.calls()[0]
         argv = start["argv"]
         for flag, value in (("--canonical-model-id", astra["lor_model"]), ("--tools", "pass"),
-                            ("--working-directory", start["cwd"]), ("--effort", astra["effort"])):
+                            ("--effort", astra["effort"])):
             self.assertEqual(argv[argv.index(flag) + 1], value)
-        self.assertEqual((argv.count("--tools"), start["ls"], Path(start["cwd"]).exists()), (1, [], False))
+        workdir = Path(argv[argv.index("--working-directory") + 1]).resolve()
+        self.assertEqual(workdir, Path(start["cwd"]))
+        self.assertEqual((argv.count("--tools"), start["ls"], workdir.exists()), (1, [], False))
         self.assertTrue(start["stdin"].startswith("SYS\n\n" + L.NO_TOOLS))
         self.assertRegex(start["stdin"], r'<turn_[0-9a-f]{8} role="assistant">\na1\n</turn_')
         self.assertIn("LOR_SESSION_TOKEN", start["env"])
@@ -204,8 +213,10 @@ class TestLor(unittest.TestCase):
         self.assertEqual(header.split()[:4], ["REVIEWER", "PROVIDER", "ROUTE", "MODEL"])
         rows = {line.split()[0]: line.split()[1:3] for line in body if line.strip()
                 and not line.split()[0].isdigit() and not line.startswith("No reviewer")}
-        self.assertEqual({n for n, (p, _r) in rows.items() if p == "lor"}, lor_seats)
-        self.assertEqual({n for n, (_p, r) in rows.items() if r == "lor"}, lor_seats)
+        self.assertEqual({n for n, (p, _r) in rows.items() if p == "lor"}, lor_seats | {"fern-0.1"})
+        self.assertEqual({n for n, (_p, r) in rows.items() if r == "lor"}, lor_seats | {"fern-0.1"})
+        self.assertEqual([c["argv"] for c in self.calls()], [["model", "list"]])
+        self.mode("ok")
         self.assertEqual((rows["terra"], rows["sonnet-5.5"]),
                          (["codex", "cli_local"], ["claude", "cli_local"]))
         explicit = {"name": "x", "provider": "lor", "model": "m"}
@@ -227,6 +238,167 @@ class TestLor(unittest.TestCase):
             self.assertEqual(R.availability(seats()["astra"]), "OPENAI_API_KEY not set")
             self.assertIn("lor provider disabled", R.availability(explicit))
             self.assertIn("lor provider disabled", R.call_lor(explicit, "p", 5)[1])
+
+    def invoke_review(self, *flags, plan=False, code=0):
+        path = self.d / "review.py"
+        path.write_text("x = 1\n")
+        argv = [str(SCRIPTS / "review.py"), "--json", "--file", str(path)]
+        if plan:
+            argv += ["--kind", "plan"]
+        else:
+            argv += ["--kind", "implementation", "--round", "1", "--claim", R.HONEST_RUN_CLAIM]
+        out, err = io.StringIO(), io.StringIO()
+        calls = []
+
+        def reply(rev, *_args, **_kwargs):
+            calls.append(rev)
+            return {"text": json.dumps(dict(verdict="upheld", findings=[],
+                claims=[dict(claim_index=0, status="supported", claim=R.HONEST_RUN_CLAIM,
+                             why="No execution paths were removed.")],
+                notes="Checked."))}, None
+
+        def plan_reply(rev, *_args, **_kwargs):
+            calls.append(rev)
+            return json.dumps(dict(verdict="upheld", findings=[], claims=[],
+                                   notes="Checked.", own_findings=[], peer_responses=[])), None, {}
+
+        env = {"HANIG_REVIEW_SLURM": "off", "XDG_STATE_HOME": str(self.d / "state")}
+        with mock.patch.object(sys, "argv", argv + list(flags)), redirect_stdout(out), \
+                redirect_stderr(err), mock.patch.dict(os.environ, env), \
+                mock.patch.object(R._subs, "claude_availability", return_value=None), \
+                mock.patch.object(R._subs, "codex_availability", return_value=None), \
+                mock.patch.dict(R.PROVIDERS, {p: reply for p in R.PROVIDERS}), \
+                mock.patch.object(C, "ask_member", side_effect=plan_reply), \
+                mock.patch.object(R, "reserve_review_round"), \
+                mock.patch.object(R, "prior_evidence", return_value=None), \
+                mock.patch.object(R, "release_round"), self.assertRaises(SystemExit) as exit_:
+            R.main()
+        self.assertEqual(exit_.exception.code, code, out.getvalue() + err.getvalue())
+        report = json.loads(out.getvalue())
+        self.assertTrue(report["journal"]["written"], err.getvalue())
+        journal = json.loads(Path(report["journal"]["path"]).read_text())
+        self.assertEqual(journal["seat_routes"], report["seat_routes"])
+        return report, calls
+
+    def assert_route(self, report, seat, *, provider="lor", route="lor", status="completed"):
+        model = "moonshotai/kimi-k3" if seat == "kimi-k3" else seat
+        self.assertIn(seat, report["seat_routes"])
+        self.assertEqual(report["seat_routes"][seat],
+                         dict(provider=provider, model=model, route=route, status=status))
+        self.assertNotIn("fern-0.1" if seat == "kimi-k3" else "kimi-k3", report["seat_routes"])
+
+    def test_profiles_and_escalation_select_advertised_replacement(self):
+        for flags, plan in (((), False), (("--profile", "standard"), False),
+                            (("--profile", "deep"), False), ((), True),
+                            (("--profile", "fast", "--escalate"), False)):
+            with self.subTest(flags=flags, plan=plan):
+                self.mode("ok")
+                report, calls = self.invoke_review(*flags, plan=plan)
+                self.assert_route(report, "fern-0.1")
+                fern = [r for r in calls if r["name"] == "fern-0.1"]
+                self.assertEqual(len(fern), 2 if plan else 1)
+                self.assertEqual(fern[0]["effort"], "xhigh")
+                self.assertEqual(fern[0]["_lor_replaced"], "kimi-k3")
+                self.assertEqual(fern[0]["profiles"], ["plan", "standard", "deep"])
+                self.assertEqual([c["argv"] for c in self.calls()], [["model", "list"]])
+                if "--escalate" in flags:
+                    self.assertEqual(report["tiers_run"], ["fast", "standard", "deep"])
+
+    def test_missing_or_broken_model_list_keeps_kimi_on_lor(self):
+        discover = L.lor_available_models
+        for mode in ("list-absent", "list-fail", "list-malformed", "list-hang"):
+            with self.subTest(mode=mode), mock.patch.object(L, "lor_available_models",
+                    side_effect=lambda env: discover(env, timeout=0.3)):
+                self.mode(mode)
+                report, _ = self.invoke_review("--profile", "standard")
+                self.assert_route(report, "kimi-k3")
+                [call] = self.calls()
+                self.assertEqual(call["argv"], ["model", "list"])
+                self.assertNotEqual(Path(call["cwd"]), Path.cwd())
+                self.assertNotIn("OPENAI_API_KEY", call["env"])
+                self.assertIn("LOR_SESSION_TOKEN", call["env"])
+
+    def test_outside_lor_fails_closed_but_explicit_opt_out_uses_api(self):
+        for env, provider, route, status in (
+                ({"LOR_SESSION_ID": ""}, "lor", "lor", "unavailable"),
+                ({L.OPT_OUT: "1"}, "openrouter", "api", "completed")):
+            with self.subTest(env=env), mock.patch.dict(os.environ, env | {"OPENROUTER_API_KEY": "fake"}):
+                report, calls = self.invoke_review("--profile", "standard")
+                self.assert_route(report, "kimi-k3", provider=provider, route=route, status=status)
+                self.assertEqual(any(r["name"] == "kimi-k3" for r in calls), status == "completed")
+                self.assertEqual(self.calls(), [])
+                if status == "unavailable":
+                    [entry] = report["unavailable"]
+                    self.assertIn("LOR_SESSION_ID unset", entry["reason"])
+
+    def test_explicit_seats_skip_discovery_and_author_keeps_kimi(self):
+        for seat in ("kimi-k3", "fern-0.1"):
+            with self.subTest(seat=seat):
+                report, _ = self.invoke_review("--only", seat, "--quorum", "1",
+                                               "--allow-single-reviewer", "offline test")
+                self.assert_route(report, seat)
+                self.assertEqual(self.calls(), [])
+        report, _ = self.invoke_review("--author", "lor/fern-0.1")
+        self.assert_route(report, "kimi-k3")
+        self.assertEqual([c["argv"] for c in self.calls()], [["model", "list"]])
+
+    def test_profiles_without_target_do_not_query_model_list(self):
+        report, _ = self.invoke_review("--profile", "fast")
+        self.assertEqual(set(report["seat_routes"]), {"luna", "haiku-5.5"})
+        self.assertEqual(self.calls(), [])
+        roster = seats()
+        selected = [roster[name] for name in ("kimi-k3", "fern-0.1")]
+        self.assertEqual(L.resolve_lor_substitutions(
+            selected, roster.values(), available_models=frozenset({"fern-0.1"})), selected)
+
+    def test_list_shows_both_and_only_checks_the_replacement_in_catalog(self):
+        self.mode("list-absent")
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", ["review.py", "--list", "--profile", "standard"]), \
+                mock.patch.object(R, "probe_liveness", return_value=None) as probe, \
+                redirect_stdout(out), self.assertRaises(SystemExit) as exit_:
+            R.main()
+        self.assertEqual(exit_.exception.code, 0)
+        self.assertRegex(out.getvalue(), r"fern-0\.1.*UNAVAILABLE \(not in lor model list\)")
+        self.assertRegex(out.getvalue(), r"kimi-k3.*ready")
+        self.assertNotIn("fern-0.1", [call.args[0]["name"] for call in probe.call_args_list])
+        self.assertEqual([c["argv"] for c in self.calls()], [["model", "list"]])
+
+    def test_plan_and_committee_reserves_substitute_when_eligible(self):
+        roster = seats()
+        kimi = roster["kimi-k3"]
+        kimi["profiles"].remove("plan")
+        for seat in roster.values():
+            for profile in ("plan", "committee"):
+                seat.get("_reserve_order", {}).pop(profile, None)
+        kimi["_reserve_order"].update(plan=0, committee=0)
+        roster["sonnet-5.5"]["profiles"].append("plan")
+        with mock.patch.object(R, "load_reviewers", return_value=list(roster.values())):
+            report, calls = self.invoke_review("--author", "claude/claude-sonnet-5-5", plan=True)
+            self.assert_route(report, "fern-0.1")
+            [fern, second_fern] = [r for r in calls if r["name"] == "fern-0.1"]
+            self.assertEqual(fern, second_fern)
+            self.assertEqual(fern["_reserve_order"], kimi["_reserve_order"])
+            self.assertIsNot(fern["_reserve_order"], kimi["_reserve_order"])
+            self.assertEqual(roster["fern-0.1"]["profiles"], [])
+            for extra, expected in (([], "fern-0.1"), (["lor/fern-0.1"], "kimi-k3")):
+                authors = ["openrouter/google/gemini-4-neon", *extra]
+                chosen = C.pick_members([], authors)
+                self.assertEqual({r["name"] for r in chosen}, {"sonnet-5.5", "deepseek-v4-pro", expected})
+
+    def test_tiebreak_reserve_substitutes_unless_fern_already_voted(self):
+        primary, error = C.tiebreaker()
+        self.assertIsNone(error)
+        args = SimpleNamespace(name="split", timeout=1)
+        for voters, expected in (([primary], "fern-0.1"),
+                                  ([primary, seats()["fern-0.1"]], "kimi-k3")):
+            with self.subTest(expected=expected), mock.patch.object(C, "save_session"), \
+                    mock.patch.object(C, "decision_reply", return_value=(None, "offline")) as ask, \
+                    mock.patch.object(C, "finish_decision"):
+                session = {"members": {"first": {"voters": voters}}}
+                C.tiebreak(args, session, {"author": []})
+                self.assertEqual(ask.call_args.args[0]["name"], expected)
+                self.assertEqual(session["tiebreak_selection"]["substituted"], [expected])
 
     def test_committee_routes_lor_and_contrasts_effective_providers(self):
         history = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
@@ -250,7 +422,10 @@ class TestLor(unittest.TestCase):
         with mock.patch("sys.stderr", io.StringIO()), self.assertRaisesRegex(SystemExit, "provider 'lor'"):
             C.pick_members(["gemini-neon,muse-wonder"])
         data = json.loads(R.CONFIG.read_text())
-        for extra, want in (({"lor_model": " "}, "'lor_model'"), ({"provider": "lor", "effort": "huge"}, "huge")):
+        for extra, want in (({"lor_model": " "}, "'lor_model'"),
+                            ({"lor_replaces": " "}, "'lor_replaces'"),
+                            ({"lor_replaces": None}, "'lor_replaces'"),
+                            ({"provider": "lor", "effort": "huge"}, "huge")):
             revs = [dict(data["reviewers"][0], **extra)] + data["reviewers"][1:]
             (self.d / "r.json").write_text(json.dumps(dict(data, reviewers=revs)))
             with mock.patch.object(R, "CONFIG", self.d / "r.json"), \

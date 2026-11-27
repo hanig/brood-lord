@@ -591,6 +591,13 @@ def _validate_protocol_flags(args, facade):
 def _apply_author_exclusion(args, roster, reviewers, profile, profile_reason, facade):
     """Exclude declared authors, apply reserve substitution, and validate plan panel."""
     authors = facade.author_model_ids(args.author, roster)
+
+    def is_excluded(rev):
+        return None in authors or facade._panels.seat_identity(rev) in authors | {None}
+
+    if not (args.only or args.list):
+        reviewers = facade._lor.resolve_lor_substitutions(
+            reviewers, roster, excluded_check=is_excluded if args.author else None)
     reviewers, excluded = facade.exclude_authors(reviewers, authors)
     if excluded and args.kind == "plan" and not (args.author or args.list):
         facade.config_error("Pass plan reviewers with a derivable model maker.")
@@ -607,8 +614,15 @@ def _apply_author_exclusion(args, roster, reviewers, profile, profile_reason, fa
         attempted = False
         selection = None
         if not (args.list or args.only or args.escalate):
+            names = {r["name"] for r in eligible}
+
+            def substitute_reserves(reserves):
+                return facade._lor.resolve_lor_substitutions(
+                    reserves, roster, excluded_check=lambda r: r["name"] in names or is_excluded(r))
+
             panel, attempted = facade._panels.fill_profile(
-                roster, profile, eligible, authors, required, excluded, plan_check)
+                roster, profile, eligible, authors, required, excluded, plan_check,
+                substitute_reserves=substitute_reserves)
             if panel is not None:
                 eligible, added = panel
                 reviewers = eligible

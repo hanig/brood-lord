@@ -543,6 +543,47 @@ class TestParsing(unittest.TestCase):
         self.assertIsNone(err, err)
         self.assertEqual(v["notes"], "a } brace { here")
 
+    def test_recovers_complete_verdicts_from_analysis_and_broken_wrappers(self):
+        verdict = {"verdict": "upheld", "findings": [], "claims": [], "notes": "Checked."}
+        payload = json.dumps(verdict)
+        for response in (
+                json.dumps({"analysis": payload, "plan": "", "commands": []}),
+                json.dumps({"analysis": f"Noted.\n```json\n{payload}\n```"}),
+                json.dumps({"analysis": verdict}),
+                '{"analysis": ' + payload,
+                '{\n  "analysis omitted per instructions; see findings below}\nPLACEHOLDER\n' + payload,
+                '{"analysis": null}\n' + payload):
+            with self.subTest(response=response):
+                self.assertEqual(review.parse_verdict(response), (verdict, None))
+                self.assertIsNone(review.verdict_schema_error(verdict))
+
+    def test_recovery_keeps_schema_validation_and_primary_precedence(self):
+        stub = {"verdict": "upheld"}
+        complete = dict(stub, findings=[], claims=[], notes="Checked.")
+        for response, expected in (
+                (json.dumps({"analysis": stub}), stub),
+                (json.dumps({"analysis": complete, **stub}), {"analysis": complete, **stub}),
+                ('{"analysis": ' + json.dumps(stub), stub)):
+            with self.subTest(response=response):
+                value, error = review.parse_verdict(response)
+                self.assertIsNone(error)
+                self.assertEqual(value, expected)
+                self.assertIsNotNone(review.verdict_schema_error(value))
+
+    def test_no_recoverable_verdict_keeps_original_result(self):
+        for obj in ({"key": "value"}, {"analysis": None},
+                    {"analysis": json.dumps({"analysis": '{"verdict": "upheld"}'})}):
+            with self.subTest(obj=obj):
+                value, error = review.parse_verdict(json.dumps(obj))
+                self.assertEqual((value, error), (obj, None))
+                self.assertIsNotNone(review.verdict_schema_error(value))
+        self.assertEqual(review.parse_verdict('{"analysis": {"verdict": "upheld"'),
+                         (None, "response truncated mid-JSON (raise max_output_tokens "
+                                "for this reviewer); 33 chars received"))
+        self.assertEqual(review.parse_verdict('{bad}'), (None, "malformed JSON: Expecting "
+                         "property name enclosed in double quotes: line 1 column 2 (char 1)"))
+        self.assertEqual(review.parse_verdict('no object'), (None, "no JSON object found in: no object"))
+
     def test_empty_response(self):
         v, err = review.parse_verdict("")
         self.assertIsNone(v)

@@ -147,13 +147,14 @@ def configure_reserves(revs, reserves, in_profile, config_error):
                 config_error(f"Opus seat {r['name']!r} is forbidden; remove it from planning")
 
 
-def fill_profile(roster, profile, eligible, authors, required, excluded, plan_check):
+def fill_profile(roster, profile, eligible, authors, required, excluded, plan_check,
+                 *, substitute_reserves):
     reserves = reserve_seats(roster, profile)
     if not reserves or not excluded:
         return None, False
     if len(eligible) >= required and not (plan_check and plan_check(eligible)):
         return None, False
-    candidates, rejected = exclude_authors(reserves, authors)
+    candidates, rejected = exclude_authors(substitute_reserves(reserves), authors)
     excluded.extend(rejected)
     return reserve_panel(eligible, candidates, required, lambda panel:
                          plan_check is None or not plan_check(panel)), True
