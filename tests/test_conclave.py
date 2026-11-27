@@ -3,9 +3,14 @@
     python3 -m unittest tests.test_conclave
 """
 
+import contextlib
 import functools
+import io
 import json
 import os
+import shlex
+import threading
+import time
 import sys
 import tempfile
 import unittest
@@ -710,6 +715,218 @@ class AllowRules(unittest.TestCase):
                 sys.argv = argv
             self.assertEqual(json.loads(settings.read_text()),
                              {"permissions": {"allow": ["Bash(ls:*)"]}})
+
+
+
+class RememberLorId(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        saved = os.environ.get("XDG_STATE_HOME")
+        os.environ["XDG_STATE_HOME"] = self.tmp.name
+
+        def restore():
+            if saved is None:
+                os.environ.pop("XDG_STATE_HOME", None)
+            else:
+                os.environ["XDG_STATE_HOME"] = saved
+        self.addCleanup(restore)
+
+    def test_concurrent_seats_keep_every_mapping(self):
+        # Widen the read-to-write window so an unserialized merge loses
+        # updates and a shared temp name collides on every run.
+        real_read = C.read_json
+
+        def slow_read(*a, **k):
+            data = real_read(*a, **k)
+            time.sleep(0.002)
+            return data
+        C.read_json = slow_read
+        self.addCleanup(setattr, C, "read_json", real_read)
+        n_threads, per_thread = 8, 5
+        barrier = threading.Barrier(n_threads)
+        errors = []
+
+        def worker(t):
+            try:
+                barrier.wait()
+                for i in range(per_thread):
+                    C.remember_lor_id("cat/%d-%d" % (t, i), "id-%d-%d" % (t, i))
+            except Exception as exc:  # collected and asserted below
+                errors.append(exc)
+        threads = [threading.Thread(target=worker, args=(t,))
+                   for t in range(n_threads)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+        self.assertEqual(errors, [])
+        path = C.state_dir() / "lor_ids.json"
+        self.assertEqual(json.loads(path.read_text()), {
+            "cat/%d-%d" % (t, i): "id-%d-%d" % (t, i)
+            for t in range(n_threads) for i in range(per_thread)})
+        self.assertEqual(sorted(p.name for p in path.parent.iterdir()),
+                         ["lor_ids.json"])
+
+
+def _board(tmp, seats):
+    board = Path(tmp) / "board"
+    board.mkdir()
+    (board / "board.json").write_text(json.dumps(
+        {"seats": seats, "max_rounds": 3, "effort": "high"}))
+    (board / "roster.json").write_text(json.dumps(
+        {"seats": {s: {"model": "m/%s" % s} for s in seats}}))
+    return board
+
+
+class SettledNeedsEverySeat(unittest.TestCase):
+    SEATS = ["a", "b", "c", "d"]
+
+    def test_unit(self):
+        self.assertFalse(C.settled({"a": "agree"}, self.SEATS))
+        self.assertFalse(C.settled({}, self.SEATS))
+        self.assertTrue(C.settled({s: "agree" for s in self.SEATS},
+                                  self.SEATS))
+        self.assertTrue(C.settled({s: "disagree" for s in self.SEATS},
+                                  self.SEATS))
+        self.assertFalse(C.settled({s: "uncertain" for s in self.SEATS},
+                                   self.SEATS))
+        split = dict({s: "agree" for s in self.SEATS}, d="disagree")
+        self.assertFalse(C.settled(split, self.SEATS))
+
+    def test_one_agree_and_three_missing_stays_open(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            board = _board(tmp, self.SEATS)
+            crux = {"id": "C1", "statement": "A beats B", "for": [],
+                    "against": [], "uncertain": []}
+            (board / "r1-cruxes.json").write_text(json.dumps(
+                {"round": 1, "cruxes": [crux]}))
+            (board / "r1").mkdir()
+            # Seat a answered; b failed (no post); c and d posted but left
+            # C1 out.
+            (board / "r1" / "a.json").write_text(json.dumps({"positions": [
+                {"crux": "C1", "stance": "agree", "confidence": 90}]}))
+            for seat in ("c", "d"):
+                (board / "r1" / (seat + ".json")).write_text(
+                    json.dumps({"positions": []}))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                C.main(["status", str(board)])
+            self.assertNotIn("SETTLED", out.getvalue())
+            self.assertIn("3 missing", out.getvalue())
+            with contextlib.redirect_stdout(io.StringIO()):
+                C.main(["cruxes", str(board)])
+            carried = json.loads((board / "r2-cruxes.json").read_text())
+            self.assertEqual([c["id"] for c in carried["cruxes"]], ["C1"])
+            self.assertEqual(carried["cruxes"][0]["for"], ["a"])
+
+
+class TallyNeedsEveryVote(unittest.TestCase):
+    def tally(self, board):
+        out = io.StringIO()
+        code = None
+        with contextlib.redirect_stdout(out):
+            try:
+                C.main(["tally", str(board)])
+            except SystemExit as exc:
+                code = exc.code
+        return code, out.getvalue()
+
+    def vote(self, board, seat, vote=None, failed=False):
+        d = board / "votes" / "p1"
+        d.mkdir(parents=True, exist_ok=True)
+        meta = {"seat": seat, "model": "m/%s" % seat}
+        if failed:
+            meta["failed"] = True
+        (d / (seat + ".meta.json")).write_text(json.dumps(meta))
+        if vote is not None:
+            (d / (seat + ".json")).write_text(json.dumps({"vote": vote}))
+
+    def test_all_approve_recommends_export(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            board = _board(tmp, ["a", "b"])
+            self.vote(board, "a", "approve")
+            self.vote(board, "b", "approve_with_reservations")
+            code, out = self.tally(board)
+            self.assertIsNone(code)
+            self.assertIn("export the transcript", out)
+
+    def test_failed_missing_and_unparsed_votes_block_export(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            board = _board(tmp, ["a", "b", "c", "d"])
+            self.vote(board, "a", "approve")
+            self.vote(board, "b", failed=True)
+            self.vote(board, "c")  # answered, no JSON vote
+            # d never wrote anything (its thread raised).
+            code, out = self.tally(board)
+            self.assertEqual(code, 3)
+            self.assertNotIn("export the transcript", out)
+            self.assertIn("not ratified", out)
+            self.assertIn("b (failed)", out)
+            self.assertIn("c (unparsed)", out)
+            self.assertIn("d (missing)", out)
+            self.assertIn("--seats b,c,d --pass 1", out)
+            tally = (board / "votes" / "p1" / "tally.md").read_text()
+            self.assertIn("| b | m/b | failed |", tally)
+
+    def test_invalid_vote_string_is_not_a_vote(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            board = _board(tmp, ["a", "b"])
+            self.vote(board, "a", "approve")
+            self.vote(board, "b", "maybe")
+            code, out = self.tally(board)
+            self.assertEqual(code, 3)
+            self.assertIn("b (maybe)", out)
+
+
+class AllowHardening(unittest.TestCase):
+    def run_main(self, argv, script=None):
+        saved_argv, saved_script = sys.argv, A.default_script
+        sys.argv = ["allow.py"] + argv
+        if script:
+            A.default_script = lambda: script
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                A.main()
+        finally:
+            sys.argv, A.default_script = saved_argv, saved_script
+        return out.getvalue()
+
+    def test_non_object_settings_fail_cleanly(self):
+        for body in ("null", "[]", '"text"', "3",
+                     '{"permissions": []}',
+                     '{"permissions": {"allow": "Bash(ls:*)"}}'):
+            with tempfile.TemporaryDirectory() as raw:
+                settings = Path(raw) / "settings.json"
+                settings.write_text(body)
+                with self.assertRaises(SystemExit) as ctx:
+                    self.run_main(["--settings", str(settings)])
+                self.assertIsInstance(ctx.exception.code, str, body)
+                self.assertIn("fix it first", ctx.exception.code)
+                self.assertEqual(settings.read_text(), body)
+                self.assertEqual(os.listdir(raw), ["settings.json"])
+
+    def test_paths_with_spaces_are_shell_quoted(self):
+        with tempfile.TemporaryDirectory() as raw:
+            script = os.path.join(os.path.realpath(raw), "my skills",
+                                  "conclave.py")
+            rules = A.rules(script, home="/nowhere")
+            self.assertIn("Bash(python3 %s:*)" % shlex.quote(script), rules)
+            self.assertIn("Bash(python3 %s:*)" % script, rules)
+            settings = Path(raw) / "settings.json"
+            out = self.run_main(["--settings", str(settings), "--dry-run"],
+                                script=script)
+            line = [ln for ln in out.splitlines() if "call conclave.py" in ln][0]
+            command = line.split("`")[1]
+            self.assertEqual(shlex.split(command), ["python3", script, "..."])
+
+    def test_home_form_keeps_tilde_unquoted(self):
+        with tempfile.TemporaryDirectory() as raw:
+            home = os.path.realpath(raw)
+            script = os.path.join(home, "my skills", "conclave.py")
+            self.assertIn("Bash(python3 ~/'my skills/conclave.py':*)",
+                          A.rules(script, home=home))
 
 
 class Packaging(unittest.TestCase):

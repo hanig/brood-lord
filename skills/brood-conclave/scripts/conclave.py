@@ -43,6 +43,7 @@ import signal
 import string
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -54,6 +55,7 @@ FAMILIES_PATH = ROOT / "families.json"
 TEMPLATES = ROOT / "templates"
 CATALOG_URL = "https://openrouter.ai/api/v1/models"
 EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
+VOTES = ("approve", "approve_with_reservations", "object")
 VERSION_TOKEN = re.compile(r"^v?\d+(?:\.\d+)*$")
 SNAPSHOT_TOKEN = re.compile(r"^\d{6,}$")
 # Tokens that mark a variant of a line in any family. A soft variant may be
@@ -574,12 +576,29 @@ def select_routes(seat, effort, prefer=None, lor_only=False, native=None):
     return healthy + [r for r in routes if r not in healthy]
 
 
+_LOR_IDS_LOCK = threading.Lock()
+
+
 def remember_lor_id(catalog_id, ident):
+    """Record the Lor id that worked for catalog_id.
+
+    Lor seats run on threads of one process, so the read-merge-write is
+    serialized here, and each write goes through its own temp file: a shared
+    temp name let one thread's replace() move another's file away.
+    """
     path = state_dir() / "lor_ids.json"
-    data = read_json(path, {}) or {}
-    if data.get(catalog_id) != ident:
+    with _LOR_IDS_LOCK:
+        data = read_json(path, {})
+        if not isinstance(data, dict):
+            data = {}
+        if data.get(catalog_id) == ident:
+            return
         data[catalog_id] = ident
-        write_json(path, data)
+        with tempfile.NamedTemporaryFile(
+                "w", dir=str(path.parent), prefix=".lor_ids.",
+                suffix=".tmp", delete=False) as f:
+            f.write(json.dumps(data, indent=2) + "\n")
+        os.replace(f.name, str(path))
 
 
 def with_effort(route, effort):
@@ -1521,10 +1540,16 @@ def crux_table(board, k, seats):
     return table
 
 
-def settled(stances):
-    present = [s for s in stances.values()]
-    return bool(present) and len(set(present)) == 1 and \
-        present[0] != "uncertain"
+def settled(stances, seats):
+    """True when every board seat took the same non-uncertain stance.
+
+    A seat that failed or left the crux out has not agreed, so one agreeing
+    post beside three missing ones keeps the crux open.
+    """
+    if not seats or any(seat not in stances for seat in seats):
+        return False
+    present = [stances[seat] for seat in seats]
+    return len(set(present)) == 1 and present[0] != "uncertain"
 
 
 def cmd_status(args):
@@ -1560,16 +1585,17 @@ def cmd_status(args):
             cells.append("%s %s(%s)%s" % (seat, stances[seat],
                                           position.get("confidence", "?"),
                                           mark))
-        done = settled(stances)
+        done = settled(stances, seats)
         if not done:
             open_ids.append(crux["id"])
         counts = {v: list(stances.values()).count(v)
                   for v in ("agree", "disagree", "uncertain")}
+        missing = len([seat for seat in seats if seat not in stances])
         print("%-4s %s\n     %s  -> %s" % (
             crux["id"], crux["statement"][:110], "  ".join(cells),
             "SETTLED" if done else "open (%d agree, %d disagree, %d "
-            "uncertain)" % (counts["agree"], counts["disagree"],
-                            counts["uncertain"])))
+            "uncertain, %d missing)" % (counts["agree"], counts["disagree"],
+                                        counts["uncertain"], missing)))
     print("\nchanged this round: %s" % (", ".join(changes) or "none"))
     if not open_ids:
         print("next: every crux is settled. Draft statement.md, then ratify.")
@@ -1599,7 +1625,7 @@ def cmd_cruxes(args):
     for crux in cruxes:
         stances = {s: stance_of(p) for s, p in table.get(crux["id"],
                                                           {}).items()}
-        if settled(stances):
+        if settled(stances, meta["seats"]):
             done.append(crux["id"])
             continue
         carried.append(dict(crux, **{
@@ -1663,12 +1689,22 @@ def cmd_tally(args):
     out_dir = votes / ("p%d" % n)
     lines = ["# Ratification pass %d\n" % n, "| seat | model | vote |",
              "|---|---|---|"]
-    detail, objections = [], 0
+    detail, objections, unvoted = [], 0, []
     for seat in meta["seats"]:
         data = read_json(out_dir / (seat + ".json")) or {}
+        if not isinstance(data, dict):
+            data = {}
         m = read_json(out_dir / (seat + ".meta.json")) or {}
-        vote = str(data.get("vote", "missing" if not m else "unparsed"))
-        objections += vote == "object"
+        if not m:
+            vote = "missing"
+        elif m.get("failed"):
+            vote = "failed"
+        else:
+            vote = str(data.get("vote", "unparsed"))
+        if vote == "object":
+            objections += 1
+        elif vote not in VOTES:
+            unvoted.append((seat, vote))
         lines.append("| %s | %s | %s |" % (seat, m.get("model", "?"), vote))
         for item in data.get("reservations") or []:
             detail.append("- %s reservation: %s" % (seat, item))
@@ -1680,6 +1716,18 @@ def cmd_tally(args):
     text = "\n".join(lines + [""] + detail) + "\n"
     (out_dir / "tally.md").write_text(text)
     print(text)
+    if unvoted:
+        # Silence is not consent: a failed, missing or unparsed vote leaves
+        # the statement unratified whatever the other seats said.
+        print("not ratified: no valid vote from %s" % ", ".join(
+            "%s (%s)" % pair for pair in unvoted))
+        print("next: rerun them into this pass: conclave.py ratify %s "
+              "--seats %s --pass %d%s" % (
+                  shlex.quote(str(board)),
+                  ",".join(seat for seat, _ in unvoted), n,
+                  "; then revise statement.md with the objectors' edits"
+                  if objections else ""))
+        sys.exit(3)
     print("next: %s" % (
         "revise statement.md with the objectors' edits and ratify again "
         "(at most one more pass; then record remaining objections as dissent)"
