@@ -70,7 +70,10 @@ def _configured_roots(explicit_roots, loaded_root):
     """Return only caller-declared additional parents; never glob a home tree."""
     roots = list(explicit_roots or [])
     for name in DEP_ROOTS_ENV:  # BROOD_ parents first, then legacy HANIG_
-        roots.extend(p for p in os.environ.get(name, "").split(os.pathsep) if p)
+        configured = os.environ.get(name, "")
+        if not configured.strip():
+            continue  # a blank setting declares no root; never a relative " "
+        roots.extend(p for p in configured.split(os.pathsep) if p)
     expanded = [Path(p).expanduser() for p in roots]
     # Collapse relative '..' lexically before touching the filesystem, so a
     # linked loaded skill keeps its installed parent rather than its target.

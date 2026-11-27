@@ -229,6 +229,39 @@ class OrchestrateAndProject(unittest.TestCase):
                     self.assertRaisesRegex(SP.SkillPathError, "BROOD_SKILL_DEP_ROOTS"):
                 SP.sibling_skill_root(loaded, "hanig-orchestrate", "hanig-project")
 
+    def test_whitespace_only_dependency_roots_declare_nothing(self):
+        copies = [load(f"_brood_compat_skill_paths_{skill}",
+                       ROOT / "skills" / skill / "scripts" / "skill_paths.py")
+                  for skill in ("hanig-orchestrate", "hanig-project", "hanig-debrief")]
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            loaded = base / "installed" / "hanig-orchestrate"
+            loaded.mkdir(parents=True)
+            (loaded / "SKILL.md").write_text("x\n")
+            legacy = base / "legacy"
+            (legacy / "hanig-project").mkdir(parents=True)
+            (legacy / "hanig-project" / "SKILL.md").write_text("x\n")
+            blank = (loaded / " ").resolve(strict=False)
+            for module in copies:
+                for env in ({"BROOD_SKILL_DEP_ROOTS": " ",
+                             "HANIG_SKILL_DEP_ROOTS": str(legacy)},
+                            {"BROOD_SKILL_DEP_ROOTS": str(legacy),
+                             "HANIG_SKILL_DEP_ROOTS": " \t"}):
+                    with self.subTest(module=module.__name__, env=env), \
+                            mock.patch.dict(os.environ, env, clear=True):
+                        roots = module._configured_roots((), loaded)
+                        self.assertEqual(roots, [legacy])
+                        self.assertNotIn(blank, roots)
+                        found = module.sibling_skill_root(
+                            loaded, "hanig-orchestrate", "hanig-project")
+                        self.assertEqual(found, (legacy / "hanig-project").resolve())
+            # an internal space is a real path segment and survives
+            spaced = base / "with space"
+            with mock.patch.dict(os.environ, {"BROOD_SKILL_DEP_ROOTS": str(spaced)},
+                                 clear=True):
+                for module in copies:
+                    self.assertEqual(module._configured_roots((), loaded), [spaced])
+
     def test_linear_ops_dir_prefers_brood(self):
         env = {"BROOD_LINEAR_OPS_DIR": "/b/ops", "HANIG_LINEAR_OPS_DIR": "/h/ops"}
         with mock.patch.dict(os.environ, env):
