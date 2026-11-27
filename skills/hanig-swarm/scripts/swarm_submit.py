@@ -555,6 +555,28 @@ def _launch_cli_agent(u, unit_dir, state, state_dir, attempt, intent,
                       f"direct-CLI run root {runs_root!r} is not under this "
                       f"state directory; refusing to start a run the "
                       f"coordinator could not observe")
+    # The placement frozen at dispatch is binding in both directions: an
+    # attempt frozen onto Slurm never falls back to running the CLI on
+    # whatever host retries it, and one frozen local is never moved onto
+    # Slurm (its node-local worktree may be unreachable) or run on a host
+    # whose own placement is Slurm (a login or agent host).
+    environ = dict(os.environ)
+    frozen = intent.get("cli_placement")
+    if frozen == CIO.SLURM:
+        environ[CIO.MODE_ENV] = "on"
+    elif frozen == CIO.LOCAL:
+        here, _problem = CIO.placement(environ)
+        if here == CIO.SLURM:
+            _refuse_lor_workspace(state, state_dir, u, unit_dir, workspace,
+                                  f"{backend} placement refused")
+            return None, (
+                f"unit {u['id']!r} attempt {attempt!r} was frozen to local "
+                f"{backend} placement at dispatch, but this host places "
+                f"coding CLIs on Slurm (a Slurm login or agent host, or "
+                f"{CIO.MODE_ENV}=on). Refusing both to run the CLI on this "
+                f"host and to submit a node-local worktree to Slurm. Retry "
+                f"from the dispatching host, or set {CIO.MODE_ENV}=off to "
+                f"run it here deliberately")
     try:
         unit_real = str(Path(unit_dir).resolve())
         work_real = str(Path(workspace).resolve())
@@ -587,11 +609,6 @@ def _launch_cli_agent(u, unit_dir, state, state_dir, attempt, intent,
     context_err = _write_attempt_context(unit_dir, pairs)
     if context_err:
         return None, context_err
-    # The placement frozen at dispatch is binding: an attempt frozen onto
-    # Slurm never falls back to running the CLI on whatever host retries it.
-    environ = dict(os.environ)
-    if intent.get("cli_placement") == CIO.SLURM:
-        environ[CIO.MODE_ENV] = "on"
     run, start_err = CIO.launch(
         backend, intent.get("cli_model"), intent.get("effort"), str(workspace),
         prompt, state_dir, attempt, env=environ)

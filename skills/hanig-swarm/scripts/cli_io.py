@@ -14,13 +14,23 @@ watcher: everything an observer needs is on disk under
         turn-<n>.stdout.log / turn-<n>.stderr.log
         turn-<n>.exit.json     atomic receipt from the wrapper
         turn-<n>.key           0600, pi+openrouter only; the wrapper reads
-                               and unlinks it before the CLI starts
+                               and unlinks it before the CLI starts, and
+                               refuses to start the CLI if the unlink fails
+        .lock                  flock held by launch, resume and cancel
+
+SECRETS. A pi turn's OpenRouter key reaches the CLI only through an inherited
+pipe; its stdout and stderr pass through a redacting pump, so the key's value
+never reaches a log or the exit receipt. Every CLI child, however the wrapper
+was started, runs behind `env -u` for each adapter-withheld name.
 
 PLACEMENT. On a Slurm login or agent host (sbatch, squeue and scancel on
 PATH and not inside a compute-node batch job; ``HANIG_SWARM_CLI_SLURM`` =
 auto|on|off) a turn is submitted with ``sbatch --export=NONE`` and the
 wrapper runs under ``env -i`` on a compute node. A failed submission FAILS
-CLOSED: a heavy CLI is never run on a login node as a fallback. Elsewhere the
+CLOSED: a heavy CLI is never run on a login node as a fallback. An agent-host
+job missing a Slurm tool refuses rather than running locally, and a resume
+of a run recorded ``local`` refuses on a host whose placement is Slurm (its
+node-local worktree may be unreachable from a compute node). Elsewhere the
 wrapper is a detached process group (``start_new_session``) whose (pid, pgid,
 start time) is recorded, so liveness survives coordinator restarts and is
 never confused by PID reuse.
@@ -38,7 +48,9 @@ holds its 0600 key file until it starts or is cancelled.
 Python 3.8+, standard library only. Never imports swarm.py.
 """
 
+import contextlib
 import datetime
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -48,6 +60,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
@@ -84,6 +97,11 @@ _JOB_STATE = re.compile(r"(?:^|\s)JobState=(\S+)")
 SLURM_FAILED = ("FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "OUT_OF_MEMORY",
                 "BOOT_FAIL", "DEADLINE", "REVOKED", "SPECIAL_EXIT")
 TERMINAL_STATES = ("stopped", "failed", "preempted", "incomplete")
+LOCK_NAME = ".lock"
+LOCK_WAIT_SECONDS = 60.0
+REDACTED = b"[REDACTED]"
+PUMP_CHUNK = 65536
+PUMP_DRAIN_SECONDS = 10.0
 
 
 class CliRunError(ValueError):
@@ -150,6 +168,41 @@ def _read_json(path):
     except (OSError, ValueError):
         return None
     return obj if isinstance(obj, dict) else None
+
+
+@contextlib.contextmanager
+def _run_lock(rdir, wait):
+    """Hold the exclusive per-attempt flock on ``<rdir>/.lock``.
+
+    Serializes launch, resume and cancel of one attempt. Raises CliRunError
+    when the lock is not acquired within ``wait`` seconds or cannot be taken
+    at all: an unlocked mutation is never attempted. The fd is close-on-exec
+    and every spawn here closes inherited fds, so no child keeps the lock.
+    """
+    path = Path(rdir) / LOCK_NAME
+    try:
+        fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as exc:
+        raise CliRunError(f"cannot open the run lock {path}: {exc}")
+    try:
+        deadline = time.monotonic() + max(0.0, wait)
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise CliRunError(
+                        f"another launch, resume or cancel of this attempt "
+                        f"holds {path}; refusing to race it. Retry once it "
+                        f"finishes")
+                time.sleep(0.05)
+            except OSError as exc:
+                raise CliRunError(f"cannot lock {path}: {exc}; refusing an "
+                                  f"unserialized run mutation")
+        yield
+    finally:
+        os.close(fd)
 
 
 def _withheld_names(contained, adapter=None):
@@ -256,8 +309,16 @@ def placement(environ=None):
                           f"refusing to run a coding CLI locally instead. Set "
                           f"{MODE_ENV}=off to run it on this host")
         return SLURM, None
-    if in_slurm_job(environ) and not is_agent_host_job(environ):
-        return LOCAL, None          # already inside a compute-node job
+    if in_slurm_job(environ):
+        if not is_agent_host_job(environ):
+            return LOCAL, None      # already inside a compute-node job
+        if missing:
+            # An agent-host allocation is login-like: never run the CLI here.
+            return None, (f"this is a Slurm agent-host job but "
+                          f"{', '.join(missing)} not on PATH; refusing to run "
+                          f"a coding CLI on it. Put the Slurm tools on PATH, or "
+                          f"set {MODE_ENV}=off to run it on this host")
+        return SLURM, None
     return (SLURM, None) if not missing else (LOCAL, None)
 
 
@@ -615,12 +676,26 @@ def _start_turn(rdir, run, turn, prompt, *, resume_session_id=None,
         return None, str(exc)
     names = {k: rdir / f"turn-{turn}.{k}" for k in (
         "prompt.txt", "stdout.log", "stderr.log", "exit.json", "key", "json")}
+    # Only files this call created are ever removed: an existing turn-N file
+    # belongs to another (or a crashed) caller and is left exactly as found.
+    created = []
+
+    def discard():
+        for path in reversed(created):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
     try:
         _write_private_text(names["prompt.txt"], str(prompt))
+        created.append(names["prompt.txt"])
         key_file = None
         if key_value is not None:
             _write_private_text(names["key"], key_value)
+            created.append(names["key"])
             key_file = str(names["key"])
+        if names["json"].exists():
+            raise FileExistsError(f"{names['json']} already exists")
         _write_atomic(names["json"], {
             "turn": turn, "adapter": adapter, "argv": argv, "cwd": worktree,
             "stdin": str(names["prompt.txt"]), "stdout": str(names["stdout.log"]),
@@ -628,12 +703,14 @@ def _start_turn(rdir, run, turn, prompt, *, resume_session_id=None,
             "key_file": key_file,
             "key_env": CA.OPENROUTER_KEY if key_file else None,
             "fallback_session_id": session_id})
+        created.append(names["json"])
+    except FileExistsError as exc:
+        discard()
+        return None, (f"turn {turn} files already exist in {rdir} ({exc}); "
+                      f"another or an interrupted launch created them. Nothing "
+                      f"was started or removed; inspect them before retrying")
     except OSError as exc:
-        for path in (names["key"], names["prompt.txt"], names["json"]):
-            try:
-                path.unlink()
-            except OSError:
-                pass
+        discard()
         return None, f"cannot write turn {turn} files in {rdir}: {exc}"
     record = {"turn": turn, "mode": run["mode"], "started_at": _now(),
               "resume_of": resume_session_id, "argv": argv}
@@ -642,10 +719,12 @@ def _start_turn(rdir, run, turn, prompt, *, resume_session_id=None,
     else:
         updates, error = _spawn_local(rdir, run, turn)
     if error:
-        # Nothing was started: remove the turn's files (the key first) so a
-        # later resume can create turn N again with O_EXCL.
-        for path in (names["key"], names["prompt.txt"], names["json"],
-                     rdir / f"turn-{turn}.sbatch.sh"):
+        # Nothing was started: remove the files this call created (the key
+        # first) so a later resume can create turn N again with O_EXCL. The
+        # sbatch script is ours too: it is only written after this call's
+        # O_EXCL prompt succeeded.
+        doomed = sorted(created, key=lambda path: path != names["key"])
+        for path in doomed + [rdir / f"turn-{turn}.sbatch.sh"]:
             try:
                 path.unlink()
             except FileNotFoundError:
@@ -754,6 +833,17 @@ def launch(adapter, model, thinking, worktree, prompt, state_dir, attempt_id, *,
     except OSError as exc:
         return None, f"cannot create {rdir}: {exc}"
     os.chmod(str(rdir), 0o700)
+    try:
+        with _run_lock(rdir, LOCK_WAIT_SECONDS):
+            return _launch_locked(adapter, model, thinking, worktree, prompt,
+                                  rdir, attempt_id, mode, source,
+                                  resume_session_id, key_value)
+    except CliRunError as exc:
+        return None, str(exc)
+
+
+def _launch_locked(adapter, model, thinking, worktree, prompt, rdir,
+                   attempt_id, mode, source, resume_session_id, key_value):
     session_id = resume_session_id or (
         str(uuid.uuid4()) if CA.preassigned_session(adapter) else None)
     run = {"schema_version": SCHEMA, "attempt_id": attempt_id, "adapter": adapter,
@@ -778,12 +868,27 @@ def launch(adapter, model, thinking, worktree, prompt, state_dir, attempt_id, *,
 
 
 def resume(state_dir, attempt_id, prompt, *, env=None):
-    """Start turn N+1 of an existing run in the same worktree and session."""
+    """Start turn N+1 of an existing run in the same worktree and session.
+
+    Holds the run lock without waiting: a competing launch, resume or cancel
+    makes this call refuse, never race. Placement is re-evaluated for THIS
+    host: a run recorded ``local`` refuses where placement is now Slurm.
+    """
     source = _env(env)
     try:
         rdir = run_dir(state_dir, attempt_id)
     except CliRunError as exc:
         return None, str(exc)
+    if not (rdir / RUN_RECORD).is_file():
+        return None, f"no direct-CLI run for attempt {attempt_id!r}"
+    try:
+        with _run_lock(rdir, 0):
+            return _resume_locked(rdir, attempt_id, prompt, source)
+    except CliRunError as exc:
+        return None, str(exc)
+
+
+def _resume_locked(rdir, attempt_id, prompt, source):
     run = _read_json(rdir / RUN_RECORD)
     if run is None:
         return None, f"no direct-CLI run for attempt {attempt_id!r}"
@@ -791,6 +896,17 @@ def resume(state_dir, attempt_id, prompt, *, env=None):
     if obs["state"] in ("running", "unknown"):
         return None, (f"turn {run.get('turn')} is {obs['state']} "
                       f"({obs['detail']}); refusing to start another turn")
+    here, problem = placement(source)
+    if problem:
+        return None, problem
+    if run.get("mode") == LOCAL and here == SLURM:
+        return None, (f"attempt {attempt_id!r} was launched with local "
+                      f"placement, but this host places coding CLIs on Slurm "
+                      f"(a Slurm login or agent host, or {MODE_ENV}=on). "
+                      f"Refusing both to run the CLI on this host and to "
+                      f"submit a node-local worktree to Slurm. Resume from the "
+                      f"host that launched it, or set {MODE_ENV}=off to run "
+                      f"it here deliberately")
     session_id = obs.get("session_id") or run.get("session_id")
     if not CA.valid_session_id(session_id):
         return None, (f"attempt {attempt_id!r} has no recorded {run.get('adapter')} "
@@ -827,6 +943,16 @@ def cancel(state_dir, attempt_id, grace=CANCEL_GRACE_SECONDS):
         rdir = run_dir(state_dir, attempt_id)
     except CliRunError as exc:
         return False, str(exc)
+    if not (rdir / RUN_RECORD).is_file():
+        return False, f"no direct-CLI run for attempt {attempt_id!r}"
+    try:
+        with _run_lock(rdir, LOCK_WAIT_SECONDS):
+            return _cancel_locked(rdir, attempt_id, grace)
+    except CliRunError as exc:
+        return False, str(exc)
+
+
+def _cancel_locked(rdir, attempt_id, grace):
     run = _read_json(rdir / RUN_RECORD)
     if run is None:
         return False, f"no direct-CLI run for attempt {attempt_id!r}"
@@ -894,6 +1020,98 @@ def _exec_with_key(fd, argv):
     os.execv(argv[0], argv)
 
 
+class _RedactingSink:
+    """Write bytes to ``out`` with every occurrence of ``secret`` replaced.
+
+    The last ``len(secret) - 1`` bytes are held back between writes, so an
+    occurrence split across any chunk boundary is still replaced: an
+    occurrence starting before the held tail lies wholly inside the buffer.
+    """
+
+    def __init__(self, out, secret):
+        self._out, self._secret, self._buf = out, secret, b""
+        self._keep = len(secret) - 1
+
+    def write(self, data):
+        self._buf = (self._buf + data).replace(self._secret, REDACTED)
+        cut = len(self._buf) - self._keep
+        if cut > 0:
+            self._out.write(self._buf[:cut])
+            self._buf = self._buf[cut:]
+
+    def close(self):
+        try:
+            self._out.write(self._buf.replace(self._secret, REDACTED))
+            self._buf = b""
+        finally:
+            self._out.close()
+
+
+def _pump(read_fd, sink):
+    """Copy a pipe into a redacting sink until EOF, then close both."""
+    try:
+        while True:
+            chunk = os.read(read_fd, PUMP_CHUNK)
+            if not chunk:
+                break
+            sink.write(chunk)
+    except OSError:
+        pass
+    finally:
+        os.close(read_fd)
+        try:
+            sink.close()
+        except OSError:
+            pass
+
+
+class _TurnLogs:
+    """The CLI's stdout/stderr targets for one turn.
+
+    Without a secret they are the log files themselves. With one, the CLI
+    writes into pipes and a pump per stream redacts ``secret`` before any
+    byte reaches its log file.
+    """
+
+    def __init__(self, stdout_path, stderr_path, secret=None):
+        self._files, self._threads, self._write_fds = [], [], []
+        try:
+            for path in (stdout_path, stderr_path):
+                self._files.append(open(path, "wb"))
+            self.targets = list(self._files)
+            if secret:
+                self.targets = []
+                for handle in self._files:
+                    read_fd, write_fd = os.pipe()
+                    self._write_fds.append(write_fd)
+                    thread = threading.Thread(
+                        target=_pump, daemon=True,
+                        args=(read_fd, _RedactingSink(handle, secret.encode("utf-8"))))
+                    thread.start()
+                    self._threads.append(thread)
+                    self.targets.append(write_fd)
+        except BaseException:
+            self.close(0)
+            raise
+
+    def spawned(self):
+        """Drop the parent's write ends once the CLI holds its own."""
+        for fd in self._write_fds:
+            os.close(fd)
+        self._write_fds = []
+
+    def close(self, wait=PUMP_DRAIN_SECONDS):
+        self.spawned()
+        if not self._threads:
+            for handle in self._files:
+                handle.close()
+            return
+        # A pump still blocked after ``wait`` (a descendant kept the pipe
+        # open) is a daemon: its later bytes are dropped, never unredacted.
+        for thread in self._threads:
+            thread.join(wait)
+
+
 def run_turn(rdir, turn):
     """Run one turn's CLI and write its exit receipt. Returns the exit code."""
     rdir = Path(rdir)
@@ -904,14 +1122,19 @@ def run_turn(rdir, turn):
     key_file = spec.get("key_file")
     if key_file:
         try:
-            key_value = Path(key_file).read_text(encoding="utf-8").strip()
+            key_value = Path(key_file).read_text(encoding="utf-8").strip() or None
         except OSError as exc:
             error = f"cannot read the private key file: {exc}"
-        finally:
-            try:
-                os.unlink(key_file)
-            except OSError:
-                pass
+        try:
+            os.unlink(key_file)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            # Fail closed: the CLI never starts while its key is on disk.
+            key_value = None
+            error = (f"cannot remove the private key file {key_file} ({exc}); "
+                     f"refusing to start the CLI while the key remains on disk")
+    secret = key_value
     terminated = []
 
     def on_term(signum, _frame):
@@ -920,12 +1143,21 @@ def run_turn(rdir, turn):
             child.send_signal(signum)
     signal.signal(signal.SIGTERM, on_term)
     signal.signal(signal.SIGHUP, on_term)
+    logs = None
     try:
         argv = spec.get("argv")
         if not isinstance(argv, list) or not argv:
             raise CliRunError(f"turn {turn} spec has no argv")
         if error:
             raise CliRunError(error)
+        # Defense in depth: whoever started this wrapper, the CLI runs behind
+        # `env -u` for every name its adapter withholds (an unknown adapter
+        # withholds every adapter's names).
+        adapter = spec.get("adapter")
+        prefix, problem = _contained_argv(
+            [], adapter if adapter in CA.CLI_BACKENDS else None)
+        if problem:
+            raise CliRunError(problem)
         pass_fds = ()
         if key_value:
             read_fd, write_fd = os.pipe()
@@ -935,15 +1167,20 @@ def run_turn(rdir, turn):
                     str(read_fd), "--"] + argv
             pass_fds = (read_fd,)
         key_value = None
-        with open(spec["stdin"], "rb") as stdin, \
-                open(spec["stdout"], "wb") as stdout, \
-                open(spec["stderr"], "wb") as stderr:
-            child = subprocess.Popen(argv, cwd=spec.get("cwd"), stdin=stdin,
-                                     stdout=stdout, stderr=stderr,
-                                     pass_fds=pass_fds, close_fds=True,
-                                     env=CE.child_env())
-        for fd in pass_fds:
-            os.close(fd)
+        argv = prefix + argv
+        try:
+            logs = _TurnLogs(spec["stdout"], spec["stderr"], secret)
+            with open(spec["stdin"], "rb") as stdin:
+                child = subprocess.Popen(argv, cwd=spec.get("cwd"), stdin=stdin,
+                                         stdout=logs.targets[0],
+                                         stderr=logs.targets[1],
+                                         pass_fds=pass_fds, close_fds=True,
+                                         env=CE.child_env())
+        finally:
+            for fd in pass_fds:
+                os.close(fd)
+            if logs is not None:
+                logs.spawned()
         while True:
             try:
                 rc = child.wait()
@@ -954,15 +1191,23 @@ def run_turn(rdir, turn):
             error = (f"terminated by signal {-rc}" if rc < 0 else f"exit {rc}")
     except (OSError, CliRunError, KeyError) as exc:
         error, rc = f"{type(exc).__name__}: {exc}", 127
+    finally:
+        if logs is not None:
+            logs.close()
     sid = None
     try:
         sid = CA.parse_session(spec.get("adapter"),
                                Path(spec["stdout"]).read_text(errors="replace"))
     except (OSError, KeyError, CA.AdapterError):
         sid = None
+    sid = sid or spec.get("fallback_session_id")
+    if secret:
+        text = REDACTED.decode("ascii")
+        error = error.replace(secret, text) if error else error
+        sid = sid.replace(secret, text) if isinstance(sid, str) else sid
     _write_atomic(spec.get("exit") or (rdir / f"turn-{turn}.exit.json"), {
         "turn": turn, "returncode": rc, "started_at": started,
-        "finished_at": _now(), "session_id": sid or spec.get("fallback_session_id"),
+        "finished_at": _now(), "session_id": sid,
         "error": error, "signalled": bool(terminated)})
     return 0 if rc == 0 else 1
 

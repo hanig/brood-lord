@@ -6,6 +6,7 @@ turn wrapper, detached process groups, receipts, the coordinator, unit.py,
 Git worktrees and state persistence are real. No live model call is possible.
 """
 import contextlib
+import fcntl
 import io
 import json
 import os
@@ -99,6 +100,17 @@ if mine.get("hang"):
         time.sleep(0.05)
 def opt(flag):
     return argv[argv.index(flag) + 1] if flag in argv else None
+if mine.get("echo_key"):
+    # Print the delivered key split across two flushed writes, so the
+    # wrapper's pump sees it straddle a read boundary.
+    key = os.environ.get("OPENROUTER_API_KEY") or ""
+    half = len(key) // 2
+    sys.stdout.write("leak=" + key[:half]); sys.stdout.flush()
+    time.sleep(0.3)
+    sys.stdout.write(key[half:] + "\n"); sys.stdout.flush()
+    sys.stderr.write("err " + key[:half]); sys.stderr.flush()
+    time.sleep(0.3)
+    sys.stderr.write(key[half:] + "\n"); sys.stderr.flush()
 if name == "claude":
     sid = opt("--session-id") or opt("--resume")
     print(json.dumps({"type": "result", "subtype": "success", "session_id": sid}))
@@ -599,6 +611,117 @@ class TestLocalExecution(CliFixture):
         self.assertIsNone(run)
         self.assertIn("already exists", error)
 
+    def _stopped_claude_run(self):
+        self.launch("claude", CLAUDE_MODEL)
+        self.wait_state("stopped")
+        return self.rundir()
+
+    def _first_callers_turn_2(self, rdir):
+        files = {rdir / "turn-2.prompt.txt": "first caller's prompt",
+                 rdir / "turn-2.json": '{"first": true}'}
+        for path, text in files.items():
+            path.write_text(text)
+        return files
+
+    def test_competing_resume_is_refused_without_touching_the_first_callers_files(self):
+        rdir = self._stopped_claude_run()
+        # The first resume holds the run lock and has created turn 2.
+        files = self._first_callers_turn_2(rdir)
+        fd = os.open(str(rdir / ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        run, error = CIO.resume(self.state_dir, "att-1", "second caller")
+        self.assertIsNone(run)
+        self.assertIn("refusing to race", error)
+        for path, text in files.items():
+            self.assertEqual(path.read_text(), text, path.name)
+        self.assertEqual(json.loads((rdir / "run.json").read_text())["turn"], 1)
+        self.assertEqual(len(self.calls("claude")), 1)
+        # cancel waits for the lock too; it never acts while it is held.
+        with mock.patch.object(CIO, "LOCK_WAIT_SECONDS", 0.2):
+            ok, detail = CIO.cancel(self.state_dir, "att-1")
+        self.assertFalse(ok)
+        self.assertIn("refusing to race", detail)
+
+    def test_resume_never_unlinks_turn_files_it_did_not_create(self):
+        rdir = self._stopped_claude_run()
+        files = self._first_callers_turn_2(rdir)
+        run, error = CIO.resume(self.state_dir, "att-1", "second caller")
+        self.assertIsNone(run)
+        self.assertIn("already exist", error)
+        for path, text in files.items():
+            self.assertEqual(path.read_text(), text, path.name)
+        record = json.loads((rdir / "run.json").read_text())
+        self.assertEqual((record["turn"], record["status"]), (1, "launched"))
+        self.assertEqual(len(self.calls("claude")), 1)
+        # Only turn 2's own json exists: the prompt is ours, the json is not.
+        (rdir / "turn-2.prompt.txt").unlink()
+        run, error = CIO.resume(self.state_dir, "att-1", "second caller")
+        self.assertIsNone(run)
+        self.assertFalse((rdir / "turn-2.prompt.txt").exists())
+        self.assertEqual((rdir / "turn-2.json").read_text(), '{"first": true}')
+        (rdir / "turn-2.json").unlink()
+        run, error = CIO.resume(self.state_dir, "att-1", "second caller")
+        self.assertIsNone(error)
+        self.assertEqual(run["turn"], 2)
+
+    def test_loaded_openrouter_key_is_redacted_from_logs_and_receipt(self):
+        self.control(pi={"echo_key": True})
+        self.launch("pi", PI_MODEL)
+        self.wait_state("stopped")
+        (call,) = self.calls("pi")
+        self.assertEqual(call["openrouter"], OPENROUTER_SECRET)
+        rdir = self.rundir()
+        stdout = (rdir / "turn-1.stdout.log").read_text()
+        stderr = (rdir / "turn-1.stderr.log").read_text()
+        receipt = (rdir / "turn-1.exit.json").read_text()
+        # The CLI did print the key on both streams, split across writes.
+        self.assertIn("leak=[REDACTED]\n", stdout)
+        self.assertIn("err [REDACTED]\n", stderr)
+        for name, text in (("stdout", stdout), ("stderr", stderr), ("exit", receipt)):
+            self.assertNotIn(OPENROUTER_SECRET, text, name)
+            self.assertNotIn(OPENROUTER_SECRET[:len(OPENROUTER_SECRET) // 2], text, name)
+        # The session line after the key still parses from the redacted log.
+        self.assertEqual(json.loads(receipt)["session_id"],
+                         json.loads((rdir / "run.json").read_text())["session_id"])
+        for secret in SECRETS:
+            self.assertNotIn(secret, self.all_run_text())
+
+    def test_redacting_sink_handles_every_chunk_boundary(self):
+        secret = b"sk-or-v1-0123456789abcdef"
+        stream = b"a" + secret + b"b" + secret + secret + b"tail" + secret[:7]
+        for size in range(1, len(stream) + 1):
+            with self.subTest(size=size):
+                out = io.BytesIO()
+                out.close = lambda: None
+                sink = CIO._RedactingSink(out, secret)
+                for i in range(0, len(stream), size):
+                    sink.write(stream[i:i + size])
+                sink.close()
+                self.assertEqual(out.getvalue(),
+                                 b"a[REDACTED]b[REDACTED][REDACTED]tail" + secret[:7])
+
+    def test_run_turn_called_directly_still_withholds_adapter_names(self):
+        os.environ["ANTHROPIC_BASE_URL"] = "https://fixture.invalid"
+        rdir = self.tmp / "direct-run"
+        rdir.mkdir()
+        (rdir / "turn-1.prompt.txt").write_text("direct")
+        (rdir / "turn-1.json").write_text(json.dumps({
+            "turn": 1, "adapter": "claude", "argv": [str(self.bin / "claude"), "-p"],
+            "cwd": str(self.worktree), "stdin": str(rdir / "turn-1.prompt.txt"),
+            "stdout": str(rdir / "turn-1.stdout.log"),
+            "stderr": str(rdir / "turn-1.stderr.log"),
+            "exit": str(rdir / "turn-1.exit.json"), "key_file": None,
+            "key_env": None, "fallback_session_id": None}))
+        handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}
+        self.addCleanup(lambda: [signal.signal(k, v) for k, v in handlers.items()])
+        self.assertIn("ANTHROPIC_API_KEY", os.environ)
+        self.assertEqual(CIO.run_turn(rdir, 1), 0)
+        (call,) = self.calls("claude")
+        for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY",
+                     "OPENROUTER_API_KEY", "LOR_SESSION_TOKEN", "ANTHROPIC_BASE_URL"):
+            self.assertNotIn(name, call["env"])
+
 
 class TestSlurmExecution(CliFixture):
     slurm = True
@@ -717,6 +840,96 @@ class TestSlurmExecution(CliFixture):
                                 self.state_dir, "att-1")
         self.assertIsNone(run)
         self.assertFalse(self.rundir().exists())
+
+    def test_agent_host_job_without_slurm_tools_fails_closed(self):
+        os.environ["SLURM_JOB_ID"] = "123"
+        os.environ["SLURM_JOB_NAME"] = "sh_agent"
+        self.assertEqual(CIO.placement(), ("slurm", None))
+        for gone in (("sbatch",), ("squeue",), ("scancel",),
+                     ("sbatch", "squeue", "scancel")):
+            with self.subTest(missing=gone):
+                for name in gone:
+                    (self.bin / name).rename(self.tmp / name)
+                try:
+                    mode, problem = CIO.placement()
+                    self.assertIsNone(mode)
+                    self.assertNotEqual(mode, "local")
+                    for name in gone:
+                        self.assertIn(name, problem)
+                    self.assertIn("agent-host", problem)
+                    run, error = CIO.launch("claude", CLAUDE_MODEL, None,
+                                            str(self.worktree), "p",
+                                            self.state_dir, "att-1")
+                    self.assertIsNone(run)
+                    self.assertEqual(error, problem)
+                    self.assertFalse(self.rundir().exists())
+                    self.assertEqual(self.calls(), [])
+                finally:
+                    for name in gone:
+                        (self.tmp / name).rename(self.bin / name)
+        # An explicit off still runs it here, as the refusal says.
+        (self.bin / "sbatch").unlink()
+        os.environ["HANIG_SWARM_CLI_SLURM"] = "off"
+        self.assertEqual(CIO.placement(), ("local", None))
+
+    def test_resume_of_a_local_run_refuses_on_a_slurm_placement_host(self):
+        os.environ["HANIG_SWARM_CLI_SLURM"] = "off"
+        run = self.launch("claude", CLAUDE_MODEL)
+        self.assertEqual(run["mode"], "local")
+        self.wait_state("stopped")
+        hosts = ({"HANIG_SWARM_CLI_SLURM": "auto", "SLURM_JOB_ID": "123",
+                  "SLURM_JOB_NAME": "sh_agent"},
+                 {"HANIG_SWARM_CLI_SLURM": "auto"},
+                 {"HANIG_SWARM_CLI_SLURM": "on"})
+        for host in hosts:
+            with self.subTest(host=host), mock.patch.dict(os.environ, host), \
+                    mock.patch.object(CIO, "_spawn_local",
+                                      side_effect=AssertionError("local spawn")):
+                self.assertEqual(CIO.placement()[0], "slurm")
+                again, error = CIO.resume(self.state_dir, "att-1", "next")
+                self.assertIsNone(again)
+                self.assertIn("local placement", error)
+                self.assertEqual(self.slurm_calls("sbatch"), [])
+                self.assertEqual(len(self.calls("claude")), 1)
+                self.assertFalse((self.rundir() / "turn-2.prompt.txt").exists())
+                self.assertEqual(json.loads((self.rundir() / "run.json")
+                                            .read_text())["turn"], 1)
+        again, error = CIO.resume(self.state_dir, "att-1", "next")
+        self.assertIsNone(error)
+        self.assertEqual((again["turn"], again["mode"]), (2, "local"))
+        self.assertEqual(self.slurm_calls("sbatch"), [])
+
+    def test_key_file_that_cannot_be_unlinked_refuses_to_start_pi(self):
+        if os.geteuid() == 0:
+            self.skipTest("root ignores directory write permission")
+        self.slurm_control(job_id="4242", squeue={"4242": "PENDING"})
+        self.launch("pi", PI_MODEL)
+        rdir = self.rundir()
+        spec_path = rdir / "turn-1.json"
+        spec = json.loads(spec_path.read_text())
+        # Move the 0600 key into a read-only directory: readable, not removable.
+        locked = rdir / "read-only"
+        locked.mkdir(mode=0o700)
+        key = locked / "turn-1.key"
+        os.replace(spec["key_file"], str(key))
+        spec["key_file"] = str(key)
+        spec_path.write_text(json.dumps(spec))
+        locked.chmod(0o500)
+        self.addCleanup(locked.chmod, 0o700)
+        self.assertEqual(stat.S_IMODE(key.stat().st_mode), 0o600)
+        done = subprocess.run(["bash", str(rdir / "turn-1.sbatch.sh")],
+                              env={"PATH": str(self.bin)},
+                              capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertEqual(self.calls("pi"), [])
+        self.assertTrue(key.exists())
+        receipt = json.loads((rdir / "turn-1.exit.json").read_text())
+        self.assertNotEqual(receipt["returncode"], 0)
+        self.assertIn("cannot remove the private key file", receipt["error"])
+        self.assertIn("refusing to start the CLI", receipt["error"])
+        self.slurm_control(job_id="4242", squeue={})
+        self.assertEqual(self.inspect()["state"], "failed")
+        self.assertNotIn(OPENROUTER_SECRET, (rdir / "turn-1.exit.json").read_text())
 
     def test_partition_override_and_auto_batch_need_no_names_in_code(self):
         os.environ["HANIG_SWARM_CLI_SLURM_PARTITION"] = "fixturepart"
@@ -1005,6 +1218,38 @@ class TestSwarmIntegration(SwarmCliFixture):
         self.assertEqual(S.reconcile_orphan(us["attempt_dir"], kind="code",
                                             intent=dict(fresh, cli_runs_root=None)),
                          (None, "UNKNOWN"))
+
+
+class TestSwarmFrozenPlacement(SwarmCliFixture):
+    slurm = True
+
+    def test_frozen_local_retry_refuses_when_this_host_forces_slurm(self):
+        plan = self.write_plan({"name": "p", "units": [
+            self.unit("c", backend="claude", model=CLAUDE_MODEL)]})
+        original = S.SSB._launch_cli_agent
+        seen = {}
+
+        def retried_on_a_slurm_host(*args, **kwargs):
+            # The intent is frozen (local); the host that launches it now
+            # forces Slurm placement.
+            os.environ["HANIG_SWARM_CLI_SLURM"] = "on"
+            seen["intent"] = dict(args[5])
+            seen["result"] = original(*args, **kwargs)
+            return seen["result"]
+        with mock.patch.object(S.SSB, "_launch_cli_agent", retried_on_a_slurm_host), \
+                mock.patch.object(CIO, "_spawn_local",
+                                  side_effect=AssertionError("local spawn")):
+            state, report, dispatched, _h = self.advance(plan)
+        self.assertEqual(seen["intent"]["cli_placement"], "local")
+        job, error = seen["result"]
+        self.assertIsNone(job)
+        self.assertIn("frozen to local", error)
+        self.assertIn("HANIG_SWARM_CLI_SLURM=off", error)
+        self.assertEqual(dispatched, 0, report)
+        self.assertEqual(self.slurm_calls(), [])
+        self.assertEqual(self.calls(), [])
+        runs = Path(self.state_dir) / "cli-runs"
+        self.assertEqual(list(runs.iterdir()) if runs.exists() else [], [])
 
 
 class TestWaitEventPollCli(CliFixture):
