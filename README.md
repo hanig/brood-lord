@@ -61,7 +61,7 @@ helper, retains its open handle until exit, and reads the result only after a
 successful bounded child. Oversized results report `state: "unknown"` and
 `truncated: true`; incomplete or invalid JSON reports unknown. For full detail
 beyond that transport bound, run
-`python3 skills/hanig-project/scripts/agent_diagnostics.py --json` directly.
+`python3 skills/brood-project/scripts/agent_diagnostics.py --json` directly.
 The legacy helper `--doctor-json` option retains its 48,000-byte cap for older
 callers. Doctor's process deadlines and ordinary log-tail bound are unchanged.
 If the private file cannot be set up (including a Perl installation without
@@ -77,7 +77,7 @@ summary still returns an explicit truncation record.
 Then, on a cluster, in an empty directory or a half-finished repo:
 
 ```
-Use the hanig-project skill to start a project here.
+Use the brood-project skill to start a project here.
 ```
 
 That is the front door. It surveys the host, interviews you only about what
@@ -90,18 +90,18 @@ every issue title for approval, files them in Linear, and dispatches.
 
 | Skill | One line |
 |---|---|
-| `hanig-project` | The front door: survey, interview, plan, approve, file, dispatch, report. |
-| `hanig-orchestrate` | The authorized loop: delegate, watch, adjudicate, merge, reconcile, report, hand off. |
-| `hanig-swarm` | The coordinator: validate a DAG, isolate each attempt, dispatch, advance, judge. |
-| `hanig-verified-workflow` | Declare and verify what "done" means for one batch job. |
-| `hanig-review-gate` | Adversarial multi-model review of code and of the claims made about it. |
-| `hanig-portable-handoff` | Capture and resume run state across machines. |
-| `hanig-wandb-logging` | Make W&B runs readable; caller supplies W&B, contracts judge outcomes. |
-| `hanig-debrief` | Collect project lessons into a private dossier, draft an owner-approved scrubbed packet, and triage/file learnings. |
-| `hanig-hillclimb` | Hill-climb a metric by pre-registered hypotheses and a paired A/B noise screen. |
+| `brood-project` | The front door: survey, interview, plan, approve, file, dispatch, report. |
+| `brood-orchestrate` | The authorized loop: delegate, watch, adjudicate, merge, reconcile, report, hand off. |
+| `brood-swarm` | The coordinator: validate a DAG, isolate each attempt, dispatch, advance, judge. |
+| `brood-verified-workflow` | Declare and verify what "done" means for one batch job. |
+| `brood-review-gate` | Adversarial multi-model review of code and of the claims made about it. |
+| `brood-portable-handoff` | Capture and resume run state across machines. |
+| `brood-wandb-logging` | Make W&B runs readable; caller supplies W&B, contracts judge outcomes. |
+| `brood-debrief` | Collect project lessons into a private dossier, draft an owner-approved scrubbed packet, and triage/file learnings. |
+| `brood-hillclimb` | Hill-climb a metric by pre-registered hypotheses and a paired A/B noise screen. |
 
-All nine are prefixed `hanig-` so they can never collide with an Arc
-org-managed skill name. That prefix is now load-bearing rather than tidy:
+All nine are prefixed `brood-` (formerly `hanig-`) so they can never collide
+with an Arc org-managed skill name. That prefix is now load-bearing rather than tidy:
 `install.sh` reads it as the authorship namespace, and anything under
 `skills/` outside it is treated as vendored -- installed by us, written
 upstream, and **left alone by `--uninstall`**.
@@ -230,7 +230,7 @@ The upstream-ready report and proposed correction are in
 `docs/upstream-agent-bus-path-discovery.md`. The vendored skill files remain
 unchanged so a future upstream re-sync remains an honest diff.
 
-### hanig-project
+### brood-project
 
 Gets you from "I am on a server with an intention" to units of work that are
 dispatched, tracked, and verifiable.
@@ -293,7 +293,7 @@ any config file the command reads) must be settled before finishing. This is
 enforced, not remembered: `swarm.py validate` refuses a plan whose declared
 inputs are empty, still placeholders, or match nothing.
 
-### hanig-orchestrate
+### brood-orchestrate
 
 The operating mode for a session driving an existing run. It points to the
 owner-originated mandate as the sole authority and covers authority
@@ -303,7 +303,7 @@ and takeover.
 
 The [mandate's judgment policy](docs/orchestrator-mandate.md#the-concurrence-rule)
 and the generated `adjudication.matrix` and `adjudication.concurrence`
-[declarations](skills/hanig-orchestrate/SKILL.md) govern dispositions. An
+[declarations](skills/brood-orchestrate/SKILL.md) govern dispositions. An
 orchestrator that did not author the affected design or implementation may
 make reproduced findings nonblocking when unlikely to change design or outcome,
 consulting Astra only when unsure; otherwise the existing concurrence rule applies.
@@ -317,19 +317,19 @@ reports. Use a validated IANA zone with its abbreviation and daylight-time
 transitions. Unset or invalid means UTC, announced once per session. Internal
 logs may keep UTC, and verbatim tool output and quoted evidence keep their
 timestamps. This is a session instruction, not a `report.py` runtime option;
-the [operating loop](skills/hanig-orchestrate/references/operating-loop.md#owner-facing-report-times)
+the [operating loop](skills/brood-orchestrate/references/operating-loop.md#owner-facing-report-times)
 shows validation and conversion guidance.
 
 It has no coordinator executable of its own. Set `HANIG_ORCHESTRATE_DIR` to the
 loaded skill directory, then use the programs from the separately loaded
-`hanig-project`, `hanig-swarm`, `hanig-review-gate`, and
-`hanig-portable-handoff` skills through their own directory variables. A
+`brood-project`, `brood-swarm`, `brood-review-gate`, and
+`brood-portable-handoff` skills through their own directory variables. A
 selective install names all five bundles:
 
 ```sh
 ./install.sh --agent codex \
-  --only hanig-orchestrate --only hanig-project --only hanig-swarm \
-  --only hanig-review-gate --only hanig-portable-handoff
+  --only brood-orchestrate --only brood-project --only brood-swarm \
+  --only brood-review-gate --only brood-portable-handoff
 ```
 
 `swarm.py advance` remains one offline, locked pass that exits. A deterministic
@@ -337,7 +337,7 @@ host scheduler repeats it; the orchestrating session performs connected review,
 merge, tracker, and reporting work around those passes.
 
 **D5 activation is installation-derived per state directory, and merge launch admission remains closed.**
-U8 has landed: [`d5_activation.py`](skills/hanig-swarm/scripts/d5_activation.py)
+U8 has landed: [`d5_activation.py`](skills/brood-swarm/scripts/d5_activation.py)
 derives activation from each state directory's installation evidence
 (`state != NOT_INSTALLED`). Absent installation evidence stays inactive; the
 owner's `d5_install publish` at quiescence under
@@ -345,7 +345,7 @@ owner's `d5_install publish` at quiescence under
 path, while partial or invalid evidence fails closed as active-contained and
 refuses with `d5_install` repair guidance rather than falling back to inactive.
 Separately, `merge_launch_admitted()` in
-[`merge_unit.py`](skills/hanig-orchestrate/scripts/merge_unit.py) still returns
+[`merge_unit.py`](skills/brood-orchestrate/scripts/merge_unit.py) still returns
 `False`, and post-activation `linear_sync` draining and row-75 refusals remain
 closed until P1 delivers per-item tracker lease authority and pre-D5 queue
 migration/disposition. The containment and entry-routing preparation is in
@@ -524,7 +524,7 @@ to `--verify-integration --retrieve-remote-evidence`. The exact-launch testimony
 is journaled as **attested**, never verified, before reconciliation. It admits
 only already-complete bound receipts, preserves FAIL and Slurm terminal-success
 requirements, and retains the stage. Unreachable is not fenced. See the
-[recovery procedure](skills/hanig-orchestrate/references/operating-loop.md#guarded-merge-and-reconciliation)
+[recovery procedure](skills/brood-orchestrate/references/operating-loop.md#guarded-merge-and-reconciliation)
 for the three fencing assertions, binding format, and operator-owned residual risk.
 
 Missing local SSH is retryable and records no launch. After a possible launch,
@@ -702,10 +702,10 @@ Fsynced operation records and progress live outside Git under
 `~/.local/state/hanig-swarm/linear-ops/WORKSPACE/PROJECT/`; tests can set
 `HANIG_LINEAR_OPS_DIR` to an external temporary directory. The audit reports
 `declared_edges` drift from Linear alone and supplementary local
-`op_incomplete` drift. See [tracker commands](skills/hanig-project/references/tracker-sync.md)
+`op_incomplete` drift. See [tracker commands](skills/brood-project/references/tracker-sync.md)
 for replay rules and the same-host locking boundary.
 
-### hanig-swarm
+### brood-swarm
 
 The coordinator (`swarm.py`, `unit.py`, and their supporting modules).
 
@@ -809,9 +809,9 @@ does not replay the seed, and reachability does not promise conflict-free
 replay. Judging, scope-check and merged-PR closure still use the fresh
 attempt's recorded base and produced head. Omission preserves existing intent,
 prompt and plan digests; a persisted attempt's seed is never replaced from a
-changed plan. See the [skill](skills/hanig-swarm/SKILL.md#seed-a-fresh-code-repair-attempt).
+changed plan. See the [skill](skills/brood-swarm/SKILL.md#seed-a-fresh-code-repair-attempt).
 
-### hanig-verified-workflow
+### brood-verified-workflow
 
 ```sh
 python3 scripts/contract.py init   --command CMD --output PATH [--input PATH] \
@@ -825,7 +825,7 @@ python3 scripts/contract.py check  <run_dir> [--json] [--watchdog SECS]
 Distinguishes `SCIENTIFIC_PASS` from `TECHNICALLY_COMPLETE`. Its Slurm state
 machine is the ancestor of `unit.py`'s.
 
-### hanig-review-gate
+### brood-review-gate
 
 Sends the diff **and the specific claims made about it** to models that did not
 write the code, each prompted to refute rather than approve. A reviewer that
@@ -873,7 +873,7 @@ unless `--premise-memo FILE` or `--continue-patching REASON` acknowledges it.
 
 Panel snapshot measured 2026-10-30 at `c2556ad4`. Current routing comes from
 the `enabled`, `profiles`, `effort` and `reserves` fields in
-[`reviewers.json`](skills/hanig-review-gate/reviewers.json), not this table:
+[`reviewers.json`](skills/brood-review-gate/reviewers.json), not this table:
 
 | profile | measured membership and effort | use |
 |---|---|---|
@@ -901,11 +901,11 @@ Gate effort comes from the `effort` field in `reviewers.json`,
 which sets Terra to `xhigh`; the registry's prose is not a gate setting.
 
 A seat that declares a `family` in `reviewers.json` (or the code-agent
-`default` in `hanig-swarm/agents.json`) can move to a newer point release per
+`default` in `brood-swarm/agents.json`) can move to a newer point release per
 project, without anyone editing a model name:
 
 ```sh
-python3 scripts/resolve_models.py --project .            # hanig-project step 1
+python3 scripts/resolve_models.py --project .            # brood-project step 1
 python3 scripts/resolve_models.py --project . --dry-run  # list and select only
 ```
 
@@ -965,7 +965,7 @@ On a split, `synthesize` invokes the same tiebreak as `tiebreak SESSION`.
 It excludes authors and prior voters by canonical identity. If the primary
 is excluded, the first eligible ordered reserve of a different maker from
 the primary can rule. If no eligible tiebreaker remains, the split goes to
-`OWNER`. See [profiles and reserves](skills/hanig-review-gate/reviewers.json).
+`OWNER`. See [profiles and reserves](skills/brood-review-gate/reviewers.json).
 
 `PROTOCOL.md` states the full model. The enforceable parts are enforced by
 `review.py` rather than left to memory, because these rules were written down
@@ -980,7 +980,7 @@ commands and outputs remain unchanged. Paraphrases and embedded receipts remain
 blind spots. Synthetic receipts are stripped too: the loss is visible, but the
 removed material cannot be assessed. See the skill's declared input limitations.
 
-### hanig-portable-handoff
+### brood-portable-handoff
 
 ```sh
 python3 scripts/handoff.py capture run1 run2 --out handoff.json
@@ -998,7 +998,7 @@ decides anything a verifier already decided.
 | 2 | `HANDOFF_ELSEWHERE` | code matches; an artifact is unreachable from here |
 | 3 | `HANDOFF_MALFORMED` | the handoff file is unusable; re-capture |
 
-### hanig-debrief and hanig-hillclimb
+### brood-debrief and brood-hillclimb
 
 ```sh
 python3 scripts/decisions_log.py append --log L --run-id R --kind K --claim C [--evidence-ref E]
@@ -1069,7 +1069,7 @@ about isolation. Nor is the agent's process tree established to be dead when a
 check runs: no portable handle proves every same-UID descendant of a Paseo
 agent or a scheduler job is gone, so a lingering one could touch outputs
 mid-digest. That is recorded on each accepted receipt rather than claimed
-closed. Both are DECLARED limits, stated in full in `hanig-swarm/SKILL.md`;
+closed. Both are DECLARED limits, stated in full in `brood-swarm/SKILL.md`;
 neither is scheduled, and neither should be assumed closed by a later reader.
 
 **A verifier is admissible only if it is authorized, pinned and bound.** The
@@ -1337,10 +1337,10 @@ either are anchored to the logical loaded skill directory containing `SKILL.md`,
 including the installed link path for a linked skill. They are not relative to
 the project's working directory.
 
-This is a compatibility break for `hanig-project` consumers that previously
+This is a compatibility break for `brood-project` consumers that previously
 resolved relative dependency roots from their project cwd. Migrate those entries
 to absolute paths, or rewrite them relative to the loaded skill directory. For
-example, with a loaded skill at `/opt/skills/hanig-project` and dependencies in
+example, with a loaded skill at `/opt/skills/brood-project` and dependencies in
 `/opt/deps`, use `/opt/deps` or `../../deps`. Plan, state, input and output paths
 remain relative to the project directory.
 
@@ -1358,10 +1358,17 @@ longer shipped. An unowned sibling stays untouched with a warning, and a failed
 `brood-<suffix>` install never retires anything. `--dry-run` reports the plan as
 `would-retire-legacy`.
 
+All nine authored skills now ship under `brood-*` names, so reinstalling from
+this checkout publishes `brood-<suffix>` and retires each owned `hanig-<suffix>`
+copy. Names that identify live state rather than a skill keep their `hanig-`
+spelling: the state directories above, Git refs under `refs/hanig-swarm*`, the
+`hanig-rev-` Slurm job prefix, and the `hanig-debrief: ` issue title prefix that
+de-duplicates filed packets.
+
 ### Dated agent compatibility
 
 The **ARC-281 live run** (2026-09-25) checked native skill discovery,
-authenticated `hanig-portable-handoff` invocation, and cross-agent handoff on
+authenticated `brood-portable-handoff` invocation, and cross-agent handoff on
 the operator host:
 
 | Agent | Exact certified version | Date | Observed skill root |
@@ -1447,7 +1454,7 @@ with no Paseo and no `~/.paseo`, so nothing in it was dispatched at the time.
 Measured on 2026-09-04: `claude/opus` and `codex/gpt-5.6-sol` came up on the
 intended model; `codex/gpt-5.6-luna` had not been dispatched. These measurements
 predate the model upgrade. Read current code-unit defaults from
-[`agents.json`](skills/hanig-swarm/agents.json) and model metadata from
+[`agents.json`](skills/brood-swarm/agents.json) and model metadata from
 [`models.json`](models.json).
 Every provider string in it is copied verbatim from an attested id — the
 examples in `skills/paseo/SKILL.md`, or an id in `models.json` — but a
@@ -1465,8 +1472,8 @@ point at a third subcommand, which has never existed.
 is a separate axis — `paseo run --thinking <id>`, or
 `settings.thinkingOptionId` on `create_agent` — and the schema is provider
 strings plus freeform prompt text, with no slot for it. The per-model effort
-decision in `docs/plan-field-reports.md` therefore binds `hanig-swarm`'s code
-units, which read it from `skills/hanig-swarm/agents.json`'s `thinking_by_model`, and binds nothing
+decision in `docs/plan-field-reports.md` therefore binds `brood-swarm`'s code
+units, which read it from `skills/brood-swarm/agents.json`'s `thinking_by_model`, and binds nothing
 else: a Paseo skill dispatching from these categories gets the provider
 default. Measured on 2026-09-04 by dispatching and inspecting real agents,
 `claude/opus` comes up at `auto` against an intended `high`, so `ui` and
@@ -1482,7 +1489,7 @@ decision that was not written in these terms; each says so in its
 `_judgement_calls` entry rather than presenting a guess as settled. And the
 decision does not fully fit: `audit` is one provider string, while the real
 review gate selects a panel from the enabled profiles in
-[`reviewers.json`](skills/hanig-review-gate/reviewers.json), and DeepSeek's
+[`reviewers.json`](skills/brood-review-gate/reviewers.json), and DeepSeek's
 Paseo route needs a provider *and* a model,
 which a one-string category cannot express. Those gaps are recorded in
 `_unmapped` instead of being papered over with invented strings.
@@ -1576,15 +1583,15 @@ install.sh                  copy-based installer (--mode link for development)
 bin/doctor                  what is installed, from where, and does it still run
 bin/probe.sh                read-only environment probe for a new host
 bin/make-release            release packaging
-skills/hanig-project/       survey.py, tickets.py
-skills/hanig-orchestrate/   authorized operating loop and takeover contract
-skills/hanig-swarm/         swarm.py, unit.py, converge.py, swarm-cron.sh
-skills/hanig-review-gate/   review.py, committee.py, reviewers.json, PROTOCOL.md
-skills/hanig-verified-workflow/  contract.py
-skills/hanig-portable-handoff/   handoff.py
-skills/hanig-wandb-logging/      wbkit.py, audit_project.py
-skills/hanig-debrief/            debrief.py, debrief_extract.py, debrief_packet.py, debrief_triage.py, debrief_file.py, decisions_log.py, debrief_audit.py, debrief_attention.py
-skills/hanig-hillclimb/          hillclimb.py
+skills/brood-project/       survey.py, tickets.py
+skills/brood-orchestrate/   authorized operating loop and takeover contract
+skills/brood-swarm/         swarm.py, unit.py, converge.py, swarm-cron.sh
+skills/brood-review-gate/   review.py, committee.py, reviewers.json, PROTOCOL.md
+skills/brood-verified-workflow/  contract.py
+skills/brood-portable-handoff/   handoff.py
+skills/brood-wandb-logging/      wbkit.py, audit_project.py
+skills/brood-debrief/            debrief.py, debrief_extract.py, debrief_packet.py, debrief_triage.py, debrief_file.py, decisions_log.py, debrief_audit.py, debrief_attention.py
+skills/brood-hillclimb/          hillclimb.py
 lib/skill_agent_policy.py   --check|--write [--json] [--skills-root DIR]: agents/openai.yaml of explicit-only skills
 tests/                      stdlib unittest
 examples/                   reference config to copy elsewhere; nothing reads it here
@@ -1615,7 +1622,7 @@ and symmetry suites, removed 2026-08-28.
 A committee concluded that isolation replaces attribution, so the machinery
 built to prove which process wrote a file was answering a question that no
 longer needed asking. `traincontract.py`'s convergence evaluator was ported to
-`hanig-swarm/converge.py` **before** the deletion. `result.py` went because
+`brood-swarm/converge.py` **before** the deletion. `result.py` went because
 figures and tables are not a swarm unit kind. The two suites expired with their
 subject: a cross-tool conformance lock needs several tools, and a symmetry lock
 needs a twin.

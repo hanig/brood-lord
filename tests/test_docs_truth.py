@@ -2633,7 +2633,7 @@ class TestScenarioCheckoutCommands(unittest.TestCase):
             for name in ("multi-agent-skills", "brood-lord", "another checkout"):
                 home = root / name / "home"
                 checkout = home / name
-                scripts = checkout / "skills/hanig-swarm/scripts"
+                scripts = checkout / "skills/brood-swarm/scripts"
                 scripts.mkdir(parents=True)
                 for script in ("swarm.py", "converge.py"):
                     (scripts / script).write_text('print("fixture tool reached")\n')

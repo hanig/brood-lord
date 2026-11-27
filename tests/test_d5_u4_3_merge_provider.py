@@ -650,14 +650,14 @@ class TestInactiveAndEntry(unittest.TestCase):
     def test_installed_ready_operator_uses_its_shipped_helpers(self):
         with tempfile.TemporaryDirectory() as tmp:
             installed = Path(tmp) / 'installed'
-            for name in ('hanig-orchestrate', 'hanig-swarm', 'hanig-project',
-                         'hanig-review-gate', 'hanig-portable-handoff'):
+            for name in ('brood-orchestrate', 'brood-swarm', 'brood-project',
+                         'brood-review-gate', 'brood-portable-handoff'):
                 shutil.copytree(t.ROOT / 'skills' / name, installed / name,
                                 ignore=shutil.ignore_patterns('__pycache__'))
             probe = r'''
 import importlib, pathlib, sys, unittest
 root = pathlib.Path(sys.argv[1]).resolve()
-operator = root / 'hanig-orchestrate/scripts'
+operator = root / 'brood-orchestrate/scripts'
 sys.path.insert(0, str(operator))
 import merge_unit
 assert pathlib.Path(merge_unit.__file__).parent == operator

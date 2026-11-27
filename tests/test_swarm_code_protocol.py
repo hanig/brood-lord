@@ -10,7 +10,7 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills/hanig-swarm/scripts"
+SCRIPTS = ROOT / "skills/brood-swarm/scripts"
 sys.path.insert(0, str(SCRIPTS))
 import swarm as S
 import swarm_code_protocol as SCP
@@ -129,7 +129,7 @@ class TestOrchestratorOwnedGateProtocol(unittest.TestCase):
          "NEVER run review.py or committee.py on your own diff"),
         ("worker pull-request prohibition", "NEVER open a pull request yourself."),
         ("orchestrator review gate",
-         "The orchestrator runs hanig-review-gate's review.py from its own Lor "
+         "The orchestrator runs brood-review-gate's review.py from its own Lor "
          "session on your pushed head"),
         ("repair continuation",
          "dispatches a repair continuation with the findings on REVIEW_FAIL."),

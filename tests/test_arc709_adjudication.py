@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "skills/hanig-review-gate/scripts/review.py"
+SCRIPT = ROOT / "skills/brood-review-gate/scripts/review.py"
 SPEC = importlib.util.spec_from_file_location("arc709_review", SCRIPT)
 review = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(review)

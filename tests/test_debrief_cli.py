@@ -14,7 +14,7 @@ from unittest import mock
 import stat
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / 'skills/hanig-debrief/scripts/debrief.py'
+SCRIPT = ROOT / 'skills/brood-debrief/scripts/debrief.py'
 sys.path.insert(0, str(SCRIPT.parent))
 import debrief
 import debrief_packet as P

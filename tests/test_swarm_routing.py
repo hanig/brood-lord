@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills/hanig-swarm/scripts"
+SCRIPTS = ROOT / "skills/brood-swarm/scripts"
 sys.path.insert(0, str(SCRIPTS))
 import swarm as S
 import swarm_routing as SR
@@ -69,7 +69,7 @@ class TestRoutingExtraction(unittest.TestCase):
         # Exercise the live facade across resolution and the next-plan reset.
         from unittest import mock
         class Family:
-            __file__ = str(ROOT / "skills/hanig-review-gate/scripts/model_family.py")
+            __file__ = str(ROOT / "skills/brood-review-gate/scripts/model_family.py")
             @staticmethod
             def config_digests(*args):
                 return {}

@@ -26,7 +26,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills" / "hanig-swarm" / "scripts"
+SCRIPTS = ROOT / "skills" / "brood-swarm" / "scripts"
 SWARM = SCRIPTS / "swarm.py"
 sys.path.insert(0, str(SCRIPTS))
 import swarm_preflight as SP
@@ -577,7 +577,7 @@ class TestTheProtocolRequiresReviewAndPush(unittest.TestCase):
                 GATE_CLAUSE,
                 "The author is not its own reviewer; the gate runs where the orchestrator runs.",
                 "NEVER open a pull request yourself.",
-                "The orchestrator runs hanig-review-gate's review.py from its own Lor session "
+                "The orchestrator runs brood-review-gate's review.py from its own Lor session "
                 "on your pushed head with --range " + INTENT["base_commit"] + "..HEAD",
                 "adjudicates its findings, and opens and merges the pull request",
                 "dispatches a repair continuation with the findings on REVIEW_FAIL.",
@@ -949,7 +949,7 @@ class TestTheRunReportSaysWhichPreflightRefused(unittest.TestCase):
                          "shared-stash-stack")
 
     def _rendered(self, refusal):
-        sys.path.insert(0, str(ROOT / "skills" / "hanig-project" / "scripts"))
+        sys.path.insert(0, str(ROOT / "skills" / "brood-project" / "scripts"))
         import report as R  # noqa: E402
         tmp = tempfile.mkdtemp(prefix="claims-report-")
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)

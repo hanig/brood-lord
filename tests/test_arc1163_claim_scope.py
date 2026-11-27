@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 
 REPO = Path(__file__).resolve().parent.parent
-SCRIPT = REPO / "skills/hanig-review-gate/scripts/review.py"
+SCRIPT = REPO / "skills/brood-review-gate/scripts/review.py"
 SPEC = importlib.util.spec_from_file_location("arc1163_review", SCRIPT)
 review = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(review)

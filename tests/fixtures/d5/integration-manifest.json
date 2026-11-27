@@ -102,7 +102,7 @@
       "main"
     ]
   },
-  "activation": "skills/hanig-swarm/scripts/d5_activation.py",
+  "activation": "skills/brood-swarm/scripts/d5_activation.py",
   "advisory_entries": {
     "swarm.py": [
       "cmd_run",

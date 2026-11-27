@@ -17,8 +17,8 @@ from unittest import mock
 from tests.scheduler_fixture import state_environment
 
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "skills/hanig-swarm/scripts"
-OPERATOR = SCRIPTS.parents[1] / "hanig-orchestrate/scripts/merge_unit.py"
+SCRIPTS = Path(__file__).resolve().parents[1] / "skills/brood-swarm/scripts"
+OPERATOR = SCRIPTS.parents[1] / "brood-orchestrate/scripts/merge_unit.py"
 sys.path.insert(0, str(SCRIPTS))
 import swarm as S
 import child_environment as CE
@@ -592,7 +592,7 @@ class TestMergeUnit(unittest.TestCase):
         line, = [line for line in result.stdout.splitlines() if 'linear_sync.py' in line and ' drain ' in line]
         command = shlex.split(line)
         self.assertEqual(command, [sys.executable,
-                                  str(SCRIPTS.parents[1] / 'hanig-project/scripts/linear_sync.py'), 'drain',
+                                  str(SCRIPTS.parents[1] / 'brood-project/scripts/linear_sync.py'), 'drain',
                                   '--binding', str(self.plan_path.parent / '.hanig/linear-binding.json'),
                                   '--state-dir', str(self.state_dir)])
         # The compatibility receipt remains usable after external confirmation.
@@ -639,11 +639,11 @@ class TestMergeUnit(unittest.TestCase):
 
     def test_copied_operator_uses_its_installed_sibling_from_project_cwd(self):
         prefix = self.directory / "installed"
-        operator = prefix / "hanig-orchestrate"
-        swarm = prefix / "hanig-swarm"
+        operator = prefix / "brood-orchestrate"
+        swarm = prefix / "brood-swarm"
         shutil.copytree(OPERATOR.parents[1], operator)
         shutil.copytree(SCRIPTS.parent, swarm)
-        shutil.copytree(SCRIPTS.parents[1] / "hanig-project", swarm.parent / "hanig-project")
+        shutil.copytree(SCRIPTS.parents[1] / "brood-project", swarm.parent / "brood-project")
         self.operator = operator / "scripts/merge_unit.py"
         self.env["HANIG_ORCHESTRATE_DIR"] = str(operator)
         result = self.invoke()
@@ -654,12 +654,12 @@ class TestMergeUnit(unittest.TestCase):
     def test_linked_operator_uses_explicit_dependency_parent(self):
         prefix = self.directory / "links"
         prefix.mkdir()
-        operator = prefix / "hanig-orchestrate"
+        operator = prefix / "brood-orchestrate"
         operator.symlink_to(OPERATOR.parents[1], target_is_directory=True)
         dependencies = self.directory / "dependencies"
-        swarm = dependencies / "hanig-swarm"
+        swarm = dependencies / "brood-swarm"
         shutil.copytree(SCRIPTS.parent, swarm)
-        shutil.copytree(SCRIPTS.parents[1] / "hanig-project", swarm.parent / "hanig-project")
+        shutil.copytree(SCRIPTS.parents[1] / "brood-project", swarm.parent / "brood-project")
         self.operator = operator / "scripts/merge_unit.py"
         self.env["HANIG_ORCHESTRATE_DIR"] = str(operator)
         self.env["HANIG_SKILL_DEP_ROOTS"] = str(dependencies)
@@ -669,12 +669,12 @@ class TestMergeUnit(unittest.TestCase):
 
     def test_relative_dependency_parent_is_relative_to_loaded_skill(self):
         prefix = self.directory / "relative-install"
-        operator = prefix / "hanig-orchestrate"
+        operator = prefix / "brood-orchestrate"
         dependencies = prefix / "deps"
-        swarm = dependencies / "hanig-swarm"
+        swarm = dependencies / "brood-swarm"
         shutil.copytree(OPERATOR.parents[1], operator)
         shutil.copytree(SCRIPTS.parent, swarm)
-        shutil.copytree(SCRIPTS.parents[1] / "hanig-project", swarm.parent / "hanig-project")
+        shutil.copytree(SCRIPTS.parents[1] / "brood-project", swarm.parent / "brood-project")
         self.operator = operator / "scripts/merge_unit.py"
         self.env["HANIG_ORCHESTRATE_DIR"] = str(operator)
         self.env["HANIG_SKILL_DEP_ROOTS"] = "../deps"
@@ -685,11 +685,11 @@ class TestMergeUnit(unittest.TestCase):
     def test_relative_dependency_parent_keeps_the_logical_link_parent(self):
         prefix = self.directory / "relative-link-install"
         prefix.mkdir()
-        operator = prefix / "hanig-orchestrate"
+        operator = prefix / "brood-orchestrate"
         operator.symlink_to(OPERATOR.parents[1], target_is_directory=True)
-        swarm = prefix / "deps/hanig-swarm"
+        swarm = prefix / "deps/brood-swarm"
         shutil.copytree(SCRIPTS.parent, swarm)
-        shutil.copytree(SCRIPTS.parents[1] / "hanig-project", swarm.parent / "hanig-project")
+        shutil.copytree(SCRIPTS.parents[1] / "brood-project", swarm.parent / "brood-project")
         self.operator = operator / "scripts/merge_unit.py"
         self.env["HANIG_ORCHESTRATE_DIR"] = str(operator)
         self.env["HANIG_SKILL_DEP_ROOTS"] = "../deps"
@@ -699,27 +699,27 @@ class TestMergeUnit(unittest.TestCase):
 
     def test_missing_project_sibling_preserves_merge_and_prints_unavailable(self):
         prefix = self.directory / "missing-project"
-        operator = prefix / "hanig-orchestrate"
+        operator = prefix / "brood-orchestrate"
         shutil.copytree(OPERATOR.parents[1], operator)
-        shutil.copytree(SCRIPTS.parent, prefix / "hanig-swarm")
+        shutil.copytree(SCRIPTS.parent, prefix / "brood-swarm")
         self.operator = operator / "scripts/merge_unit.py"
         self.env["HANIG_ORCHESTRATE_DIR"] = str(operator)
         self.env.pop("HANIG_SKILL_DEP_ROOTS", None)
         result = self.invoke()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("Tracker: UNAVAILABLE (missing declared installed dependency 'hanig-project'", result.stdout)
-        self.assertIn("Tracker drain: UNAVAILABLE (missing declared installed dependency 'hanig-project'", result.stdout)
+        self.assertIn("Tracker: UNAVAILABLE (missing declared installed dependency 'brood-project'", result.stdout)
+        self.assertIn("Tracker drain: UNAVAILABLE (missing declared installed dependency 'brood-project'", result.stdout)
         self.assertEqual(len(self.calls(["pr", "merge"])), 1)
         state = json.loads((self.state_dir / S.STATE_FILE).read_text())
         self.assertEqual(state["units"]["u"]["state"], "DONE")
 
     def test_broken_project_imports_preserve_merge_and_print_unavailable(self):
         prefix = self.directory / "broken-project"
-        operator = prefix / "hanig-orchestrate"
-        project = prefix / "hanig-project"
+        operator = prefix / "brood-orchestrate"
+        project = prefix / "brood-project"
         shutil.copytree(OPERATOR.parents[1], operator)
-        shutil.copytree(SCRIPTS.parent, prefix / "hanig-swarm")
-        shutil.copytree(SCRIPTS.parents[1] / "hanig-project", project)
+        shutil.copytree(SCRIPTS.parent, prefix / "brood-swarm")
+        shutil.copytree(SCRIPTS.parents[1] / "brood-project", project)
         self.operator = operator / "scripts/merge_unit.py"
         self.env["HANIG_ORCHESTRATE_DIR"] = str(operator)
         self.env.pop("HANIG_SKILL_DEP_ROOTS", None)
@@ -739,12 +739,12 @@ class TestMergeUnit(unittest.TestCase):
                 self.assertEqual(state["units"]["u"]["state"], "DONE")
 
     def test_missing_installed_sibling_refuses_before_forge_or_writes(self):
-        operator = self.directory / "isolated" / "hanig-orchestrate"
+        operator = self.directory / "isolated" / "brood-orchestrate"
         shutil.copytree(OPERATOR.parents[1], operator)
         self.operator = operator / "scripts/merge_unit.py"
         self.env["HANIG_ORCHESTRATE_DIR"] = str(operator)
         # A matching bundle in the project cwd is not a declared dependency.
-        (self.repo / "hanig-swarm").symlink_to(SCRIPTS.parent, target_is_directory=True)
+        (self.repo / "brood-swarm").symlink_to(SCRIPTS.parent, target_is_directory=True)
         before = {p.name: p.read_bytes() for p in self.state_dir.iterdir()}
         result = self.invoke()
         self.assert_refused(result)

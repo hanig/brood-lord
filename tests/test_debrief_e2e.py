@@ -9,7 +9,7 @@ import unittest
 
 from tests.test_debrief_file import FAKE_GH, reply
 
-SCRIPTS = Path(__file__).resolve().parents[1] / 'skills/hanig-debrief/scripts'
+SCRIPTS = Path(__file__).resolve().parents[1] / 'skills/brood-debrief/scripts'
 sys.path.insert(0, str(SCRIPTS))
 import debrief_packet as P
 import debrief_schema as S

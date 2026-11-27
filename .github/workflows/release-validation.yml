@@ -68,7 +68,7 @@ jobs:
           from pathlib import Path
           root = Path(tempfile.mkdtemp(prefix="brood-tests-", dir=os.environ["RUNNER_TEMP"]))
           homes = ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR")
-          denied = runpy.run_path("skills/hanig-swarm/scripts/child_environment.py")["DENIED_ENV_NAMES"]
+          denied = runpy.run_path("skills/brood-swarm/scripts/child_environment.py")["DENIED_ENV_NAMES"]
           startup = root / "isolation.bash"
           startup.write_text("unset " + " ".join(sorted(denied)) + "\n", encoding="utf-8")
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as out:
@@ -86,7 +86,7 @@ jobs:
           import os
           import runpy
           from pathlib import Path
-          denied = runpy.run_path("skills/hanig-swarm/scripts/child_environment.py")["DENIED_ENV_NAMES"]
+          denied = runpy.run_path("skills/brood-swarm/scripts/child_environment.py")["DENIED_ENV_NAMES"]
           remaining = sorted(denied.intersection(os.environ))
           if remaining:
               raise SystemExit("Credential environment still set: " + ", ".join(remaining))
@@ -180,7 +180,7 @@ jobs:
           from pathlib import Path
           root = Path(tempfile.mkdtemp(prefix="brood-tests-", dir=os.environ["RUNNER_TEMP"]))
           homes = ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR")
-          denied = runpy.run_path("skills/hanig-swarm/scripts/child_environment.py")["DENIED_ENV_NAMES"]
+          denied = runpy.run_path("skills/brood-swarm/scripts/child_environment.py")["DENIED_ENV_NAMES"]
           startup = root / "isolation.bash"
           startup.write_text("unset " + " ".join(sorted(denied)) + "\n", encoding="utf-8")
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as out:
@@ -198,7 +198,7 @@ jobs:
           import os
           import runpy
           from pathlib import Path
-          denied = runpy.run_path("skills/hanig-swarm/scripts/child_environment.py")["DENIED_ENV_NAMES"]
+          denied = runpy.run_path("skills/brood-swarm/scripts/child_environment.py")["DENIED_ENV_NAMES"]
           remaining = sorted(denied.intersection(os.environ))
           if remaining:
               raise SystemExit("Credential environment still set: " + ", ".join(remaining))

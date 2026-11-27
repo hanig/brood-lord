@@ -21,15 +21,15 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "skills"
 COMPATIBILITY = ROOT / "docs" / "agent-compatibility.md"
 AUTHORED = {
-    "hanig-wandb-logging",
-    "hanig-debrief",
-    "hanig-hillclimb",
-    "hanig-orchestrate",
-    "hanig-project",
-    "hanig-swarm",
-    "hanig-verified-workflow",
-    "hanig-review-gate",
-    "hanig-portable-handoff",
+    "brood-wandb-logging",
+    "brood-debrief",
+    "brood-hillclimb",
+    "brood-orchestrate",
+    "brood-project",
+    "brood-swarm",
+    "brood-verified-workflow",
+    "brood-review-gate",
+    "brood-portable-handoff",
 }
 VENDORED = {
     "agent-bus",
@@ -190,7 +190,7 @@ class TestSkillCapabilities(unittest.TestCase):
             self.assertEqual(doctor.returncode, 0, doctor.stderr)
             roots = json.loads(doctor.stdout)["agents"]["claude"]["installation"]["roots"]
             payloads = [item for location in roots for item in location["payloads"]]
-            debrief = [item for item in payloads if item["name"] == "hanig-debrief"]
+            debrief = [item for item in payloads if item["name"] == "brood-debrief"]
             self.assertEqual(len(debrief), 1, doctor.stdout)
             # JSON calls authored installs "owned" and retains "vendored" separately.
             self.assertEqual(debrief[0]["ownership"], "owned")
@@ -219,23 +219,23 @@ class TestSkillCapabilities(unittest.TestCase):
 
     def test_authored_skills_state_their_host_safe_boundaries(self):
         expected = {
-            "hanig-wandb-logging": "Host capability boundary",
-            "hanig-debrief": (
+            "brood-wandb-logging": "Host capability boundary",
+            "brood-debrief": (
                 "Drafting is offline; only debrief_file.py reaches the network, "
                 "after one named approval of the exact packet."
             ),
-            "hanig-hillclimb": "Host capability boundary",
-            "hanig-orchestrate": "Host capability boundary",
-            "hanig-project": (
+            "brood-hillclimb": "Host capability boundary",
+            "brood-orchestrate": "Host capability boundary",
+            "brood-project": (
                 "Use linear_sync.py with the current session's authorized tracker access; "
                 "if none is available, preserve the reviewed draft or outbox intent, "
                 "report the pending synchronization to the owner, and never invent "
                 "a receipt, ticket reference, or confirmation."
             ),
-            "hanig-swarm": "Host capability boundary",
-            "hanig-verified-workflow": "Host capability boundary",
-            "hanig-review-gate": "Host capability boundary",
-            "hanig-portable-handoff": "Host capability boundary",
+            "brood-swarm": "Host capability boundary",
+            "brood-verified-workflow": "Host capability boundary",
+            "brood-review-gate": "Host capability boundary",
+            "brood-portable-handoff": "Host capability boundary",
         }
         for name, phrase in expected.items():
             with self.subTest(bundle=name):
@@ -296,7 +296,7 @@ class TestSkillCapabilities(unittest.TestCase):
         self.assertEqual(
             manifest.get("vendored_skill_directories"),
             sorted(VENDORED),
-            "manifest directory inventory must match the installer's non-hanig- classifier",
+            "manifest directory inventory must match the installer's non-brood- classifier",
         )
 
         files = manifest.get("files")

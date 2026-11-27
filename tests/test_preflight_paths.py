@@ -12,7 +12,7 @@ from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills" / "hanig-swarm" / "scripts"
+SCRIPTS = ROOT / "skills" / "brood-swarm" / "scripts"
 SWARM = SCRIPTS / "swarm.py"
 sys.path.insert(0, str(SCRIPTS))
 import coordinator_paths as CP  # noqa: E402

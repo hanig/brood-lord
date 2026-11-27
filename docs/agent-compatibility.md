@@ -34,7 +34,7 @@ practical adapters are intentionally small:
 | Grok Build | Installer target at `~/.grok/skills`; possible Claude/shared-root consumption is unverified. | Native discovery/invocation and collision semantics remain unverified; installation supplies no tool or credential access. |
 
 `MEMORY.md` is ordinary project state, not Claude-only state. Any host may
-read it, and `hanig-portable-handoff` may refresh only its factual marked block
+read it, and `brood-portable-handoff` may refresh only its factual marked block
 when its local prerequisites are available. A handoff records paths,
 identities, decisions, blockers, and verifier receipts; it never transfers
 credentials or silently turns an absent service into a result.
@@ -69,7 +69,7 @@ connector, or authority is available.
 | Python 3 and Git | Authored helper scripts and worktree/commit evidence | Either command is absent or unusable in the current worktree | Install or expose the host-approved program, then rerun. Preserve the repository cwd and use a disposable home/config root in tests. |
 | linear_sync.py and authorized tracker access | Filing, draining, issue changes and audit in Linear | No API key, account, or required authority in this session | Keep the ticket intent/outbox artifact reviewable, report **pending synchronization**, and let an authorized session run linear_sync.py with its LINEAR_API_KEY. |
 | Paseo and agent bus | The optional delegation, fleet, and notification workflows | Binary, daemon, configured state, or local bus is absent | Do the bounded local work without delegation, or ask an operator to install/configure the optional service. Do not create look-alike paths or a daemon. |
-| Reviewer providers and coordinator-held credentials | `hanig-review-gate` automated multi-model review | Reviewer configuration or credentials are unavailable | Mark the change **unreviewed** and retain the local evidence; do not borrow/copy credentials or call a paid provider from a worker. |
+| Reviewer providers and coordinator-held credentials | `brood-review-gate` automated multi-model review | Reviewer configuration or credentials are unavailable | Mark the change **unreviewed** and retain the local evidence; do not borrow/copy credentials or call a paid provider from a worker. |
 
 Python and Git are baseline local prerequisites for their named workflows.
 Paseo/agent-bus, reviewer access, and Linear are optional capabilities with
@@ -117,14 +117,14 @@ support.
 
 | Bundle | Origin | Loader/frontmatter | Host-specific names, paths, siblings, optional services | Support classification |
 |---|---|---|---|---|
-| `hanig-orchestrate` | authored | portable / all four | owner mandate; authored project, swarm, review, and handoff siblings; optional scheduler, reviewers, tracker, and Paseo | capability-limited; installation supplies instructions, never authority or liveness |
-| `hanig-project` | authored | portable / all four | Python/Git helpers; sibling `hanig-swarm`; linear_sync.py tracker access and approval gate; optional scheduler/Paseo | capability-limited; Linear uses the outbox contract |
-| `hanig-swarm` | authored | portable / all four | Python/Git, Slurm, optional Paseo; sibling authored scripts; coordinator-only credentials | capability-limited; Slurm/dispatch behavior is not a host-worker promise |
-| `hanig-verified-workflow` | authored | portable / all four | Python helper, Git evidence, `sbatch`/`sacct`, project-local Nextflow/Snakemake | capability-limited; usable locally only where its workflow programs exist |
-| `hanig-review-gate` | authored | portable / all four | Python review helpers, reviewer configuration and coordinator credentials | capability-limited; unavailable reviewers yield unreviewed, never a self-pass |
-| `hanig-debrief` | authored | portable / all four | bundled path resolver; debrief programs are not yet shipped | skeleton; filing waits for owner approval of the exact scrubbed packet |
-| `hanig-wandb-logging` | authored | portable / all four | caller-provided W&B module; stdlib helper | logging only; no verdict authority or installed W&B dependency |
-| `hanig-portable-handoff` | authored | portable / all four | Python/Git helper, `MEMORY.md`, local receipt paths | supported when Python/Git and paths are available; never moves secrets |
+| `brood-orchestrate` | authored | portable / all four | owner mandate; authored project, swarm, review, and handoff siblings; optional scheduler, reviewers, tracker, and Paseo | capability-limited; installation supplies instructions, never authority or liveness |
+| `brood-project` | authored | portable / all four | Python/Git helpers; sibling `brood-swarm`; linear_sync.py tracker access and approval gate; optional scheduler/Paseo | capability-limited; Linear uses the outbox contract |
+| `brood-swarm` | authored | portable / all four | Python/Git, Slurm, optional Paseo; sibling authored scripts; coordinator-only credentials | capability-limited; Slurm/dispatch behavior is not a host-worker promise |
+| `brood-verified-workflow` | authored | portable / all four | Python helper, Git evidence, `sbatch`/`sacct`, project-local Nextflow/Snakemake | capability-limited; usable locally only where its workflow programs exist |
+| `brood-review-gate` | authored | portable / all four | Python review helpers, reviewer configuration and coordinator credentials | capability-limited; unavailable reviewers yield unreviewed, never a self-pass |
+| `brood-debrief` | authored | portable / all four | bundled path resolver; debrief programs are not yet shipped | skeleton; filing waits for owner approval of the exact scrubbed packet |
+| `brood-wandb-logging` | authored | portable / all four | caller-provided W&B module; stdlib helper | logging only; no verdict authority or installed W&B dependency |
+| `brood-portable-handoff` | authored | portable / all four | Python/Git helper, `MEMORY.md`, local receipt paths | supported when Python/Git and paths are available; never moves secrets |
 | `agent-bus` | vendored verbatim | portable / all four | fixed upstream `~/.agent-bus` layout, local bus helper, optional Paseo | dependency-limited; upstream path is not created by this installer |
 | `paseo` | vendored verbatim | portable / all four | Paseo daemon/CLI, `~/.paseo` preferences, agent-bus | dependency-limited; no daemon or provider is provisioned |
 | `paseo-advisor` | vendored verbatim | portable / all four | sibling `paseo`, provider preferences, Paseo service | dependency-limited |

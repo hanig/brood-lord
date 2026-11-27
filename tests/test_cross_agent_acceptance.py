@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DISCOVERY_PATH = ROOT / "skills" / "hanig-project" / "scripts" / "agent_discovery.py"
+DISCOVERY_PATH = ROOT / "skills" / "brood-project" / "scripts" / "agent_discovery.py"
 SPEC = importlib.util.spec_from_file_location("agent_discovery_acceptance",
                                               DISCOVERY_PATH)
 discovery = importlib.util.module_from_spec(SPEC)
@@ -212,7 +212,7 @@ class LifecycleAcceptance(unittest.TestCase):
         self.project.mkdir()
         self.addCleanup(self.temp.cleanup)
 
-    def source(self, name="hanig-verified-workflow"):
+    def source(self, name="brood-verified-workflow"):
         source = self.base / "source-copy" / name
         shutil.copytree(ROOT / "skills" / name, source)
         return source
@@ -258,7 +258,7 @@ class LifecycleAcceptance(unittest.TestCase):
         shutil.rmtree(roots["claude"].parent)
         self.assertFalse(source.exists())
         self.assertFalse((self.home / ".claude").exists())
-        script = roots["codex"] / "hanig-verified-workflow" / "scripts" / "contract.py"
+        script = roots["codex"] / "brood-verified-workflow" / "scripts" / "contract.py"
         run_dir, output = self.project / "run", self.project / "result.tsv"
         init = subprocess.run(
             [sys.executable, str(script), "init", str(run_dir), "--command", "/bin/true",
@@ -293,7 +293,7 @@ class LifecycleAcceptance(unittest.TestCase):
         original = (destination / "SKILL.md").read_text()
         replacement = self.base / "replacement"
         shutil.copytree(source, replacement)
-        (replacement / "SKILL.md").write_text("---\nname: hanig-verified-workflow\n---\nreplacement\n")
+        (replacement / "SKILL.md").write_text("---\nname: brood-verified-workflow\n---\nreplacement\n")
         upgrade = lifecycle.LifecycleTarget(
             name=source.name, source=replacement, destination=destination,
             origin="authored", consumers=("codex",), source_version="v2")
@@ -317,8 +317,8 @@ class LifecycleAcceptance(unittest.TestCase):
         self.assertFalse(destination.exists())
 
     def test_preflight_is_write_free_and_uninstall_keeps_unselected_skill(self):
-        first = self.source("hanig-verified-workflow")
-        second = self.source("hanig-portable-handoff")
+        first = self.source("brood-verified-workflow")
+        second = self.source("brood-portable-handoff")
         root = self.home / ".agents" / "skills"
         first_target = self.target(first, "claude", destination=root / first.name,
                                    consumers=("claude",))
@@ -362,8 +362,8 @@ class LifecycleAcceptance(unittest.TestCase):
         host loaded the skill.  Native discovery/invocation remains a release
         record requirement in the accompanying acceptance document.
         """
-        workflow_source = self.source("hanig-verified-workflow")
-        handoff_source = self.source("hanig-portable-handoff")
+        workflow_source = self.source("brood-verified-workflow")
+        handoff_source = self.source("brood-portable-handoff")
         claude_workflow = self.home / ".claude" / "skills" / workflow_source.name
         codex_handoff = self.home / ".agents" / "skills" / handoff_source.name
         results = lifecycle.install([
@@ -433,7 +433,7 @@ class PublicCommandAcceptance(unittest.TestCase):
         return value
 
     def test_explicit_absent_target_dry_run_has_complete_payload_and_no_writes(self):
-        result = self.invoke("--agent", "pi", "--only", "hanig-verified-workflow",
+        result = self.invoke("--agent", "pi", "--only", "brood-verified-workflow",
                              "--dry-run", "--json")
         value = self.payload(result)
         self.assertTrue(value["dry_run"])
@@ -443,7 +443,7 @@ class PublicCommandAcceptance(unittest.TestCase):
         self.assertFalse((self.home / ".pi").exists())
 
     def test_public_migration_plan_retains_legacy_source_and_writes_nothing(self):
-        legacy = self.base / "legacy" / "hanig-verified-workflow"
+        legacy = self.base / "legacy" / "brood-verified-workflow"
         shutil.copytree(ROOT / "skills" / legacy.name, legacy)
         result = self.invoke("--agent", "codex", "--only", legacy.name,
                              "--migrate-from", str(legacy.parent), "--dry-run", "--json")

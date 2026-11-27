@@ -14,7 +14,7 @@ from unittest import mock
 
 from tests.test_linear_audit import AuditCase, FakeLinear, KEY, ROOT, connection, BudgetPaging, budget_project, selected_fields
 
-sys.path.insert(0, str(ROOT / 'skills/hanig-project/scripts'))
+sys.path.insert(0, str(ROOT / 'skills/brood-project/scripts'))
 import linear_api as API
 import linear_issue as LI
 import linear_sync as LS
@@ -301,7 +301,7 @@ def observations():
     Path(fixture).write_text(json.dumps({'calls': fake.calls,
         'mutations': fake.mutations, 'project_reads': project_reads}))
 atexit.register(observations)
-script = ROOT / 'skills/hanig-project/scripts/linear_sync.py'
+script = ROOT / 'skills/brood-project/scripts/linear_sync.py'
 sys.argv = [str(script)] + args
 runpy.run_path(str(script), run_name='__main__')
 '''
@@ -1855,7 +1855,7 @@ class TestIssue(IssueCase):
         self.assertEqual(self.checks['op_incomplete'], 'CLEAN')
 
     def test_8_network_boundary(self):
-        for path in (ROOT / 'skills/hanig-swarm/scripts/swarm.py', ROOT / 'skills/hanig-project/scripts/tickets.py', ROOT / 'skills/hanig-project/scripts/drain_contract.py'):
+        for path in (ROOT / 'skills/brood-swarm/scripts/swarm.py', ROOT / 'skills/brood-project/scripts/tickets.py', ROOT / 'skills/brood-project/scripts/drain_contract.py'):
             tree = ast.parse(path.read_text())
             imports = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
             imports |= {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}

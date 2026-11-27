@@ -70,7 +70,7 @@ def main():
         if mode == 'receipt':
             # Read-only atexit measurement: never close the retained holder.
             atexit.register(lambda: print('before-process-exit DRAIN=' + probe(data['record']), flush=True))
-        sys.argv = [str(ROOT / 'skills/hanig-orchestrate/scripts/merge_unit.py')] + data['argv']
+        sys.argv = [str(ROOT / 'skills/brood-orchestrate/scripts/merge_unit.py')] + data['argv']
         runpy.run_path(sys.argv[0], run_name='__main__')
 
 

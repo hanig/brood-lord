@@ -21,8 +21,8 @@ def setUpModule():
     isolated_module_path()
 
 ROOT = Path(__file__).resolve().parents[1]
-SWARM = ROOT / 'skills/hanig-swarm/scripts'
-PROJECT = ROOT / 'skills/hanig-project/scripts'
+SWARM = ROOT / 'skills/brood-swarm/scripts'
+PROJECT = ROOT / 'skills/brood-project/scripts'
 sys.path.insert(0, str(SWARM))
 sys.path.insert(0, str(PROJECT))
 import swarm as S

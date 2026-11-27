@@ -37,7 +37,7 @@ from unittest.mock import patch
 from tests.review_round_fixture import isolated_reservation
 
 REPO = Path(__file__).resolve().parent.parent
-SCRIPT = REPO / "skills" / "hanig-review-gate" / "scripts" / "review.py"
+SCRIPT = REPO / "skills" / "brood-review-gate" / "scripts" / "review.py"
 
 spec = importlib.util.spec_from_file_location("review", SCRIPT)
 review = importlib.util.module_from_spec(spec)
@@ -2191,7 +2191,7 @@ class TestEmptyContentNamesItsCause(unittest.TestCase):
         at a larger input, so the DEFAULT is what needs to be right. Reasoning
         tokens come out of the answer's budget."""
         import json as _json
-        cfg = _json.loads((REPO / "skills" / "hanig-review-gate"
+        cfg = _json.loads((REPO / "skills" / "brood-review-gate"
                            / "reviewers.json").read_text())
         self.assertGreaterEqual(review.DEFAULT_MAX_OUTPUT_TOKENS, 32_000)
         for r in cfg["reviewers"]:
@@ -2724,7 +2724,7 @@ class TestFindingDispositions(unittest.TestCase):
         return path
 
     def entry(self, disposition="not-reproduced"):
-        location = "skills/hanig-review-gate/scripts/review.py:1170"
+        location = "skills/brood-review-gate/scripts/review.py:1170"
         summary = "the original finding text survives into the next round"
         digest = review.finding_digest(location, summary)
         return digest, {
@@ -3327,7 +3327,7 @@ class TestBothProviderPathsShareTheirLimits(unittest.TestCase):
         about the code is how this survived."""
         import json
         cfg = json.loads(
-            (REPO / "skills" / "hanig-review-gate" / "reviewers.json").read_text())
+            (REPO / "skills" / "brood-review-gate" / "reviewers.json").read_text())
         comment = cfg.get("_comment", "")
         self.assertIn(str(review.DEFAULT_MAX_OUTPUT_TOKENS), comment,
                      "reviewers.json documents a different default than the "

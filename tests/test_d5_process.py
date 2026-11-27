@@ -15,7 +15,7 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'skills/hanig-orchestrate/scripts'))
+sys.path.insert(0, str(ROOT / 'skills/brood-orchestrate/scripts'))
 import d5_process as process
 import d5_protocol_locks as protocol
 import d5_registry as registry

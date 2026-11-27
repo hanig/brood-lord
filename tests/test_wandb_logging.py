@@ -7,7 +7,7 @@ from contextlib import redirect_stderr
 from tempfile import TemporaryDirectory as TD
 import types,unittest
 from unittest.mock import patch
-SCRIPTS=Path(__file__).resolve().parents[1]/'skills/hanig-wandb-logging/scripts'
+SCRIPTS=Path(__file__).resolve().parents[1]/'skills/brood-wandb-logging/scripts'
 sys.path.insert(0,str(SCRIPTS))
 import wbkit
 PR='provenance'

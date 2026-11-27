@@ -1,0 +1,67 @@
+{
+ "_comment": "Code-unit agent routing, read by swarm.py at import. Data, not code: change a model here, never in a script. `default` is what a `code` unit runs when it declares no provider and the plan omits `orchestrator` or names an orchestrator without an override (such as claude). `default_by_orchestrator` routes non-Claude orchestrators (codex, antigravity) to the highest probed Opus across any major via resolve_models.py (`any_major: true`), with claude/claude-opus-5-5 as the offline fallback pin. `forbid_when_orchestrator` refuses code units selecting Opus (or bare claude) when claude is the orchestrator. A unit overrides provider, model or thinking on itself unless forbidden by the plan's orchestrator rule. There is deliberately no fallback model: a host that cannot serve the selected default fails loudly at dispatch (paseo returns an ERRORED agent) instead of silently running a model the plan never declared.",
+ "default": {
+  "provider": "codex/gpt-6.2-sol",
+  "thinking": "high",
+  "family": {
+   "listing": "paseo:codex",
+   "vendor": "",
+   "prefix": "gpt-",
+   "separator": ".",
+   "suffix": "-sol",
+   "major": 6
+  },
+  "_evidence": "2026-11-17 canary: `paseo run --provider codex --model gpt-6.2-sol --thinking high` with an API-key Codex home inspected as Provider codex, Model gpt-6.2-sol, Thinking high, and answered `SOL62-OK`. ChatGPT-account homes refuse (\"not supported when using Codex with a ChatGPT account\"); per-agent homes already use the API key. Dispatch only; authoring quality unbenchmarked."
+ },
+ "default_by_orchestrator": {
+  "codex": {
+   "provider": "claude/claude-opus-5-5",
+   "thinking": "high",
+   "family": {
+    "listing": "paseo:claude",
+    "vendor": "",
+    "prefix": "claude-opus-",
+    "separator": "-",
+    "suffix": "",
+    "major": 5,
+    "any_major": true
+   },
+   "_evidence": "2026-11-23 canary on Paseo 0.17.4: `paseo run --provider claude --model claude-opus-5-5 --thinking high` inspected as Provider claude, Model claude-opus-5-5, Thinking high, and answered `OPUS55-OK`. `any_major: true` resolves to the highest probed Opus in `paseo:claude` across any major via `resolve_models.py`; `claude/claude-opus-5-5` is the offline fallback pin. Used only when Claude/Opus is not the orchestrator."
+  },
+  "antigravity": {
+   "provider": "claude/claude-opus-5-5",
+   "thinking": "high",
+   "family": {
+    "listing": "paseo:claude",
+    "vendor": "",
+    "prefix": "claude-opus-",
+    "separator": "-",
+    "suffix": "",
+    "major": 5,
+    "any_major": true
+   },
+   "_evidence": "2026-11-23 canary on Paseo 0.17.4 (`OPUS55-OK`, inspected Provider claude, Model claude-opus-5-5, Thinking high). `any_major: true` resolves to the highest probed Opus in `paseo:claude` across any major via `resolve_models.py`; `claude/claude-opus-5-5` is the offline fallback pin. Used only when Antigravity orchestrates."
+  }
+ },
+ "forbid_when_orchestrator": {
+  "claude": {
+   "routes": [
+    "claude"
+   ],
+   "model_substrings": [
+    "opus"
+   ]
+  }
+ },
+ "thinking_by_model": {
+  "codex/gpt-6-astra": "high",
+  "codex/gpt-6-sol": "high",
+  "codex/gpt-6-luna": "xhigh",
+  "claude/opus": "high",
+  "claude/claude-opus-5": "high",
+  "claude/claude-opus-5-5": "high",
+  "codex/gpt-6.1-sol": "high",
+  "codex/gpt-6.2-sol": "high"
+ },
+ "_thinking_by_model": "Reasoning effort belongs to the MODEL, not the project. Keys are provider/model exactly as a unit resolves them (provider string, or provider prefix plus a separate `model`), so list every spelling that reaches paseo. A model not listed gets default.thinking. Measured 2026-09-04: high resolves on claude, whose bare default is auto, and claude/opus expanded to claude-opus-5. Measured 2026-11-23 on Paseo 0.17.4: claude/claude-opus-5-5 resolves at high and answers OPUS55-OK. The older 6-series Sol/Luna dispatch defaults were unmeasured; Sol 6.1 high was canaried on 2026-11-06; pass the intended effort and inspect the launched agent. Gate effort is configured separately in brood-review-gate/reviewers.json."
+}

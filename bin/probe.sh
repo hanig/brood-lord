@@ -194,7 +194,7 @@ for d in "$HOME"/.claude-science/orgs/*/skills; do
 done
 if [ "$ORG_SKILLS" -eq 0 ]; then
   say "  >>> ORG SKILLS NOT PRESENT on this host."
-  say "  >>> Personal hanig-* skills must be self-sufficient here."
+  say "  >>> Personal brood-* skills must be self-sufficient here."
 else
   say "  >>> org skills present: $ORG_SKILLS"
 fi

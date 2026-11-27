@@ -312,7 +312,7 @@ class TestReadiness(unittest.TestCase):
                 "ok,why=s.acquire_lease(sys.argv[2],bump_epoch=False); print(ok); "
                 "s.release_lease(sys.argv[2])")
         result = subprocess.run([sys.executable, "-c", code,
-            str(fixtures.ROOT / "skills/hanig-swarm/scripts"), str(self.state)],
+            str(fixtures.ROOT / "skills/brood-swarm/scripts"), str(self.state)],
             capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.strip() == "True"
@@ -417,7 +417,7 @@ class TestReadiness(unittest.TestCase):
         code = """
 import sys
 from pathlib import Path
-for folder in ("skills/hanig-swarm/scripts", "skills/hanig-orchestrate/scripts"):
+for folder in ("skills/brood-swarm/scripts", "skills/brood-orchestrate/scripts"):
     sys.path.insert(0, str(Path(sys.argv[1]) / folder))
 import d5_readiness as r
 import swarm_state as s

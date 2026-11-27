@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "skills/hanig-debrief/scripts/debrief_packet.py"
+SCRIPT = ROOT / "skills/brood-debrief/scripts/debrief_packet.py"
 sys.path.insert(0, str(SCRIPT.parent))
 import debrief_packet as P
 import debrief_schema as S
@@ -44,7 +44,7 @@ def dossier():
     "numerator": 1, "denominator": 2, "cohort_ref": "C001"}], "reproduction": None,
     "coverage_disposition": "unknown"}],
     "omissions": [{"source_root": "root", "locator": ".", "reason": "budget"}],
-    "provenance": {"hanig-swarm": "marker"}}
+    "provenance": {"brood-swarm": "marker"}}
 
 
 class TestDebriefPacket(unittest.TestCase):
@@ -159,7 +159,7 @@ class TestDebriefPacket(unittest.TestCase):
         "probe": secret, "observed": secret})
       d["omissions"] = [{"source_root": secret, "locator": "relative/" + secret,
         "reason": secret}]
-      d["provenance"]["hanig-swarm"] = secret
+      d["provenance"]["brood-swarm"] = secret
       pkt = P.compile_packet(d, self.c)
       title, body = P.render(pkt)
       with self.subTest(secret=secret):
@@ -284,7 +284,7 @@ class TestDebriefPacket(unittest.TestCase):
       (e + ("location",), {"json_pointer": "/bad~2escape"}),
       (e + ("location",), {"json_pointer": "no slash"}),
       (c + ("rationale",), " "), (c + ("rationale",), "\ud800"),
-      (("provenance", "hanig-swarm"), "\udfff")])
+      (("provenance", "brood-swarm"), "\udfff")])
     for pointer in ("", "/", "/a~0b~1c", "/a/b"):
       self.d["evidence"]["E001"]["location"] = {"json_pointer": pointer}
       P.validate_dossier(self.d)

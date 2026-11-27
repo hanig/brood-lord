@@ -20,7 +20,7 @@ from scheduler_fixture import isolated_module_state_home as setUpModule  # noqa:
 from scheduler_fixture import cleanup_module_path as tearDownModule  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills" / "hanig-project" / "scripts"
+SCRIPTS = ROOT / "skills" / "brood-project" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import report as R  # noqa: E402
 
@@ -641,7 +641,7 @@ class TestCoordinatorStatesAreAllClassified(unittest.TestCase):
         self.assertEqual(got, "IN FLIGHT", why)
 
     def test_no_coordinator_state_is_left_unclassified(self):
-        swarm = (ROOT / "skills" / "hanig-swarm" / "scripts" /
+        swarm = (ROOT / "skills" / "brood-swarm" / "scripts" /
                  "swarm.py").read_text()
         import re
         stored = set(re.findall(r'us\["state"\] = "([A-Z_]+)"', swarm))

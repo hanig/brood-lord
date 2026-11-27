@@ -81,7 +81,7 @@ you change a predicate here, change it there.
 | A1 | Outputs must live in the attempt's write root; validate refuses otherwise | `swarm.py` validate |
 | A2 | A slurm command must be the work, not an `sbatch` invocation | `swarm.py` validate |
 | A3 | Adopt path cannot destroy an existing `PLAN.md` | `survey.py` `protected_docs` |
-| A5/B5 | Code units require `repo`, `branch`, `mode`; contract table by kind | `swarm.py`, `hanig-project/SKILL.md` |
+| A5/B5 | Code units require `repo`, `branch`, `mode`; contract table by kind | `swarm.py`, `brood-project/SKILL.md` |
 | A6 | `survey.py` creates its output directory | `survey.py` |
 | A7 | `tickets.py --name` for a human project title, separate from the slug | `tickets.py` |
 | B2 | `--array` combined with declared outputs is refused (all four spellings) | `swarm.py` validate |
@@ -95,10 +95,10 @@ you change a predicate here, change it there.
 | C12 | The completion protocol is appended at dispatch: branch, base, remote, PR target | `swarm.py` |
 | C14 | The receipt lists untracked paths no declared output covers; audit-only | `worktree.py`, `report.py` |
 | B4 | Per-partition `allow_accounts`, `deny_accounts`, `max_mem_per_cpu_mb`, `qos`, `qos_grptres`, each `set`/`unrestricted`/`unknown` | `survey.py` |
-| B9 | The two partition questions `sinfo` cannot answer, with the association-QOS caveat | `hanig-project/SKILL.md` |
-| A8 | Interview audited against `SCHEMA_FIELDS`; `target_branch` and the retry contract were asked by the wrong name or not at all | `hanig-project/SKILL.md` |
+| B9 | The two partition questions `sinfo` cannot answer, with the association-QOS caveat | `brood-project/SKILL.md` |
+| A8 | Interview audited against `SCHEMA_FIELDS`; `target_branch` and the retry contract were asked by the wrong name or not at all | `brood-project/SKILL.md` |
 | A4 | The isolation described as the per-attempt worktree; the branch constraint C11 removed is no longer claimed | both `SKILL.md`s |
-| E2 | The two declared limits stated where a skill reader meets them, plus three contradicting claims fixed | `hanig-swarm/SKILL.md`, `README.md` |
+| E2 | The two declared limits stated where a skill reader meets them, plus three contradicting claims fixed | `brood-swarm/SKILL.md`, `README.md` |
 
 Plus one item nobody asked for, which the cycle forced: the launch record and
 the receipt are now **audit-only**, and authority lives in coordinator state.
@@ -281,7 +281,7 @@ Reasoning effort is per MODEL, revised 2026-09-04: `codex/gpt-5.6-sol`
 at **high**, `codex/gpt-5.6-luna` at **xhigh**, `claude/opus` at
 **high**. luna sits below the other two on `bus models`' measured
 intelligence, so it is asked for xhigh to compensate; asking the leaders
-for xhigh buys latency and not quality. `hanig-swarm/agents.json`'s
+for xhigh buys latency and not quality. `brood-swarm/agents.json`'s
 `thinking_by_model` enforces this for code units, and nothing enforces it for a paseo skill
 dispatching from `orchestration-preferences.json`, which has no slot for
 effort -- there, claude/opus falls to its `auto` default.
@@ -293,7 +293,7 @@ schema is fixed by `skills/paseo/SKILL.md` -- `providers`, one provider string
 per category, and `preferences`, freeform text woven into prompts -- that file
 is vendored verbatim so an upstream re-sync stays a real diff, and it is
 explicit that no skill may hardcode a provider string. The same argument
-forbids hardcoding an effort. So the intent above binds `hanig-swarm`
+forbids hardcoding an effort. So the intent above binds `brood-swarm`
 dispatches and nothing else, and the file must not be read as controlling
 something it cannot control.
 
@@ -373,7 +373,7 @@ upheld past. Two rounds, two different models catching what the other missed.
 ## Loose ends
 
 - `converge.py` (resolved): wired into `swarm.py` (`converge_verdict` / `converge_problem`) as the declared-convergence metrics gate.
-- W&B logging (resolved): shipped as `skills/hanig-wandb-logging/` (`wbkit.py`, `audit_project.py`); caller supplies W&B and contracts judge outcomes.
+- W&B logging (resolved): shipped as `skills/brood-wandb-logging/` (`wbkit.py`, `audit_project.py`); caller supplies W&B and contracts judge outcomes.
 - Orphan paseo workspace `wks_acba5d75` from a probe run on 2026-08-31.
 - `paseo-advisor`, `paseo-committee`, `paseo-loop`, `paseo-handoff` and
   `pi-fleet` pin no provider and fall back to Paseo's discovery, so they are

@@ -2,11 +2,11 @@
 Status: historical
 Date: 2026-10-11
 Title: Plan: a Codex home per dispatched agent
-Purpose: This delivered plan specifies a separate authenticated Codex home for each dispatched agent; the implementation lives in `skills/hanig-swarm/scripts/codex_home.py`.
+Purpose: This delivered plan specifies a separate authenticated Codex home for each dispatched agent; the implementation lives in `skills/brood-swarm/scripts/codex_home.py`.
 
 # Plan: a Codex home per dispatched agent
 
-This delivered plan specifies a separate authenticated Codex home for each dispatched agent; the implementation lives in `skills/hanig-swarm/scripts/codex_home.py`.
+This delivered plan specifies a separate authenticated Codex home for each dispatched agent; the implementation lives in `skills/brood-swarm/scripts/codex_home.py`.
 
 Plan review: passed (round 2, Kimi and Sol) on 2026-10-06.
 

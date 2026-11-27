@@ -10,7 +10,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-SCRIPTS = ROOT / "skills/hanig-swarm/scripts"
+SCRIPTS = ROOT / "skills/brood-swarm/scripts"
 sys.path.insert(0, str(SCRIPTS))
 import swarm as S
 import swarm_outbox as SO

@@ -20,8 +20,8 @@ from lib import skill_agent_policy as sap  # noqa: E402
 
 SCRIPT = ROOT / "lib" / "skill_agent_policy.py"
 YAML = b"policy:\n  allow_implicit_invocation: false\n"
-LISTED = "hanig-swarm"
-UNLISTED = "hanig-review-gate"
+LISTED = "brood-swarm"
+UNLISTED = "brood-review-gate"
 
 
 def skill_md(name, flag_line=None):
@@ -79,8 +79,8 @@ class TreeCase(unittest.TestCase):
 class TestConstants(unittest.TestCase):
     def test_explicit_only_list_and_canonical_bytes(self):
         self.assertEqual(sap.EXPLICIT_ONLY_SKILLS, (
-            "hanig-debrief", "hanig-hillclimb", "hanig-orchestrate", "hanig-portable-handoff",
-            "hanig-project", "hanig-swarm"))
+            "brood-debrief", "brood-hillclimb", "brood-orchestrate", "brood-portable-handoff",
+            "brood-project", "brood-swarm"))
         self.assertEqual(sap.OPENAI_YAML_BYTES, YAML)
 
     def test_parses_under_python_38_grammar(self):
@@ -166,14 +166,14 @@ class TestCheck(TreeCase):
 
     def test_malformed_frontmatter_and_unsafe_paths_fail_closed(self):
         self.make(LISTED, text="no frontmatter\n")
-        skill = self.make("hanig-a", "disable-model-invocation: true")
+        skill = self.make("brood-a", "disable-model-invocation: true")
         (skill / "agents").write_text("not a dir")
-        self.make("hanig-b")
-        (self.root / "hanig-b" / "SKILL.md").write_bytes(b"---\nname: \xff\n---\n")
+        self.make("brood-b")
+        (self.root / "brood-b" / "SKILL.md").write_bytes(b"---\nname: \xff\n---\n")
         codes = self.codes(sap.run(self.root))
         self.assertIn(("malformed_frontmatter", LISTED), codes)
-        self.assertIn(("unsafe_openai_yaml", "hanig-a"), codes)
-        self.assertIn(("malformed_frontmatter", "hanig-b"), codes)
+        self.assertIn(("unsafe_openai_yaml", "brood-a"), codes)
+        self.assertIn(("malformed_frontmatter", "brood-b"), codes)
 
     def test_symlinked_yaml_is_unsafe_and_not_written_through(self):
         outside = self.tmp / "outside.yaml"
@@ -217,13 +217,13 @@ class TestWrite(TreeCase):
     def test_write_generates_only_for_flagged_skills_and_is_idempotent(self):
         for name in sap.EXPLICIT_ONLY_SKILLS:
             self.make(name, "disable-model-invocation: true")
-        self.make("hanig-debrief-x", "disable-model-invocation: true", YAML + b"# drift\n")
+        self.make("brood-debrief-x", "disable-model-invocation: true", YAML + b"# drift\n")
         self.make(UNLISTED)
         result = self.cli("--write", "--json")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(sorted(json.loads(result.stdout)["written"]),
-                         sorted(sap.EXPLICIT_ONLY_SKILLS + ("hanig-debrief-x",)))
-        for name in sap.EXPLICIT_ONLY_SKILLS + ("hanig-debrief-x",):
+                         sorted(sap.EXPLICIT_ONLY_SKILLS + ("brood-debrief-x",)))
+        for name in sap.EXPLICIT_ONLY_SKILLS + ("brood-debrief-x",):
             self.assertEqual((self.root / name / "agents" / "openai.yaml").read_bytes(), YAML)
         self.assertFalse(os.path.lexists(str(self.root / UNLISTED / "agents")))
         before = self.snapshot(self.root)
@@ -235,13 +235,13 @@ class TestWrite(TreeCase):
 
     def test_write_does_not_repair_orphans_or_noncanonical_flags(self):
         self.make(UNLISTED, None, b"stale\n")
-        self.make("hanig-q", 'disable-model-invocation: "true"')
+        self.make("brood-q", 'disable-model-invocation: "true"')
         report = sap.run(self.root, write=True)
         self.assertEqual(report["written"], [])
         self.assertEqual((self.root / UNLISTED / "agents" / "openai.yaml").read_bytes(),
                          b"stale\n")
-        self.assertFalse(os.path.lexists(str(self.root / "hanig-q" / "agents")))
-        self.assertEqual(self.codes(report), [("noncanonical_flag", "hanig-q"),
+        self.assertFalse(os.path.lexists(str(self.root / "brood-q" / "agents")))
+        self.assertEqual(self.codes(report), [("noncanonical_flag", "brood-q"),
                                               ("orphan_openai_yaml", UNLISTED)])
         self.assertEqual(self.cli("--write").returncode, 1)
 
@@ -272,12 +272,12 @@ class TestWrite(TreeCase):
 
 
 class TestLiveRepository(unittest.TestCase):
-    IMPLICIT = ("hanig-review-gate", "hanig-verified-workflow", "hanig-wandb-logging")
+    IMPLICIT = ("brood-review-gate", "brood-verified-workflow", "brood-wandb-logging")
 
     def test_explicit_only_list_is_pinned_and_check_exits_zero(self):
         self.assertEqual(sap.EXPLICIT_ONLY_SKILLS, (
-            "hanig-debrief", "hanig-hillclimb", "hanig-orchestrate", "hanig-portable-handoff",
-            "hanig-project", "hanig-swarm"))
+            "brood-debrief", "brood-hillclimb", "brood-orchestrate", "brood-portable-handoff",
+            "brood-project", "brood-swarm"))
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--check", "--json"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,

@@ -14,7 +14,7 @@ from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills/hanig-debrief/scripts"
+SCRIPTS = ROOT / "skills/brood-debrief/scripts"
 sys.path.insert(0, str(SCRIPTS))
 import debrief_attention as T
 import debrief_audit as A

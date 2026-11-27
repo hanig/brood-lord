@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills/hanig-review-gate/scripts"))
+sys.path.insert(0, str(ROOT / "skills/brood-review-gate/scripts"))
 import committee as C
 import resolve_models as RM
 import review as R

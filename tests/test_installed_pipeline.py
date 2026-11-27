@@ -17,7 +17,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures" / "installed_pipeline"
-SKILLS = ("hanig-project", "hanig-swarm")
+SKILLS = ("brood-project", "brood-swarm")
 OUTPUTS = ["result.txt", "details.txt"]
 
 
@@ -72,7 +72,7 @@ class InstalledPipeline(unittest.TestCase):
         installed = self.command([
             sys.executable, "-I", "-B", str(source / "lib" / "skill_installer.py"),
             "--prefix", str(self.store), "--mode", "copy", "--json",
-            "--only", "hanig-project", "--only", "hanig-swarm"])
+            "--only", "brood-project", "--only", "brood-swarm"])
         self.assertEqual(installed.returncode, 0, installed.stderr + installed.stdout)
         self.assertEqual({p.name for p in self.store.iterdir() if p.is_dir()}, set(SKILLS))
         for entry in self.store.iterdir():
@@ -100,8 +100,8 @@ class InstalledPipeline(unittest.TestCase):
         self.store = store
         self.env.update({
             "PIPELINE_STORE": str(store),
-            "HANIG_SWARM_DIR": str(store / "hanig-swarm"),
-            "HANIG_PROJECT_DIR": str(store / "hanig-project"),
+            "HANIG_SWARM_DIR": str(store / "brood-swarm"),
+            "HANIG_PROJECT_DIR": str(store / "brood-project"),
         })
 
     def command(self, argv):
@@ -234,8 +234,8 @@ class InstalledPipeline(unittest.TestCase):
     def test_020_missing_output_mutation_is_caught_by_hollow_grader(self):
         mutant = self.home / "mutant skills"
         shutil.copytree(self.store, mutant)
-        predicate = mutant / "hanig-swarm" / "scripts" / "unit.py"
-        pristine = self.store / "hanig-swarm" / "scripts" / "unit.py"
+        predicate = mutant / "brood-swarm" / "scripts" / "unit.py"
+        pristine = self.store / "brood-swarm" / "scripts" / "unit.py"
         original = pristine.read_bytes()
         before = ast.parse(original)
         self.ignore_missing_outputs(predicate)
@@ -268,7 +268,7 @@ class InstalledPipeline(unittest.TestCase):
     def test_030_mutation_survives_formatting_and_local_name_changes(self):
         reformatted = self.home / "reformatted skills"
         shutil.copytree(self.store, reformatted)
-        predicate = reformatted / "hanig-swarm" / "scripts" / "unit.py"
+        predicate = reformatted / "brood-swarm" / "scripts" / "unit.py"
         tree = ast.parse(predicate.read_text())
         check = next(n for n in tree.body
                      if isinstance(n, ast.FunctionDef) and n.name == "check_unit")
@@ -345,7 +345,7 @@ class InstalledPipeline(unittest.TestCase):
             self.assertEqual(list(Path(parent).iterdir()), [])
 
     def test_060_unknown_or_ambiguous_mutation_target_is_refused_without_writing(self):
-        original = (self.store / "hanig-swarm" / "scripts" / "unit.py").read_text()
+        original = (self.store / "brood-swarm" / "scripts" / "unit.py").read_text()
         for variant, message in (("renamed", "pipeline function not found"),
                                  ("absent", "missing-output guard not identified"),
                                  ("duplicate", "ambiguous missing-output guards")):

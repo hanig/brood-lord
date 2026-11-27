@@ -147,7 +147,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     def test_coordinator_passes_state_dir(self):
         inventory = {}
-        for skill in ('hanig-swarm', 'hanig-orchestrate'):
+        for skill in ('brood-swarm', 'brood-orchestrate'):
             for path in sorted((ROOT / 'skills' / skill / 'scripts').glob('*.py')):
                 sites = command_sites(path.read_text())
                 if sites:

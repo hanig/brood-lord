@@ -13,13 +13,13 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-REG = "skills/hanig-swarm/scripts/declaration_registry.py"  # closed inventories: test_skill_shape
-NEW = {"hanig-orchestrate": ("review.counterexample-evidence", "review.premise-check",
+REG = "skills/brood-swarm/scripts/declaration_registry.py"  # closed inventories: test_skill_shape
+NEW = {"brood-orchestrate": ("review.counterexample-evidence", "review.premise-check",
                              "watch.pr-oracle"),
-       "hanig-debrief": ("capability.decisions-log", "capability.audit", "capability.attention",
+       "brood-debrief": ("capability.decisions-log", "capability.audit", "capability.attention",
                          "workflow.durability")}
-OD, DB, RG = ("skills/hanig-%s/SKILL.md" % s for s in ("orchestrate", "debrief", "review-gate"))
-HO, RM = "skills/hanig-portable-handoff/SKILL.md", "README.md"
+OD, DB, RG = ("skills/brood-%s/SKILL.md" % s for s in ("orchestrate", "debrief", "review-gate"))
+HO, RM = "skills/brood-portable-handoff/SKILL.md", "README.md"
 RULES = ((OD, "never executes reviewer text"), (OD, "downgrades REVIEW_FAIL"),
          (OD, "pass --require-premise-ack"), (OD, "read-only PR-status oracle"),
          (OD, "Never execute reviewer commands or auto-downgrade severity"),
@@ -28,11 +28,11 @@ RULES = ((OD, "never executes reviewer text"), (OD, "downgrades REVIEW_FAIL"),
          (DB, "never globs unrelated projects"), (DB, "never prints raw transcript text"),
          (DB, "imports no network module"), (DB, "beats prose"), (RG, "(L1):**"),
          (RG, "never changes a verdict"), (RG, "struck in rounds N-2 and N-1"), (HO, "decisions_log.py"), (HO, "debrief_audit.py"),
-         (RM, "| `hanig-hillclimb` |"), (RM, "All nine are"), (RM, "skills/hanig-hillclimb/"),
+         (RM, "| `brood-hillclimb` |"), (RM, "All nine are"), (RM, "skills/brood-hillclimb/"),
          (RM, "lib/skill_agent_policy.py   --check"))
 UNSHIPPED = tuple((doc, flag) for doc in (OD, DB, RG, RM) for flag in (
     "premise-replay", "--allow-egress", "debrief_attention.py run", "--rerun"))
-CLIS = dict({n: "skills/hanig-%s/scripts/" % s for n, s in (
+CLIS = dict({n: "skills/brood-%s/scripts/" % s for n, s in (
     ("watch_pr.py", "orchestrate"), ("hillclimb.py", "hillclimb"), ("review.py", "review-gate"),
     ("decisions_log.py", "debrief"), ("debrief_audit.py", "debrief"),
     ("debrief_attention.py", "debrief"))}, **{"skill_agent_policy.py": "lib/"})
@@ -144,13 +144,13 @@ class TestPstackWiring(unittest.TestCase):
                     self.assertEqual(out.returncode, 0, (skill, command, out.stdout))
             policy = (ROOT / "lib/skill_agent_policy.py", "--check", "--skills-root", skills)
             self.assertEqual(_run(*policy).returncode, 0)
-            target = skills / "hanig-debrief" / "SKILL.md"  # the check must see lost frontmatter
+            target = skills / "brood-debrief" / "SKILL.md"  # the check must see lost frontmatter
             target.write_text(target.read_text(encoding="utf-8").replace(
                 "disable-model-invocation: true\n", "", 1), encoding="utf-8")
             self.assertEqual(_run(*policy).returncode, 1)
 
     def test_handoff_parses_at_python_37_and_claude_md_fits(self):
-        ast.parse(_read(ROOT, "skills/hanig-portable-handoff/scripts/handoff.py"),
+        ast.parse(_read(ROOT, "skills/brood-portable-handoff/scripts/handoff.py"),
                   feature_version=(3, 7))
         self.assertLess((ROOT / "CLAUDE.md").stat().st_size, 18000)
 

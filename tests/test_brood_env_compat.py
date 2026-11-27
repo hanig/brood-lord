@@ -16,10 +16,10 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "skills"
-GATE = SKILLS / "hanig-review-gate" / "scripts"
-SWARM = SKILLS / "hanig-swarm" / "scripts"
-ORCH = SKILLS / "hanig-orchestrate" / "scripts"
-PROJECT = SKILLS / "hanig-project" / "scripts"
+GATE = SKILLS / "brood-review-gate" / "scripts"
+SWARM = SKILLS / "brood-swarm" / "scripts"
+ORCH = SKILLS / "brood-orchestrate" / "scripts"
+PROJECT = SKILLS / "brood-project" / "scripts"
 for _path in (GATE, SWARM):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
@@ -208,11 +208,11 @@ class OrchestrateAndProject(unittest.TestCase):
     def test_dependency_roots_merge_brood_before_hanig(self):
         with tempfile.TemporaryDirectory() as raw:
             base = Path(raw)
-            loaded = base / "installed" / "hanig-orchestrate"
+            loaded = base / "installed" / "brood-orchestrate"
             loaded.mkdir(parents=True)
             (loaded / "SKILL.md").write_text("x\n")
             for parent in ("b", "h"):
-                sibling = base / parent / "hanig-project"
+                sibling = base / parent / "brood-project"
                 sibling.mkdir(parents=True)
                 (sibling / "SKILL.md").write_text("x\n")
             both = {"BROOD_SKILL_DEP_ROOTS": str(base / "b"),
@@ -221,26 +221,26 @@ class OrchestrateAndProject(unittest.TestCase):
                      ({"BROOD_SKILL_DEP_ROOTS": str(base / "b")}, "b"))
             for env, want in cases:
                 with self.subTest(env=env), mock.patch.dict(os.environ, env, clear=True):
-                    found = SP.sibling_skill_root(loaded, "hanig-orchestrate", "hanig-project")
-                    self.assertEqual(found, (base / want / "hanig-project").resolve())
+                    found = SP.sibling_skill_root(loaded, "brood-orchestrate", "brood-project")
+                    self.assertEqual(found, (base / want / "brood-project").resolve())
             with mock.patch.dict(os.environ, both, clear=True):
                 self.assertEqual(SP._configured_roots((), loaded), [base / "b", base / "h"])
             with mock.patch.dict(os.environ, {}, clear=True), \
                     self.assertRaisesRegex(SP.SkillPathError, "BROOD_SKILL_DEP_ROOTS"):
-                SP.sibling_skill_root(loaded, "hanig-orchestrate", "hanig-project")
+                SP.sibling_skill_root(loaded, "brood-orchestrate", "brood-project")
 
     def test_whitespace_only_dependency_roots_declare_nothing(self):
         copies = [load(f"_brood_compat_skill_paths_{skill}",
                        ROOT / "skills" / skill / "scripts" / "skill_paths.py")
-                  for skill in ("hanig-orchestrate", "hanig-project", "hanig-debrief")]
+                  for skill in ("brood-orchestrate", "brood-project", "brood-debrief")]
         with tempfile.TemporaryDirectory() as raw:
             base = Path(raw)
-            loaded = base / "installed" / "hanig-orchestrate"
+            loaded = base / "installed" / "brood-orchestrate"
             loaded.mkdir(parents=True)
             (loaded / "SKILL.md").write_text("x\n")
             legacy = base / "legacy"
-            (legacy / "hanig-project").mkdir(parents=True)
-            (legacy / "hanig-project" / "SKILL.md").write_text("x\n")
+            (legacy / "brood-project").mkdir(parents=True)
+            (legacy / "brood-project" / "SKILL.md").write_text("x\n")
             blank = (loaded / " ").resolve(strict=False)
             for module in copies:
                 for env in ({"BROOD_SKILL_DEP_ROOTS": " ",
@@ -253,8 +253,8 @@ class OrchestrateAndProject(unittest.TestCase):
                         self.assertEqual(roots, [legacy])
                         self.assertNotIn(blank, roots)
                         found = module.sibling_skill_root(
-                            loaded, "hanig-orchestrate", "hanig-project")
-                        self.assertEqual(found, (legacy / "hanig-project").resolve())
+                            loaded, "brood-orchestrate", "brood-project")
+                        self.assertEqual(found, (legacy / "brood-project").resolve())
             # an internal space is a real path segment and survives
             spaced = base / "with space"
             with mock.patch.dict(os.environ, {"BROOD_SKILL_DEP_ROOTS": str(spaced)},
@@ -336,7 +336,7 @@ class SweepEveryAuthoredScript(unittest.TestCase):
             'def f(e):\n    b = e.get("BROOD_FOO")\n    return b or e.get("HANIG_FOO")\n'), [])
 
     def test_no_authored_script_reads_a_legacy_name_without_its_brood_twin(self):
-        scripts = sorted(SKILLS.glob("hanig-*/scripts/*.py")) + sorted((ROOT / "lib").glob("*.py"))
+        scripts = sorted(SKILLS.glob("brood-*/scripts/*.py")) + sorted((ROOT / "lib").glob("*.py"))
         self.assertGreater(len(scripts), 50)
         offenders = {}
         for path in scripts:

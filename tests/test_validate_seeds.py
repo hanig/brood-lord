@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SWARM = ROOT / "skills" / "hanig-swarm" / "scripts" / "swarm.py"
+SWARM = ROOT / "skills" / "brood-swarm" / "scripts" / "swarm.py"
 sys.path.insert(0, str(SWARM.parent))
 import swarm_plan_rules as SPR
 

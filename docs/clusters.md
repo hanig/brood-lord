@@ -404,7 +404,7 @@ One command per cluster answers most of it, and reports the fields by the
 names the rest of the tooling uses:
 
 ```bash
-python3 skills/hanig-project/scripts/survey.py --json
+python3 skills/brood-project/scripts/survey.py --json
 ```
 
 ---

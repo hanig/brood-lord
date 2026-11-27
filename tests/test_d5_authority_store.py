@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills/hanig-orchestrate/scripts"))
+sys.path.insert(0, str(ROOT / "skills/brood-orchestrate/scripts"))
 import d5_authority as records
 import d5_authority_store as A
 

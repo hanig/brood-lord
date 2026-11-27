@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills/hanig-orchestrate/scripts"))
+sys.path.insert(0, str(ROOT / "skills/brood-orchestrate/scripts"))
 import d5_authority as A
 
 MANDATE = b"grant\nbounds\n"

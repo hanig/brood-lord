@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SWARM = ROOT / "skills" / "hanig-swarm" / "scripts" / "swarm.py"
+SWARM = ROOT / "skills" / "brood-swarm" / "scripts" / "swarm.py"
 sys.path.insert(0, str(SWARM.parent))
 import swarm as S  # noqa: E402
 import swarm_code_protocol as SCP
@@ -338,7 +338,7 @@ class TestTheSurveyFlagsWhatMustNotBeOverwritten(unittest.TestCase):
         import subprocess
         import tempfile
         import json as _json
-        survey = (ROOT / "skills" / "hanig-project" / "scripts" / "survey.py")
+        survey = (ROOT / "skills" / "brood-project" / "scripts" / "survey.py")
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "PLAN.md").write_text("someone's design document\n")
             r = subprocess.run([sys.executable, str(survey), "--repo", d,
@@ -354,7 +354,7 @@ class TestTheSurveyFlagsWhatMustNotBeOverwritten(unittest.TestCase):
         import subprocess
         import tempfile
         import json as _json
-        survey = (ROOT / "skills" / "hanig-project" / "scripts" / "survey.py")
+        survey = (ROOT / "skills" / "brood-project" / "scripts" / "survey.py")
         with tempfile.TemporaryDirectory() as d:
             r = subprocess.run([sys.executable, str(survey), "--repo", d,
                                 "--json"], capture_output=True, text=True)
@@ -454,14 +454,14 @@ class TestTheDefaultAgent(unittest.TestCase):
     def _argv(self, unit):
         """The paseo argv _submit would build, without dispatching."""
         import ast
-        src = (ROOT / "skills" / "hanig-swarm" / "scripts" / "swarm.py")
+        src = (ROOT / "skills" / "brood-swarm" / "scripts" / "swarm.py")
         self.assertTrue(src.is_file())
         return None
 
     def test_the_default_comes_from_agents_json(self):
         import json
         routing = json.loads(S.AGENTS_FILE.read_text(encoding="utf-8"))
-        self.assertEqual(S.AGENTS_FILE.parent.name, "hanig-swarm")
+        self.assertEqual(S.AGENTS_FILE.parent.name, "brood-swarm")
         self.assertEqual(S.DEFAULT_AGENT_PROVIDER, routing["default"]["provider"])
         self.assertEqual(S.DEFAULT_AGENT_THINKING, routing["default"]["thinking"])
         self.assertEqual(S.THINKING_BY_MODEL, routing["thinking_by_model"])
@@ -526,7 +526,7 @@ class TestTheDefaultAgent(unittest.TestCase):
 
     def test_dispatch_passes_the_default_provider_and_thinking(self):
         import ast
-        src = (ROOT / "skills" / "hanig-swarm" / "scripts" / "swarm.py"
+        src = (ROOT / "skills" / "brood-swarm" / "scripts" / "swarm.py"
                ).read_text()
         fn = next(n for n in ast.walk(ast.parse(src))
                   if isinstance(n, ast.FunctionDef) and n.name == "_submit")
@@ -539,7 +539,7 @@ class TestTheDefaultAgent(unittest.TestCase):
 
     def test_a_unit_can_override_each_piece(self):
         import ast
-        src = (ROOT / "skills" / "hanig-swarm" / "scripts" / "swarm.py"
+        src = (ROOT / "skills" / "brood-swarm" / "scripts" / "swarm.py"
                ).read_text()
         fn = next(n for n in ast.walk(ast.parse(src))
                   if isinstance(n, ast.FunctionDef) and n.name == "_submit")
@@ -553,7 +553,7 @@ class TestTheDefaultAgent(unittest.TestCase):
     def test_thinking_can_be_switched_off_for_a_provider_without_it(self):
         """A provider with no thinking option must not be sent one."""
         import ast
-        src = (ROOT / "skills" / "hanig-swarm" / "scripts" / "swarm.py"
+        src = (ROOT / "skills" / "brood-swarm" / "scripts" / "swarm.py"
                ).read_text()
         fn = next(n for n in ast.walk(ast.parse(src))
                   if isinstance(n, ast.FunctionDef) and n.name == "_submit")
@@ -563,7 +563,7 @@ class TestTheDefaultAgent(unittest.TestCase):
 
     def test_claude_is_no_longer_hardcoded_as_the_provider(self):
         import ast
-        src = (ROOT / "skills" / "hanig-swarm" / "scripts" / "swarm.py"
+        src = (ROOT / "skills" / "brood-swarm" / "scripts" / "swarm.py"
                ).read_text()
         fn = next(n for n in ast.walk(ast.parse(src))
                   if isinstance(n, ast.FunctionDef) and n.name == "_submit")
@@ -783,7 +783,7 @@ class TestTheSchemaIsReadableInOneGo(unittest.TestCase):
     def _run(self, *args):
         import subprocess
         return subprocess.run(
-            [sys.executable, str(ROOT / "skills" / "hanig-swarm" / "scripts"
+            [sys.executable, str(ROOT / "skills" / "brood-swarm" / "scripts"
                                  / "swarm.py"), "schema", *args],
             capture_output=True, text=True)
 
@@ -921,13 +921,13 @@ class TestModeAdviceMatchesTheProvider(CodeUnitCase):
         default = S.DEFAULT_AGENT_PROVIDER.split("/", 1)[0].lower()
         if default != "codex":
             self.skipTest("default provider is no longer codex")
-        for name in ("hanig-swarm", "hanig-project"):
+        for name in ("brood-swarm", "brood-project"):
             doc = ROOT / "skills" / name / "SKILL.md"
             for i, line in enumerate(doc.read_text().splitlines(), 1):
                 if '"mode": "bypass"' in line or '"mode":"bypass"' in line:
                     self.fail("%s:%d recommends mode=bypass, which codex "
                               "rejects: %s" % (doc.name, i, line.strip()))
-                if (name == "hanig-project" and "auto-review" in line
+                if (name == "brood-project" and "auto-review" in line
                         and "full-access" in line):
                     self.fail("%s:%d publishes a closed codex mode list: %s"
                               % (doc.name, i, line.strip()))
@@ -944,7 +944,7 @@ class TestTheCheapFixForAWrongPartitionIsWrittenDown(unittest.TestCase):
     Guarded in the DOC rather than in code because nothing in swarm.py moves a
     queued job; the doc is where the choice is actually made."""
 
-    DOC = ROOT / "skills" / "hanig-swarm" / "SKILL.md"
+    DOC = ROOT / "skills" / "brood-swarm" / "SKILL.md"
 
     def test_the_dispatch_section_names_scontrol_update(self):
         doc = self.DOC.read_text()
@@ -1223,7 +1223,7 @@ class TestTheSurveySaysWhoMayChargeAPartition(SurveyCase):
 class TestValidateFindsTheSurveyItself(SurveyCase):
     """The plumbing. `validate` had no survey at all before this, so an
     honest answer to "where does it get one" had to be built: the file
-    hanig-project's very first command writes, beside the plan."""
+    brood-project's very first command writes, beside the plan."""
 
     def _project(self, d, survey=None, plan_=None):
         proj = Path(d)
@@ -1395,7 +1395,7 @@ class TestTheSurveyShapeIsTheRealOne(SurveyCase):
             env["PATH"] = str(binp)
             r = subprocess.run(
                 [sys.executable,
-                 str(ROOT / "skills" / "hanig-project" / "scripts"
+                 str(ROOT / "skills" / "brood-project" / "scripts"
                      / "survey.py"), "--repo", d, "--json"],
                 capture_output=True, text=True, env=env)
             self.assertEqual(r.returncode, 0, r.stderr)
@@ -1472,12 +1472,12 @@ class TestFindingsMustBeAbleToReachTheReport(unittest.TestCase):
         """The premise, pinned. If report.py ever learns to read findings out
         of the terminal unit's attempt directory, this rule's justification is
         gone and the rule should change with it."""
-        src = (ROOT / "skills" / "hanig-project" / "scripts"
+        src = (ROOT / "skills" / "brood-project" / "scripts"
                / "report.py").read_text()
         self.assertIn('"findings": _load(p("findings.json"))', src)
 
     def test_the_doc_no_longer_demands_it_of_every_plan(self):
-        doc = " ".join((ROOT / "skills" / "hanig-project"
+        doc = " ".join((ROOT / "skills" / "brood-project"
                         / "SKILL.md").read_text().split())
         self.assertNotIn("So the final unit must emit", doc)
         self.assertIn("must also declare `promote_to`", doc)

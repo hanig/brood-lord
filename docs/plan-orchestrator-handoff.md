@@ -72,7 +72,7 @@ The predecessor can transfer references and operational custody, **not manufactu
 - Route all writers through one stable state-host exclusion mechanism. Desktop-local locks do not exclude the old orchestrator. Release/acquire control explicitly; never infer takeover safety from heartbeat expiry.
 - On SSH/lock loss, stop outward effects and reconcile before retrying. Do not silently create replacement local state.
 
-## GAPS IN hanig-portable-handoff
+## GAPS IN brood-portable-handoff
 
 It must carry—or reference a durable, verified companion record containing:
 

@@ -4,7 +4,7 @@ import sys
 import uuid
 
 ROOT = Path(__file__).resolve().parents[3]
-for bundle in ('hanig-swarm', 'hanig-orchestrate'):
+for bundle in ('brood-swarm', 'brood-orchestrate'):
     sys.path.insert(0, str(ROOT / 'skills' / bundle / 'scripts'))
 
 import d5_install as install

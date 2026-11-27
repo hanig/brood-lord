@@ -17,7 +17,7 @@ from unittest import mock
 from tests.watchdog_guard import guarded_main
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / 'skills' / 'hanig-review-gate' / 'scripts'))
+sys.path.insert(0, str(REPO / 'skills' / 'brood-review-gate' / 'scripts'))
 import committee
 import review
 plan_review = review._load_plan_review()
@@ -298,7 +298,7 @@ class TestPlanExchange(unittest.TestCase):
                 self.assert_exchange_panel_refused(members)
 
     def run_shipped_pair(self, names):
-        roster = json.loads((REPO / 'skills/hanig-review-gate/reviewers.json').read_text())
+        roster = json.loads((REPO / 'skills/brood-review-gate/reviewers.json').read_text())
         members = [m for m in roster['reviewers'] if m['name'] in names]
         self.assertEqual({m['name'] for m in members}, set(names))
         self.first, self.second = answers(names)
@@ -356,7 +356,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 repo = Path(sys.argv[1])
-scripts = repo / 'skills/hanig-review-gate/scripts'
+scripts = repo / 'skills/brood-review-gate/scripts'
 assert str(scripts) not in sys.path
 def load(name):
     spec = importlib.util.spec_from_file_location(name, scripts / 'review.py')

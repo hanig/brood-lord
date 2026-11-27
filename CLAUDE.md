@@ -6,7 +6,7 @@ This repository is private by owner decision (2026-11-05); it was public from 20
 
 If you are driving a run rather than editing this repository, read `docs/orchestrator-mandate.md` first. Authority is owner-granted by merge, not by conversation, and a new session must show the owner its enumerated grant and bounds and get confirmation before operating unattended. Until confirmed you may read, survey, plan, run the gate and report, and you may not dispatch, merge, spend or mutate a tracker.
 
-`MEMORY.md` is a dated snapshot, not live truth; verify any owed item against the tree before acting on it. `docs/plan-field-reports.md` is the live plan and `README.md` is the CLI reference (same caveat on measurements). Routing truth is the `enabled` flags in `skills/hanig-review-gate/reviewers.json`, the code-unit default in `skills/hanig-swarm/agents.json`, and `models.json`, never a roster quoted in prose. No script should name a model: `tests/test_no_hardcoded_models.py` fails on any tracked authored Python string literal equal to a model id declared in those three files (excluding prose/fixtures); an undeclared model id typed directly is not caught (ARC-1175 closed 2026-10-11).
+`MEMORY.md` is a dated snapshot, not live truth; verify any owed item against the tree before acting on it. `docs/plan-field-reports.md` is the live plan and `README.md` is the CLI reference (same caveat on measurements). Routing truth is the `enabled` flags in `skills/brood-review-gate/reviewers.json`, the code-unit default in `skills/brood-swarm/agents.json`, and `models.json`, never a roster quoted in prose. No script should name a model: `tests/test_no_hardcoded_models.py` fails on any tracked authored Python string literal equal to a model id declared in those three files (excluding prose/fixtures); an undeclared model id typed directly is not caught (ARC-1175 closed 2026-10-11).
 
 ## Commands
 
@@ -24,8 +24,8 @@ python3 scripts/run_tests.py test_outbox         # chosen modules, same isolatio
 python3 scripts/run_tests.py --fast              # inner loop: leaves out tests/slow_tests.json
 python3 -m unittest discover -s tests            # full suite, serial
 python3 -m unittest tests.test_swarm             # one module
-python3 skills/hanig-swarm/scripts/swarm.py schema           # every unit field, before writing a plan
-python3 skills/hanig-review-gate/scripts/review.py --kind implementation --staged --round 1 \
+python3 skills/brood-swarm/scripts/swarm.py schema           # every unit field, before writing a plan
+python3 skills/brood-review-gate/scripts/review.py --kind implementation --staged --round 1 \
   --claim "This change cannot make an honest run fail."
 ./install.sh --dry-run --json --agent claude     # plan an install, changes nothing
 ./bin/doctor --json                              # what is installed, from where, still runs
@@ -49,13 +49,13 @@ No linter, no formatter, no build. Standard library only (`tests/test_stdlib_imp
 
 `lib/skill_agent_policy.py --write|--check` keeps `disable-model-invocation: true` skills (`EXPLICIT_ONLY_SKILLS`) paired with a byte-exact `agents/openai.yaml`; the installer and `bin/doctor` reject a missing or altered installed copy.
 
-`skills/` holds two populations classified by the `hanig-` prefix (`install.sh` and `bin/doctor`): 9 authored bundles (`hanig-project`, `hanig-swarm`, `hanig-verified-workflow`, `hanig-review-gate`, `hanig-portable-handoff`, `hanig-orchestrate`, `hanig-debrief`, `hanig-wandb-logging`, `hanig-hillclimb`) and 8 vendored verbatim bundles (`paseo*`, `pi-fleet`, `agent-bus`, `start-a-sprint`, untouched by `--uninstall`). `hanig-orchestrate` deliberately does NOT restate the mandate grant (`docs/orchestrator-mandate.md` is live authority).
+`skills/` holds two populations classified by the `brood-` prefix (`install.sh` and `bin/doctor`; the installer also reads legacy `hanig-` as authored): 9 authored bundles (`brood-project`, `brood-swarm`, `brood-verified-workflow`, `brood-review-gate`, `brood-portable-handoff`, `brood-orchestrate`, `brood-debrief`, `brood-wandb-logging`, `brood-hillclimb`) and 8 vendored verbatim bundles (`paseo*`, `pi-fleet`, `agent-bus`, `start-a-sprint`, untouched by `--uninstall`). `brood-orchestrate` deliberately does NOT restate the mandate grant (`docs/orchestrator-mandate.md` is live authority).
 
 The bus executable is `bin/bus` (`$MULTI_AGENT_SKILLS_CHECKOUT/bin/bus`). Never create `~/.agent-bus/bin/bus` to satisfy vendored prose. `bin/bus` carries one tracked local patch pinned by `tests/test_bus_models.py`.
 
 ## Architecture
 
-The pipeline runs one direction: `hanig-project/survey.py` -> interview -> `plan.json` (declaring `inputs`, `outputs`, `kind`, retry exposure) -> `swarm.py validate` / `run` / `advance` -> `report.py` (evidence-assembled verdict from `plan.json`, coordinator state and `receipt.json`, never narrative). `validate` checks declared facts, not shell behavior; use declared `runtime` plus canary/allocation-local preflight for compute-node resolution.
+The pipeline runs one direction: `brood-project/survey.py` -> interview -> `plan.json` (declaring `inputs`, `outputs`, `kind`, retry exposure) -> `swarm.py validate` / `run` / `advance` -> `report.py` (evidence-assembled verdict from `plan.json`, coordinator state and `receipt.json`, never narrative). `validate` checks declared facts, not shell behavior; use declared `runtime` plus canary/allocation-local preflight for compute-node resolution.
 
 **Nothing judges except `unit.py check`.** `run` and `advance` allocate, submit, bind and act solely on its exit code. Supporting judgment lives in `worktree.py` (code), `verify.py` (authorized verifier) and `converge.py` (metrics gate; unmet criterion -> `NEEDS_HUMAN`, closing no ticket and releasing no dependent). Never move judging into the coordinator.
 
@@ -75,11 +75,11 @@ The pipeline runs one direction: `hanig-project/survey.py` -> interview -> `plan
 
 `needs`, `inputs`, `outputs`, `sbatch` and `requires_verification` must be JSON lists; `validate` raises `PlanError` on strings. Preserve this refusal in every new reader.
 
-Authored skills locate programs via `HANIG_<SKILL>_DIR` (directory of the loaded `SKILL.md`) and `skill_paths.py`, with `HANIG_SKILL_DEP_ROOTS` (relative to the loaded skill's logical dir, never cwd) for mixed/link installs; never search agent stores. Canonical resolver: `skills/hanig-orchestrate/scripts/skill_paths.py`—edit there and copy byte-for-byte to every `skills/hanig-*/scripts/skill_paths.py` (`tests/test_skill_paths.py`).
+Authored skills locate programs via `HANIG_<SKILL>_DIR` (directory of the loaded `SKILL.md`) and `skill_paths.py`, with `HANIG_SKILL_DEP_ROOTS` (relative to the loaded skill's logical dir, never cwd) for mixed/link installs; never search agent stores. Canonical resolver: `skills/brood-orchestrate/scripts/skill_paths.py`—edit there and copy byte-for-byte to every `skills/hanig-*/scripts/skill_paths.py` (`tests/test_skill_paths.py`).
 
 ## Editing rules this repo paid for
 
-Do not report a change complete or assert code works until `hanig-review-gate` passes (exit 0); exit 2 (`REVIEW_UNAVAILABLE`) or 3 (`REVIEW_PARTIAL`) is unreviewed. Provider keys live in `~/.zshrc` (invoke via `zsh -ic` or export explicitly). Reproduce every finding before acting. Repeatable `--author PROVIDER/MODEL` excludes declared authors in `review.py`/`committee.py` by canonical maker and exact model leaf; profile-selected reviews/committees substitute ordered reserves from `reviewers.json` (`--only`, `--escalate`, `--member` skip reserve substitution); split tiebreaks exclude authors/prior voters and fall back to an eligible different-maker reserve or `OWNER`. `--escalate` walks `fast` -> `standard` -> `deep`, stopping on a failing tier with quorum.
+Do not report a change complete or assert code works until `brood-review-gate` passes (exit 0); exit 2 (`REVIEW_UNAVAILABLE`) or 3 (`REVIEW_PARTIAL`) is unreviewed. Provider keys live in `~/.zshrc` (invoke via `zsh -ic` or export explicitly). Reproduce every finding before acting. Repeatable `--author PROVIDER/MODEL` excludes declared authors in `review.py`/`committee.py` by canonical maker and exact model leaf; profile-selected reviews/committees substitute ordered reserves from `reviewers.json` (`--only`, `--escalate`, `--member` skip reserve substitution); split tiebreaks exclude authors/prior voters and fall back to an eligible different-maker reserve or `OWNER`. `--escalate` walks `fast` -> `standard` -> `deep`, stopping on a failing tier with quorum.
 
 Never edit vendored skill docs: put corrections in `docs/upstream-*.md` plus a pinning test (like `bin/bus`), and routing in `~/.paseo/orchestration-preferences.json` (`examples/`). `tests/test_skill_capabilities.py::test_vendored_payload_matches_offline_manifest` pins all 8 vendored bundles + `bin/bus` against `docs/upstream-manifest.json` (plus optional `origin/main` check).
 

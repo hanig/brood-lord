@@ -22,7 +22,7 @@ from scheduler_fixture import cleanup_module_path as tearDownModule  # noqa: E40
 from terminal_watcher_fixture import publish  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills" / "hanig-swarm" / "scripts"
+SCRIPTS = ROOT / "skills" / "brood-swarm" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import swarm as S
 

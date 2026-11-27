@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT=Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT/'skills/hanig-orchestrate/scripts'))
+sys.path.insert(0, str(ROOT/'skills/brood-orchestrate/scripts'))
 import d5_host as H
 identity=H.process_identity
 Identity=H.ProcessIdentity
@@ -314,7 +314,7 @@ print(json.dumps({'anchor': anchor, 'ppid': os.getppid(),
 """
   # The background child plus wait keeps sh alive instead of exec-optimizing it away.
   result=subprocess.run(['/bin/sh', '-c', '"$@" & child=$!; wait "$child"', 'chain',
-    sys.executable, '-c', code, str(ROOT/'skills/hanig-orchestrate/scripts')],
+    sys.executable, '-c', code, str(ROOT/'skills/brood-orchestrate/scripts')],
     env=env, capture_output=True, text=True, timeout=20, check=True)
   observed=json.loads(result.stdout)
   self.assertNotEqual(observed['ppid'], os.getpid())

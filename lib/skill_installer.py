@@ -31,15 +31,15 @@ if str(_CHECKOUT_ROOT) not in sys.path:
 
 SUPPORTED_AGENTS = ("claude", "codex", "opencode", "pi", "cursor", "grok", "antigravity")
 WORKFLOW_DEPENDENCIES = {
-    "hanig-project": ("hanig-swarm",),
-    "hanig-orchestrate": (
-        "hanig-project",
-        "hanig-swarm",
-        "hanig-review-gate",
-        "hanig-portable-handoff",
+    "brood-project": ("brood-swarm",),
+    "brood-orchestrate": (
+        "brood-project",
+        "brood-swarm",
+        "brood-review-gate",
+        "brood-portable-handoff",
     ),
 }
-# Authored bundles are being renamed hanig-<suffix> -> brood-<suffix>.  Both
+# Authored bundles were renamed hanig-<suffix> -> brood-<suffix>.  Both
 # prefixes are authored; (current, retired) pairs drive legacy retirement.
 AUTHORED_PREFIXES = ("brood-", "hanig-")
 RETIRED_PREFIXES = (("brood-", "hanig-"),)
@@ -503,7 +503,7 @@ def render_plan(plan: InstallPlan, options: InstallOptions, version: str) -> str
 
 
 def _load_discovery(repo: Path):
-    path = repo / "skills" / "hanig-project" / "scripts" / "agent_discovery.py"
+    path = repo / "skills" / "brood-project" / "scripts" / "agent_discovery.py"
     spec = importlib.util.spec_from_file_location("hanig_agent_discovery", path)
     if spec is None or spec.loader is None:
         raise InstallRequestError(f"cannot load discovery contract: {path}")
@@ -535,6 +535,14 @@ def selected_sources(repo: Path, only: Sequence[str]) -> list[tuple[str, Path, s
     available = {path.name: path for path in root.iterdir()
                  if path.is_dir() and not path.name.startswith(".")
                  and ".bak" not in path.name}
+    # A pull across the rename leaves skills/hanig-<suffix> behind whenever it
+    # held untracked files (e.g. __pycache__). Beside its brood-<suffix>
+    # successor, such a husk with no SKILL.md entry is not a source.
+    for name in list(available):
+        legacy = retired_legacy_name(name)
+        husk = available.get(legacy) if legacy else None
+        if husk is not None and not os.path.lexists(husk / "SKILL.md"):
+            del available[legacy]
     missing = [name for name in only if name not in available]
     if missing:
         raise InstallRequestError("unknown skill(s) for --only: " + ", ".join(missing))
@@ -655,7 +663,7 @@ def agent_policy_errors(path: Path) -> list[str]:
     Applies lib/skill_agent_policy.py's per-skill rules to a single directory:
     ``disable-model-invocation: true`` requires the byte-exact
     ``agents/openai.yaml``, no other skill may carry that file, and a name in
-    EXPLICIT_ONLY_SKILLS must carry the flag.  Only ``hanig-`` names are read.
+    EXPLICIT_ONLY_SKILLS must carry the flag.  Only ``brood-`` names are read.
     """
     from lib import skill_agent_policy as policy
     name = path.name

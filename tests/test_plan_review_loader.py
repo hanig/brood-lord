@@ -58,7 +58,7 @@ if polluted:
     unrelated = types.ModuleType('plan_review')
     sys.modules['plan_review'] = unrelated
 sys.argv = [str(repo / 'tests/review_round_cli.py'),
-            str(repo / 'skills/hanig-review-gate/scripts/review.py'),
+            str(repo / 'skills/brood-review-gate/scripts/review.py'),
             '--kind', 'implementation', '--round', '1', '--file', 'candidate.py',
             '--claim', 'This change cannot make an honest run fail.', '--json']
 output = io.StringIO()
@@ -82,7 +82,7 @@ if polluted:
         assert (code, report['state']) == (0, 'PLAN_PASS'), (code, report, stderr)
         assert len(case.requests) == 4, case.requests
         assert sys.modules['plan_review'] is unrelated
-        assert Path(sys.modules[private].__file__) == repo / 'skills/hanig-review-gate/scripts/plan_review.py'
+        assert Path(sys.modules[private].__file__) == repo / 'skills/brood-review-gate/scripts/plan_review.py'
     finally:
         case.doCleanups()
 print('implementation and requested plan transport completed')
@@ -119,7 +119,7 @@ for name, function in {
     setattr(foreign, name, mock.Mock(side_effect=function))
 sys.modules['review'] = foreign
 del sys.modules['_hanig_review_gate_plan_review']
-script = repo / 'skills/hanig-review-gate/scripts/review.py'
+script = repo / 'skills/brood-review-gate/scripts/review.py'
 spec = importlib.util.spec_from_file_location('embedded_review', script)
 subject = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(subject)
@@ -152,7 +152,7 @@ finally:
         self.run_process('''
 import runpy, sys
 from pathlib import Path
-script = Path(sys.argv[1]) / 'skills/hanig-review-gate/scripts/plan_review.py'
+script = Path(sys.argv[1]) / 'skills/brood-review-gate/scripts/plan_review.py'
 subject = runpy.run_path(str(script))
 for name, args in (('_plan_schema_error', ({}, [])),
                    ('_plan_panel_error', ([],)),
@@ -172,7 +172,7 @@ assert 'review' not in sys.modules
 import importlib.util, sys, types
 from pathlib import Path
 from unittest import mock
-script = Path(sys.argv[1]) / 'skills/hanig-review-gate/scripts/review.py'
+script = Path(sys.argv[1]) / 'skills/brood-review-gate/scripts/review.py'
 private = '_hanig_review_gate_plan_review'
 def load(name):
     spec = importlib.util.spec_from_file_location(name, script)

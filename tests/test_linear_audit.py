@@ -16,9 +16,9 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-PROJECT = ROOT / 'skills/hanig-project/scripts'
-SWARM = ROOT / 'skills/hanig-swarm/scripts'
-ORCHESTRATE = ROOT / 'skills/hanig-orchestrate/scripts'
+PROJECT = ROOT / 'skills/brood-project/scripts'
+SWARM = ROOT / 'skills/brood-swarm/scripts'
+ORCHESTRATE = ROOT / 'skills/brood-orchestrate/scripts'
 for path in (SWARM, ORCHESTRATE, PROJECT):
     sys.path.insert(0, str(path))
 import linear_api as API

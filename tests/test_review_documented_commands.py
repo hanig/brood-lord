@@ -17,7 +17,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / 'skills/hanig-review-gate/scripts/review.py'
+SCRIPT = ROOT / 'skills/brood-review-gate/scripts/review.py'
 sys.path.insert(0, str(SCRIPT.parent))
 import committee
 
@@ -168,8 +168,8 @@ class TestDocumentedReviewCommands(unittest.TestCase):
                         self.assertEqual(markers, [])
                         if args.kind == 'plan' and not args.size:
                             self.assertEqual(sorted(calls), ['a', 'a', 'b', 'b'])
-        self.assertTrue({'README.md', 'CLAUDE.md', 'skills/hanig-review-gate/SKILL.md',
-                         'skills/hanig-project/SKILL.md'} <= covered, covered)
+        self.assertTrue({'README.md', 'CLAUDE.md', 'skills/brood-review-gate/SKILL.md',
+                         'skills/brood-project/SKILL.md'} <= covered, covered)
         self.assertTrue({'staged', 'range'} <= sources, sources)
 
     def test_command_extraction_keeps_inline_alias_and_invalid_flags(self):
@@ -221,7 +221,7 @@ class TestDocumentedReviewCommands(unittest.TestCase):
 
 class TestDocumentedCommitteeCrossCritique(unittest.TestCase):
     def test_project_cross_critique_delivers_other_designs(self):
-        document = ROOT / 'skills/hanig-project/SKILL.md'
+        document = ROOT / 'skills/brood-project/SKILL.md'
         commands = [shlex.split(line) for line in document.read_text().splitlines()
                     if line.startswith('python3 ') and 'committee.py" ask NAME' in line]
         self.assertEqual(len(commands), 1)

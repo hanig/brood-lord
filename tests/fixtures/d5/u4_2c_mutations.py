@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-SOURCE = ROOT / "skills/hanig-orchestrate/scripts/d5_submission.py"
+SOURCE = ROOT / "skills/brood-orchestrate/scripts/d5_submission.py"
 MODULE = "tests.test_d5_u4_2c_completion_provider.TestCompletionProvider."
 MUTATIONS = [
     ("journal-ledger-fallback", "outcome = capability.complete(outcome)",

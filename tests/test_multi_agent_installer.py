@@ -28,11 +28,11 @@ class TestSelectionBeforeWrites(unittest.TestCase):
         authored = {name for name, _path, origin in installer.selected_sources(ROOT, ())
                     if origin == "authored"}
         self.assertEqual(authored, {
-            "hanig-wandb-logging", "hanig-debrief", "hanig-hillclimb", "hanig-orchestrate", "hanig-project", "hanig-swarm",
-            "hanig-review-gate", "hanig-verified-workflow", "hanig-portable-handoff",
+            "brood-wandb-logging", "brood-debrief", "brood-hillclimb", "brood-orchestrate", "brood-project", "brood-swarm",
+            "brood-review-gate", "brood-verified-workflow", "brood-portable-handoff",
         })
-        self.assertEqual(installer.selected_sources(ROOT, ("hanig-debrief",)), [
-            ("hanig-debrief", ROOT / "skills" / "hanig-debrief", "authored"),
+        self.assertEqual(installer.selected_sources(ROOT, ("brood-debrief",)), [
+            ("brood-debrief", ROOT / "skills" / "brood-debrief", "authored"),
         ])
 
     def test_no_targets_diagnostic_lists_every_installer_target(self):
@@ -99,9 +99,9 @@ class TestSelectionBeforeWrites(unittest.TestCase):
                 with self.assertRaisesRegex(installer.InstallRequestError,
                                             "skill name, not a path"):
                     installer.parse_options(["--only", name])
-        options = installer.parse_options(["--only", "hanig-swarm",
-                                           "--only", "hanig-swarm"])
-        self.assertEqual(options.only, ("hanig-swarm",))
+        options = installer.parse_options(["--only", "brood-swarm",
+                                           "--only", "brood-swarm"])
+        self.assertEqual(options.only, ("brood-swarm",))
 
     def test_shipped_payloads_pass_bounded_frontmatter_validation(self):
         for path in sorted((ROOT / "skills").iterdir()):
@@ -112,9 +112,9 @@ class TestSelectionBeforeWrites(unittest.TestCase):
     def test_payload_validation_rejects_invocation_policy_drift(self):
         yaml = b"policy:\n  allow_implicit_invocation: false\n"
         cases = (
-            ("hanig-swarm", "missing", "agents/openai.yaml is missing"),
-            ("hanig-swarm", yaml + b"#\n", "differs from the canonical bytes"),
-            ("hanig-review-gate", yaml, "exists without"),
+            ("brood-swarm", "missing", "agents/openai.yaml is missing"),
+            ("brood-swarm", yaml + b"#\n", "differs from the canonical bytes"),
+            ("brood-review-gate", yaml, "exists without"),
         )
         for name, change, message in cases:
             with self.subTest(name=name, change=change), \
@@ -133,13 +133,13 @@ class TestSelectionBeforeWrites(unittest.TestCase):
 
     def test_explicit_only_skill_without_flag_is_one_fault(self):
         with tempfile.TemporaryDirectory() as raw:
-            payload = Path(raw) / "hanig-swarm"
-            shutil.copytree(str(ROOT / "skills" / "hanig-swarm"), str(payload))
+            payload = Path(raw) / "brood-swarm"
+            shutil.copytree(str(ROOT / "skills" / "brood-swarm"), str(payload))
             skill = payload / "SKILL.md"
             text = skill.read_text()
             skill.write_text(text.replace("disable-model-invocation: true\n", "", 1))
             self.assertEqual(installer.agent_policy_errors(payload), [
-                "hanig-swarm: explicit-only skill lacks "
+                "brood-swarm: explicit-only skill lacks "
                 "'disable-model-invocation: true'"])
 
     def test_frontmatter_rejects_malformed_or_wrong_identity(self):
@@ -307,10 +307,10 @@ class TestPublicCli(unittest.TestCase):
         self.assertEqual(target["verification"], "unverified")
         self.assertIn("antigravity was selected explicitly", result.stderr)
         self.assertIn("not adapter-certified", result.stderr)
-        expected = {path.parent.name for path in (ROOT / "skills").glob("hanig-*/SKILL.md")}
+        expected = {path.parent.name for path in (ROOT / "skills").glob("brood-*/SKILL.md")}
         self.assertEqual({action["skill"] for action in data["actions"]
                           if action["status"] == "install" and action["root"] == str(root.resolve())
-                          and action["skill"].startswith("hanig-")}, expected)
+                          and action["skill"].startswith("brood-")}, expected)
         self.assertFalse(home.exists())
 
     def test_antigravity_preserves_foreign_directory_and_symlink(self):
@@ -346,7 +346,7 @@ class TestPublicCli(unittest.TestCase):
             native = home / ".gemini/config/skills"
             native.parent.mkdir(parents=True)
             native.symlink_to(shared, target_is_directory=True)
-            result, _ = self._run("--dry-run", "--json", "--only", "hanig-swarm",
+            result, _ = self._run("--dry-run", "--json", "--only", "brood-swarm",
                                   agents=("codex", "agy"), extra_env={"HOME": str(home)})
             self.assertEqual(result.returncode, 0, result.stderr)
             actions = json.loads(result.stdout)["actions"]
@@ -430,7 +430,7 @@ class TestPublicCli(unittest.TestCase):
     def test_expected_duplicate_visibility_is_prominent_and_installs_same_snapshot(self):
         result, home = self._run(
             "--agent", "claude", "--agent", "codex",
-            "--only", "hanig-swarm", "--json",
+            "--only", "brood-swarm", "--json",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         data = json.loads(result.stdout)
@@ -439,8 +439,8 @@ class TestPublicCli(unittest.TestCase):
         self.assertFalse(data["conflicts"])
         self.assertTrue(any("native precedence remains adapter-specific" in item
                             for item in data["diagnostics"]))
-        claude = home / ".claude" / "skills" / "hanig-swarm"
-        shared = home / ".agents" / "skills" / "hanig-swarm"
+        claude = home / ".claude" / "skills" / "brood-swarm"
+        shared = home / ".agents" / "skills" / "brood-swarm"
         self.assertEqual((claude / "SKILL.md").read_bytes(),
                          (shared / "SKILL.md").read_bytes())
         self.assertIn("consumers=claude\n",
@@ -456,7 +456,7 @@ class TestPublicCli(unittest.TestCase):
                 with self.subTest(order=order):
                     result, _ = self._run(
                         "--agent", order[0], "--agent", order[1],
-                        "--only", "hanig-swarm", "--dry-run", "--json",
+                        "--only", "brood-swarm", "--dry-run", "--json",
                         extra_env={"HOME": str(home)},
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
@@ -505,13 +505,13 @@ class TestPublicCli(unittest.TestCase):
                             for action in data["actions"]))
 
     def test_copy_is_a_stable_snapshot_and_dry_run_leaves_no_bytecode(self):
-        source_roots = (ROOT / "skills" / "hanig-swarm", ROOT / "lib")
+        source_roots = (ROOT / "skills" / "brood-swarm", ROOT / "lib")
         before = {path for root in source_roots
                   for path in root.rglob("__pycache__")}
-        result, home = self._run("--agent", "claude", "--only", "hanig-swarm", "--json",
+        result, home = self._run("--agent", "claude", "--only", "brood-swarm", "--json",
                                  agents=("claude",))
         self.assertEqual(result.returncode, 0, result.stderr)
-        installed = home / ".claude" / "skills" / "hanig-swarm"
+        installed = home / ".claude" / "skills" / "brood-swarm"
         self.assertTrue(installed.is_dir())
         self.assertFalse(installed.is_symlink())
         self.assertTrue((installed / ".installed-by-multi-agent-skills").is_file())
@@ -519,58 +519,58 @@ class TestPublicCli(unittest.TestCase):
                                   for path in root.rglob("__pycache__")})
 
     def test_install_copies_policy_file_and_installed_drift_is_detected(self):
-        yaml = (ROOT / "skills" / "hanig-swarm" / "agents" / "openai.yaml").read_bytes()
+        yaml = (ROOT / "skills" / "brood-swarm" / "agents" / "openai.yaml").read_bytes()
         for mode in ("copy", "link"):
             with self.subTest(mode=mode):
                 result, home = self._run("--agent", "claude", "--mode", mode,
-                                         "--only", "hanig-swarm",
-                                         "--only", "hanig-review-gate",
+                                         "--only", "brood-swarm",
+                                         "--only", "brood-review-gate",
                                          "--json", agents=("claude",))
                 self.assertEqual(result.returncode, 0, result.stderr)
                 root = home / ".claude" / "skills"
-                installed = root / "hanig-swarm"
+                installed = root / "brood-swarm"
                 self.assertEqual(installed.is_symlink(), mode == "link")
                 self.assertEqual((installed / "agents" / "openai.yaml").read_bytes(), yaml)
                 self.assertFalse(os.path.lexists(
-                    str(root / "hanig-review-gate" / "agents")))
-                for name in ("hanig-swarm", "hanig-review-gate"):
+                    str(root / "brood-review-gate" / "agents")))
+                for name in ("brood-swarm", "brood-review-gate"):
                     self.assertEqual(installer.agent_policy_errors(root / name), [])
                 if mode == "copy":
                     target = installed
         # Mutate only the copy: the link install points into this checkout.
         self.assertFalse(target.is_symlink())
         shutil.rmtree(str(target / "agents"))
-        self.assertTrue((ROOT / "skills" / "hanig-swarm" / "agents").is_dir())
+        self.assertTrue((ROOT / "skills" / "brood-swarm" / "agents").is_dir())
         self.assertEqual(installer.agent_policy_errors(target),
-                         ["hanig-swarm: agents/openai.yaml is missing"])
-        shutil.copytree(str(ROOT / "skills" / "hanig-swarm" / "agents"),
+                         ["brood-swarm: agents/openai.yaml is missing"])
+        shutil.copytree(str(ROOT / "skills" / "brood-swarm" / "agents"),
                         str(target / "agents"))
         (target / "agents" / "openai.yaml").write_bytes(
             yaml.replace(b"false", b"true"))
         self.assertEqual(installer.agent_policy_errors(target), [
-            "hanig-swarm: agents/openai.yaml differs from the canonical bytes"])
+            "brood-swarm: agents/openai.yaml differs from the canonical bytes"])
 
     def test_all_collisions_are_reported_before_any_destination_is_written(self):
         with tempfile.TemporaryDirectory() as raw:
             base = Path(raw)
             home = base / "home"
-            existing = home / ".claude" / "skills" / "hanig-swarm"
+            existing = home / ".claude" / "skills" / "brood-swarm"
             existing.mkdir(parents=True)
             (existing / "SKILL.md").write_text("foreign\n")
-            result, _ = self._run("--agent", "claude", "--only", "hanig-swarm",
+            result, _ = self._run("--agent", "claude", "--only", "brood-swarm",
                                   "--json", agents=("claude",),
                                   extra_env={"HOME": str(home)})
             self.assertNotEqual(result.returncode, 0)
             data = json.loads(result.stdout)
             self.assertTrue(data["conflicts"])
-            self.assertIn("hanig-swarm", data["conflicts"][0])
+            self.assertIn("brood-swarm", data["conflicts"][0])
             self.assertEqual((existing / "SKILL.md").read_text(), "foreign\n")
 
     def test_only_reports_a_workflow_dependency_instead_of_a_broken_subset(self):
-        result, home = self._run("--agent", "claude", "--only", "hanig-project",
+        result, home = self._run("--agent", "claude", "--only", "brood-project",
                                  "--dry-run", agents=("claude",))
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("hanig-project requires hanig-swarm", result.stderr)
+        self.assertIn("brood-project requires brood-swarm", result.stderr)
         self.assertFalse(home.exists())
 
     def test_selected_agents_not_visible_loader_union_control_selective_uninstall(self):
@@ -580,23 +580,23 @@ class TestPublicCli(unittest.TestCase):
             shared = base / "shared config"
             env = {"HOME": str(home), "XDG_CONFIG_HOME": str(shared),
                    "PI_CODING_AGENT_DIR": str(shared / "opencode")}
-            first, _ = self._run("--agent", "opencode", "--only", "hanig-swarm",
+            first, _ = self._run("--agent", "opencode", "--only", "brood-swarm",
                                  "--json", agents=("opencode",), extra_env=env)
-            second, _ = self._run("--agent", "pi", "--only", "hanig-swarm",
+            second, _ = self._run("--agent", "pi", "--only", "brood-swarm",
                                   "--json", agents=("pi",), extra_env=env)
             self.assertEqual(first.returncode, 0, first.stderr)
             self.assertEqual(second.returncode, 0, second.stderr)
-            installed = shared / "opencode" / "skills" / "hanig-swarm"
+            installed = shared / "opencode" / "skills" / "brood-swarm"
             marker = (installed / ".installed-by-multi-agent-skills").read_text()
             self.assertIn("consumers=opencode,pi", marker)
             removed_one, _ = self._run("--agent", "opencode", "--uninstall",
-                                       "--only", "hanig-swarm", "--json",
+                                       "--only", "brood-swarm", "--json",
                                        agents=("opencode",), extra_env=env)
             self.assertEqual(removed_one.returncode, 0, removed_one.stderr)
             self.assertTrue(installed.exists())
             self.assertIn("consumers=pi", (installed / ".installed-by-multi-agent-skills").read_text())
             removed_two, _ = self._run("--agent", "pi", "--uninstall",
-                                       "--only", "hanig-swarm", "--json",
+                                       "--only", "brood-swarm", "--json",
                                        agents=("pi",), extra_env=env)
             self.assertEqual(removed_two.returncode, 0, removed_two.stderr)
             self.assertFalse(installed.exists())
@@ -619,11 +619,11 @@ class TestPublicCli(unittest.TestCase):
     def test_only_uninstall_refuses_an_explicit_foreign_destination(self):
         with tempfile.TemporaryDirectory() as raw:
             prefix = Path(raw) / "prefix"
-            foreign = prefix / "hanig-swarm"
+            foreign = prefix / "brood-swarm"
             foreign.mkdir(parents=True)
             (foreign / "SKILL.md").write_text("foreign\n")
             result, _ = self._run("--prefix", str(prefix), "--uninstall",
-                                  "--only", "hanig-swarm", "--json")
+                                  "--only", "brood-swarm", "--json")
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual((foreign / "SKILL.md").read_text(), "foreign\n")
 
@@ -696,7 +696,7 @@ class TestPublicCli(unittest.TestCase):
             root = Path(os.path.realpath(shared / "opencode" / "skills"))
             stale = root / "hanig-gone"
             prepared = install([LifecycleTarget(
-                name="hanig-gone", source=ROOT / "skills" / "hanig-swarm",
+                name="hanig-gone", source=ROOT / "skills" / "brood-swarm",
                 destination=stale, origin="authored", consumers=("opencode", "pi"),
                 source_version="test",
             )])
@@ -768,6 +768,27 @@ class TestLegacyRetirement(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIsNone(installer.retired_legacy_name(name))
         self.assertEqual(installer.selected_sources(self.repo, ("brood-demo",))[0][2], "authored")
+
+    def test_renamed_source_husk_is_not_shipped_and_legacy_still_retires(self):
+        # git leaves skills/hanig-<suffix>/ behind after a pull when it held
+        # untracked files; that husk must neither block nor shadow the rename.
+        husk = self.repo / "skills" / "hanig-demo" / "scripts" / "__pycache__"
+        husk.mkdir(parents=True)
+        (husk / "x.pyc").write_bytes(b"\0")
+        names = [name for name, _path, _origin in installer.selected_sources(self.repo, ())]
+        self.assertEqual(names, ["brood-demo"])
+        legacy = self.legacy()
+        code, dry, _ = self.run_installer("--dry-run")
+        self.assertEqual(code, 0, dry["conflicts"])
+        self.assertEqual(self.statuses(dry, "hanig-demo"), ["would-retire-legacy"])
+        code, done, _ = self.run_installer()
+        self.assertEqual(code, 0, done["conflicts"])
+        self.assertFalse(legacy.exists())
+        self.assertTrue((self.prefix / "brood-demo" / "SKILL.md").is_file())
+        # A legacy directory that still carries SKILL.md stays a real source.
+        self.skill(self.repo / "skills", "hanig-demo")
+        names = [name for name, _path, _origin in installer.selected_sources(self.repo, ())]
+        self.assertEqual(names, ["brood-demo", "hanig-demo"])
 
     def test_owned_legacy_is_planned_then_retired_after_publish(self):
         for mode in ("copy", "link"):
@@ -948,7 +969,7 @@ class TestLiveCertificationPlan(unittest.TestCase):
                     contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                 clock.today.return_value = observed
                 code = installer.run(
-                    ["--dry-run", "--json", "--only", "hanig-portable-handoff"],
+                    ["--dry-run", "--json", "--only", "brood-portable-handoff"],
                     repo=ROOT, env={"HOME": str(root / "home"), "PATH": str(bindir),
                                     "PYTHONDONTWRITEBYTECODE": "1"})
             self.assertEqual(code, 0, stderr.getvalue())

@@ -18,7 +18,7 @@ from unittest import mock
 from tests.test_linear_issue import IssueCase, IssueLinear, Crash
 from tests.test_linear_audit import BudgetPaging, KEY, ROOT, connection, budget_page
 
-sys.path.insert(0, str(ROOT / 'skills/hanig-project/scripts'))
+sys.path.insert(0, str(ROOT / 'skills/brood-project/scripts'))
 import linear_api as API
 import linear_file as LF
 import linear_issue as LI
@@ -1741,7 +1741,7 @@ class FileCase(IssueCase):
 
     def test_public_entrypoint_and_transport_boundary(self):
         # Real __main__, not just a call to main(); credentials never leave the fake.
-        script = ROOT / 'skills/hanig-project/scripts/linear_sync.py'
+        script = ROOT / 'skills/brood-project/scripts/linear_sync.py'
         source = """
 import runpy, sys
 from tests.test_linear_file import FileLinear, API
@@ -1755,10 +1755,10 @@ runpy.run_path(sys.argv[0], run_name='__main__')
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn('CONFIRMED', p.stdout)
         self.assertNotIn(KEY, p.stdout + p.stderr)
-        for rel in ('skills/hanig-project/scripts/linear_file.py',
-                    'skills/hanig-project/scripts/tickets.py',
-                    'skills/hanig-swarm/scripts/swarm.py',
-                    'skills/hanig-project/scripts/drain_contract.py'):
+        for rel in ('skills/brood-project/scripts/linear_file.py',
+                    'skills/brood-project/scripts/tickets.py',
+                    'skills/brood-swarm/scripts/swarm.py',
+                    'skills/brood-project/scripts/drain_contract.py'):
             tree = ast.parse((ROOT / rel).read_text())
             imported = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
             imported.update(a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names)
@@ -1787,7 +1787,7 @@ runpy.run_path(sys.argv[0], run_name='__main__')
         import argparse
         plan = self.root / 'plan.json'
         plan.write_text(json.dumps({'name': 'p', 'units': [{'id': 'a', 'outputs': ['a']}]}))
-        script = ROOT / 'skills/hanig-project/scripts/tickets.py'
+        script = ROOT / 'skills/brood-project/scripts/tickets.py'
         env = {k: v for k, v in os.environ.items() if k != API.KEY_ENV}
         subprocess.run([sys.executable, str(script), 'draft', str(plan), '--out', str(self.draft),
                         '--repository', 'Owner/Exact'], check=True, env=env, stdout=subprocess.PIPE)
@@ -1832,7 +1832,7 @@ class TestDocumentedLinearCommands(unittest.TestCase):
         seen = set()
         with mock.patch.object(API, 'load_key', side_effect=AssertionError('loaded credentials')) as key, \
                 mock.patch.object(API, 'transport', side_effect=AssertionError('network call')) as transport:
-            for relative in ('README.md', 'skills/hanig-project/SKILL.md'):
+            for relative in ('README.md', 'skills/brood-project/SKILL.md'):
                 commands = []
                 for block in re.findall(r'^```[^\n]*\n(.*?)^```', (ROOT / relative).read_text(), re.M | re.S):
                     for line in block.replace('\\\n', ' ').splitlines():

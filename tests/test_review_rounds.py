@@ -20,7 +20,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "skills/hanig-review-gate/scripts/review.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "skills/brood-review-gate/scripts/review.py"
 SPEC = importlib.util.spec_from_file_location("round_review", SCRIPT)
 review = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(review)

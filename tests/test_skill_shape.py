@@ -31,7 +31,7 @@ MARKDOWN_ESCAPABLE = frozenset(
 MARKDOWN_DELIMITER_WHITESPACE_TEXT = " \t\n\r\f\v"
 MARKDOWN_DELIMITER_WHITESPACE = frozenset(MARKDOWN_DELIMITER_WHITESPACE_TEXT)
 
-DECLARATION_SCRIPT = SKILLS / "hanig-swarm" / "scripts" / "declaration_registry.py"
+DECLARATION_SCRIPT = SKILLS / "brood-swarm" / "scripts" / "declaration_registry.py"
 DECLARATION_SPEC = importlib.util.spec_from_file_location(
     "hanig_swarm_declaration_registry", DECLARATION_SCRIPT
 )
@@ -277,23 +277,23 @@ DEBRIEF_DECLARATIONS = ("purpose.scope", "capability.programs",
 WANDB_DECLARATIONS = ('logging.conventions', 'logging.boundary', 'capability.host', 'paths.skill-directory', 'logging.credentials', 'approval.shared-state')
 
 DECLARATION_INVENTORIES = {
-    "hanig-wandb-logging": WANDB_DECLARATIONS,
-    "hanig-debrief": DEBRIEF_DECLARATIONS,
-    "hanig-project": PROJECT_DECLARATIONS,
-    "hanig-orchestrate": ORCHESTRATE_DECLARATIONS,
-    "hanig-swarm": SWARM_DECLARATIONS,
+    "brood-wandb-logging": WANDB_DECLARATIONS,
+    "brood-debrief": DEBRIEF_DECLARATIONS,
+    "brood-project": PROJECT_DECLARATIONS,
+    "brood-orchestrate": ORCHESTRATE_DECLARATIONS,
+    "brood-swarm": SWARM_DECLARATIONS,
 }
 
 REFERENCE_ELABORATION_INVENTORIES = {
-    "hanig-wandb-logging": (("references/frameworks.md", "logging.conventions", 1), ("references/naming.md", "logging.conventions", 1), ("references/naming.md", "logging.credentials", 1),
+    "brood-wandb-logging": (("references/frameworks.md", "logging.conventions", 1), ("references/naming.md", "logging.conventions", 1), ("references/naming.md", "logging.credentials", 1),
         ("references/artifacts.md", "logging.boundary", 1),
         ("references/artifacts.md", "logging.conventions", 1),
     ),
-    "hanig-debrief": (
+    "brood-debrief": (
         ('references/contract.md', 'purpose.scope', 17),
         ('references/contract.md', 'workflow.triage', 1),
     ),
-    "hanig-project": (
+    "brood-project": (
         ('references/reporting-evidence.md', 'findings.bound', 3),
         ('references/reporting-evidence.md', 'findings.contract', 2),
         ('references/reporting-evidence.md', 'findings.interview', 2),
@@ -342,7 +342,7 @@ REFERENCE_ELABORATION_INVENTORIES = {
         ('references/unit-contract.md', 'slurm.array-outputs', 2),
         ('references/unit-contract.md', 'slurm.command-boundary', 2),
     ),
-    "hanig-swarm": (
+    "brood-swarm": (
         ("references/capability-fallbacks.md", "capability.paseo-bus", 1),
         ("references/capability-fallbacks.md", "capability.python-git", 1),
         ("references/capability-fallbacks.md", "capability.review", 1),
@@ -379,7 +379,7 @@ REFERENCE_ELABORATION_INVENTORIES = {
         ("references/slurm-evidence.md", "isolation.done-predicate", 10),
         ("references/slurm-evidence.md", "usage.outputs", 2),
     ),
-    "hanig-orchestrate": (
+    "brood-orchestrate": (
         ("references/authority-adjudication.md",
          "adjudication.concurrence", 1),
         ("references/authority-adjudication.md", "adjudication.envelope", 1),
@@ -500,7 +500,7 @@ def _body(path):
 
 
 def _authored_skill_docs():
-    return sorted(SKILLS.glob("hanig-*/SKILL.md"))
+    return sorted(SKILLS.glob("brood-*/SKILL.md"))
 
 
 def _is_escaped(text, index):
@@ -707,8 +707,8 @@ def _local_reference_problems(doc):
 class TestAuthoredSkillShape(unittest.TestCase):
     def test_debrief_registry_round_trip_and_closed_inventory(self):
         with tempfile.TemporaryDirectory() as raw:
-            skill = Path(raw) / "hanig-debrief"
-            shutil.copytree(SKILLS / "hanig-debrief", skill)
+            skill = Path(raw) / "brood-debrief"
+            shutil.copytree(SKILLS / "brood-debrief", skill)
             before = (skill / "SKILL.md").read_bytes()
             for action in ("write-body", "check-body", "check-references"):
                 result = subprocess.run(
@@ -967,28 +967,28 @@ class TestAuthoredSkillShape(unittest.TestCase):
             )
 
     def test_wandb_declarations_and_reference_modals(self):
-        skill = SKILLS / "hanig-wandb-logging"
+        skill = SKILLS / "brood-wandb-logging"
         self.assertEqual(DECLARATION_REGISTRY.body_diff(skill), "")
         self.assertEqual(DECLARATION_REGISTRY.reference_problems(skill), [])
         self.assertEqual(_reference_elaboration_problems(skill), [])
 
     def test_swarm_declaration_block_matches_the_canonical_registry(self):
-        skill = SKILLS / "hanig-swarm"
+        skill = SKILLS / "brood-swarm"
         self.assertEqual(DECLARATION_REGISTRY.body_diff(skill), "")
         self.assertEqual(_declaration_completeness_problems(skill), [])
 
     def test_swarm_reference_modals_are_tied_to_registered_declarations(self):
-        skill = SKILLS / "hanig-swarm"
+        skill = SKILLS / "brood-swarm"
         self.assertEqual(DECLARATION_REGISTRY.reference_problems(skill), [])
         self.assertEqual(_reference_elaboration_problems(skill), [])
 
     def test_orchestrate_declaration_block_matches_the_canonical_registry(self):
-        skill = SKILLS / "hanig-orchestrate"
+        skill = SKILLS / "brood-orchestrate"
         self.assertEqual(DECLARATION_REGISTRY.body_diff(skill), "")
         self.assertEqual(_declaration_completeness_problems(skill), [])
 
     def test_orchestrate_owner_questions_reach_the_generated_body(self):
-        skill = SKILLS / "hanig-orchestrate"
+        skill = SKILLS / "brood-orchestrate"
         text = (skill / "SKILL.md").read_text(encoding="utf-8")
         block = text.split(DECLARATION_REGISTRY.BEGIN_MARKER, 1)[1].split(
             DECLARATION_REGISTRY.END_MARKER, 1)[0]
@@ -1046,7 +1046,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
         self.assertIn("(3) work that can start now followed by dispatch", block)
 
     def test_orchestrate_round_budget_survives_continuations(self):
-        skill = SKILLS / "hanig-orchestrate"
+        skill = SKILLS / "brood-orchestrate"
         data = json.loads((skill / "declarations.json").read_text(encoding="utf-8"))
         text = next(item["normative_text"] for item in data["declarations"]
                     if item["id"] == "review.rounds")
@@ -1061,7 +1061,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_orchestrate_review_modes_defer_to_mandate(self):
         rules = {d["id"]: d["normative_text"] for d in
-                 DECLARATION_REGISTRY.load_registry(SKILLS / "hanig-orchestrate")}
+                 DECLARATION_REGISTRY.load_registry(SKILLS / "brood-orchestrate")}
         for name in ("review.rounds", "adjudication.matrix", "adjudication.concurrence",
                      "adjudication.envelope", "adjudication.record"):
             with self.subTest(declaration=name):
@@ -1071,7 +1071,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
                 self.assertIn("owner-selected SWE mode must be recorded per", research)
                 self.assertTrue(swe)
     def test_project_contract_requires_real_probe_and_synthetic_cases(self):
-        skill = SKILLS / "hanig-project"
+        skill = SKILLS / "brood-project"
         declarations = DECLARATION_REGISTRY.load_registry(skill)
         text = next(e["normative_text"] for e in declarations
                     if e["id"] == "plan.unit-contract")
@@ -1085,7 +1085,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
         self.assertIn(text, (skill / "SKILL.md").read_text(encoding="utf-8"))
 
     def test_detector_ledger_fields_and_detectors_reach_reference(self):
-        skill = SKILLS / "hanig-orchestrate"
+        skill = SKILLS / "brood-orchestrate"
         declarations = DECLARATION_REGISTRY.load_registry(skill)
         text = next(e["normative_text"] for e in declarations
                     if e["id"] == "evidence.detector-ledger")
@@ -1104,7 +1104,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
         self.assertIn(text, (skill / "SKILL.md").read_text(encoding="utf-8"))
 
     def test_codex_dispatch_waits_and_parallel_inner_loop(self):
-        reference = (SKILLS / "hanig-orchestrate/references/dispatch-preamble.md").read_text(
+        reference = (SKILLS / "brood-orchestrate/references/dispatch-preamble.md").read_text(
             encoding="utf-8")
         for sentence in (
                 "For Codex code agents only, wait in one blocking harness call whenever it covers the run.",
@@ -1124,7 +1124,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
                 self.assertIn(sentence, reference)
 
     def test_g2_dispatch_testing_and_lineage_guidance(self):
-        reference = (SKILLS / "hanig-orchestrate/references/dispatch-preamble.md").read_text(
+        reference = (SKILLS / "brood-orchestrate/references/dispatch-preamble.md").read_text(
             encoding="utf-8")
         for phrase in ("exhaustive `itertools`", "declared finite bounds",
                        "seeded `random.Random(SEED)`", "no third-party libraries",
@@ -1146,7 +1146,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
         self.assertEqual(fixture.continuation(
             "--repoint-dependents", "--tickets",
             str(fixture.tmp / "absent.json")).returncode, 1)
-        skill = SKILLS / "hanig-orchestrate"
+        skill = SKILLS / "brood-orchestrate"
         text = next(e["normative_text"] for e in
                     DECLARATION_REGISTRY.load_registry(skill)
                     if e["id"] == "delegation.continuation")
@@ -1166,7 +1166,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
             self.test_continuation_guidance_allows_omitting_optional_updates()
 
     def test_g2_continuation_and_default_verification_guidance(self):
-        skill = SKILLS / "hanig-orchestrate"
+        skill = SKILLS / "brood-orchestrate"
         entries = {e["id"]: e["normative_text"]
                    for e in DECLARATION_REGISTRY.load_registry(skill)}
         for text in (entries["delegation.continuation"],
@@ -1179,7 +1179,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
                           "is the default merge-verification route", text)
 
     def test_orchestrate_report_timezone_reaches_the_generated_body(self):
-        skill = SKILLS / "hanig-orchestrate"
+        skill = SKILLS / "brood-orchestrate"
         data = json.loads((skill / "declarations.json").read_text(encoding="utf-8"))
         declarations = {entry["id"]: entry for entry in data["declarations"]}
         self.assertIn("report.timezone", data["known_declarations"])
@@ -1192,12 +1192,12 @@ class TestAuthoredSkillShape(unittest.TestCase):
             declarations["report.timezone"]["normative_text"], block)
 
     def test_orchestrate_reference_modals_are_tied_to_registered_declarations(self):
-        skill = SKILLS / "hanig-orchestrate"
+        skill = SKILLS / "brood-orchestrate"
         self.assertEqual(DECLARATION_REGISTRY.reference_problems(skill), [])
         self.assertEqual(_reference_elaboration_problems(skill), [])
 
     def test_dispatch_preamble_credential_loading_is_host_filled(self):
-        reference = (SKILLS / "hanig-orchestrate" / "references" /
+        reference = (SKILLS / "brood-orchestrate" / "references" /
                      "dispatch-preamble.md").read_text(encoding="utf-8")
         preamble, _ = reference.split("## Order of work", 1)
         _, instructions = reference.split("## Orchestrator use", 1)
@@ -1208,7 +1208,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
                 self.assertNotIn(host_detail, reference)
 
     def test_dispatch_preamble_names_tree_wide_test_guards(self):
-        reference = (SKILLS / "hanig-orchestrate" / "references" /
+        reference = (SKILLS / "brood-orchestrate" / "references" /
                      "dispatch-preamble.md").read_text(encoding="utf-8")
         sections = re.findall(r"^## Scoped tests$(.*?)(?=^## |\Z)",
                               reference, re.MULTILINE | re.DOTALL)
@@ -1234,7 +1234,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
             self.assertEqual(probe.returncode, 0, probe.stderr)
             self.assertEqual(probe.stdout, "synthetic-counterexample-sentinel\n")
             self.assertEqual(private.read_text(), "synthetic-counterexample-sentinel")
-        reference = (SKILLS / "hanig-orchestrate" / "references" /
+        reference = (SKILLS / "brood-orchestrate" / "references" /
                      "dispatch-preamble.md").read_text(encoding="utf-8")
         order = reference.split("## Order of work", 1)[1].split("## Scoped tests", 1)[0]
         instruction = next(line for line in order.splitlines()
@@ -1251,7 +1251,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
                         instruction.index("Run the inspected counterexample"))
 
     def test_orchestrate_concurrence_guidance_keeps_the_mandate_exception(self):
-        skill = SKILLS / "hanig-orchestrate"
+        skill = SKILLS / "brood-orchestrate"
         declarations = {
             item["id"]: item["normative_text"]
             for item in DECLARATION_REGISTRY.load_registry(skill)
@@ -1284,7 +1284,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
         mandate = (ROOT / "docs/orchestrator-mandate.md").read_bytes().decode("utf-8")
         self.assertIn(self._PROTECTED_POLICY, mandate)
         rules = {d["id"]: d["normative_text"] for d in
-                 DECLARATION_REGISTRY.load_registry(SKILLS / "hanig-orchestrate")}
+                 DECLARATION_REGISTRY.load_registry(SKILLS / "brood-orchestrate")}
         self.assertIn("Never override a hard constraint, missing or fabricated evidence, "
             "unauthorized or destructive action, failed required criterion or output, "
             "compromised isolation or authority, an unsound shared guard, or a missing "
@@ -1320,7 +1320,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_every_declaration_registry_has_a_closed_inventory(self):
         registry_skills = sorted(
-            path.parent for path in SKILLS.glob("hanig-*/declarations.json")
+            path.parent for path in SKILLS.glob("brood-*/declarations.json")
         )
         self.assertEqual(
             [skill.name for skill in registry_skills],
@@ -1364,7 +1364,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
                     )
 
     def test_orchestrate_reads_authority_from_the_current_mandate(self):
-        skill = SKILLS / "hanig-orchestrate"
+        skill = SKILLS / "brood-orchestrate"
         mandate = (ROOT / "docs" / "orchestrator-mandate.md").read_text(
             encoding="utf-8")
         declarations = {
@@ -1404,7 +1404,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
         declarations = {
             item["id"]: item["normative_text"]
             for item in DECLARATION_REGISTRY.load_registry(
-                SKILLS / "hanig-orchestrate")
+                SKILLS / "brood-orchestrate")
         }
         tracker = declarations["tracker.reconcile"]
         for required in (
@@ -1423,20 +1423,20 @@ class TestAuthoredSkillShape(unittest.TestCase):
         declarations = {
             item["id"]: item["normative_text"]
             for item in DECLARATION_REGISTRY.load_registry(
-                SKILLS / "hanig-orchestrate")
+                SKILLS / "brood-orchestrate")
         }
         dependencies = declarations["capability.dependencies"]
-        self.assertIn("merge_unit.py requires hanig-swarm for merge and reconciliation", dependencies)
-        self.assertIn("hanig-project is optional for its tracker audit", dependencies)
+        self.assertIn("merge_unit.py requires brood-swarm for merge and reconciliation", dependencies)
+        self.assertIn("brood-project is optional for its tracker audit", dependencies)
         self.assertIn("Tracker: UNAVAILABLE without blocking the merge or changing its exit code", dependencies)
 
     def test_orchestrate_installs_and_doctor_calls_it_authored(self):
         names = (
-            "hanig-orchestrate",
-            "hanig-project",
-            "hanig-swarm",
-            "hanig-review-gate",
-            "hanig-portable-handoff",
+            "brood-orchestrate",
+            "brood-project",
+            "brood-swarm",
+            "brood-review-gate",
+            "brood-portable-handoff",
         )
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -1452,7 +1452,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
                 universal_newlines=True,
             )
             self.assertEqual(installed.returncode, 0, installed.stdout)
-            self.assertTrue((prefix / "hanig-orchestrate" / "SKILL.md").is_file())
+            self.assertTrue((prefix / "brood-orchestrate" / "SKILL.md").is_file())
 
             doctor = subprocess.run(
                 ["sh", str(ROOT / "bin" / "doctor"), "--prefix", str(prefix)],
@@ -1464,15 +1464,15 @@ class TestAuthoredSkillShape(unittest.TestCase):
             )
             self.assertEqual(doctor.returncode, 0, doctor.stdout)
             authored = [line for line in doctor.stdout.splitlines()
-                        if line.split()[:1] == ["hanig-orchestrate"]]
+                        if line.split()[:1] == ["brood-orchestrate"]]
             self.assertEqual(len(authored), 1, doctor.stdout)
             self.assertIn("ours (version", authored[0])
 
     def test_orchestrate_review_facts_match_the_named_sources(self):
-        reference = (SKILLS / "hanig-orchestrate" / "references" /
+        reference = (SKILLS / "brood-orchestrate" / "references" /
                      "delegation-evidence.md").read_text(encoding="utf-8")
         config = json.loads(
-            (SKILLS / "hanig-review-gate" / "reviewers.json").read_text(
+            (SKILLS / "brood-review-gate" / "reviewers.json").read_text(
                 encoding="utf-8"))
         reviewers = config["reviewers"]
         for profile in ("plan", "fast", "standard", "deep", "committee"):
@@ -1518,7 +1518,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
             self.assertIn(published, reference)
 
     def test_orchestrate_describes_advance_as_the_one_pass_it_is(self):
-        source = (SKILLS / "hanig-swarm" / "scripts" / "swarm.py").read_text(
+        source = (SKILLS / "brood-swarm" / "scripts" / "swarm.py").read_text(
             encoding="utf-8")
         functions = {node.name: node for node in ast.parse(source).body
                      if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
@@ -1559,14 +1559,14 @@ class TestAuthoredSkillShape(unittest.TestCase):
                           and node.func.id == "print"
                           and "coordinator exiting" in ast.unparse(node)]
         self.assertEqual(len(exiting_prints), 1)
-        loop_reference = (SKILLS / "hanig-orchestrate" / "references" /
+        loop_reference = (SKILLS / "brood-orchestrate" / "references" /
                           "operating-loop.md").read_text(encoding="utf-8")
         self.assertIn("calls `advance` once under the state lock", loop_reference)
         self.assertIn("prints that the coordinator is exiting", loop_reference)
 
     def test_deleting_any_active_declaration_requires_a_lifecycle_record(self):
         sources = sorted(
-            path.parent for path in SKILLS.glob("hanig-*/declarations.json")
+            path.parent for path in SKILLS.glob("brood-*/declarations.json")
         )
         for source in sources:
             with self.subTest(skill=source.name):
@@ -1591,7 +1591,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_retirement_reason_survives_removal_from_the_active_registry(self):
         with tempfile.TemporaryDirectory() as raw:
-            source = SKILLS / "hanig-swarm"
+            source = SKILLS / "brood-swarm"
             skill = Path(raw) / source.name
             shutil.copytree(source, skill)
             registry = skill / "declarations.json"
@@ -1617,7 +1617,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_retiring_a_referenced_declaration_retires_its_elaboration(self):
         with tempfile.TemporaryDirectory() as raw:
-            source = SKILLS / "hanig-orchestrate"
+            source = SKILLS / "brood-orchestrate"
             skill = Path(raw) / source.name
             shutil.copytree(source, skill)
             registry = skill / "declarations.json"
@@ -1653,7 +1653,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_replacement_record_survives_removal_from_the_active_registry(self):
         with tempfile.TemporaryDirectory() as raw:
-            source = SKILLS / "hanig-swarm"
+            source = SKILLS / "brood-swarm"
             skill = Path(raw) / source.name
             shutil.copytree(source, skill)
             registry = skill / "declarations.json"
@@ -1685,7 +1685,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_closed_inventory_rejects_deleting_both_active_and_ledger_entries(self):
         sources = sorted(
-            path.parent for path in SKILLS.glob("hanig-*/declarations.json")
+            path.parent for path in SKILLS.glob("brood-*/declarations.json")
         )
         for source in sources:
             with self.subTest(skill=source.name):
@@ -1713,7 +1713,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_deleting_a_registered_reference_elaboration_is_detected(self):
         with tempfile.TemporaryDirectory() as raw:
-            source = SKILLS / "hanig-orchestrate"
+            source = SKILLS / "brood-orchestrate"
             skill = Path(raw) / source.name
             shutil.copytree(source, skill)
             reference_name = "references/operating-loop.md"
@@ -1735,18 +1735,18 @@ class TestAuthoredSkillShape(unittest.TestCase):
             reference.write_text("".join(kept), encoding="utf-8")
             self.assertEqual(
                 _reference_elaboration_problems(skill),
-                ["hanig-orchestrate: elaboration tracker.dag in "
+                ["brood-orchestrate: elaboration tracker.dag in "
                  "references/operating-loop.md expected 1 occurrence(s), "
                  "found 0"],
             )
 
     def test_project_declaration_block_matches_the_canonical_registry(self):
-        skill = SKILLS / "hanig-project"
+        skill = SKILLS / "brood-project"
         self.assertEqual(DECLARATION_REGISTRY.body_diff(skill), "")
         self.assertEqual(_declaration_completeness_problems(skill), [])
 
     def test_project_reference_modals_are_tied_to_registered_declarations(self):
-        skill = SKILLS / "hanig-project"
+        skill = SKILLS / "brood-project"
         self.assertEqual(DECLARATION_REGISTRY.reference_problems(skill), [])
         self.assertEqual(_reference_elaboration_problems(skill), [])
 
@@ -1757,11 +1757,11 @@ class TestAuthoredSkillShape(unittest.TestCase):
         documents describing the previous one, so every surface must name
         the file and none may name the current default's model.
         """
-        routing = json.loads((SKILLS / "hanig-swarm" / "agents.json").read_text(
+        routing = json.loads((SKILLS / "brood-swarm" / "agents.json").read_text(
             encoding="utf-8"))
         provider = routing["default"]["provider"]
         model = provider.split("/", 1)[1]
-        skill = SKILLS / "hanig-project"
+        skill = SKILLS / "brood-project"
         declaration = next(
             item for item in DECLARATION_REGISTRY.load_registry(skill)
             if item["id"] == "code.default-agent"
@@ -1770,14 +1770,14 @@ class TestAuthoredSkillShape(unittest.TestCase):
                         (skill / "SKILL.md").read_text(encoding="utf-8"),
                         (skill / "references" / "unit-contract.md").read_text(
                             encoding="utf-8")):
-            self.assertIn("`hanig-swarm/agents.json`", surface)
+            self.assertIn("`brood-swarm/agents.json`", surface)
             self.assertNotIn(model, surface)
 
     def test_project_keeps_partition_routing_as_owner_judgment(self):
         declarations = {
             item["id"]: item["normative_text"]
             for item in DECLARATION_REGISTRY.load_registry(
-                SKILLS / "hanig-project"
+                SKILLS / "brood-project"
             )
         }
         self.assertIn(
@@ -1789,7 +1789,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
         declarations = {
             item["id"]: item["normative_text"]
             for item in DECLARATION_REGISTRY.load_registry(
-                SKILLS / "hanig-project"
+                SKILLS / "brood-project"
             )
         }
         self.assertIn(
@@ -1801,7 +1801,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
         declarations = {
             item["id"]: item["normative_text"]
             for item in DECLARATION_REGISTRY.load_registry(
-                SKILLS / "hanig-project"
+                SKILLS / "brood-project"
             )
         }
         required = {
@@ -1831,8 +1831,8 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_an_unregistered_reference_imperative_is_rejected(self):
         with tempfile.TemporaryDirectory() as raw:
-            skill = Path(raw) / "hanig-swarm"
-            shutil.copytree(SKILLS / "hanig-swarm", skill)
+            skill = Path(raw) / "brood-swarm"
+            shutil.copytree(SKILLS / "brood-swarm", skill)
             reference = skill / "references" / "field-evidence.md"
             reference.write_text(
                 "# Fixture\nA new dispatch rule must stay hidden here.\n",
@@ -1846,8 +1846,8 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_ambiguous_reference_structures_are_refused_not_parsed(self):
         with tempfile.TemporaryDirectory() as raw:
-            skill = Path(raw) / "hanig-swarm"
-            shutil.copytree(SKILLS / "hanig-swarm", skill)
+            skill = Path(raw) / "brood-swarm"
+            shutil.copytree(SKILLS / "brood-swarm", skill)
             reference = skill / "references" / "field-evidence.md"
             cases = {
                 "    indented prose": "indentation of four or more spaces",
@@ -1947,8 +1947,8 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_an_unserializable_reference_name_is_refused_at_the_registry(self):
         with tempfile.TemporaryDirectory() as raw:
-            skill = Path(raw) / "hanig-swarm"
-            shutil.copytree(SKILLS / "hanig-swarm", skill)
+            skill = Path(raw) / "brood-swarm"
+            shutil.copytree(SKILLS / "brood-swarm", skill)
             unsafe = skill / "references" / "foo bar.md"
             unsafe.write_text("Measured note.\n", encoding="utf-8")
             registry_path = skill / "declarations.json"
@@ -1964,8 +1964,8 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_reference_existence_is_byte_exact_on_case_folding_filesystems(self):
         with tempfile.TemporaryDirectory() as raw:
-            skill = Path(raw) / "hanig-swarm"
-            shutil.copytree(SKILLS / "hanig-swarm", skill)
+            skill = Path(raw) / "brood-swarm"
+            shutil.copytree(SKILLS / "brood-swarm", skill)
             lower = skill / "references" / "limits.md"
             lower.rename(skill / "references" / "Limits.md")
             with self.assertRaisesRegex(
@@ -1976,8 +1976,8 @@ class TestAuthoredSkillShape(unittest.TestCase):
     def test_registry_reference_symlink_to_identical_external_file_is_refused(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            skill = root / "hanig-swarm"
-            shutil.copytree(SKILLS / "hanig-swarm", skill)
+            skill = root / "brood-swarm"
+            shutil.copytree(SKILLS / "brood-swarm", skill)
             reference = skill / "references" / "limits.md"
             outside = root / "outside-limits.md"
             outside.write_bytes(reference.read_bytes())
@@ -1990,7 +1990,7 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_registry_reference_names_roundtrip_through_generated_links(self):
         declarations = DECLARATION_REGISTRY.load_registry(
-            SKILLS / "hanig-swarm"
+            SKILLS / "brood-swarm"
         )
         expected = [
             reference
@@ -2006,8 +2006,8 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_canonical_fences_and_comments_are_explicit_exclusions(self):
         with tempfile.TemporaryDirectory() as raw:
-            skill = Path(raw) / "hanig-swarm"
-            shutil.copytree(SKILLS / "hanig-swarm", skill)
+            skill = Path(raw) / "brood-swarm"
+            shutil.copytree(SKILLS / "brood-swarm", skill)
             reference = skill / "references" / "capability-fallbacks.md"
             reference.write_text(
                 "# Fixture\n"
@@ -2023,8 +2023,8 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_noncanonical_closer_cannot_swallow_following_prose(self):
         with tempfile.TemporaryDirectory() as raw:
-            skill = Path(raw) / "hanig-swarm"
-            shutil.copytree(SKILLS / "hanig-swarm", skill)
+            skill = Path(raw) / "brood-swarm"
+            shutil.copytree(SKILLS / "brood-swarm", skill)
             reference = skill / "references" / "field-evidence.md"
             reference.write_text(
                 "```text\nThis must remain example text.\n  ```\n"
@@ -2041,8 +2041,8 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_unclosed_fence_is_refused(self):
         with tempfile.TemporaryDirectory() as raw:
-            skill = Path(raw) / "hanig-swarm"
-            shutil.copytree(SKILLS / "hanig-swarm", skill)
+            skill = Path(raw) / "brood-swarm"
+            shutil.copytree(SKILLS / "brood-swarm", skill)
             reference = skill / "references" / "field-evidence.md"
             reference.write_text(
                 "# Fixture\n```text\nThis must remain example text.\n",
@@ -2056,8 +2056,8 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_declaration_markers_are_validated_even_without_a_modal(self):
         with tempfile.TemporaryDirectory() as raw:
-            skill = Path(raw) / "hanig-swarm"
-            shutil.copytree(SKILLS / "hanig-swarm", skill)
+            skill = Path(raw) / "brood-swarm"
+            shutil.copytree(SKILLS / "brood-swarm", skill)
             reference = skill / "references" / "field-evidence.md"
             reference.write_text(
                 "Measured note. <!-- declaration: unknown.id -->\n"
@@ -2073,8 +2073,8 @@ class TestAuthoredSkillShape(unittest.TestCase):
 
     def test_declaration_marker_on_an_adjacent_line_has_no_authority(self):
         with tempfile.TemporaryDirectory() as raw:
-            skill = Path(raw) / "hanig-swarm"
-            shutil.copytree(SKILLS / "hanig-swarm", skill)
+            skill = Path(raw) / "brood-swarm"
+            shutil.copytree(SKILLS / "brood-swarm", skill)
             reference = skill / "references" / "field-evidence.md"
             reference.write_text(
                 "A rule must be tied on this line.\n"
@@ -2264,8 +2264,8 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
     """
 
     DECLARED = {
-        "hanig-project": PROJECT_DECLARATIONS,
-        "hanig-debrief": DEBRIEF_DECLARATIONS,
+        "brood-project": PROJECT_DECLARATIONS,
+        "brood-debrief": DEBRIEF_DECLARATIONS,
     }
 
     @staticmethod
@@ -2351,7 +2351,7 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
 
     def registry_topics(self):
         """The interview topics, read from the registry every time."""
-        with open(SKILLS / "hanig-project" / "declarations.json") as handle:
+        with open(SKILLS / "brood-project" / "declarations.json") as handle:
             declared = {entry["id"]: entry["normative_text"]
                         for entry in json.load(handle)["declarations"]}
         return self.interview_topics(declared["interview.judgment-only"])
@@ -2369,8 +2369,8 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
             return surface.name
 
     def authored_surfaces(self):
-        """Every hanig-project surface a human wrote, generated block cut."""
-        skill = SKILLS / "hanig-project"
+        """Every brood-project surface a human wrote, generated block cut."""
+        skill = SKILLS / "brood-project"
         return [skill / "SKILL.md"] + sorted(
             (skill / "references").glob("*.md"))
 
@@ -2461,7 +2461,7 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
         with a concurrent run and leaves the file mutated if one is
         killed.
         """
-        skill = SKILLS / "hanig-project"
+        skill = SKILLS / "brood-project"
         self.assertEqual(DECLARATION_REGISTRY.reference_problems(skill), [],
                          "the markers the files already use must be accepted")
 
@@ -2478,7 +2478,7 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
         for expected, planted in refused:
             with self.subTest(form=expected):
                 with tempfile.TemporaryDirectory() as tmp:
-                    copy = Path(tmp) / "hanig-project"
+                    copy = Path(tmp) / "brood-project"
                     shutil.copytree(skill, copy)
                     reference = copy / "references" / "unit-contract.md"
                     reference.write_text(
@@ -2492,7 +2492,7 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
         # And the copy itself is clean before anything is planted, so a
         # subTest failure above means the planted line, not the copy.
         with tempfile.TemporaryDirectory() as tmp:
-            copy = Path(tmp) / "hanig-project"
+            copy = Path(tmp) / "brood-project"
             shutil.copytree(skill, copy)
             self.assertEqual(DECLARATION_REGISTRY.reference_problems(copy), [])
 
@@ -2509,7 +2509,7 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
         must name every topic another declaration makes mandatory, or say
         it is not exhaustive.
         """
-        with open(SKILLS / "hanig-project" / "declarations.json") as handle:
+        with open(SKILLS / "brood-project" / "declarations.json") as handle:
             declared = {entry["id"]: entry["normative_text"]
                         for entry in json.load(handle)["declarations"]}
 
@@ -2591,8 +2591,8 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
         # scan is run against that copy. A hardcoded list cannot
         # follow a file it never reads.
         with tempfile.TemporaryDirectory() as tmp:
-            copy = Path(tmp) / "hanig-project"
-            shutil.copytree(SKILLS / "hanig-project", copy)
+            copy = Path(tmp) / "brood-project"
+            shutil.copytree(SKILLS / "brood-project", copy)
             registry = copy / "declarations.json"
             data = json.loads(registry.read_text())
             for entry in data["declarations"]:
@@ -2687,7 +2687,7 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
         # never be looked at. Asserted directly, because a mutation
         # restoring the strip is invisible while no real frontmatter
         # carries topics.
-        skill_md = SKILLS / "hanig-project" / "SKILL.md"
+        skill_md = SKILLS / "brood-project" / "SKILL.md"
         scanned = " ".join(self.sentences(skill_md))
         self.assertIn(
             "Start a swarm project", scanned,
@@ -2854,7 +2854,7 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
             (root / "tests").mkdir(parents=True)
             shutil.copytree(SKILLS, root / "skills", symlinks=True)
             shutil.copy(Path(__file__), root / "tests" / Path(__file__).name)
-            registry = (root / "skills" / "hanig-project" /
+            registry = (root / "skills" / "brood-project" /
                         "declarations.json")
             declared = json.loads(registry.read_text())
             for entry in declared["declarations"]:
@@ -2868,14 +2868,14 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
             registry.write_text(json.dumps(declared, indent=2) + "\n")
             regenerated = subprocess.run(
                 [sys.executable,
-                 str(root / "skills" / "hanig-swarm" / "scripts" /
+                 str(root / "skills" / "brood-swarm" / "scripts" /
                      "declaration_registry.py"),
                  "write-body", "--skill-dir",
-                 str(root / "skills" / "hanig-project")],
+                 str(root / "skills" / "brood-project")],
                 cwd=str(root), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, universal_newlines=True)
             self.assertEqual(regenerated.returncode, 0, regenerated.stdout)
-            surface = root / "skills" / "hanig-project" / "SKILL.md"
+            surface = root / "skills" / "brood-project" / "SKILL.md"
             body = surface.read_text() + "\nA closing note.\n" + marker + "\n"
             surface.write_text(body)
             planted_line = body[:body.index(marker)].count("\n") + 1
@@ -2954,7 +2954,7 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
             package_marker = Path(__file__).parent / "__init__.py"
             if package_marker.exists():
                 shutil.copy(package_marker, root / "tests" / "__init__.py")
-            surface = root / "skills" / "hanig-project" / "SKILL.md"
+            surface = root / "skills" / "brood-project" / "SKILL.md"
             surface.write_text(surface.read_text() + planted)
 
             done = subprocess.run(
@@ -2991,7 +2991,7 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
         declaration's elaboration must carry at least one line tied to
         that declaration's id.
         """
-        skill = SKILLS / "hanig-project"
+        skill = SKILLS / "brood-project"
         with open(skill / "declarations.json") as handle:
             entries = json.load(handle)["declarations"]
         for entry in entries:
@@ -3013,7 +3013,7 @@ class TestDeclarationsDoNotSilentlyLeave(unittest.TestCase):
         rather than "a worker the coordinator's authority". A normative
         sentence that can be parsed two ways states two rules.
         """
-        with open(SKILLS / "hanig-project" / "declarations.json") as handle:
+        with open(SKILLS / "brood-project" / "declarations.json") as handle:
             declared = {entry["id"]: entry["normative_text"]
                         for entry in json.load(handle)["declarations"]}
         self.assertNotIn("judgment inspection cannot",

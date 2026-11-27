@@ -29,7 +29,7 @@ from scheduler_fixture import isolated_module_state_home as setUpModule  # noqa:
 from scheduler_fixture import cleanup_module_path as tearDownModule  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills" / "hanig-swarm" / "scripts"
+SCRIPTS = ROOT / "skills" / "brood-swarm" / "scripts"
 UNIT = SCRIPTS / "unit.py"
 sys.path.insert(0, str(SCRIPTS))
 import worktree as W  # noqa: E402

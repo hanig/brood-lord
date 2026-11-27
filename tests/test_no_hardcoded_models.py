@@ -1,7 +1,7 @@
 """Authored code names no model: routing is data.
 
 Which model reviews, breaks ties or writes code lives in
-``skills/hanig-review-gate/reviewers.json``, ``skills/hanig-swarm/agents.json``
+``skills/brood-review-gate/reviewers.json``, ``skills/brood-swarm/agents.json``
 and ``models.json``. A model id inside a script is a routing decision the data
 cannot change, which is how the committee tie-breaker stayed pinned to one
 model after the roster moved on. This sweep reads every non-docstring string
@@ -26,8 +26,8 @@ ROOT = Path(__file__).resolve().parents[1]
 #
 # Excluded from the tracked set: tests, docs and examples (prose and
 # fixtures that legitimately name models) and upstream code this repo
-# carries verbatim and must not edit (CLAUDE.md): the non-hanig skill
-# bundles, which the hanig- prefix classifies, and the vendored fleet tools
+# carries verbatim and must not edit (CLAUDE.md): the skill bundles outside
+# the brood- (or legacy hanig-) authored prefix, and the vendored fleet tools
 # in bin/.
 VENDORED = {"bin/bus", "bin/agent-manager", "bin/agent-view"}
 SKIPPED_TOP = {"tests", "docs", "examples"}
@@ -62,7 +62,7 @@ def authored_python(root=ROOT):
         rel = path.relative_to(root)
         if not path.is_file() or rel.parts[0] in SKIPPED_TOP:
             continue
-        if rel.parts[0] == "skills" and not rel.parts[1].startswith("hanig-"):
+        if rel.parts[0] == "skills" and not rel.parts[1].startswith(("brood-", "hanig-")):
             continue
         if rel.as_posix() in VENDORED:
             continue
@@ -76,10 +76,10 @@ SOURCES = authored_python()
 
 def declared_model_ids():
     ids = set()
-    review = json.loads((ROOT / "skills/hanig-review-gate/reviewers.json")
+    review = json.loads((ROOT / "skills/brood-review-gate/reviewers.json")
                         .read_text(encoding="utf-8"))
     routes = [reviewer["model"] for reviewer in review["reviewers"]]
-    agents = json.loads((ROOT / "skills/hanig-swarm/agents.json")
+    agents = json.loads((ROOT / "skills/brood-swarm/agents.json")
                         .read_text(encoding="utf-8"))
     routes += [agents["default"]["provider"], *agents["thinking_by_model"]]
     routes += [seat["provider"]
@@ -157,6 +157,7 @@ class TestNoHardcodedModels(unittest.TestCase):
             subprocess.run(["git", "init", "-q", str(root)], check=True)
             swept = [root / "scripts" / "route.py", root / "bin" / "route",
                      root / "bin" / "tools" / "bus",
+                     root / "skills" / "brood-x" / "scripts" / "a.py",
                      root / "skills" / "hanig-x" / "scripts" / "a.py",
                      root / ".github" / "route.py", root / ".claude" / "h.py",
                      root / "scripts" / "launch.pyw", root / "bin" / "long"]

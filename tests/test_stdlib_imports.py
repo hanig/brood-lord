@@ -55,7 +55,7 @@ def stdlib_module_roots():
 
 
 def authored_python_files():
-    skill_scripts = ROOT.glob("skills/hanig-*/scripts/**/*.py")
+    skill_scripts = ROOT.glob("skills/brood-*/scripts/**/*.py")
     library_files = (ROOT / "lib").rglob("*.py")
     return sorted([*skill_scripts, *library_files])
 

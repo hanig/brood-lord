@@ -13,8 +13,8 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SS = ROOT / "skills/hanig-swarm/scripts"
-OS = ROOT / "skills/hanig-orchestrate/scripts"
+SS = ROOT / "skills/brood-swarm/scripts"
+OS = ROOT / "skills/brood-orchestrate/scripts"
 for _p in (SS, OS, Path(__file__).resolve().parent):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
@@ -472,9 +472,9 @@ class TestOrchestrationEnvCheckAndHelpers(unittest.TestCase):
 class TestSkillDocsTemplatesAndMigration(unittest.TestCase):
     def test_templates_preamble_migration_bodies_and_changelog(self):
         rd = lambda r: (ROOT / r).read_text(encoding="utf-8")
-        OR, ai = "skills/hanig-orchestrate/references/", self.assertIn
+        OR, ai = "skills/brood-orchestrate/references/", self.assertIn
         lp = rd(OR + "operating-loop.md")
-        pr = rd("skills/hanig-swarm/references/protocol-details.md")
+        pr = rd("skills/brood-swarm/references/protocol-details.md")
         pm = rd(OR + "dispatch-preamble.md")
         cl = rd("CHANGELOG.md")
         self.assertNotIn("<string>/python3</string>", lp)
@@ -506,10 +506,10 @@ class TestSkillDocsTemplatesAndMigration(unittest.TestCase):
         for s in ("{{UNIT_ENV_NAME}}", "{{UNIT_ENV_PATH}}", "{{UNIT_ENV_PYTHON}}", "{{UNIT_ENV_LOCK}}", "{{UNIT_ENV_BUILD}}", "new model line", "lock file"):
             ai(s, pm)
         for sk, dec in (
-            ("hanig-project", "env.dedicated"),
-            ("hanig-project", "interview.orchestration-env"),
-            ("hanig-swarm", "env.dedicated"),
-            ("hanig-orchestrate", "env.dedicated"),
+            ("brood-project", "env.dedicated"),
+            ("brood-project", "interview.orchestration-env"),
+            ("brood-swarm", "env.dedicated"),
+            ("brood-orchestrate", "env.dedicated"),
         ):
             ai(f"`{dec}`:", rd(f"skills/{sk}/SKILL.md"))
         for s in ("2026-11-22", "workbook", "orch-venv"):

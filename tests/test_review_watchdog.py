@@ -17,7 +17,7 @@ from tests.watchdog_guard import guarded_main
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "skills/hanig-review-gate/scripts/review.py"
+SCRIPT = ROOT / "skills/brood-review-gate/scripts/review.py"
 sys.path.insert(0, str(SCRIPT.parent))
 import committee
 SPEC = importlib.util.spec_from_file_location("watchdog_review", SCRIPT)

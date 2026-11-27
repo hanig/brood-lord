@@ -15,7 +15,7 @@ This validation record documents the native-agent harness, its measured results,
   then lifecycle hardening `c8c3650d725c42942888074690a3d752a210ac25`
 - First cross-host CI evidence: run `33974800468`, PR merge ref
   `459841fdf3ed1e203fcf9b115d1931b3db31696f`, head `a1df089`
-- Representative skill: `hanig-portable-handoff`
+- Representative skill: `brood-portable-handoff`
 - Verdict: **cross-host native discovery and the macOS no-Claude fixture passed;
   final-fixture CI and model invocation remain unobserved**
 
@@ -89,10 +89,10 @@ selected.
 
 | Agent | Gated version | macOS native discovery | macOS representative invocation | Linux evidence | Minimal missing requirement |
 |---|---:|---|---|---|---|
-| Claude Code | 2.1.261 | **Pass.** Native debug trace loaded one user skill from isolated `CLAUDE_CONFIG_DIR`; zero tokens and $0. | **Not passed.** Direct `/hanig-portable-handoff` resolved to the API boundary, then the invalid test key returned 401 with zero tokens and $0. | **Pass in run 33974800468.** Artifact gate has no failure, missing discovery, or version gap. | A coordinator-owned test account/model and explicit spend authorization only if actual invocation is required. |
+| Claude Code | 2.1.261 | **Pass.** Native debug trace loaded one user skill from isolated `CLAUDE_CONFIG_DIR`; zero tokens and $0. | **Not passed.** Direct `/brood-portable-handoff` resolved to the API boundary, then the invalid test key returned 401 with zero tokens and $0. | **Pass in run 33974800468.** Artifact gate has no failure, missing discovery, or version gap. | A coordinator-owned test account/model and explicit spend authorization only if actual invocation is required. |
 | Codex | 0.153.4 | **Pass.** App-server `skills/list` returned the installed skill as `scope=user`, `enabled=true`, with no loader errors; the separate no-Claude fixture also passed. | Not run; `skills/list` is discovery, not a model turn. | **Pass in run 33974800468.** Artifact gate has no failure, missing discovery, or version gap. | A coordinator-owned authenticated test model only if actual invocation is required. |
 | OpenCode | 1.18.29 | **Pass.** Official pinned 1.18.29 `opencode debug skill --pure` found the exact installed `.agents` copy in both macOS fixtures. | Not run; `debug skill` is discovery, not a provider/model turn. | **Pass in run 33974800468.** Artifact gate has no failure, missing discovery, or version gap. | A configured test provider/model only if actual invocation is required. |
-| Pi | 0.73.1 | **Pass.** Official pinned 0.73.1 `DefaultResourceLoader.reload()`/`getSkills()` found the exact installed `.agents` copy in both macOS fixtures, with no diagnostics. | Not run; native SDK discovery starts no model. | **Pass in run 33974800468.** Artifact gate has no failure, missing discovery, or version gap. | A configured test model only if `/skill:hanig-portable-handoff` execution is required. |
+| Pi | 0.73.1 | **Pass.** Official pinned 0.73.1 `DefaultResourceLoader.reload()`/`getSkills()` found the exact installed `.agents` copy in both macOS fixtures, with no diagnostics. | Not run; native SDK discovery starts no model. | **Pass in run 33974800468.** Artifact gate has no failure, missing discovery, or version gap. | A configured test model only if `/skill:brood-portable-handoff` execution is required. |
 
 The current bounded cross-host gap is narrower than model invocation: the
 updated no-Claude/capture fixture has not yet run in CI. The coordinator owns
@@ -165,13 +165,13 @@ The exact installer command was:
 ```sh
 ./install.sh \
   --agent claude --agent codex --agent opencode --agent pi \
-  --only hanig-portable-handoff --json
+  --only brood-portable-handoff --json
 ```
 
 It returned zero, no conflicts, and these two actions:
 
-1. `CLAUDE_CONFIG_DIR/skills/hanig-portable-handoff`, registered for Claude.
-2. `HOME/.agents/skills/hanig-portable-handoff`, registered for Codex,
+1. `CLAUDE_CONFIG_DIR/skills/brood-portable-handoff`, registered for Claude.
+2. `HOME/.agents/skills/brood-portable-handoff`, registered for Codex,
    OpenCode, and Pi.
 
 Both roots resolved below scratch. This confirms the combined plan's intended
@@ -200,7 +200,7 @@ Against the disposable source checkout at `c8c3650`, the exact install was:
 ```sh
 ./install.sh \
   --agent codex --agent opencode --agent pi \
-  --only hanig-portable-handoff --json
+  --only brood-portable-handoff --json
 ```
 
 It returned one confined physical root, `HOME/.agents/skills`, whose action
@@ -252,7 +252,7 @@ with `user: 1`, and reported `getSkills returning: 1 skill dir commands`.
 The JSON result recorded zero input/output/cache tokens and `$0` cost.
 
 A bounded direct resolution probe replaced `/help` with
-`/hanig-portable-handoff`. The native loader again reported one user skill and
+`/brood-portable-handoff`. The native loader again reported one user skill and
 advanced to an API request; the deliberately invalid key received HTTP 401.
 The result recorded zero tokens and `$0`. This is command-resolution evidence,
 not successful LLM-driven skill execution. As a negative control under the
@@ -263,7 +263,7 @@ made no model request, and also recorded zero tokens and `$0`.
 `--bare` is not a valid discovery substitute on this build. Although its help
 says skills still resolve, the observed debug trace said `[reduced mode]
 Skipping skill dir discovery`, returned zero skill-directory commands, and
-reported `Unknown command: /hanig-portable-handoff`. The report does not turn
+reported `Unknown command: /brood-portable-handoff`. The report does not turn
 that contradiction into a pass.
 
 ### Codex CLI 0.153.4
@@ -286,7 +286,7 @@ codex app-server --listen stdio://
 -> skills/list(cwds=[$SCRATCH/workspace], forceReload=true)
 ```
 
-The response contained one `hanig-portable-handoff` entry at the installed
+The response contained one `brood-portable-handoff` entry at the installed
 `HOME/.agents/skills/.../SKILL.md` path with `scope: user`, `enabled: true`, and
 `errors: []`. App-server analytics default to disabled and this operation did
 not require login or a model.
@@ -302,7 +302,7 @@ OPENCODE_DISABLE_DEFAULT_PLUGINS=1 \
 opencode debug skill --pure
 ```
 
-It returned JSON containing `hanig-portable-handoff` at the exact installed
+It returned JSON containing `brood-portable-handoff` at the exact installed
 `HOME/.agents/skills/.../SKILL.md` path. Database migration, logs, locks,
 cache, and config files stayed inside scratch. Its package manifest and
 `--version` both reported 1.18.29. The official discovery locations include
@@ -326,7 +326,7 @@ The harness located the installed package entry point from the `pi` executable,
 verified the package manifest version, then ran the native SDK loader with
 extensions, prompts, themes, and context files disabled. Under the disposable
 `HOME`/`PI_CODING_AGENT_DIR`, `DefaultResourceLoader.reload()` followed by
-`getSkills()` returned exactly one `hanig-portable-handoff` at the installed
+`getSkills()` returned exactly one `brood-portable-handoff` at the installed
 shared path and no diagnostics. This needed no provider credential or model. A
 `/skill:name` execution still needs a configured model and remains a separate
 gate.
@@ -344,7 +344,7 @@ After installation, the harness created a minimal local `contract.json` and
 the separate workspace cwd and returned zero:
 
 ```sh
-python3 "$SCRATCH/home/.agents/skills/hanig-portable-handoff/scripts/handoff.py" \
+python3 "$SCRATCH/home/.agents/skills/brood-portable-handoff/scripts/handoff.py" \
   capture "$SCRATCH/workspace/capture-fixture/run" \
   --out "$SCRATCH/workspace/capture-fixture/handoff.json" \
   --cwd "$SCRATCH/workspace"

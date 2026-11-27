@@ -227,7 +227,7 @@ and unlinked, and sends and writes nothing.
 
 ## Docs
 
-`hanig-project` step 4 runs `linear_sync.py file` after approval; the `tracker.apply` and `tracker.edges` declarations say
+`brood-project` step 4 runs `linear_sync.py file` after approval; the `tracker.apply` and `tracker.edges` declarations say
 so. `docs/tracker-outbox.md` and CLAUDE.md name it.
 
 ## Acceptance criteria

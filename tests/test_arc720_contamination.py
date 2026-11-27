@@ -25,7 +25,7 @@ from unittest.mock import patch
 
 
 REPO = Path(__file__).resolve().parent.parent
-SCRIPT = REPO / "skills/hanig-review-gate/scripts/review.py"
+SCRIPT = REPO / "skills/brood-review-gate/scripts/review.py"
 FIXTURES = REPO / "tests/fixtures/arc720"
 SPEC = importlib.util.spec_from_file_location("arc720_review", SCRIPT)
 review = importlib.util.module_from_spec(SPEC)
@@ -243,7 +243,7 @@ class TestPriorDecisionInputs(unittest.TestCase):
 
     def test_060_protocol_is_an_admissible_file(self):
         self.positive_control()
-        path = REPO / "skills/hanig-review-gate/PROTOCOL.md"
+        path = REPO / "skills/brood-review-gate/PROTOCOL.md"
         self.delivered(self.invoke(files=[path]), path.read_text(), "[protocol-acceptance]")
 
 

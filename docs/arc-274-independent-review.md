@@ -154,7 +154,7 @@ on failed publication, and remove it after a successful copy publication. Add
 
 ### P2 — target flag order changes placement, and the installer drops a known duplicate-visibility conflict
 
-**Lines:** `skills/hanig-project/scripts/agent_discovery.py:472-533` and
+**Lines:** `skills/brood-project/scripts/agent_discovery.py:472-533` and
 `lib/skill_installer.py:241-273,523-536,638-644`.
 
 Selection only lets a previously selected destination cover a later agent.
@@ -207,7 +207,7 @@ unterminated delimiters, and name mismatch.
 
 ### P2 — diagnostics can report provenance valid when lifecycle rejects the same bytes
 
-**Lines:** `skills/hanig-project/scripts/agent_diagnostics.py:43-60,77-119`
+**Lines:** `skills/brood-project/scripts/agent_diagnostics.py:43-60,77-119`
 versus `lib/skill_lifecycle.py:154-197`.
 
 Diagnostics decodes metadata with UTF-8 replacement, while lifecycle uses

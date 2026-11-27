@@ -34,11 +34,11 @@ README = ROOT / "README.md"
 LIVE_NAME = "orchestration-preferences.json"
 LIVE_PATH = "~/.paseo/" + LIVE_NAME
 SHIPPED_SKILLS = (
-    "agent-bus", "hanig-debrief", "hanig-hillclimb", "hanig-orchestrate", "hanig-portable-handoff", "hanig-project",
-    "hanig-review-gate", "hanig-swarm", "hanig-verified-workflow",
+    "agent-bus", "brood-debrief", "brood-hillclimb", "brood-orchestrate", "brood-portable-handoff", "brood-project",
+    "brood-review-gate", "brood-swarm", "brood-verified-workflow",
     "paseo", "paseo-advisor", "paseo-committee", "paseo-handoff",
     "paseo-loop", "pi-fleet", "start-a-sprint",
-    "hanig-wandb-logging",
+    "brood-wandb-logging",
 )
 
 

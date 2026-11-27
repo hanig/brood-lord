@@ -76,7 +76,7 @@ UNKNOWN with evidence:
 It records scope, read interval, pagination completeness, bindings and the
 plan/state/outbox inputs it read. No mutation anywhere in this slice.
 
-**Slice 2: audit-backed reporting.** The report producer (hanig-orchestrate's
+**Slice 2: audit-backed reporting.** The report producer (brood-orchestrate's
 report step and `merge_unit.py` after advance and drain) invokes the audit and
 renders its structured result. A clean tracker section requires matching
 binding, complete coverage, successful reads, matching plan/state/outbox

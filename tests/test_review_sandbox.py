@@ -42,7 +42,7 @@ def write(path=None):
     return journal.append_review_journal(
         cached_path if path is None else path, 'implementation', 1,
         ['offline'], 'REVIEW_PASS', [journal.HONEST_RUN_CLAIM])
-""" % str(ROOT / "skills/hanig-review-gate/scripts/review.py")
+""" % str(ROOT / "skills/brood-review-gate/scripts/review.py")
 
     def simple_suite(self, body="pass"):
         return "import unittest\nclass Probe(unittest.TestCase):\n    def test_probe(self):\n        " + body + "\n"

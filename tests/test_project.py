@@ -25,7 +25,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills" / "hanig-project" / "scripts"
+SCRIPTS = ROOT / "skills" / "brood-project" / "scripts"
 SURVEY, TICKETS = SCRIPTS / "survey.py", SCRIPTS / "tickets.py"
 sys.path.insert(0, str(SCRIPTS))
 import tickets as T  # noqa: E402
@@ -1478,16 +1478,16 @@ class TestRamificationsOfTheRoundTwoFixes(unittest.TestCase):
         """
         consumers = (
             SURVEY,
-            ROOT / "skills" / "hanig-project" / "scripts" / "tickets.py",
-            ROOT / "skills" / "hanig-project" / "scripts" / "report.py",
-            ROOT / "skills" / "hanig-swarm" / "scripts" / "swarm.py",
+            ROOT / "skills" / "brood-project" / "scripts" / "tickets.py",
+            ROOT / "skills" / "brood-project" / "scripts" / "report.py",
+            ROOT / "skills" / "brood-swarm" / "scripts" / "swarm.py",
         )
         readers = []
         for f in consumers:
             if "dirty_files" in f.read_text():
                 readers.append(str(f.relative_to(ROOT)))
         self.assertEqual(readers,
-                         ["skills/hanig-project/scripts/survey.py"],
+                         ["skills/brood-project/scripts/survey.py"],
                          f"a stale reader of dirty_files: {readers}")
         with tempfile.TemporaryDirectory() as d:
             import subprocess as sp
@@ -1521,7 +1521,7 @@ class TestTheInstalledVersionSurvivesAWorktree(unittest.TestCase):
                  "--allow-org-shadow"],
                 capture_output=True, text=True, cwd=ROOT)
             self.assertEqual(r.returncode, 0, r.stderr)
-            marker = (prefix / "hanig-swarm"
+            marker = (prefix / "brood-swarm"
                       / ".installed-by-multi-agent-skills").read_text()
             version = next(l.split("=", 1)[1] for l in marker.splitlines()
                            if l.startswith("version="))
@@ -1582,27 +1582,27 @@ class TestUninstallOnlyRemovesOurOwn(unittest.TestCase):
             prefix = Path(d) / "prefix"
             prefix.mkdir()
             self._install_into(prefix)
-            self.assertTrue((prefix / "hanig-swarm").is_dir())
+            self.assertTrue((prefix / "brood-swarm").is_dir())
             sp.run(["sh", str(ROOT / "install.sh"), "--prefix", str(prefix),
                     "--uninstall", "--allow-org-shadow"],
                    capture_output=True, text=True, cwd=ROOT)
-            self.assertFalse((prefix / "hanig-swarm").exists())
+            self.assertFalse((prefix / "brood-swarm").exists())
 
     def test_install_does_not_clobber_a_foreign_symlink_either(self):
         """The same inference lived in the install path's replace check."""
         import subprocess as sp
         with tempfile.TemporaryDirectory() as d:
             prefix, elsewhere = Path(d) / "prefix", Path(d) / "elsewhere"
-            (elsewhere / "hanig-swarm").mkdir(parents=True)
-            (elsewhere / "hanig-swarm" / "SKILL.md").write_text("not ours\n")
+            (elsewhere / "brood-swarm").mkdir(parents=True)
+            (elsewhere / "brood-swarm" / "SKILL.md").write_text("not ours\n")
             prefix.mkdir()
-            os.symlink(elsewhere / "hanig-swarm", prefix / "hanig-swarm")
+            os.symlink(elsewhere / "brood-swarm", prefix / "brood-swarm")
             r = self._install_into(prefix)
             self.assertEqual(r.returncode, 1, r.stdout)
-            self.assertIn("hanig-swarm", r.stderr,
+            self.assertIn("brood-swarm", r.stderr,
                           "install replaced a symlink it did not create")
             self.assertEqual(
-                (elsewhere / "hanig-swarm" / "SKILL.md").read_text(),
+                (elsewhere / "brood-swarm" / "SKILL.md").read_text(),
                 "not ours\n")
 
     def test_ownership_is_never_inferred_from_being_a_symlink(self):
@@ -1653,15 +1653,15 @@ class TestInstallerSymlinkEdgeCases(unittest.TestCase):
             prefix = Path(d) / "prefix"
             prefix.mkdir()
             installed = self._install(prefix, "--mode", "link", "--only",
-                                      "hanig-swarm")
+                                      "brood-swarm")
             self.assertEqual(installed.returncode, 0, installed.stderr)
-            link = prefix / "hanig-swarm"
+            link = prefix / "brood-swarm"
             self.assertTrue(link.is_symlink())
             removed = self._install(prefix, "--uninstall", "--only",
-                                    "hanig-swarm")
+                                    "brood-swarm")
             self.assertEqual(removed.returncode, 0, removed.stderr)
             self.assertFalse(link.is_symlink())
-            self.assertTrue((ROOT / "skills" / "hanig-swarm" / "SKILL.md")
+            self.assertTrue((ROOT / "skills" / "brood-swarm" / "SKILL.md")
                             .is_file(), "uninstall followed the link and "
                             "deleted the real skill")
 
@@ -1696,7 +1696,7 @@ class TestInstallerSymlinkEdgeCases(unittest.TestCase):
             marker = ".installed-by-multi-agent-skills"
             (prefix / "hanig-gone").mkdir()
             (prefix / "hanig-gone" / marker).write_text("stale\n")
-            r = self._install(prefix, "--only", "hanig-swarm")
+            r = self._install(prefix, "--only", "brood-swarm")
             self.assertNotIn("prune", r.stdout)
             self.assertTrue((prefix / "hanig-gone").is_dir())
 
@@ -1710,11 +1710,11 @@ def _skill_dirs():
 
 
 def _authored():
-    return [n for n in _skill_dirs() if n.startswith("hanig-")]
+    return [n for n in _skill_dirs() if n.startswith("brood-")]
 
 
 def _vendored():
-    return [n for n in _skill_dirs() if not n.startswith("hanig-")]
+    return [n for n in _skill_dirs() if not n.startswith("brood-")]
 
 
 def _doctor_sections(path):
@@ -1741,7 +1741,7 @@ class TestVendoredSkillsAreNotOursToDelete(unittest.TestCase):
     recorded, but what we recorded no longer meant what it used to.
 
     Vendored-ness is read off the tree, never from a list: this repo names
-    everything it writes hanig-*, so a directory under skills/ outside that
+    everything it writes brood-*, so a directory under skills/ outside that
     namespace arrived from somebody else."""
 
     def _host_env(self, root):
@@ -1817,7 +1817,7 @@ class TestVendoredSkillsAreNotOursToDelete(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             prefix = Path(d) / "prefix"
             prefix.mkdir()
-            for name in ("paseo", "hanig-swarm"):
+            for name in ("paseo", "brood-swarm"):
                 (prefix / name).mkdir()
                 (prefix / name / MARKER).write_text(
                     "repo=multi-agent-skills\nversion=19c5171\n")
@@ -1825,7 +1825,7 @@ class TestVendoredSkillsAreNotOursToDelete(unittest.TestCase):
             self.assertTrue((prefix / "paseo").is_dir(),
                             "an origin-less marker on a vendored name was "
                             "read as ours to delete")
-            self.assertTrue((prefix / "hanig-swarm").is_dir(),
+            self.assertTrue((prefix / "brood-swarm").is_dir(),
                             "an origin-less marker cannot prove a payload is "
                             "safe to delete, even in an authored namespace")
 
@@ -1844,7 +1844,7 @@ class TestVendoredSkillsAreNotOursToDelete(unittest.TestCase):
                           "report that there was one")
             self.assertTrue((prefix / "paseo").is_symlink())
             self.assertEqual((theirs / "SKILL.md").read_text(), "theirs\n")
-            self.assertFalse((prefix / "hanig-swarm").exists(),
+            self.assertFalse((prefix / "brood-swarm").exists(),
                              "refused at second zero, or it did not refuse")
 
     def test_a_directory_with_someone_elses_marker_is_a_collision(self):
@@ -1890,11 +1890,11 @@ class TestVendoredSkillsAreNotOursToDelete(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             base = Path(d)
             prefix = base / "prefix"
-            self._upstream_install(base, prefix, name="hanig-swarm")
+            self._upstream_install(base, prefix, name="brood-swarm")
             r = self._install(prefix)
             self.assertEqual(r.returncode, 1, r.stdout)
-            self.assertIn("hanig-swarm", r.stderr)
-            self.assertTrue((prefix / "hanig-swarm").is_symlink())
+            self.assertIn("brood-swarm", r.stderr)
+            self.assertTrue((prefix / "brood-swarm").is_symlink())
 
     # --- where "vendored" comes from ----------------------------------------
 
@@ -1906,13 +1906,13 @@ class TestVendoredSkillsAreNotOursToDelete(unittest.TestCase):
                 origin = [l.split("=", 1)[1] for l
                           in (prefix / name / MARKER).read_text().splitlines()
                           if l.startswith("origin=")]
-                want = "authored" if name.startswith("hanig-") else "vendored"
+                want = "authored" if name.startswith("brood-") else "vendored"
                 self.assertEqual(origin, [want], f"{name}: {origin}")
 
     def test_vendoredness_is_derived_from_the_tree_not_a_written_list(self):
         """A list of vendored names in the installer would rot the first time
         skills/ changed, and rot silently in the direction that deletes. The
-        classification is the hanig- namespace applied to whatever is on disk,
+        classification is the brood- namespace applied to whatever is on disk,
         so no executable line may name a specific vendored skill.
 
         Scoped to the OWNERSHIP code rather than the whole file, because the
@@ -1970,7 +1970,7 @@ class TestVendoredSkillsAreNotOursToDelete(unittest.TestCase):
                         if l.strip().startswith("paseo "))
             self.assertIn("vendored", line)
             ours = next(l for l in installed.splitlines()
-                        if l.strip().startswith("hanig-swarm "))
+                        if l.strip().startswith("brood-swarm "))
             self.assertIn("ours", ours)
 
     # --- the prefix is spelled the same way twice ---------------------------
@@ -2396,7 +2396,7 @@ class TestTheTrackerTeamIsNotAQuestion(unittest.TestCase):
         self.assertEqual(T.draft(plan)["project"]["team"], "Arc")
 
     def test_the_skill_says_not_to_ask(self):
-        doc = (ROOT / "skills" / "hanig-project" / "SKILL.md").read_text()
+        doc = (ROOT / "skills" / "brood-project" / "SKILL.md").read_text()
         self.assertIn("do not ask", doc.lower())
         self.assertIn("charge_to", doc)
 
@@ -2460,7 +2460,7 @@ class TestFilingRequiresApproval(unittest.TestCase):
             self.assertIn(T.AUTOPILOT_PHRASE, out)
 
     def test_the_skill_names_the_gate_and_the_phrase(self):
-        doc = (ROOT / "skills" / "hanig-project" / "SKILL.md").read_text()
+        doc = (ROOT / "skills" / "brood-project" / "SKILL.md").read_text()
         self.assertIn("swarm autopilot", doc)
         self.assertIn("DEFAULT IS TO STOP HERE", doc)
 
@@ -2506,14 +2506,14 @@ class TestTheRepoDecisionComesFromTheSurvey(unittest.TestCase):
             self.assertFalse(r["git"])
 
     def test_the_skill_says_adopt_without_asking(self):
-        doc = (ROOT / "skills" / "hanig-project" / "SKILL.md").read_text()
+        doc = (ROOT / "skills" / "brood-project" / "SKILL.md").read_text()
         self.assertIn("Adopt it. Do not ask", doc)
         self.assertIn("first-class answer", doc)
 
     def test_the_skill_forbids_committing_swarm_outputs(self):
         """Outputs are DATA. They reach a shared path through promote, with a
         named approver, and never through a repo."""
-        doc = (ROOT / "skills" / "hanig-project" / "SKILL.md").read_text()
+        doc = (ROOT / "skills" / "brood-project" / "SKILL.md").read_text()
         self.assertIn("may commit a swarm output to a repo", doc)
         self.assertIn("outlive the attempt directory as SOURCE", doc)
 
@@ -2956,7 +2956,7 @@ class TestTheWalkCannotBeHeldOpenByASyscall(_FixtureTestCase):
         """The same lesson as the partition limits: a distinction that only
         exists in the JSON is a distinction the agent reading the skill will
         flatten, so the vocabulary goes where the reader hits it."""
-        doc = (ROOT / "skills" / "hanig-project" / "SKILL.md").read_text()
+        doc = (ROOT / "skills" / "brood-project" / "SKILL.md").read_text()
         self.assertIn("`truncated` and `stuck` are not the same fact", doc)
         self.assertIn("stuck_at", doc)
         self.assertIn("FLOORS", doc)
@@ -3327,7 +3327,7 @@ class TestAnAbsentReadBackCannotClaimSync(unittest.TestCase):
 
     def test_the_skill_routes_edge_reconciliation_through_file(self):
         """PR 4 makes the program consume blocked_by; previews are not instructions."""
-        skill = (ROOT / "skills" / "hanig-project" / "SKILL.md").read_text()
+        skill = (ROOT / "skills" / "brood-project" / "SKILL.md").read_text()
         self.assertIn("linear_sync.py", skill)
         self.assertIn("file --draft tickets.json", skill)
         self.assertIn("remove_blocked_by", skill)

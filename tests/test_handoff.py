@@ -30,8 +30,8 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-HANDOFF = REPO / "skills" / "hanig-portable-handoff" / "scripts" / "handoff.py"
-CONTRACT = REPO / "skills" / "hanig-verified-workflow" / "scripts" / "contract.py"
+HANDOFF = REPO / "skills" / "brood-portable-handoff" / "scripts" / "handoff.py"
+CONTRACT = REPO / "skills" / "brood-verified-workflow" / "scripts" / "contract.py"
 
 CLEAN, DRIFTED, ELSEWHERE, MALFORMED = 0, 1, 2, 3
 USAGE = 64

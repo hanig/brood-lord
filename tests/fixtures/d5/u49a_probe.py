@@ -16,7 +16,7 @@ import urllib.request
 def capture(source, tool, command, active=False, installed=False):
     source = Path(source).resolve()
     sys.dont_write_bytecode = True
-    for name in ('hanig-swarm', 'hanig-orchestrate', 'hanig-project'):
+    for name in ('brood-swarm', 'brood-orchestrate', 'brood-project'):
         sys.path.insert(0, str(source / 'skills' / name / 'scripts'))
     sys.path.insert(0, str(source))
     from tests.test_d5_u4_0b1_issuance import no_effects

@@ -57,13 +57,13 @@ outbox reader without rewriting its append-only audit bytes.
 Inspect intents locally:
 
 ```sh
-python3 skills/hanig-swarm/scripts/swarm.py outbox --state-dir STATE
+python3 skills/brood-swarm/scripts/swarm.py outbox --state-dir STATE
 ```
 
 Validate their shape and the connector capability before a drain:
 
 ```sh
-python3 skills/hanig-project/scripts/drain_contract.py validate \
+python3 skills/brood-project/scripts/drain_contract.py validate \
   STATE/outbox.jsonl \
   --capability tracker.intent.idempotent-mutation-readback.v1
 ```
@@ -112,7 +112,7 @@ operation and evidence digest:
 Reconcile without writing anything:
 
 ```sh
-python3 skills/hanig-project/scripts/drain_contract.py reconcile \
+python3 skills/brood-project/scripts/drain_contract.py reconcile \
   --intent intent.json --observation observation.json
 ```
 
@@ -134,7 +134,7 @@ The two append-only journals have different jobs:
 For compatibility, this still records the weaker form:
 
 ```sh
-python3 skills/hanig-swarm/scripts/swarm.py outbox --state-dir STATE \
+python3 skills/brood-swarm/scripts/swarm.py outbox --state-dir STATE \
   --record-receipt KEY --ref ARC-171
 ```
 
@@ -143,7 +143,7 @@ The connected drainer instead supplies a complete bound observation to the
 reconciliation command:
 
 ```sh
-python3 skills/hanig-project/scripts/drain_contract.py reconcile \
+python3 skills/brood-project/scripts/drain_contract.py reconcile \
   --intent intent.json --observation observation.json --state-dir STATE
 ```
 
@@ -198,7 +198,7 @@ remote worker cannot replace it.
 ## Read-only Linear consistency audit
 
 The authorized operator can run `linear_sync.py audit` from the installed
-hanig-project skill, followed by `section` with the same binding or draft,
+brood-project skill, followed by `section` with the same binding or draft,
 plan and state inputs. The audit performs no GraphQL mutation.
 `linear_sync.py drain` applies outbox intents and records their acknowledgments;
 `file --draft` files approved drafts, and `issue` handles ad-hoc changes.
@@ -223,9 +223,9 @@ section remains offline even when the key is loaded for output redaction.
 The authorized operator now applies outbox intents with:
 
 ```sh
-python3 skills/hanig-project/scripts/linear_sync.py drain \
+python3 skills/brood-project/scripts/linear_sync.py drain \
   --binding .hanig/linear-binding.json --state-dir STATE --state-dir OTHER_STATE
-python3 skills/hanig-project/scripts/linear_sync.py audit \
+python3 skills/brood-project/scripts/linear_sync.py audit \
   --binding .hanig/linear-binding.json --out AUDIT
 ```
 

@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "skills/hanig-debrief/scripts/debrief_schema.py"
+SCRIPT = ROOT / "skills/brood-debrief/scripts/debrief_schema.py"
 sys.path.insert(0, str(SCRIPT.parent))
 import debrief_schema as S
 

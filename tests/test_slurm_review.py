@@ -20,7 +20,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills/hanig-review-gate/scripts"
+SCRIPTS = ROOT / "skills/brood-review-gate/scripts"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(ROOT / "tests"))
 import review as R  # noqa: E402
@@ -880,7 +880,7 @@ class TestReceipts(unittest.TestCase):
 
 class TestZeroApiRoster(unittest.TestCase):
     def test_every_enabled_seat_is_enterprise_cli_or_lor_served(self):
-        roster = json.loads((ROOT / "skills/hanig-review-gate/reviewers.json").read_text())
+        roster = json.loads((ROOT / "skills/brood-review-gate/reviewers.json").read_text())
         enabled = [r for r in roster["reviewers"] if r.get("enabled", True)]
         self.assertTrue(enabled)
         for rev in enabled:

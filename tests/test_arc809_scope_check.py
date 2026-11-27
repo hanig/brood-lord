@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "skills/hanig-swarm/scripts"
+SCRIPTS = Path(__file__).resolve().parents[1] / "skills/brood-swarm/scripts"
 sys.path.insert(0, str(SCRIPTS))
 import swarm as S
 
