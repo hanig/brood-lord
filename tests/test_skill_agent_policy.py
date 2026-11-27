@@ -272,7 +272,8 @@ class TestWrite(TreeCase):
 
 
 class TestLiveRepository(unittest.TestCase):
-    IMPLICIT = ("brood-review-gate", "brood-verified-workflow", "brood-wandb-logging")
+    IMPLICIT = ("brood-conclave", "brood-review-gate", "brood-verified-workflow",
+                "brood-wandb-logging")
 
     def test_explicit_only_list_is_pinned_and_check_exits_zero(self):
         self.assertEqual(sap.EXPLICIT_ONLY_SKILLS, (

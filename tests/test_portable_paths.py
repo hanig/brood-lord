@@ -22,7 +22,7 @@ from scheduler_fixture import closed_bin  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SKILLS = REPO / "skills"
-AUTHORED = ("brood-wandb-logging", "brood-debrief", "brood-hillclimb", "brood-orchestrate", "brood-portable-handoff", "brood-project",
+AUTHORED = ("brood-wandb-logging", "brood-conclave", "brood-debrief", "brood-hillclimb", "brood-orchestrate", "brood-portable-handoff", "brood-project",
             "brood-review-gate", "brood-swarm", "brood-verified-workflow")
 
 

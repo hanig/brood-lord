@@ -28,12 +28,14 @@ RULES = ((OD, "never executes reviewer text"), (OD, "downgrades REVIEW_FAIL"),
          (DB, "never globs unrelated projects"), (DB, "never prints raw transcript text"),
          (DB, "imports no network module"), (DB, "beats prose"), (RG, "(L1):**"),
          (RG, "never changes a verdict"), (RG, "struck in rounds N-2 and N-1"), (HO, "decisions_log.py"), (HO, "debrief_audit.py"),
-         (RM, "| `brood-hillclimb` |"), (RM, "All nine are"), (RM, "skills/brood-hillclimb/"),
+         (RM, "| `brood-hillclimb` |"), (RM, "All ten are"), (RM, "skills/brood-hillclimb/"),
+         (RM, "| `brood-conclave` |"), (RM, "skills/brood-conclave/"),
          (RM, "lib/skill_agent_policy.py   --check"))
 UNSHIPPED = tuple((doc, flag) for doc in (OD, DB, RG, RM) for flag in (
     "premise-replay", "--allow-egress", "debrief_attention.py run", "--rerun"))
 CLIS = dict({n: "skills/brood-%s/scripts/" % s for n, s in (
     ("watch_pr.py", "orchestrate"), ("hillclimb.py", "hillclimb"), ("review.py", "review-gate"),
+    ("conclave.py", "conclave"),
     ("decisions_log.py", "debrief"), ("debrief_audit.py", "debrief"),
     ("debrief_attention.py", "debrief"))}, **{"skill_agent_policy.py": "lib/"})
 REVIEW_FLAGS = ("--record-evidence --head --finding --round --method --status --tree --test-ref "

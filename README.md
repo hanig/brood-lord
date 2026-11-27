@@ -86,7 +86,7 @@ every issue title for approval, files them in Linear, and dispatches.
 
 ---
 
-## The nine skills we wrote
+## The ten skills we wrote
 
 | Skill | One line |
 |---|---|
@@ -99,8 +99,9 @@ every issue title for approval, files them in Linear, and dispatches.
 | `brood-wandb-logging` | Make W&B runs readable; caller supplies W&B, contracts judge outcomes. |
 | `brood-debrief` | Collect project lessons into a private dossier, draft an owner-approved scrubbed packet, and triage/file learnings. |
 | `brood-hillclimb` | Hill-climb a metric by pre-registered hypotheses and a paired A/B noise screen. |
+| `brood-conclave` | Convene one frontier model per family: blind answers, anonymized cross-examination, a ratification vote. |
 
-All nine are prefixed `brood-` (formerly `hanig-`) so they can never collide
+All ten are prefixed `brood-` (formerly `hanig-`) so they can never collide
 with an Arc org-managed skill name. That prefix is now load-bearing rather than tidy:
 `install.sh` reads it as the authorship namespace, and anything under
 `skills/` outside it is treated as vendored -- installed by us, written
@@ -1013,6 +1014,24 @@ python3 scripts/hillclimb.py record --state-dir S --id H --runs-json R --checkli
 Also `decisions_log.py show --log L --json` and
 `hillclimb.py hypothesize|summary|verify-log --state-dir S`. Nothing here calls a model.
 
+### brood-conclave
+
+```sh
+python3 scripts/conclave.py resolve
+python3 scripts/conclave.py doctor --refresh
+python3 scripts/conclave.py new BOARD --brief brief.md [--attach fig.png] [--no-lor]
+python3 scripts/conclave.py round BOARD 0 [--seats S] [--dry-run]
+python3 scripts/conclave.py ratify BOARD
+```
+
+The moderator writes the brief, cruxes and statement; it never votes. Seats run
+as Lor subagents by default (`"lor": true` in `families.json`; requires
+`LOR_SESSION_ID`); `--no-lor` or `CONCLAVE_LOR=0` routes them through
+`codex`/`agy`/`claude`/`pi`/`opencode` instead. Model ids come from live
+catalogs and `families.json`, never from the script. Also
+`conclave.py digest|status|cruxes|tally|export BOARD`. `scripts/allow.py` edits
+the owner's Claude Code permissions, so only the owner runs it.
+
 ---
 
 ## The invariants
@@ -1358,7 +1377,7 @@ longer shipped. An unowned sibling stays untouched with a warning, and a failed
 `brood-<suffix>` install never retires anything. `--dry-run` reports the plan as
 `would-retire-legacy`.
 
-All nine authored skills now ship under `brood-*` names, so reinstalling from
+All ten authored skills now ship under `brood-*` names, so reinstalling from
 this checkout publishes `brood-<suffix>` and retires each owned `hanig-<suffix>`
 copy. Names that identify live state rather than a skill keep their `hanig-`
 spelling: the state directories above, Git refs under `refs/hanig-swarm*`, the
@@ -1592,6 +1611,7 @@ skills/brood-portable-handoff/   handoff.py
 skills/brood-wandb-logging/      wbkit.py, audit_project.py
 skills/brood-debrief/            debrief.py, debrief_extract.py, debrief_packet.py, debrief_triage.py, debrief_file.py, decisions_log.py, debrief_audit.py, debrief_attention.py
 skills/brood-hillclimb/          hillclimb.py
+skills/brood-conclave/           conclave.py, allow.py, families.json, templates/
 lib/skill_agent_policy.py   --check|--write [--json] [--skills-root DIR]: agents/openai.yaml of explicit-only skills
 tests/                      stdlib unittest
 examples/                   reference config to copy elsewhere; nothing reads it here

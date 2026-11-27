@@ -20,7 +20,7 @@ from tests.test_attempt_worktrees import ENV, FakePaseo, code_unit, git, repo_at
 from tests.scheduler_fixture import codex_environment, state_environment
 
 SHIPPED_SKILLS = (
-    "brood-debrief", "brood-hillclimb", "brood-orchestrate", "brood-portable-handoff", "brood-project",
+    "brood-conclave", "brood-debrief", "brood-hillclimb", "brood-orchestrate", "brood-portable-handoff", "brood-project",
     "brood-review-gate", "brood-swarm", "brood-verified-workflow",
     "brood-wandb-logging",
 )
