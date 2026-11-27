@@ -20,7 +20,7 @@ ROUTING_FUNCTIONS = (
     "forbid_unit_provider_problem", "_model_family", "apply_agent_resolution",
     "default_thinking_for", "normalize_agent_spec", "lor_mode_refusal",
     "_unit_pins_agent", "plan_code_agent", "resolve_effective_agent",
-    "effective_agent_problem",
+    "effective_agent_problem", "_spec_options", "unit_agent_spec",
 )
 ROUTING_DATA = (
     "AGENTS_FILE", "DEFAULT_AGENT_PROVIDER", "DEFAULT_AGENT_THINKING",

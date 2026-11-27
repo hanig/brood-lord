@@ -112,7 +112,7 @@ def _validate_orchestrator(plan, units):
         if not isinstance(u, dict) or u.get("kind") != "code":
             continue
         problem = SR.forbid_unit_provider_problem(plan, u)
-        if not problem and not SR._unit_pins_agent(u):
+        if not problem and (not SR._unit_pins_agent(u) or "backend" in u):
             # The plan-level code_agent is what this unit would run.
             agent = SR.resolve_effective_agent(plan, u)
             problem = SR.forbid_unit_provider_problem(plan, agent["unit"])
@@ -153,7 +153,8 @@ def _validate_convergence_paseo_promote(units, which=None, plan=None):
 
     resolve_bin = shutil.which if which is None else which
     # Only units that resolve to a Paseo agent need paseo here; a lor/<model>
-    # unit is started through the Lor CLI and checked at dispatch instead.
+    # or direct-CLI unit is started through its own CLI and checked at
+    # dispatch instead.
     paseo_units = [u for u in units
                    if isinstance(u, dict) and u.get("kind") == "code"
                    and _plan_backend(plan, u) == "paseo"]
@@ -641,6 +642,18 @@ def _validate_commands_and_code_units(units, plan=None):
         default_provider = SR.effective_default_provider(plan)
         unattended = SP._unattended_mode_example(u.get("provider") or default_provider)
         agent = SR.resolve_effective_agent(plan or {}, u)
+        if agent.get("problem"):
+            raise PlanError(agent["problem"])
+        if agent["backend"] in ("claude", "codex", "pi"):
+            # Direct CLIs run with approvals bypassed in the coordinator
+            # worktree: 'mode' is optional and a restrictive one is refused.
+            if agent.get("mode") in SR.LOR_REFUSED_MODES:
+                raise PlanError(SR.lor_mode_refusal(
+                    f"unit {uid!r}", agent["mode"], agent["backend"]))
+            if agent.get("cli_model") is None:
+                raise PlanError(
+                    f"unit {uid!r} selects backend {agent['backend']!r} with "
+                    f"no valid model; write {agent['backend']}/<model>")
         if agent["backend"] == "lor":
             # Lor subagents have no permission-mode flag: 'mode' is optional,
             # and a restrictive one is refused rather than silently ignored.
@@ -660,7 +673,8 @@ def _validate_commands_and_code_units(units, plan=None):
                 f"\"{unattended}\" or \"default\". Modes are "
                 f"provider-specific; `paseo run --help` and the provider name "
                 f"the set it accepts.")
-        if "mode" not in u and agent["backend"] != "lor" and not agent.get("mode"):
+        if ("mode" not in u and agent["backend"] not in ("lor", "claude", "codex", "pi")
+                and not agent.get("mode")):
             raise PlanError(
                 f"unit {uid!r} is kind=code and declares no 'mode'. An agent "
                 f"under default permissions stops at its first write and "

@@ -7,6 +7,12 @@ no detached watcher: it emits `lor_session_finished` once a Lor session
 leaves `running`, and exits EXIT_LOR_AUTH (4, distinct from the timeout/no
 event code 3) when Lor rejects the session token, so token expiry is never
 reported as "still running".
+
+With --poll-cli it ALSO reads in-flight direct-CLI coding attempts (backend
+"claude", "codex" or "pi", local or Slurm) through hanig-swarm's cli_io: a
+turn's atomic exit receipt (or, without one, a dead process or a finished
+Slurm job) emits `cli_run_finished`, `cli_run_failed` or `cli_run_preempted`
+once per turn. Paseo is never contacted.
 """
 import argparse
 import datetime
@@ -24,18 +30,83 @@ QUIET = {"UNALLOCATED", "SUBMITTED", "RUNNING", "DONE", "ABANDONED", "SUPERSEDED
 EXIT_LOR_AUTH = 4
 LOR_LIVE_STATES = {"ALLOCATED", "SUBMITTED", "RUNNING", "INCOMPLETE"}
 LOR_SNAPSHOT_PREFIX = "lor:"
+CLI_SNAPSHOT_PREFIX = "cli:"
+CLI_BACKENDS = ("claude", "codex", "pi")
+CLI_EVENTS = {"stopped": "cli_run_finished", "failed": "cli_run_failed",
+              "incomplete": "cli_run_failed", "preempted": "cli_run_preempted"}
 
 
-def load_lor_io():
-  """hanig-swarm's Lor adapter, from the installed sibling skill only."""
+def _swarm_scripts():
   import skill_paths
   swarm = skill_paths.sibling_skill_root(
     Path(__file__).absolute().parents[1], "hanig-orchestrate", "hanig-swarm")
   scripts = str(swarm / "scripts")
   if scripts not in sys.path:
     sys.path.insert(0, scripts)
+
+
+def load_lor_io():
+  """hanig-swarm's Lor adapter, from the installed sibling skill only."""
+  _swarm_scripts()
   import lor_io
   return lor_io
+
+
+def load_cli_io():
+  """hanig-swarm's direct-CLI substrate, from the installed sibling skill only."""
+  _swarm_scripts()
+  import cli_io
+  return cli_io
+
+
+def cli_attempts(directory):
+  """In-flight direct-CLI attempts: (uid, attempt, run_dir, backend)."""
+  units = json.loads((directory / "swarm-state.json").read_bytes()).get("units") or {}
+  found = []
+  for uid, unit in sorted(units.items()):
+    if not isinstance(unit, dict) or unit.get("state") not in LOR_LIVE_STATES:
+      continue
+    attempt = unit.get("attempt_dir")
+    if not attempt or not unit.get("job_id"):
+      continue
+    name = Path(str(attempt)).name
+    intent = (unit.get("attempt_launch_intents") or {}).get(name) or {}
+    root = intent.get("cli_runs_root")
+    if intent.get("backend") in CLI_BACKENDS and root:
+      found.append((uid, name, Path(str(root)) / name, intent["backend"]))
+  return found
+
+
+def observe_cli(cli_io, directories, snapshot, warned):
+  """Terminal direct-CLI turns not yet reported. Reads files and, for Slurm
+  runs without a receipt, one bounded squeue (and scontrol/sacct) call."""
+  events = []
+  for directory in directories:
+    try:
+      attempts = cli_attempts(directory)
+    except (OSError, ValueError, RecursionError, AttributeError, TypeError):
+      continue
+    seen = snapshot.setdefault(CLI_SNAPSHOT_PREFIX + str(directory), {})
+    for uid, attempt, rdir, backend in attempts:
+      obs = cli_io.inspect_run_dir(rdir)
+      observed = local_time()
+      state = obs.get("state")
+      if state not in CLI_EVENTS:
+        if state != "running" and (directory, attempt) not in warned:
+          print("CLI UNKNOWN {} {} {}: {}".format(observed, directory.name, uid,
+                " ".join(str(obs.get("detail")).splitlines())), file=sys.stderr, flush=True)
+          warned.add((directory, attempt))
+        continue
+      mark = "{}:{}:{}".format(attempt, obs.get("turn"), state)
+      if seen.get(uid) != mark:
+        events.append(dict(event=CLI_EVENTS[state], observed=observed,
+                           directory=directory.name, state_dir=str(directory),
+                           unit=uid, backend=backend, attempt=attempt,
+                           turn=obs.get("turn"), cli_state=state,
+                           returncode=obs.get("returncode"), mode=obs.get("mode"),
+                           detail=obs.get("detail"), previous=seen.get(uid)))
+      seen[uid] = mark
+  return events
 
 
 def lor_attempts(directory):
@@ -205,6 +276,9 @@ def main(argv=None):
   parser.add_argument("--poll-lor", action="store_true",
                       help="also poll in-flight lor coding attempts at --interval; "
                            "exit 4 if Lor rejects the session token")
+  parser.add_argument("--poll-cli", action="store_true",
+                      help="also wake when a direct-CLI (claude/codex/pi) coding "
+                           "turn reaches a terminal state")
   args = parser.parse_args(argv)
   if args.interval == 0:
     parser.error("--interval must be positive")
@@ -227,6 +301,14 @@ def main(argv=None):
       lor_io = load_lor_io()
     except Exception as exc:  # an absent sibling skill is a usage error, not a wait
       print("wait_event: --poll-lor cannot load hanig-swarm lor_io: {}".format(exc),
+            file=sys.stderr)
+      return 2
+  cli_io = None
+  if args.poll_cli:
+    try:
+      cli_io = load_cli_io()
+    except Exception as exc:  # an absent sibling skill is a usage error, not a wait
+      print("wait_event: --poll-cli cannot load hanig-swarm cli_io: {}".format(exc),
             file=sys.stderr)
       return 2
   try:
@@ -254,18 +336,29 @@ def main(argv=None):
             print("LOR_SESSION_FINISHED {} {} {} session {}: {} [{}]".format(
               event["observed"], event["directory"], event["unit"], event["session_id"],
               event["lor_state"], event["state_dir"]), flush=True)
-        if lor_events and not events:
-          end = local_time()
+      if cli_io is not None:
+        cli_events = observe_cli(cli_io, directories, snapshot, warned)
+        for event in cli_events:
           if args.json:
-            print(json.dumps(dict(event="END", observed=end, lines=len(lor_events))), flush=True)
+            print(json.dumps(event), flush=True)
           else:
-            print("(end of pass {}, {} line(s))".format(end, len(lor_events)), flush=True)
-          try:
-            write_snapshot(path, snapshot)
-          except (OSError, ValueError, RecursionError) as exc:
-            print("wait_event: snapshot persistence failed; event may repeat: {}".format(exc), file=sys.stderr)
-            return 2
-          return 0
+            print("{} {} {} {} {} run {} turn {}: {} [{}]".format(
+              event["event"].upper(), event["observed"], event["directory"], event["unit"],
+              event["backend"], event["attempt"], event["turn"], event["cli_state"],
+              event["state_dir"]), flush=True)
+        lor_events = lor_events + cli_events
+      if lor_events and not events:
+        end = local_time()
+        if args.json:
+          print(json.dumps(dict(event="END", observed=end, lines=len(lor_events))), flush=True)
+        else:
+          print("(end of pass {}, {} line(s))".format(end, len(lor_events)), flush=True)
+        try:
+          write_snapshot(path, snapshot)
+        except (OSError, ValueError, RecursionError) as exc:
+          print("wait_event: snapshot persistence failed; event may repeat: {}".format(exc), file=sys.stderr)
+          return 2
+        return 0
       if readable and not events:
         write_snapshot(path, snapshot)
       if events:

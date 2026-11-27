@@ -627,7 +627,20 @@ def attempt_backend(us, attempt):
     no migration and an attempt can never change backend after launch.
     """
     backend = attempt_launch_intent(us, attempt).get("backend")
-    return backend if backend in ("paseo", "lor") else "paseo"
+    return backend if backend in ("paseo", "lor", "claude", "codex", "pi") else "paseo"
+
+
+def attempt_cli_run_dir(us, attempt):
+    """STATE_DIR/cli-runs/<attempt> frozen by a direct-CLI attempt, or None.
+
+    Derived only from the coordinator-recorded launch intent, never from a
+    path an agent could write.
+    """
+    intent = attempt_launch_intent(us, attempt)
+    root = intent.get("cli_runs_root")
+    if intent.get("backend") not in ("claude", "codex", "pi") or not root:
+        return None
+    return str(Path(root) / Path(str(attempt)).name)
 
 
 def attempt_parent_session(us, attempt):

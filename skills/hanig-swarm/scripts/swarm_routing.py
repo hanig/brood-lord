@@ -11,6 +11,7 @@ import re
 import sys
 from pathlib import Path
 
+import cli_adapters as CA
 import lor_io as LIO
 
 _HERE = Path(__file__).resolve().parent
@@ -392,19 +393,23 @@ def default_thinking_for(u, plan=None):
 
 # --- effective code agent: backend, provider, model, thinking, mode --------
 # A code attempt runs on exactly one backend, frozen when it is launched:
-# "paseo" (a Paseo agent) or "lor" (a native Lor subagent selected by
-# provider "lor/<canonical_model_id>"). Which one a NEW attempt gets is
+# "paseo" (a Paseo agent), "lor" (a native Lor subagent selected by
+# provider "lor/<canonical_model_id>"), or a direct CLI worker "claude",
+# "codex" or "pi" (cli_io). A direct CLI is selected ONLY by an explicit
+# backend: Paseo already spells its providers claude/<m> and codex/<m>, and a
+# legacy plan must keep the transport it had. Which one a NEW attempt gets is
 # resolved here, most specific first:
 #   1. per-unit runtime override   (STATE_DIR/agent-overrides.json units[uid])
-#   2. the unit's own provider/model in plan.json (an explicit pin)
+#   2. the unit's own backend/provider/model in plan.json (an explicit pin)
 #   3. project runtime override     (agent-overrides.json project)
 #   4. the plan's top-level "code_agent"
 #   5. agents.json default_by_orchestrator / default
 # Runtime overrides never edit plan.json, so the plan digest stays put.
 AGENT_SPEC_KEYS = ("backend", "provider", "model", "thinking", "mode")
-# Modes that would make a Lor coding subagent unable to write. Lor has no
-# permission-mode flag, so such a declaration cannot be honored and is refused
-# rather than silently ignored.
+# Modes that would make a Lor or direct-CLI coding agent unable to write.
+# Neither honors a restrictive Paseo mode (Lor has no permission-mode flag;
+# the direct CLIs run with bypassed approvals in a coordinator worktree), so
+# such a declaration is refused rather than silently ignored.
 LOR_REFUSED_MODES = frozenset(("plan", "read-only", "readonly", "read_only",
                                "readOnly"))
 NO_THINKING = ("none", "null", "")
@@ -414,7 +419,8 @@ def normalize_agent_spec(spec, where="code_agent"):
     """Return (normalized spec, problem). Never guesses a missing model.
 
     Accepts {"provider": "lor/<id>"|"route/model", ...} or
-    {"backend": "lor"|"paseo", "provider"?: ..., "model"?: ...}. The result
+    {"backend": "lor"|"paseo"|"claude"|"codex"|"pi", "provider"?: ...,
+    "model"?: ...}. The result
     always names one backend and one complete provider string; ``thinking``
     and ``mode`` are carried only when declared (``thinking: null`` is an
     explicit request to send no effort flag).
@@ -437,6 +443,13 @@ def normalize_agent_spec(spec, where="code_agent"):
                           f"string without whitespace")
     if provider is None and model is None:
         return None, f"{where} names neither a provider nor a model"
+    if CA.is_cli_backend(backend):
+        try:
+            cli_model = CA.parse_provider(backend, provider, model)
+        except CA.AdapterError as exc:
+            return None, f"{where}: {exc}"
+        out = {"backend": backend, "provider": backend + "/" + cli_model}
+        return _spec_options(spec, out, where)
     if backend == LIO.LOR_BACKEND and provider is not None and not LIO.is_lor_provider(provider):
         return None, (f"{where} declares backend 'lor' with non-Lor provider "
                       f"{provider!r}; write provider lor/<canonical_model_id> "
@@ -464,6 +477,11 @@ def normalize_agent_spec(spec, where="code_agent"):
                           f"does not name one PROVIDER/MODEL; a runtime agent "
                           f"must say which model runs")
         out = {"backend": LIO.PASEO_BACKEND, "provider": route + "/" + chosen}
+    return _spec_options(spec, out, where)
+
+
+def _spec_options(spec, out, where):
+    """Carry the declared thinking/mode onto a normalized spec."""
     if "thinking" in spec:
         thinking = spec["thinking"]
         if thinking is None or (isinstance(thinking, str)
@@ -478,13 +496,19 @@ def normalize_agent_spec(spec, where="code_agent"):
         if not _routing_token(mode) or mode.startswith("-"):
             return None, (f"{where}.mode {mode!r} must be a non-empty mode "
                           f"id without whitespace")
-        if out["backend"] == LIO.LOR_BACKEND and mode in LOR_REFUSED_MODES:
-            return None, lor_mode_refusal(where, mode)
+        if out["backend"] in LIO.NATIVE_BACKENDS and mode in LOR_REFUSED_MODES:
+            return None, lor_mode_refusal(where, mode, out["backend"])
         out["mode"] = mode
     return out, None
 
 
-def lor_mode_refusal(where, mode):
+def lor_mode_refusal(where, mode, backend=LIO.LOR_BACKEND):
+    if backend != LIO.LOR_BACKEND:
+        return (f"{where} declares mode {mode!r} for a direct {backend} CLI "
+                f"coding agent, which runs with approvals bypassed in its "
+                f"coordinator worktree, so a restrictive mode cannot be "
+                f"honored; refusing rather than running it with full tools. "
+                f"Remove 'mode' or choose a Paseo agent.")
     return (f"{where} declares mode {mode!r} for a Lor coding agent. Lor "
             f"subagents have no permission-mode flag, so a restrictive mode "
             f"cannot be honored; refusing rather than running it with full "
@@ -492,7 +516,20 @@ def lor_mode_refusal(where, mode):
 
 
 def _unit_pins_agent(u):
-    return bool(u.get("provider")) or bool(u.get("model"))
+    return bool(u.get("provider")) or bool(u.get("model")) or bool(u.get("backend"))
+
+
+def unit_agent_spec(u):
+    """(normalized spec, problem) for a unit that declares ``backend``.
+
+    (None, None) when the unit declares no backend, so every existing unit
+    resolves exactly as before. A declared backend makes the unit's own
+    backend/provider/model/thinking/mode one runtime-style spec.
+    """
+    if not isinstance(u, dict) or "backend" not in u:
+        return None, None
+    raw = {k: u[k] for k in AGENT_SPEC_KEYS if k in u}
+    return normalize_agent_spec(raw, f"unit {u.get('id', '?')!r}")
 
 
 def plan_code_agent(plan):
@@ -517,8 +554,20 @@ def resolve_effective_agent(plan, u, overrides=None):
     unit_ov = (ov.get("units") or {}).get(uid) if isinstance(ov.get("units"), dict) else None
     proj_ov = ov.get("project") if isinstance(ov.get("project"), dict) else None
     code_agent = plan_code_agent(plan)
+    unit_spec, _unit_problem = unit_agent_spec(u)
     if unit_ov:
         source, spec = "unit-override", unit_ov
+    elif unit_spec is not None:
+        source, spec = "unit", unit_spec
+    elif "backend" in u:
+        # An unresolvable declared backend never falls back to another
+        # transport; effective_agent_problem reports it.
+        return {"source": "unit", "backend": u.get("backend"),
+                "provider": u.get("provider"), "model": u.get("model"),
+                "canonical_model_id": None, "cli_model": None,
+                "thinking": u.get("thinking"), "thinking_explicit": "thinking" in u,
+                "mode": u.get("mode"), "override_revision": ov.get("revision"),
+                "unit": u, "problem": _unit_problem}
     elif _unit_pins_agent(u):
         source, spec = "unit", None
     elif proj_ov:
@@ -550,6 +599,13 @@ def resolve_effective_agent(plan, u, overrides=None):
             view["provider"] = spec["provider"]
             view.pop("model", None)
             provider, model = spec["provider"], None
+        elif CA.is_cli_backend(backend):
+            # route/model, the shape Paseo views have, so thinking defaults
+            # and the orchestrator's forbid rule read a direct claude/<m>
+            # exactly as they read the Paseo one.
+            route, _sep, model = spec["provider"].partition("/")
+            view["backend"], view["provider"], view["model"] = backend, route, model
+            provider = spec["provider"]
         else:
             route, _sep, model = spec["provider"].partition("/")
             view["provider"], view["model"] = route, model
@@ -565,15 +621,20 @@ def resolve_effective_agent(plan, u, overrides=None):
             view["mode"] = mode
         else:
             view.pop("mode", None)
+    canonical, cli_model = None, None
     if backend == LIO.LOR_BACKEND:
         try:
             canonical = LIO.parse_lor_model(view.get("provider"), view.get("model"))
         except LIO.LorError:
             canonical = None
-    else:
-        canonical = None
+    elif CA.is_cli_backend(backend):
+        try:
+            cli_model = CA.parse_provider(backend, provider)
+        except CA.AdapterError:
+            cli_model = None
     return {"source": source, "backend": backend, "provider": provider,
             "model": model, "canonical_model_id": canonical,
+            "cli_model": cli_model,
             "thinking": thinking, "thinking_explicit": thinking_explicit,
             "mode": mode, "override_revision": ov.get("revision"),
             "unit": view}
@@ -583,7 +644,15 @@ def effective_agent_problem(plan, agent):
     """Why a resolved agent cannot be dispatched (backend-independent checks)."""
     view = agent["unit"]
     uid = view.get("id", "?")
-    if agent["backend"] == LIO.LOR_BACKEND:
+    if agent.get("problem"):
+        return agent["problem"]
+    if CA.is_cli_backend(agent["backend"]):
+        if agent.get("cli_model") is None:
+            return (f"unit {uid!r}: backend {agent['backend']!r} with provider "
+                    f"{agent.get('provider')!r} names no valid model")
+        if agent.get("mode") in LOR_REFUSED_MODES:
+            return lor_mode_refusal(f"unit {uid!r}", agent["mode"], agent["backend"])
+    elif agent["backend"] == LIO.LOR_BACKEND:
         if agent["canonical_model_id"] is None:
             return (f"unit {uid!r}: provider {view.get('provider')!r} names no "
                     f"valid Lor canonical model id")

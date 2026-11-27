@@ -13,6 +13,7 @@ from pathlib import Path
 import child_environment as CE
 import codex_home as CH
 import coordinator_paths as CP
+import cli_io as CIO
 import lor_io as LIO
 import unit as U
 import worktree as W
@@ -196,19 +197,20 @@ def _prepare_code_worktree(u, unit_dir, state, state_dir, attempt, intent):
     rc, _out, _err = SP._git(
         source_repo, "show-ref", "--verify", "--quiet",
         f"refs/heads/{intent['branch']}")
-    lor = intent.get("backend") == LIO.LOR_BACKEND
+    native = intent.get("backend") in LIO.NATIVE_BACKENDS
     if rc == 0:
         existing_agent, note = SW.reconcile_orphan(
             unit_dir, kind="code", intent=intent)
-        if lor and not existing_agent and note == "UNKNOWN":
+        if native and not existing_agent and note == "UNKNOWN":
             # Paseo is guarded below by its registry ownership check; a Lor
-            # attempt skips that, so an unanswerable title lookup must refuse
-            # here rather than start a second session for one attempt.
+            # or direct-CLI attempt skips that, so an unanswerable lookup
+            # must refuse here rather than start a second agent for one
+            # attempt.
             return None, None, (
                 f"attempt {attempt!r} has branch {intent['branch']!r}, but "
-                f"Lor could not be asked whether a session already exists "
-                f"for it; refusing to start another. Retry when `lor session "
-                f"list` answers")
+                f"{intent.get('backend')} could not be asked whether an agent "
+                f"already exists for it; refusing to start another. Retry "
+                f"when it answers")
         if existing_agent:
             recovery_error = SW._recover_code_launch(
                 state if state is not None else {}, u, unit_dir,
@@ -234,9 +236,9 @@ def _prepare_code_worktree(u, unit_dir, state, state_dir, attempt, intent):
                 f"one unambiguous worktree that still matches its trusted "
                 f"launch intent")
         reuse_workspace = candidates[0]
-        # A Lor attempt never touches Paseo: the title lookup above already
-        # established that no Lor session owns this attempt.
-        ownership_problem = (None if lor else
+        # A Lor or direct-CLI attempt never touches Paseo: the lookup above
+        # already established that no agent of its own backend owns it.
+        ownership_problem = (None if native else
                              SW._paseo_path_ownership_problem(reuse_workspace))
         if ownership_problem:
             return None, None, (
@@ -535,3 +537,105 @@ def _launch_lor_agent(u, unit_dir, state, state_dir, attempt, intent,
                       f"worktree could not be recorded: {complete_err}")
     SS.save_state(state_dir, state)
     return session_id, None
+
+
+def _launch_cli_agent(u, unit_dir, state, state_dir, attempt, intent,
+                      workspace, plan_path=None):
+    """Start a direct-CLI (claude/codex/pi) worker in the verified worktree.
+
+    The run id bound to the unit is the attempt id; its run directory is
+    STATE_DIR/cli-runs/<attempt>, frozen in the intent. Context reaches the
+    worker only through the allowlisted prompt block and an owner-only
+    context.json outside the worktree, exactly as for a Lor subagent.
+    """
+    backend = intent.get("backend")
+    runs_root = intent.get("cli_runs_root")
+    if not runs_root or Path(runs_root).parent.resolve() != Path(state_dir).resolve():
+        return None, (f"unit {u['id']!r} attempt {attempt!r}: the frozen "
+                      f"direct-CLI run root {runs_root!r} is not under this "
+                      f"state directory; refusing to start a run the "
+                      f"coordinator could not observe")
+    try:
+        unit_real = str(Path(unit_dir).resolve())
+        work_real = str(Path(workspace).resolve())
+        if os.path.commonpath((unit_real, work_real)) in (unit_real, work_real):
+            return None, (f"attempt directory {unit_real} and worktree "
+                          f"{work_real} overlap; refusing to write attempt "
+                          f"context where git would see it")
+    except ValueError:
+        pass
+    try:
+        pairs = SCP.attempt_context_values(
+            u["id"], unit_dir, SD._dep_env(u, state or {}))
+    except PlanError as exc:
+        return None, str(exc)
+    prompt_intent = dict(intent)
+    if plan_path is not None:
+        prompt_intent.update(scope_plan=str(Path(plan_path).resolve()),
+                             scope_state_dir=str(Path(state_dir).resolve()))
+    prompt = SCP._dispatch_prompt(
+        u, prompt_intent, attempt_context=SCP.render_attempt_context(pairs))
+    protocol_problem = SCP._code_protocol_problem(prompt, prompt_intent)
+    if protocol_problem:
+        return None, (f"unit {u['id']!r} code prompt has no valid completion "
+                      f"protocol ({protocol_problem}); refusing an unclosable "
+                      f"agent launch")
+    leaked = _secret_in(prompt) or _secret_in(json.dumps(pairs))
+    if leaked:
+        return None, (f"unit {u['id']!r}: the rendered {backend} prompt would "
+                      f"contain the value of {leaked}; refusing to launch")
+    context_err = _write_attempt_context(unit_dir, pairs)
+    if context_err:
+        return None, context_err
+    # The placement frozen at dispatch is binding: an attempt frozen onto
+    # Slurm never falls back to running the CLI on whatever host retries it.
+    environ = dict(os.environ)
+    if intent.get("cli_placement") == CIO.SLURM:
+        environ[CIO.MODE_ENV] = "on"
+    run, start_err = CIO.launch(
+        backend, intent.get("cli_model"), intent.get("effort"), str(workspace),
+        prompt, state_dir, attempt, env=environ)
+    if start_err:
+        _refuse_lor_workspace(state, state_dir, u, unit_dir, workspace,
+                              f"{backend} launch failed")
+        return None, start_err
+    us = SS._unit_state(state, u["id"])
+    us.setdefault("attempt_cleanup_agents", {})[attempt] = attempt
+    us.setdefault("code_terminal_watches", {})[attempt] = {
+        "agent_id": attempt, "backend": backend, "host": os.uname().nodename,
+        "cli_mode": run["mode"], "slurm_job_id": run.get("slurm_job_id"),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "status": "cli_turn_receipt",
+        "reason": ("no watcher process: the turn wrapper writes an atomic "
+                   "exit receipt; run `swarm.py advance` or `wait_event.py "
+                   "--poll-cli` to judge")}
+    SCL._register_code_workspace(state, u, unit_dir, workspace,
+                                 workspace_owner="coordinator")
+    SS.save_state(state_dir, state)
+    facts = SS.trusted_launch_facts(state, u["id"], unit_dir)
+    identity_error = W.workspace_identity_problem(U.run, facts)
+    if not identity_error:
+        try:
+            if str(Path(run["worktree"]).resolve()) != str(Path(workspace).resolve()):
+                identity_error = (f"{backend} run {attempt} works in "
+                                  f"{run['worktree']!r}, not authenticated "
+                                  f"worktree {workspace!r}")
+        except OSError as exc:
+            identity_error = f"cannot resolve the {backend} run worktree: {exc}"
+    if identity_error:
+        CIO.cancel(state_dir, attempt)
+        _refuse_lor_workspace(state, state_dir, u, unit_dir, workspace,
+                              identity_error)
+        return None, (f"{backend} run {attempt} was started, but worktree "
+                      f"verification failed and it was cancelled: "
+                      f"{identity_error}")
+    complete_err = SCL._complete_code_launch(
+        state, u, unit_dir, workspace, recovery=True,
+        workspace_owner="coordinator")
+    if complete_err:
+        _refuse_lor_workspace(state, state_dir, u, unit_dir, workspace,
+                              complete_err)
+        return None, (f"{backend} run {attempt} was started, but its "
+                      f"worktree could not be recorded: {complete_err}")
+    SS.save_state(state_dir, state)
+    return attempt, None

@@ -6,6 +6,8 @@ Python 3.8+, standard library only; dependencies never point to the facade.
 import time
 from pathlib import Path
 
+import cli_adapters as CA
+import cli_io as CIO
 import lor_io as LIO
 import unit as U
 import verify as V
@@ -40,7 +42,11 @@ def _bind_attempt(state, uid, unit_dir, job_id, state_dir):
     `unit.py` (tests/test_d5_activation_guards.py).
     """
     us = ((state.get("units") or {}).get(uid) or {})
-    if SS.attempt_backend(us, unit_dir) != LIO.LOR_BACKEND:
+    backend = SS.attempt_backend(us, unit_dir)
+    if CA.is_cli_backend(backend):
+        return SD._bind(unit_dir, job_id, state_dir, backend=backend,
+                        cli_run_dir=SS.attempt_cli_run_dir(us, unit_dir))
+    if backend != LIO.LOR_BACKEND:
         return SD._bind(unit_dir, job_id, state_dir)
     return SD._bind(unit_dir, job_id, state_dir, backend=LIO.LOR_BACKEND,
                     parent_session_id=SS.attempt_parent_session(us, unit_dir))
@@ -681,6 +687,19 @@ def _lor_claim_liveness(us):
     return SP.CLAIM_UNKNOWN, f"lor session {agent}: {obs['detail']}"
 
 
+def _cli_claim_liveness(us):
+    """Claim liveness for a direct-CLI attempt from its turn receipt/process."""
+    rdir = SS.attempt_cli_run_dir(us, us.get("attempt_dir"))
+    if not rdir:
+        return SP.CLAIM_UNKNOWN, "the direct-CLI attempt records no run directory"
+    obs = CIO.inspect_run_dir(rdir)
+    if obs["state"] == "running":
+        return SP.CLAIM_LIVE, f"direct-CLI turn {obs['turn']} is running"
+    if obs["state"] in CIO.TERMINAL_STATES:
+        return SP.CLAIM_FREE, f"direct-CLI turn {obs['turn']} is {obs['state']}"
+    return SP.CLAIM_UNKNOWN, f"direct-CLI run: {obs['detail']}"
+
+
 def _release_completed_output_claims(units, state, state_dir, root, dry_run,
                                      report):
     """Release output claims for units no longer occupying live resources."""
@@ -696,6 +715,9 @@ def _release_completed_output_claims(units, state, state_dir, root, dry_run,
                 if (u.get("kind") == "code" and SS.attempt_backend(
                         us, us["attempt_dir"]) == LIO.LOR_BACKEND):
                     live, why = _lor_claim_liveness(us)
+                elif (u.get("kind") == "code" and CA.is_cli_backend(
+                        SS.attempt_backend(us, us["attempt_dir"]))):
+                    live, why = _cli_claim_liveness(us)
                 else:
                     live, why = SP._claim_liveness({
                         "attempt": Path(us["attempt_dir"]).name,

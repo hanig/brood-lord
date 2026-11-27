@@ -30,11 +30,16 @@ import shutil
 import subprocess
 
 import child_environment as CE
+import cli_adapters as CA
 import paseo_io as PIO
 
 LOR_BACKEND = "lor"
 PASEO_BACKEND = "paseo"
-BACKENDS = (PASEO_BACKEND, LOR_BACKEND)
+# Every frozen per-attempt backend. claude/codex/pi are direct-CLI workers
+# (cli_adapters + cli_io); this module keeps the Lor transport and routes the
+# shared unit.py bind/judge glue below to the backend an attempt froze.
+BACKENDS = (PASEO_BACKEND, LOR_BACKEND) + CA.CLI_BACKENDS
+NATIVE_BACKENDS = (LOR_BACKEND,) + CA.CLI_BACKENDS
 
 # A session id is passed as a CLI argument value; refuse anything that could
 # read as a flag or carry whitespace rather than normalizing it.
@@ -411,9 +416,12 @@ def add_bind_arguments(parser):
                         help="kind=code lifecycle backend; absent reads as paseo")
     parser.add_argument("--parent-session-id", default=None,
                         help="the Lor session that started a --backend lor agent")
+    parser.add_argument("--cli-run-dir", default=None,
+                        help="STATE_DIR/cli-runs/<attempt> of a direct-CLI "
+                             "(--backend claude|codex|pi) attempt")
 
 
-def code_binding(kind, job_id, backend, parent_session_id):
+def code_binding(kind, job_id, backend, parent_session_id, cli_run_dir=None):
     """Validate a bind's id/backend; return the unit.json fields to record.
 
     Exits (SystemExit, as unit.py's other refusals do) on an invalid shape.
@@ -421,10 +429,18 @@ def code_binding(kind, job_id, backend, parent_session_id):
     records nothing new, so a legacy bind is byte-for-byte what it was.
     """
     if kind != "code":
-        if backend is not None or parent_session_id is not None:
-            raise SystemExit("error: --backend and --parent-session-id apply "
-                             "only to kind=code attempts")
+        if backend is not None or parent_session_id is not None or cli_run_dir is not None:
+            raise SystemExit("error: --backend, --parent-session-id and "
+                             "--cli-run-dir apply only to kind=code attempts")
         return {}
+    if CA.is_cli_backend(backend):
+        if parent_session_id is not None:
+            raise SystemExit("error: --parent-session-id applies only to --backend lor")
+        import cli_io  # lazy: keeps pathlib (urllib.parse) out of offline importers
+        return cli_io.binding_fields(job_id, backend, cli_run_dir)
+    if cli_run_dir is not None:
+        raise SystemExit("error: --cli-run-dir applies only to --backend "
+                         "claude|codex|pi")
     if backend == LOR_BACKEND:
         if not valid_session_id(str(job_id)):
             raise SystemExit(f"error: implausible lor session id {job_id!r}. "
@@ -456,6 +472,9 @@ def code_lifecycle(spec, notes, environ=None):
     checks in unit.py still decide, exactly as for a Paseo `idle`.
     """
     agent = spec.get("job_id")
+    if CA.is_cli_backend(spec.get("backend")) and agent:
+        import cli_io  # lazy, as above
+        return cli_io.code_lifecycle(spec, notes)
     if spec.get("backend") != LOR_BACKEND or not agent:
         return None, None
     obs = poll_session(str(agent), parent_session_id=spec.get("parent_session_id"),

@@ -2,6 +2,7 @@
 
 import shlex
 
+import cli_adapters as CA
 import lor_io as LIO
 from swarm_types import PlanError
 
@@ -61,6 +62,16 @@ def declared_author_history(unit):
 def intent_identity(intent):
     """Resolve frozen routing exactly as the completion protocol does."""
     provider_spec = intent.get("provider")
+    backend = intent.get("backend")
+    if CA.is_cli_backend(backend):
+        # Direct CLI: claude/<m> and codex/<m> keep their route (the token a
+        # Paseo attempt on that route records); pi/<provider>/<vendor>/<m>
+        # was authored by <vendor>, never by the pi harness.
+        try:
+            return CA.author_identity(backend, CA.parse_provider(
+                backend, provider_spec, intent.get("model")))
+        except CA.AdapterError:
+            return None
     if LIO.is_lor_provider(provider_spec):
         try:
             identity = LIO.canonical_author_identity(
