@@ -565,7 +565,13 @@ def _launch_cli_agent(u, unit_dir, state, state_dir, attempt, intent,
     if frozen == CIO.SLURM:
         environ[CIO.MODE_ENV] = "on"
     elif frozen == CIO.LOCAL:
-        here, _problem = CIO.placement(environ)
+        here, problem = CIO.placement(environ)
+        if problem:
+            # Placement refused on this host (as cli_io.resume refuses): a
+            # host that cannot say where the CLI belongs never runs it.
+            _refuse_lor_workspace(state, state_dir, u, unit_dir, workspace,
+                                  f"{backend} placement refused")
+            return None, problem
         if here == CIO.SLURM:
             _refuse_lor_workspace(state, state_dir, u, unit_dir, workspace,
                                   f"{backend} placement refused")

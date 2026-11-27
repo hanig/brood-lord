@@ -111,6 +111,14 @@ if mine.get("echo_key"):
     sys.stderr.write("err " + key[:half]); sys.stderr.flush()
     time.sleep(0.3)
     sys.stderr.write(key[half:] + "\n"); sys.stderr.flush()
+if mine.get("background_sleep"):
+    # A descendant that inherits stdout/stderr and outlives the CLI, so the
+    # wrapper's pumps never see EOF before their join timeout.
+    import subprocess
+    sleeper = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(%r)" % mine["background_sleep"]])
+    with open(os.path.join(here, "..", "sleeper-" + name + ".pid"), "w") as fh:
+        fh.write(str(sleeper.pid))
 if name == "claude":
     sid = opt("--session-id") or opt("--resume")
     print(json.dumps({"type": "result", "subtype": "success", "session_id": sid}))
@@ -701,6 +709,72 @@ class TestLocalExecution(CliFixture):
                 self.assertEqual(out.getvalue(),
                                  b"a[REDACTED]b[REDACTED][REDACTED]tail" + secret[:7])
 
+    def test_pump_join_timeout_flushes_held_back_output_before_receipt(self):
+        # The session message is shorter than the secret, so the redacting
+        # sink holds all of it back; a background descendant keeps the pipes
+        # open past the join timeout. The flush must still land it in the
+        # log before the receipt is written.
+        secret = "sk-or-v1-" + "f" * 200
+        sid = "e73c852f-6d65-4b6c-a8e0-577cc75d920d"
+        self.control(pi={"background_sleep": 30})
+        pid_file = self.tmp / "sleeper-pi.pid"
+
+        def kill_sleeper():
+            try:
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+            except (OSError, ValueError):
+                pass
+        self.addCleanup(kill_sleeper)
+        rdir = self.tmp / "direct-run"
+        rdir.mkdir()
+        (rdir / "turn-1.prompt.txt").write_text("direct")
+        (rdir / "turn-1.key").write_text(secret)
+        (rdir / "turn-1.json").write_text(json.dumps({
+            "turn": 1, "adapter": "pi",
+            "argv": [str(self.bin / "pi"), "--session-id", sid],
+            "cwd": str(self.worktree), "stdin": str(rdir / "turn-1.prompt.txt"),
+            "stdout": str(rdir / "turn-1.stdout.log"),
+            "stderr": str(rdir / "turn-1.stderr.log"),
+            "exit": str(rdir / "turn-1.exit.json"),
+            "key_file": str(rdir / "turn-1.key"),
+            "key_env": CA.OPENROUTER_KEY, "fallback_session_id": None}))
+        handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}
+        self.addCleanup(lambda: [signal.signal(k, v) for k, v in handlers.items()])
+        seen = {}
+        real_write = CIO._write_atomic
+
+        def receipt_write(path, record):
+            if str(path).endswith("exit.json"):
+                seen["stdout"] = (rdir / "turn-1.stdout.log").read_text()
+            return real_write(path, record)
+        started = time.monotonic()
+        with mock.patch.object(CIO, "PUMP_DRAIN_SECONDS", 0.5), \
+                mock.patch.object(CIO, "_write_atomic", receipt_write):
+            self.assertEqual(CIO.run_turn(rdir, 1), 0)
+        self.assertLess(time.monotonic() - started, 20)
+        self.assertTrue(pid_file.exists(), "the fake CLI never started its sleeper")
+        message = json.dumps({"type": "session", "id": sid})
+        self.assertLess(len(message), len(secret))
+        self.assertIn(message, seen["stdout"])
+        receipt = json.loads((rdir / "turn-1.exit.json").read_text())
+        self.assertEqual((receipt["returncode"], receipt["session_id"]), (0, sid))
+        self.assertNotIn(secret, self.all_text(rdir))
+
+    def all_text(self, rdir):
+        return "\n".join(p.read_text(errors="replace")
+                         for p in sorted(Path(rdir).rglob("*")) if p.is_file())
+
+    def test_redacting_sink_close_is_idempotent_and_drops_late_writes(self):
+        out = io.BytesIO()
+        closes = []
+        out.close = lambda: closes.append(True)
+        sink = CIO._RedactingSink(out, b"0123456789")
+        sink.write(b"short")
+        sink.close()
+        sink.write(b"late")
+        sink.close()
+        self.assertEqual((out.getvalue(), len(closes)), (b"short", 1))
+
     def test_run_turn_called_directly_still_withholds_adapter_names(self):
         os.environ["ANTHROPIC_BASE_URL"] = "https://fixture.invalid"
         rdir = self.tmp / "direct-run"
@@ -725,6 +799,43 @@ class TestLocalExecution(CliFixture):
 
 class TestSlurmExecution(CliFixture):
     slurm = True
+
+    def test_preexisting_batch_script_is_refused_and_left_in_place(self):
+        self.slurm_control(job_id="4242", squeue={"4242": "PENDING"})
+        run = self.launch("pi", PI_MODEL)
+        rdir = self.rundir()
+        script = rdir / "turn-2.sbatch.sh"
+        script.write_text("#!/bin/sh\necho someone else's\n")
+        updates, error = CIO._start_turn(rdir, run, 2, "next", key_value="k")
+        self.assertIsNone(updates)
+        self.assertIn("already exists", error)
+        self.assertEqual(script.read_text(), "#!/bin/sh\necho someone else's\n")
+        self.assertEqual(len(self.slurm_calls("sbatch")), 1)
+        for name in ("prompt.txt", "key", "json"):
+            self.assertFalse((rdir / f"turn-2.{name}").exists(), name)
+
+    def test_cleanup_that_cannot_unlink_never_raises(self):
+        run = self.launch_record_only()
+        with mock.patch.object(Path, "unlink",
+                               side_effect=PermissionError("read-only")):
+            updates, error = CIO._start_turn(self.rundir(), run, 2, "next",
+                                             key_value="k")
+        self.assertIsNone(updates)
+        self.assertIn("sbatch refused", error)
+
+    def launch_record_only(self):
+        self.slurm_control(job_id="4242", squeue={"4242": "PENDING"})
+        run = self.launch("pi", PI_MODEL)
+        self.slurm_control(sbatch_fail=True)
+        return run
+
+    def test_refused_submit_removes_the_batch_script_this_call_wrote(self):
+        self.slurm_control(sbatch_fail=True)
+        run, error = CIO.launch("pi", PI_MODEL, None, str(self.worktree), "do it",
+                                self.state_dir, "att-1")
+        self.assertIsNone(run)
+        self.assertFalse((self.rundir() / "turn-1.sbatch.sh").exists())
+        self.assertFalse((self.rundir() / "turn-1.key").exists())
 
     def test_login_host_submits_with_export_none_and_never_spawns_locally(self):
         self.slurm_control(job_id="4242", squeue={"4242": "PENDING"})
@@ -1248,6 +1359,44 @@ class TestSwarmFrozenPlacement(SwarmCliFixture):
         self.assertEqual(dispatched, 0, report)
         self.assertEqual(self.slurm_calls(), [])
         self.assertEqual(self.calls(), [])
+        runs = Path(self.state_dir) / "cli-runs"
+        self.assertEqual(list(runs.iterdir()) if runs.exists() else [], [])
+
+
+class TestSwarmFrozenPlacementRefused(SwarmCliFixture):
+    slurm = False
+
+    def test_frozen_local_retry_refuses_when_this_host_refuses_placement(self):
+        plan = self.write_plan({"name": "p", "units": [
+            self.unit("c", backend="claude", model=CLAUDE_MODEL)]})
+        original = S.SSB._launch_cli_agent
+        seen = {}
+
+        def retried_where_placement_is_refused(*args, **kwargs):
+            # Frozen local at dispatch; this host now forces Slurm without
+            # the Slurm tools, so placement itself refuses.
+            os.environ["HANIG_SWARM_CLI_SLURM"] = "on"
+            seen["intent"] = dict(args[5])
+            seen["unit_dir"] = Path(args[1])
+            seen["result"] = original(*args, **kwargs)
+            return seen["result"]
+        with mock.patch.object(S.SSB, "_launch_cli_agent",
+                               retried_where_placement_is_refused), \
+                mock.patch.object(CIO, "_spawn_local",
+                                  side_effect=AssertionError("local spawn")):
+            state, report, dispatched, _h = self.advance(plan)
+        self.assertEqual(seen["intent"]["cli_placement"], "local")
+        job, error = seen["result"]
+        self.assertIsNone(job)
+        self.assertIn("HANIG_SWARM_CLI_SLURM=on but", error)
+        self.assertEqual(dispatched, 0, report)
+        self.assertEqual(self.calls(), [])
+        # Refused before any attempt context was written, and recorded as a
+        # placement refusal rather than a failed launch.
+        self.assertFalse((seen["unit_dir"] / "context.json").exists())
+        (meta,) = state["units"]["c"]["attempt_workspaces"].values()
+        self.assertEqual((meta["verification"], meta["verification_problem"]),
+                         ("refused", "claude placement refused"))
         runs = Path(self.state_dir) / "cli-runs"
         self.assertEqual(list(runs.iterdir()) if runs.exists() else [], [])
 

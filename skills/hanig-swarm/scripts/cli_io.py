@@ -681,10 +681,13 @@ def _start_turn(rdir, run, turn, prompt, *, resume_session_id=None,
     created = []
 
     def discard():
-        for path in reversed(created):
+        # The key goes first. Cleanup runs inside error paths, so it never
+        # raises: a file it cannot remove is left for the operator.
+        doomed = list(reversed(created))
+        for path in sorted(doomed, key=lambda path: path != names["key"]):
             try:
                 path.unlink()
-            except FileNotFoundError:
+            except OSError:
                 pass
     try:
         _write_private_text(names["prompt.txt"], str(prompt))
@@ -715,20 +718,14 @@ def _start_turn(rdir, run, turn, prompt, *, resume_session_id=None,
     record = {"turn": turn, "mode": run["mode"], "started_at": _now(),
               "resume_of": resume_session_id, "argv": argv}
     if run["mode"] == SLURM:
-        updates, error = _submit_slurm(rdir, run, turn, environ)
+        updates, error = _submit_slurm(rdir, run, turn, environ, created)
     else:
         updates, error = _spawn_local(rdir, run, turn)
     if error:
         # Nothing was started: remove the files this call created (the key
         # first) so a later resume can create turn N again with O_EXCL. The
-        # sbatch script is ours too: it is only written after this call's
-        # O_EXCL prompt succeeded.
-        doomed = sorted(created, key=lambda path: path != names["key"])
-        for path in doomed + [rdir / f"turn-{turn}.sbatch.sh"]:
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                pass
+        # sbatch script is removed only if _submit_slurm recorded creating it.
+        discard()
         return None, error
     record.update(updates)
     _append(rdir / TURNS_LOG, record)
@@ -761,7 +758,13 @@ def _spawn_local(rdir, run, turn):
             "slurm_job_id": None}, None
 
 
-def _submit_slurm(rdir, run, turn, environ=None):
+def _submit_slurm(rdir, run, turn, environ=None, created=None):
+    """Write turn N's batch script and submit it. Returns (updates, error).
+
+    The script is created with O_EXCL and appended to ``created`` the moment
+    it exists, so the caller's cleanup removes it only if this call made it;
+    a pre-existing script is refused and left as found.
+    """
     tools = slurm_tools(environ)
     missing = [name for name in TOOLS if not tools[name]]
     if missing:
@@ -769,7 +772,12 @@ def _submit_slurm(rdir, run, turn, environ=None):
                       f"refusing to run the CLI on this login host")
     script = rdir / f"turn-{turn}.sbatch.sh"
     try:
-        _write_atomic_text(script, batch_script(rdir, turn, run["worktree"], environ))
+        _write_exclusive_text(script, batch_script(rdir, turn, run["worktree"], environ),
+                              created)
+    except FileExistsError:
+        return None, (f"{script} already exists; another or an interrupted "
+                      f"launch created it. Nothing was submitted and it was "
+                      f"left in place; inspect it before retrying")
     except OSError as exc:
         return None, f"cannot write {script}: {exc}"
     env = _env(environ)
@@ -785,12 +793,13 @@ def _submit_slurm(rdir, run, turn, environ=None):
             "slurm_job_id": match.group(1)}, None
 
 
-def _write_atomic_text(path, text):
-    tmp = Path(path).with_name(f".{Path(path).name}.tmp")
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o700)
+def _write_exclusive_text(path, text, created=None):
+    """Create ``path`` (0700) with O_EXCL; record it in ``created`` once it exists."""
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
+    if created is not None:
+        created.append(Path(path))
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(text)
-    os.replace(str(tmp), str(path))
 
 
 def launch(adapter, model, thinking, worktree, prompt, state_dir, attempt_id, *,
@@ -1026,25 +1035,40 @@ class _RedactingSink:
     The last ``len(secret) - 1`` bytes are held back between writes, so an
     occurrence split across any chunk boundary is still replaced: an
     occurrence starting before the held tail lies wholly inside the buffer.
+
+    ``write`` and ``close`` share a lock, and ``close`` is idempotent: the
+    turn wrapper may flush a sink whose pump is still blocked on a pipe a
+    descendant holds open, and that pump's later ``write``/``close`` must
+    neither interleave with the flush nor write after it (late bytes are
+    dropped, never unredacted).
     """
 
     def __init__(self, out, secret):
         self._out, self._secret, self._buf = out, secret, b""
         self._keep = len(secret) - 1
+        self._lock = threading.Lock()
+        self._closed = False
 
     def write(self, data):
-        self._buf = (self._buf + data).replace(self._secret, REDACTED)
-        cut = len(self._buf) - self._keep
-        if cut > 0:
-            self._out.write(self._buf[:cut])
-            self._buf = self._buf[cut:]
+        with self._lock:
+            if self._closed:
+                return
+            self._buf = (self._buf + data).replace(self._secret, REDACTED)
+            cut = len(self._buf) - self._keep
+            if cut > 0:
+                self._out.write(self._buf[:cut])
+                self._buf = self._buf[cut:]
 
     def close(self):
-        try:
-            self._out.write(self._buf.replace(self._secret, REDACTED))
-            self._buf = b""
-        finally:
-            self._out.close()
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                self._out.write(self._buf.replace(self._secret, REDACTED))
+                self._buf = b""
+            finally:
+                self._out.close()
 
 
 def _pump(read_fd, sink):
@@ -1075,6 +1099,7 @@ class _TurnLogs:
 
     def __init__(self, stdout_path, stderr_path, secret=None):
         self._files, self._threads, self._write_fds = [], [], []
+        self._sinks = []
         try:
             for path in (stdout_path, stderr_path):
                 self._files.append(open(path, "wb"))
@@ -1084,9 +1109,10 @@ class _TurnLogs:
                 for handle in self._files:
                     read_fd, write_fd = os.pipe()
                     self._write_fds.append(write_fd)
+                    sink = _RedactingSink(handle, secret.encode("utf-8"))
+                    self._sinks.append(sink)
                     thread = threading.Thread(
-                        target=_pump, daemon=True,
-                        args=(read_fd, _RedactingSink(handle, secret.encode("utf-8"))))
+                        target=_pump, daemon=True, args=(read_fd, sink))
                     thread.start()
                     self._threads.append(thread)
                     self.targets.append(write_fd)
@@ -1100,16 +1126,24 @@ class _TurnLogs:
             os.close(fd)
         self._write_fds = []
 
-    def close(self, wait=PUMP_DRAIN_SECONDS):
+    def close(self, wait=None):
         self.spawned()
         if not self._threads:
             for handle in self._files:
                 handle.close()
             return
-        # A pump still blocked after ``wait`` (a descendant kept the pipe
-        # open) is a daemon: its later bytes are dropped, never unredacted.
+        wait = PUMP_DRAIN_SECONDS if wait is None else wait
         for thread in self._threads:
             thread.join(wait)
+        # A pump still blocked after ``wait`` (a descendant kept the pipe
+        # open) stays a daemon, but its sink is flushed and closed here, so
+        # the held-back tail reaches the log before the exit receipt is
+        # written. Bytes the pump reads later are dropped, never unredacted.
+        for sink in self._sinks:
+            try:
+                sink.close()
+            except OSError:
+                pass
 
 
 def run_turn(rdir, turn):
