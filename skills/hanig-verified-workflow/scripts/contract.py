@@ -918,6 +918,170 @@ def sacct_state(job_id, declared_at=None, bound_at=None,
     return chosen[0], chosen[1], chosen[2], None
 
 
+def slurm_job_matches(requested, actual, array_job=None, array_task=None):
+    """Compare scheduler identifiers, including an explicitly bound array task.
+
+    Twin of hanig-swarm unit.py's function of the same name (PR #181)."""
+    if actual == requested:
+        return True
+    return (all(isinstance(value, str) and re.fullmatch(r"[0-9]+", value)
+                for value in (actual, array_job, array_task))
+            and requested == array_job + "_" + array_task)
+
+
+def scontrol_fields(output, multiline=False):
+    """Extract evidence, refining lossy inline text through native line groups.
+
+    Twin of hanig-swarm unit.py's parser (PR #181). Exactly one JobId header
+    and exactly one each of JobState, ExitCode, SubmitTime and EndTime, or
+    None. One-line output (`-o`) cannot tell a real field from the same text
+    inside a free-form field such as Comment; the multi-line rendering puts
+    each field on its native line, so a second key there is refused rather
+    than guessed at.
+    """
+    lines = output.split("\n")
+    headers = [line for line in lines if line.lstrip().startswith("JobId=")]
+    if len(headers) != 1:
+        return None
+    header = re.split(r"\sJobName=", headers[0], maxsplit=1)
+    if len(header) != 2:
+        return None
+    identity = re.findall(r"(?:^|\s)(JobId|ArrayJobId|ArrayTaskId)=(\S*)",
+                          header[0])
+    fields = dict(identity)
+    if (len(fields) != len(identity)
+            or not re.fullmatch(r"[0-9]+", fields.get("JobId", ""))):
+        return None
+    pattern = r"(?:^|\s)(JobState|ExitCode|SubmitTime|EndTime)=(\S*)"
+    groups = {"JobState": "JobState", "Requeue": "ExitCode",
+              "SubmitTime": "SubmitTime", "StartTime": "EndTime"}
+    if multiline:
+        pairs, seen = [], set()
+        for line in lines:
+            heading = line.lstrip().split("=", 1)[0]
+            if heading not in groups:
+                continue
+            if heading in seen:
+                return None
+            seen.add(heading)
+            found = re.findall(pattern, line)
+            if len(found) != 1 or found[0][0] != groups[heading]:
+                return None
+            pairs.extend(found)
+    else:
+        pairs = re.findall(pattern, output)
+    if (len(pairs) != 4
+            or {name for name, _value in pairs} != set(groups.values())):
+        return None
+    fields.update(pairs)
+    return fields
+
+
+SCONTROL_NO_JOBS = ("", "No jobs in the system", "No jobs in the system.")
+
+
+def scontrol_state(job_id, declared_at=None, bound_at=None,
+                   newest_evidence_mtime=None, note_out=None):
+    """Terminal state of OUR job from the controller, for an accounting outage.
+
+    Returns (state, exit_code, submit, why_not) with sacct_state's meaning: an
+    all-None state is absent evidence, never failure. The caller consults this
+    ONLY when sacct_state returned no evidence at all (None, None, None, None);
+    a healthy accounting answer, including one that discarded every row as
+    not ours, is never replaced by the controller's.
+
+    Ownership is sacct_row_is_ours on SubmitTime, the same interval with the
+    same slack, so a recycled id outside the declared/bound window is refused
+    exactly as its accounting row would be.
+
+    What a retained controller record ESTABLISHES, equally with sacct -X: the
+    job's current JobState, and an ExitCode in the same "<exit>:<signal>"
+    rendering exit_code_is_clean judges (the batch script's code, as in the
+    allocation row; DerivedExitCode is ignored by both paths). An active state
+    (PENDING, RUNNING, COMPLETING, ...) read here because the job was requeued
+    or squeue raced with it is returned as-is and classifies as RUNNING, never
+    as terminal.
+
+    What it does NOT establish:
+      - History. The controller holds only the current incarnation. A requeue
+        resets SubmitTime past bound_at, so a requeued job is refused here
+        (absent evidence) rather than read; sacct remains the only source
+        that can see per-attempt rows.
+      - Retention. The controller forgets a finished job after MinJobAge.
+        "Invalid job id specified", any other nonzero exit (controller
+        unreachable), and an empty listing are all absent evidence: none of
+        them is a failure verdict, and none proves the job never ran. This
+        holds for the grouped-line refinement query too, since the job can be
+        forgotten between the two calls.
+      - Arrays by master id. `scontrol show job <array id>` lists every task;
+        more than one record is refused rather than reduced to one.
+    Malformed output, a different JobId, an unparseable SubmitTime or an
+    omitted JobState fail CLOSED with a reason, never toward a terminal match.
+    """
+    empty = (None, None, None, None)
+    if note_out is None:
+        note_out = []
+    if not shutil.which("scontrol"):
+        return empty
+    rc, out, err = run(["scontrol", "show", "job", "-o", str(job_id)],
+                       timeout=20)
+    if rc != 0:
+        if "Invalid job id specified" in (err or out):
+            note_out.append(f"scontrol no longer retains job {job_id} "
+                            f"(past MinJobAge); no controller evidence")
+        else:
+            note_out.append(f"scontrol query for job {job_id} failed; "
+                            f"controller evidence unavailable")
+        return empty
+    if out.strip() in SCONTROL_NO_JOBS:
+        return empty
+    fields = scontrol_fields(out)
+    if fields is None:
+        rc, out, err = run(["scontrol", "show", "job", str(job_id)],
+                           timeout=20)
+        # The controller can forget the job (MinJobAge) or become unreachable
+        # between the two queries. That is the same absent evidence as on the
+        # first query, not a parse refusal.
+        if rc != 0:
+            if "Invalid job id specified" in (err or out):
+                note_out.append(f"scontrol no longer retains job {job_id} "
+                                f"(past MinJobAge); no controller evidence")
+            else:
+                note_out.append(f"scontrol grouped-line query for job "
+                                f"{job_id} failed; controller evidence "
+                                f"unavailable")
+            return empty
+        if out.strip() in SCONTROL_NO_JOBS:
+            return empty
+        fields = scontrol_fields(out, multiline=True)
+        if fields is None:
+            return (None, None, None,
+                    "the controller record could not be parsed unambiguously "
+                    "(one-line and grouped-line output both refused)")
+        note_out.append("scontrol: refined ambiguous one-line output using "
+                        "one complete grouped-line snapshot")
+    if not slurm_job_matches(str(job_id), fields.get("JobId"),
+                             fields.get("ArrayJobId"),
+                             fields.get("ArrayTaskId")):
+        return None, None, None, "the controller returned a different job id"
+    submit = fields.get("SubmitTime")
+    ours, why = sacct_row_is_ours(parse_iso_ts(submit), declared_at, bound_at)
+    if not ours:
+        return None, None, submit, why
+    raw_state = (fields.get("JobState") or "").strip()
+    state = raw_state.split()[0] if raw_state else None
+    if not state:
+        return None, None, submit, "the controller record omitted JobState"
+    if state in SLURM_OK and not terminal_record_postdates(
+            parse_iso_ts(fields.get("EndTime")), newest_evidence_mtime):
+        # Reported, not enforced, for the reasons given in sacct_state.
+        note_out.append("the controller record for this job ended before the "
+                        "declared output(s) it certifies; if this directory "
+                        "was reused, that job is not the one which produced "
+                        "them")
+    return state, fields.get("ExitCode"), submit, None
+
+
 def squeue_active(job_id, declared_at=None, bound_at=None):
     """Whether OUR job is still in the queue.
 
@@ -1505,19 +1669,43 @@ def cmd_check(args):
             # sacct_state applies ownership to EVERY row and returns the last
             # OWNED one, so there is nothing left to null out here: an
             # unattributable row never becomes state in the first place.
-            sstate, scode, ssubmit, why_not = sacct_state(
-                job_id, declared_at,
-                parse_iso_ts(binding.get("submitted_at")),
-                newest_output_mtime, ordering_notes)
-            evidence["scheduler"] = {"state": sstate, "exit_code": scode,
-                                     "submit": ssubmit}
+            bound_at = parse_iso_ts(binding.get("submitted_at"))
+            sched_ev = sacct_state(job_id, declared_at, bound_at,
+                                   newest_output_mtime, ordering_notes)
+            source = "sacct"
+            # The controller is a FALLBACK for an accounting outage, consulted
+            # only when sacct returned nothing at all. Any sacct answer,
+            # including "every row discarded as not ours", stands.
+            if sched_ev == (None, None, None, None):
+                sched_ev = scontrol_state(job_id, declared_at, bound_at,
+                                          newest_output_mtime, ordering_notes)
+                source = "scontrol"
+            sstate, scode, ssubmit, why_not = sched_ev
+            evidence["scheduler"] = {
+                "state": sstate, "exit_code": scode, "submit": ssubmit,
+                "source": (source if sched_ev != (None, None, None, None)
+                           else None)}
             if sstate is None and why_not:
-                reasons.append(f"sacct row(s) for job {job_id} discarded: "
+                what = ("sacct row(s)" if source == "sacct"
+                        else "scontrol record")
+                reasons.append(f"{what} for job {job_id} discarded: "
                                f"{why_not}")
                 evidence["scheduler"]["stale"] = True
-            if sstate is None:
+            if sstate is None and source == "sacct":
+                reasons.append("no usable Slurm accounting row, and the "
+                               "controller is consulted only when sacct "
+                               "returns nothing; relying on artifacts alone")
+            elif sstate is None:
                 reasons.append("no Slurm accounting data (sacct unavailable "
-                               "or job too old); relying on artifacts alone")
+                               "or job too old) and no usable controller "
+                               "record (scontrol unavailable, job past "
+                               "MinJobAge, or record refused); relying on "
+                               "artifacts alone")
+            elif source == "scontrol":
+                reasons.append(f"job {job_id} state read from the controller "
+                               f"(scontrol): accounting returned nothing")
+            if sstate is None:
+                pass
             elif sstate in SLURM_PREEMPTED:
                 state = "PREEMPTED"
                 reasons.append(f"job {job_id} state {sstate}")
