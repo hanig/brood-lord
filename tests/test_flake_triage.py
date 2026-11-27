@@ -13,7 +13,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'skills/hanig-orchestrate/scripts/flake_triage.py'
+SCRIPT = Path(__file__).resolve().parents[1] / 'skills/brood-orchestrate/scripts/flake_triage.py'
 sys.path.insert(0, str(SCRIPT.parent))
 import flake_triage as F
 ID = 'tests.test_x.C.test_x'

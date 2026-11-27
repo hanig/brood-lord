@@ -12,7 +12,7 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills/hanig-review-gate/scripts"
+SCRIPTS = ROOT / "skills/brood-review-gate/scripts"
 sys.path.insert(0, str(SCRIPTS))
 import committee as C
 import model_family as MF

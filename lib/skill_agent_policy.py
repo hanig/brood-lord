@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Codex invocation policy for explicit-only authored skills.
 
-An authored ``hanig-*`` skill whose ``SKILL.md`` frontmatter carries the
+An authored ``brood-*`` skill whose ``SKILL.md`` frontmatter carries the
 canonical line ``disable-model-invocation: true`` must ship a byte-identical
 ``agents/openai.yaml`` that turns off implicit invocation, and no other
 authored skill may ship that file.  ``--write`` generates the file; ``--check``
 fails closed on every drift class.
 
-Only directories whose names start with ``hanig-`` are inspected.  Vendored
+Only directories whose names start with ``brood-`` are inspected.  Vendored
 bundles are never opened: the skills root is listed by name and every other
 entry is skipped before any stat or read.  Frontmatter parsing is line-level
 over top-level scalar keys, not a YAML parser.
@@ -22,17 +22,17 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 # The single authoritative list of authored skills that must not be invoked
-# implicitly.  Unit h1-hillclimb-skill appends "hanig-hillclimb".
+# implicitly.  Unit h1-hillclimb-skill appends "brood-hillclimb".
 EXPLICIT_ONLY_SKILLS = (
-    "hanig-debrief",
-    "hanig-hillclimb",
-    "hanig-orchestrate",
-    "hanig-portable-handoff",
-    "hanig-project",
-    "hanig-swarm",
+    "brood-debrief",
+    "brood-hillclimb",
+    "brood-orchestrate",
+    "brood-portable-handoff",
+    "brood-project",
+    "brood-swarm",
 )
 
-AUTHORED_PREFIX = "hanig-"
+AUTHORED_PREFIX = "brood-"
 FLAG_KEY = "disable-model-invocation"
 # The exact text after the colon that counts as canonical true.
 CANONICAL_FLAG_VALUE = " true"
@@ -86,7 +86,7 @@ def parse_flag(text):
 
 def authored_skill_names(skills_root):
     # type: (Path) -> List[str]
-    """Names of ``hanig-*`` entries, filtered by name before any stat."""
+    """Names of ``brood-*`` entries, filtered by name before any stat."""
     return sorted(name for name in os.listdir(str(skills_root))
                   if name.startswith(AUTHORED_PREFIX))
 

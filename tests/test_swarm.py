@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SCRIPTS = REPO / "skills" / "hanig-swarm" / "scripts"
+SCRIPTS = REPO / "skills" / "brood-swarm" / "scripts"
 # The scripts import one another by bare name (`unit` does `import paseo_io`),
 # so the directory has to be importable before any of them is loaded below.
 # Every other module in tests/ opens with exactly this line. This one did not,

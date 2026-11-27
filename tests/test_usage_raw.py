@@ -1,4 +1,4 @@
-"""Raw archive contract; randomized oracle uses seed 601106, 120 cases."""; import hashlib; import json; import os; from pathlib import Path; import random; import stat; import subprocess; import sys; import tempfile; import time; import unittest; from unittest import mock; sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'skills/hanig-swarm/scripts')); import usage_raw as U
+"""Raw archive contract; randomized oracle uses seed 601106, 120 cases."""; import hashlib; import json; import os; from pathlib import Path; import random; import stat; import subprocess; import sys; import tempfile; import time; import unittest; from unittest import mock; sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'skills/brood-swarm/scripts')); import usage_raw as U
 
 def event(n, **overrides):
  counters = {key: n for key in U.COUNTERS}; counters.update(overrides); return (json.dumps({'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {'total_token_usage': counters}}}) + '\n').encode()

@@ -72,7 +72,7 @@ path; no native-agent conclusion is inferred from that automated evidence.
 
 The orchestrator checked the ARC-281 live-run artifacts on the operator host.
 Each agent received one short authenticated prompt in a scratch Git project,
-discovered the installed `hanig-portable-handoff` skill itself, and ran its
+discovered the installed `brood-portable-handoff` skill itself, and ran its
 script's `capture` followed by `resume`, yielding `HANDOFF_CLEAN`. An independent
 `resume` of each produced handoff exited 0. This is retained evidence from
 **ARC-281 live run**, not a new invocation performed by this documentation update.

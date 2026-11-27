@@ -14,7 +14,7 @@ from unittest import mock
 from tests.watchdog_guard import guarded_main
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills/hanig-review-gate/scripts"))
+sys.path.insert(0, str(ROOT / "skills/brood-review-gate/scripts"))
 import committee
 
 

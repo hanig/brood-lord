@@ -177,9 +177,9 @@ on one host.
 
 ## Consumers and docs
 
-`hanig-orchestrate`'s `tracker.dag` declaration says ad-hoc issues are filed
+`brood-orchestrate`'s `tracker.dag` declaration says ad-hoc issues are filed
 and edited only through `linear_sync.py issue`, with relations declared at
-filing, and that prose dependencies are not a substitute. `hanig-project`'s
+filing, and that prose dependencies are not a substitute. `brood-project`'s
 tracker references and README describe the command. CLAUDE.md's
 network-boundary paragraph names it.
 

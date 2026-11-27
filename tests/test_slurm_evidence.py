@@ -18,7 +18,7 @@ from scheduler_fixture import isolated_module_state_home as setUpModule  # noqa:
 from scheduler_fixture import cleanup_module_path as tearDownModule  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills" / "hanig-swarm" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "brood-swarm" / "scripts"))
 import swarm as S
 import unit as U
 
@@ -324,7 +324,7 @@ class SlurmEvidence(unittest.TestCase):
                 with self.assertRaisesRegex(S.PlanError, "reserved"):
                     S.validate_plan({"name": "p", "units": [plan_unit]})
                 allocated = subprocess.run(
-                    [sys.executable, str(ROOT / "skills/hanig-swarm/scripts/unit.py"),
+                    [sys.executable, str(ROOT / "skills/brood-swarm/scripts/unit.py"),
                      "allocate", "--root", str(self.root / "runs"), "--task", "unit",
                      "--kind", "slurm", "--output", output],
                     capture_output=True, text=True, timeout=10)
@@ -530,7 +530,7 @@ class SlurmEvidence(unittest.TestCase):
 
     def test_allocation_checks_parent_alias_before_mkdir(self):
         result = subprocess.run(
-            [sys.executable, str(ROOT / "skills/hanig-swarm/scripts/unit.py"),
+            [sys.executable, str(ROOT / "skills/brood-swarm/scripts/unit.py"),
              "allocate", "--root", str(self.root / "runs"), "--task", "unit",
              "--kind", "slurm", "--output", "foo/../" + U.SLURM_EXIT_RECORD],
             capture_output=True, text=True, timeout=10)
@@ -640,7 +640,7 @@ class SlurmEvidence(unittest.TestCase):
         plan_path = self.root / "plan.json"
         plan_path.write_text(json.dumps(plan))
         result = subprocess.run(
-            [sys.executable, str(ROOT / "skills/hanig-swarm/scripts/swarm.py"),
+            [sys.executable, str(ROOT / "skills/brood-swarm/scripts/swarm.py"),
              "advance", str(plan_path), "--state-dir", str(state_dir),
              "--root", str(self.root / "runs"), "--max-new-dispatches", str(max_new)],
             cwd=str(self.root), capture_output=True, text=True, timeout=20)

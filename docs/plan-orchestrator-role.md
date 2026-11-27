@@ -13,8 +13,8 @@ how this project was actually run between 2026-09-16 and 2026-09-20.
 
 ## Why this exists
 
-The repository documents four roles well: the coordinator (`hanig-swarm`), the
-project front door (`hanig-project`), the review gate and its protocol, and the
+The repository documents four roles well: the coordinator (`brood-swarm`), the
+project front door (`brood-project`), the review gate and its protocol, and the
 contract for editing this codebase (`CLAUDE.md`).
 
 It documents nothing about the ORCHESTRATOR: the agent that drives dispatch,
@@ -177,7 +177,7 @@ A future reader should be able to reconstruct the decision without the conversat
 
 ## LOCATION
 
-Create a sixth authored skill, **`hanig-orchestrate`**, rather than burying the role in the front door or coordinator documentation.
+Create a sixth authored skill, **`brood-orchestrate`**, rather than burying the role in the front door or coordinator documentation.
 
 Divide ownership:
 
@@ -257,7 +257,7 @@ Ranked below. Locations for new files are proposed, not assertions about unseen 
 | **3 / P0** | **Require sound candidate integration; support repair and rejudgment** | Specify and enforce candidate-merge checks, shared-guard validation and the supported amend/rejudge or fresh-attempt path in judging components and the session merge adapter. | Prevent another known-bad test or compatibility break from poisoning main. | Reject a known-failing candidate despite a follow-up promise; invalidate integration evidence when the target moves; show the repaired head requires fresh judgment. |
 | **4 / P1** | **ARC-678: Drive READY_FOR_PR through merge, closure and restart** | Add the session-side durable driver, action reconciliation, wakeups and evidence-derived status/report path. No network imports enter the coordinator. | Removes human polling as the execution engine. | With fake connectors and one initial authorization, finish a DAG without status prompts; crash after remote merge but before recording, restart and reconcile without duplicate effects. |
 | **5 / P1** | **ARC-680: Bind dispatch to observed remote and executable provenance; qualify fan-out** | External fetch/observation, offline consistency refusal, actual installed-code digests and an end-to-end orchestration canary keyed to relevant runtime/protocol changes. | Checkout freshness alone misses stale installed skills. | Fresh checkout plus stale executable refuses fan-out. A canary must reach merge recording and dependency advancement; tracker outage alone must not fail it. |
-| **6 / P1** | **ARC-681: Publish and obligatorily load the orchestrator contract** | Add `hanig-orchestrate`, bootstrap/handoff references, installer dependencies, takeover checklist and canonical documentation ownership. Specify durable approval inheritance explicitly. | Fresh or different models otherwise improvise the role. | A fresh-session harness receives the required policy through both start and resume paths; missing policy or authorization produces a specific refusal. |
+| **6 / P1** | **ARC-681: Publish and obligatorily load the orchestrator contract** | Add `brood-orchestrate`, bootstrap/handoff references, installer dependencies, takeover checklist and canonical documentation ownership. Specify durable approval inheritance explicitly. | Fresh or different models otherwise improvise the role. | A fresh-session harness receives the required policy through both start and resume paths; missing policy or authorization produces a specific refusal. |
 | **7 / P1** | **Test orchestrator transitions, not prose compliance** | Add adversarial transition/restart fixtures, native-session scenarios and enforcement coverage in `tests/` and `docs/audit-protocol-enforcement.md`. | New instructions can drift immediately unless refusals are exercised. | Mutation-disable each new guard and require a failing test. Run seeded semantic cases against fresh models; record those results as behavioral evidence, not universal guarantees. |
 
 Implement all authored additions with the stated standard-library and Python compatibility constraints. Do not make policy enablement wait for polished documentation, but do require owner approval before enabling exceptions.

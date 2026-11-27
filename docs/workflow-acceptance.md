@@ -2,13 +2,13 @@
 Status: live
 Date: 2026-10-11
 Title: Installed workflow acceptance
-Purpose: Run `python3 -m unittest tests.test_installed_pipeline -v` for the hermetic workflow seam: the repository installer copies `hanig-project` and its declared `hanig-swarm` dependency into a disposable store under a temporary HOME. The staging source is removed before validate → run → advance → report executes from a separate project directory through `HANIG_SWARM_DIR` and `HANIG_PROJECT_DIR`. If the ambient temporary parent is inside the checkout, the fixture chooses an external writable system temporary parent; a subprocess regression runs the honest control with a checkout-local `TMPDIR` to exercise this placement.
+Purpose: Run `python3 -m unittest tests.test_installed_pipeline -v` for the hermetic workflow seam: the repository installer copies `brood-project` and its declared `brood-swarm` dependency into a disposable store under a temporary HOME. The staging source is removed before validate → run → advance → report executes from a separate project directory through `HANIG_SWARM_DIR` and `HANIG_PROJECT_DIR`. If the ambient temporary parent is inside the checkout, the fixture chooses an external writable system temporary parent; a subprocess regression runs the honest control with a checkout-local `TMPDIR` to exercise this placement.
 
 # Installed workflow acceptance
 
 Run `python3 -m unittest tests.test_installed_pipeline -v` for the hermetic
-workflow seam: the repository installer copies `hanig-project` and its declared
-`hanig-swarm` dependency into a disposable store under a temporary HOME. The
+workflow seam: the repository installer copies `brood-project` and its declared
+`brood-swarm` dependency into a disposable store under a temporary HOME. The
 staging source is removed before validate → run → advance → report executes
 from a separate project directory through `HANIG_SWARM_DIR` and
 `HANIG_PROJECT_DIR`.

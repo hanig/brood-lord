@@ -288,8 +288,8 @@ class LifecycleTest(unittest.TestCase):
         self.assertFalse(target.destination.exists())
 
     def test_swarm_registry_generator_and_references_ship_in_the_skill(self):
-        source = ROOT / "skills" / "hanig-swarm"
-        target = self.target("hanig-swarm", source=source)
+        source = ROOT / "skills" / "brood-swarm"
+        target = self.target("brood-swarm", source=source)
 
         self.assertEqual(lifecycle.install([target])[0].status, "installed")
         for relative in (

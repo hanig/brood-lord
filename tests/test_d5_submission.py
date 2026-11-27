@@ -16,7 +16,7 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills/hanig-orchestrate/scripts"))
+sys.path.insert(0, str(ROOT / "skills/brood-orchestrate/scripts"))
 import d5_submission as submission
 import d5_admission as admission
 import d5_authority as authority

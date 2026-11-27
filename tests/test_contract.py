@@ -23,7 +23,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SCRIPT = REPO / "skills" / "hanig-verified-workflow" / "scripts" / "contract.py"
+SCRIPT = REPO / "skills" / "brood-verified-workflow" / "scripts" / "contract.py"
 
 PASS, RUNNING, FAILED, TECH, VIOLATED, PREEMPTED, INCOMPLETE = range(7)
 
@@ -1954,7 +1954,7 @@ class TestAbsentSubmitNamesItsRemedy(unittest.TestCase):
         self.assertIn("no Submit time is refused", text)
 
 class TestReceiptNamesItsContractInstance(unittest.TestCase):
-    """kimi, reviewing the PLAN for hanig-portable-handoff: neither verifier's
+    """kimi, reviewing the PLAN for brood-portable-handoff: neither verifier's
     receipt carried a contract_id, so a receipt left by `init --force` is
     indistinguishable from a current one and anything reading receipts
     attributes an old pass to a contract that was never verified. The planned
@@ -2077,7 +2077,7 @@ class TestProductionEvidence(Base):
 class TestScontrolFallbackDuringAccountingOutage(unittest.TestCase):
     """Issue #183: contract.py had no controller evidence path, so while
     accounting was unreachable every contract over a finished job sat at
-    absent evidence. PR #181 gave hanig-swarm that path and its twin here was
+    absent evidence. PR #181 gave brood-swarm that path and its twin here was
     not changed.
 
     The controller is a FALLBACK: consulted only when sacct returns nothing,

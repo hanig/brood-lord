@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills" / "hanig-swarm" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "brood-swarm" / "scripts"))
 import swarm_preflight as SP
 import swarm as S
 from tests.test_attempt_worktrees import ENV, FakePaseo, git, repo_at, paseo_resolvable
@@ -487,8 +487,10 @@ class UnseededCompatibilityTests(unittest.TestCase):
                          "978eec05d93163a32e80c5447b0a4277fbb12c25363ce1e3644076e597075769")
         # Prompt golden re-captured from this test for the orchestrator-owned
         # review gate protocol (2026-11-26): workers hand off, never self-review.
+        # Re-captured 2026-11-27 for the hanig-* -> brood-* skill rename, the
+        # only change: the gate is now named brood-review-gate in the prompt.
         self.assertEqual(hashlib.sha256(S._dispatch_prompt(unit, intent).encode()).hexdigest(),
-                         "6eb525c172b2e1e4a2ff1614bd7f119e383e5edbe299a1b3f1f78591ed7a355f")
+                         "82858f2be9a0777d70c21ff80de041db15122258ec2c97d502e1b939eac75a59")
         self.assertEqual(S.plan_digest({"name": "seed-compat", "units": [unit]}),
                          "55ce911fb07620734d54da3b6ef9cde709df04d099bc7d7ffd66aaf2d24db93a")
 

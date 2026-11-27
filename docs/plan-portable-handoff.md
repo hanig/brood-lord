@@ -1,10 +1,10 @@
 <!-- docs-truth:status -->
 Status: historical
 Date: 2026-10-11
-Title: Plan v4 — hanig-portable-handoff
+Title: Plan v4 — brood-portable-handoff
 Purpose: Capture and restore durable research state across machines, clusters and sessions. Two commands and a rule.
 
-# Plan v4 — hanig-portable-handoff
+# Plan v4 — brood-portable-handoff
 
 Capture and restore durable research state across machines, clusters and
 sessions. Two commands and a rule.
@@ -33,7 +33,7 @@ session with those notes present.
 ## What it does NOT do
 
 - **No data movement.** A handoff is pointers plus identities.
-- **No content-identity staleness.** Retired in `hanig-verified-workflow`: a
+- **No content-identity staleness.** Retired in `brood-verified-workflow`: a
   deterministic pipeline regenerating identical bytes is the SUCCESS case. A
   handoff may report that bytes match; it may never conclude work was skipped.
 - **No new environment capture.** See criterion 5, which v1 stated wrongly.
@@ -173,8 +173,8 @@ timestamp is an inference.
 
 ## One decision the reviews did not surface
 
-`install.sh --only NAME` installs a single skill, so `hanig-portable-handoff`
-must run without `hanig-verified-workflow` present. It therefore cannot import
+`install.sh --only NAME` installs a single skill, so `brood-portable-handoff`
+must run without `brood-verified-workflow` present. It therefore cannot import
 `repo_state()` and the other small helpers from its sibling, and the plan's
 "reuses rather than a second implementation" is not achievable as written.
 

@@ -22,8 +22,8 @@ from scheduler_fixture import closed_bin  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SKILLS = REPO / "skills"
-AUTHORED = ("hanig-wandb-logging", "hanig-debrief", "hanig-hillclimb", "hanig-orchestrate", "hanig-portable-handoff", "hanig-project",
-            "hanig-review-gate", "hanig-swarm", "hanig-verified-workflow")
+AUTHORED = ("brood-wandb-logging", "brood-debrief", "brood-hillclimb", "brood-orchestrate", "brood-portable-handoff", "brood-project",
+            "brood-review-gate", "brood-swarm", "brood-verified-workflow")
 
 
 # A bare `docs/...` path in installed skill prose resolves against nothing: the
@@ -37,9 +37,9 @@ REPO_BLOB = re.compile(r"https://github\.com/hanig/brood-lord/blob/main/([^\s)>\
 # Sentence punctuation that ends prose, not a repository path.
 URL_TRAILING_PUNCTUATION = ".,;:!?"
 OPERATED_CHECKOUT_PATHS = {
-    "hanig-orchestrate": {"docs/orchestrator-mandate.md", "docs/d5-cutover-runbook.md",
+    "brood-orchestrate": {"docs/orchestrator-mandate.md", "docs/d5-cutover-runbook.md",
                           "docs/deferred-edge-cases.md", "docs/*.md", "docs/README.md"},
-    "hanig-review-gate": {"docs/orchestrator-mandate.md", "docs/**"},
+    "brood-review-gate": {"docs/orchestrator-mandate.md", "docs/**"},
 }
 
 
@@ -116,34 +116,34 @@ class InstalledSnapshot(unittest.TestCase):
             text = (SKILLS / name / "SKILL.md").read_text()
             self.assertNotIn("~/.claude/skills", text, name)
             self.assertNotIn("python3 scripts/", text, name)
-        project = (SKILLS / "hanig-project" / "SKILL.md").read_text()
-        self.assertNotIn("../hanig-swarm/scripts", project)
+        project = (SKILLS / "brood-project" / "SKILL.md").read_text()
+        self.assertNotIn("../brood-swarm/scripts", project)
 
     def test_debrief_resolver_uses_loaded_copy_from_another_project(self):
-        loaded = self.prefix / "hanig-debrief"
+        loaded = self.prefix / "brood-debrief"
         self.env["HANIG_DEBRIEF_DIR"] = str(loaded)
         result = subprocess.run(
             ["sh", "-c", 'exec "$1" "$HANIG_DEBRIEF_DIR/scripts/skill_paths.py" '
-             'self "$HANIG_DEBRIEF_DIR" hanig-debrief', "resolver", sys.executable],
+             'self "$HANIG_DEBRIEF_DIR" brood-debrief', "resolver", sys.executable],
             cwd=str(self.project), env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), str(loaded.resolve()))
 
     def test_contract_handoff_survey_and_validation_use_copy_not_checkout(self):
-        contract = self.invoke("hanig-verified-workflow/scripts/contract.py", "init",
+        contract = self.invoke("brood-verified-workflow/scripts/contract.py", "init",
                                "run", "--command", "true", "--output", "out.txt")
         self.assertEqual(contract.returncode, 0, contract.stderr)
         self.assertTrue((self.project / "run" / "contract.json").is_file())
-        self.assertFalse((self.prefix / "hanig-verified-workflow" / "run").exists())
+        self.assertFalse((self.prefix / "brood-verified-workflow" / "run").exists())
 
         run_dir = self.project / "handoff run"
         run_dir.mkdir()
-        handoff = self.invoke("hanig-portable-handoff/scripts/handoff.py", "capture",
+        handoff = self.invoke("brood-portable-handoff/scripts/handoff.py", "capture",
                               str(run_dir), "--out", "handoff.json")
         self.assertEqual(handoff.returncode, 0, handoff.stderr)
         self.assertTrue((self.project / "handoff.json").is_file())
 
-        survey = self.invoke("hanig-project/scripts/survey.py", "--repo", ".",
+        survey = self.invoke("brood-project/scripts/survey.py", "--repo", ".",
                              "--out", ".swarm/survey.json")
         self.assertEqual(survey.returncode, 0, survey.stderr)
         self.assertTrue((self.project / ".swarm" / "survey.json").is_file())
@@ -151,15 +151,15 @@ class InstalledSnapshot(unittest.TestCase):
         plan = {"name": "portable", "units": [{"id": "check", "kind": "slurm",
                 "runtime": "none", "command": "true", "outputs": ["out.txt"]}]}
         (self.project / "plan.json").write_text(json.dumps(plan))
-        valid = self.invoke("hanig-swarm/scripts/swarm.py", "validate", "plan.json")
+        valid = self.invoke("brood-swarm/scripts/swarm.py", "validate", "plan.json")
         self.assertEqual(valid.returncode, 0, valid.stderr + valid.stdout)
 
     def test_review_configuration_and_project_sibling_are_portable(self):
-        review = self.invoke("hanig-review-gate/scripts/review.py", "--list", "--no-probe")
+        review = self.invoke("brood-review-gate/scripts/review.py", "--list", "--no-probe")
         # Loading a valid copied config is distinct from having provider keys.
         # An empty HOME/environment honestly reports REVIEW_UNAVAILABLE (2).
         self.assertEqual(review.returncode, 2, review.stderr + review.stdout)
-        config = json.loads((self.prefix / "hanig-review-gate" / "reviewers.json").read_text())
+        config = json.loads((self.prefix / "brood-review-gate" / "reviewers.json").read_text())
         expected = [reviewer for reviewer in config["reviewers"]
                     if config["default_profile"] in reviewer.get("profiles", [])]
         self.assertTrue(expected)
@@ -168,38 +168,38 @@ class InstalledSnapshot(unittest.TestCase):
         self.assertIn("No reviewer can run", review.stdout)
         self.assertNotIn("REVIEW_ERROR", review.stdout + review.stderr)
 
-        resolver = self.prefix / "hanig-project" / "scripts" / "skill_paths.py"
+        resolver = self.prefix / "brood-project" / "scripts" / "skill_paths.py"
         found = subprocess.run([sys.executable, str(resolver), "sibling",
-                                str(self.prefix / "hanig-project"), "hanig-project",
-                                "hanig-swarm"], env=self.env, text=True, capture_output=True)
+                                str(self.prefix / "brood-project"), "brood-project",
+                                "brood-swarm"], env=self.env, text=True, capture_output=True)
         self.assertEqual(found.returncode, 0, found.stderr)
         self.assertEqual(Path(found.stdout.strip()),
-                         (self.prefix / "hanig-swarm").resolve())
+                         (self.prefix / "brood-swarm").resolve())
 
-        shutil.rmtree(self.prefix / "hanig-swarm")
+        shutil.rmtree(self.prefix / "brood-swarm")
         missing = subprocess.run([sys.executable, str(resolver), "sibling",
-                                  str(self.prefix / "hanig-project"), "hanig-project",
-                                  "hanig-swarm"], env=self.env, text=True, capture_output=True)
+                                  str(self.prefix / "brood-project"), "brood-project",
+                                  "brood-swarm"], env=self.env, text=True, capture_output=True)
         self.assertNotEqual(missing.returncode, 0)
-        self.assertIn("missing declared installed dependency 'hanig-swarm'",
+        self.assertIn("missing declared installed dependency 'brood-swarm'",
                       missing.stderr)
 
     def test_linked_loaded_skill_keeps_logical_parent_and_uses_known_root(self):
         linked_parent = self.root / "link store"
         linked_parent.mkdir()
-        linked_project = linked_parent / "hanig-project"
-        linked_project.symlink_to(self.prefix / "hanig-project", target_is_directory=True)
+        linked_project = linked_parent / "brood-project"
+        linked_project.symlink_to(self.prefix / "brood-project", target_is_directory=True)
         separate = self.root / "separate known parent"
         separate.mkdir()
-        shutil.copytree(SKILLS / "hanig-swarm", separate / "hanig-swarm")
-        resolver = self.prefix / "hanig-project" / "scripts" / "skill_paths.py"
+        shutil.copytree(SKILLS / "brood-swarm", separate / "brood-swarm")
+        resolver = self.prefix / "brood-project" / "scripts" / "skill_paths.py"
         found = subprocess.run([sys.executable, str(resolver), "sibling",
-                                str(linked_project), "hanig-project", "hanig-swarm",
+                                str(linked_project), "brood-project", "brood-swarm",
                                 "--root", str(separate)], env=self.env,
                                text=True, capture_output=True)
         self.assertEqual(found.returncode, 0, found.stderr)
         self.assertEqual(Path(found.stdout.strip()),
-                         (separate / "hanig-swarm").resolve())
+                         (separate / "brood-swarm").resolve())
 
         mixed_env = dict(self.env, HANIG_SKILL_DEP_ROOTS=str(separate))
         report = subprocess.run([sys.executable,
@@ -209,14 +209,14 @@ class InstalledSnapshot(unittest.TestCase):
         self.assertEqual(report.returncode, 0, report.stderr)
 
     def test_project_report_resolves_its_sibling_without_source_layout(self):
-        report = self.invoke("hanig-project/scripts/report.py", ".", "--json")
+        report = self.invoke("brood-project/scripts/report.py", ".", "--json")
         self.assertEqual(report.returncode, 0, report.stderr)
 
     def test_missing_relative_root_reports_loaded_anchor_and_absolute_escape(self):
-        shutil.rmtree(self.prefix / "hanig-swarm")
+        shutil.rmtree(self.prefix / "brood-swarm")
         links = self.root / "logical link store"
         links.mkdir()
-        for name in ("hanig-project", "hanig-orchestrate"):
+        for name in ("brood-project", "brood-orchestrate"):
             linked = links / name
             linked.symlink_to(self.prefix / name, target_is_directory=True)
             for loaded in (self.prefix / name, linked):
@@ -227,7 +227,7 @@ class InstalledSnapshot(unittest.TestCase):
                             env["HANIG_SKILL_DEP_ROOTS"] = "../missing deps"
                         result = subprocess.run(
                             [sys.executable, str(loaded / "scripts/skill_paths.py"),
-                             "sibling", str(loaded), name, "hanig-swarm", *option],
+                             "sibling", str(loaded), name, "brood-swarm", *option],
                             cwd=self.project, env=env, text=True, capture_output=True)
                         self.assertNotEqual(result.returncode, 0)
                         self.assertIn("missing declared installed dependency", result.stderr)
@@ -239,11 +239,11 @@ class InstalledSnapshot(unittest.TestCase):
     def test_cwd_relative_consumers_migrate_to_absolute_dependency_root(self):
         deps = self.root / "deps"
         deps.mkdir()
-        shutil.move(str(self.prefix / "hanig-swarm"), str(deps / "hanig-swarm"))
+        shutil.move(str(self.prefix / "brood-swarm"), str(deps / "brood-swarm"))
         # ../deps is valid from the project cwd, but not from the loaded skill.
         self.assertEqual((self.project / "../deps").resolve(), deps.resolve())
-        consumers = (("hanig-project", "report.py", [".", "--json"]),
-                     ("hanig-orchestrate", "merge_unit.py", ["--help"]))
+        consumers = (("brood-project", "report.py", [".", "--json"]),
+                     ("brood-orchestrate", "merge_unit.py", ["--help"]))
         for name, program, args in consumers:
             loaded = self.prefix / name
             env = dict(self.env, HANIG_SKILL_DEP_ROOTS="../deps")
@@ -259,14 +259,14 @@ class InstalledSnapshot(unittest.TestCase):
                                           text=True, capture_output=True)
                 self.assertEqual(migrated.returncode, 0,
                                  migrated.stderr + migrated.stdout)
-                if name == "hanig-project":
+                if name == "brood-project":
                     self.assertIsInstance(json.loads(migrated.stdout), dict)
                 else:
                     self.assertIn("usage:", migrated.stdout)
 
     def test_both_consumers_use_declared_roots_from_unrelated_cwd(self):
-        consumers = (("hanig-project", "report.py", [".", "--json"]),
-                     ("hanig-orchestrate", "merge_unit.py", ["--help"]))
+        consumers = (("brood-project", "report.py", [".", "--json"]),
+                     ("brood-orchestrate", "merge_unit.py", ["--help"]))
         for name, program, args in consumers:
             for mode in ("copy", "link"):
                 parent = self.root / (name + " " + mode + " store")
@@ -281,7 +281,7 @@ class InstalledSnapshot(unittest.TestCase):
                 else:
                     shutil.copytree(self.prefix / name, loaded)
                 deps = parent / "deps"
-                shutil.copytree(self.prefix / "hanig-swarm", deps / "hanig-swarm")
+                shutil.copytree(self.prefix / "brood-swarm", deps / "brood-swarm")
                 for dep_root in (str(deps), "../deps"):
                     with self.subTest(skill=name, mode=mode, root=dep_root):
                         env = dict(self.env, HANIG_SKILL_DEP_ROOTS=dep_root)
@@ -292,18 +292,18 @@ class InstalledSnapshot(unittest.TestCase):
                                 resolver_env.pop("HANIG_SKILL_DEP_ROOTS")
                             found = subprocess.run(
                                 [sys.executable, str(loaded / "scripts/skill_paths.py"),
-                                 "sibling", str(loaded), name, "hanig-swarm", *option],
+                                 "sibling", str(loaded), name, "brood-swarm", *option],
                                 cwd=self.project, env=resolver_env,
                                 text=True, capture_output=True)
                             self.assertEqual(found.returncode, 0, found.stderr)
                             self.assertEqual(Path(found.stdout.strip()),
-                                             (deps / "hanig-swarm").resolve())
+                                             (deps / "brood-swarm").resolve())
                         result = subprocess.run(
                             [sys.executable, str(loaded / "scripts" / program), *args],
                             cwd=self.project, env=env, text=True, capture_output=True)
                         self.assertEqual(result.returncode, 0,
                                          result.stderr + result.stdout)
-                        if name == "hanig-project":
+                        if name == "brood-project":
                             self.assertIsInstance(json.loads(result.stdout), dict)
                         else:
                             self.assertIn("usage:", result.stdout)
@@ -314,9 +314,9 @@ class InstalledSnapshot(unittest.TestCase):
             with self.subTest(skill=name):
                 self.assertEqual(unshipped_docs_citations(
                     self.prefix / name, OPERATED_CHECKOUT_PATHS.get(name, set())), [])
-        gate = (self.prefix / "hanig-review-gate" / "SKILL.md").read_text()
+        gate = (self.prefix / "brood-review-gate" / "SKILL.md").read_text()
         compat = "https://github.com/hanig/brood-lord/blob/main/docs/agent-compatibility.md"
-        self.assertTrue(compat in gate, "hanig-review-gate must cite " + compat)
+        self.assertTrue(compat in gate, "brood-review-gate must cite " + compat)
 
     def test_repository_doc_links_name_tracked_files(self):
         tracked = tracked_files(REPO)

@@ -14,9 +14,9 @@ Build one `LifecycleTarget` per selected payload:
 
 ```python
 LifecycleTarget(
-    name="hanig-swarm",
-    source=checkout / "skills" / "hanig-swarm",
-    destination=home / ".claude" / "skills" / "hanig-swarm",
+    name="brood-swarm",
+    source=checkout / "skills" / "brood-swarm",
+    destination=home / ".claude" / "skills" / "brood-swarm",
     origin="authored",  # or "vendored"
     consumers=("claude",), mode="copy", source_version="8ac8992",
 )

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills" / "hanig-project" / "scripts"
+SCRIPTS = ROOT / "skills" / "brood-project" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import tickets as T
 

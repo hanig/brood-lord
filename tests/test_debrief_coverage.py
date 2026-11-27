@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / 'skills/hanig-debrief/scripts/debrief_coverage.py'
+SCRIPT = ROOT / 'skills/brood-debrief/scripts/debrief_coverage.py'
 sys.path.insert(0, str(SCRIPT.parent))
 import debrief_coverage as C
 import debrief_packet as P
@@ -25,7 +25,7 @@ def registry(entry='DB001', applies=None):
 
 
 def provenance(commit):
-  return {'hanig-swarm': 'schema=2\nrepo=multi-agent-skills\norigin=authored\n'
+  return {'brood-swarm': 'schema=2\nrepo=multi-agent-skills\norigin=authored\n'
       'source_version=' + commit + '\nversion=' + commit + '\n'}
 
 
@@ -104,6 +104,20 @@ class TestCoverage(unittest.TestCase):
     other = self.git('rev-parse', 'HEAD')
     self.assertEqual(self.classify(registry(applies={'fixed_in': other})), 'unknown')
     self.assertEqual(self.classify(registry(applies={'fixed_in': 'f' * 40})), 'unknown')
+  def test_frozen_legacy_skill_name_reads_either_installed_spelling(self):
+    # Catalog v1 keeps hanig-swarm; the marker may be keyed by the installed
+    # brood-swarm successor or, before a reinstall, by the legacy copy.
+    self.assertEqual(S.skill_names('hanig-swarm'), ('brood-swarm', 'hanig-swarm'))
+    self.assertEqual(S.skill_names('brood-swarm'), ('brood-swarm',))
+    self.assertEqual(S.skill_names('hanig-'), ('hanig-',))
+    marker = provenance(self.head)['brood-swarm']
+    reg = registry(applies={'fixed_in': self.base})
+    for prov in ({'brood-swarm': marker}, {'hanig-swarm': marker},
+                 {'brood-swarm': marker, 'hanig-swarm': 'garbage'}):
+      with self.subTest(prov=sorted(prov)):
+        self.assertEqual(C.classify(self.c, reg, self.root, provenance=prov), 'covered')
+    self.assertEqual(C.classify(self.c, reg, self.root,
+      provenance={'brood-swarm': 'garbage', 'hanig-swarm': marker}), 'unknown')
   def test_installer_abbreviated_commit(self):
     short = self.git('rev-parse', '--short', 'HEAD')
     self.assertEqual(C.classify(self.c, registry(applies={'fixed_in': self.base}),
@@ -148,7 +162,7 @@ class TestCoverage(unittest.TestCase):
     self.assertEqual(self.classify(registry('DB013')), 'not_found_in_snapshot')
     C.record_review(self.d, 0, 'conflicts', 'Observed failure contradicts the documented feature.')
     self.assertEqual(C.classify(self.c, registry('DB014'), self.root,
-      provenance={'hanig-review-gate': provenance(self.head)['hanig-swarm']}), 'covered')
+      provenance={'brood-review-gate': provenance(self.head)['brood-swarm']}), 'covered')
     self.assertEqual(self.c['coverage_disposition'], 'conflicts')
     cat = S.load_catalog()
     residual = copy.deepcopy(next(e for e in cat['entries'] if e['id'] == 'DB014'))

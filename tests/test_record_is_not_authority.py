@@ -28,8 +28,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills" / "hanig-swarm" / "scripts"
-MERGE_OPERATOR = ROOT / "skills/hanig-orchestrate/scripts/merge_unit.py"
+SCRIPTS = ROOT / "skills" / "brood-swarm" / "scripts"
+MERGE_OPERATOR = ROOT / "skills/brood-orchestrate/scripts/merge_unit.py"
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))

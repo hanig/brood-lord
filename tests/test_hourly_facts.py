@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills" / "hanig-orchestrate" / "scripts"
+SCRIPTS = ROOT / "skills" / "brood-orchestrate" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import hourly_facts
 import wait_report
@@ -39,10 +39,10 @@ class HourlyFacts(unittest.TestCase):
     self.audit = self.root / "audit.json"
     self.audit.write_text(json.dumps({"read_finished": "2026-11-09T01:02:03+00:00"}))
     skills = self.root / "installed"
-    loaded = skills / "hanig-orchestrate"
+    loaded = skills / "brood-orchestrate"
     loaded.mkdir(parents=True)
     (loaded / "SKILL.md").write_text("fixture")
-    project = skills / "hanig-project"
+    project = skills / "brood-project"
     (project / "scripts").mkdir(parents=True)
     (project / "SKILL.md").write_text("fixture")
     (project / "scripts" / "linear_sync.py").write_text(
@@ -1030,12 +1030,12 @@ class HourlyFacts(unittest.TestCase):
         self.assertEqual(before, {p.name: p.read_bytes() for p in self.output.iterdir()})
 
   def test_declaration_registry(self):
-    registry = ROOT / "skills" / "hanig-swarm" / "scripts" / "declaration_registry.py"
+    registry = ROOT / "skills" / "brood-swarm" / "scripts" / "declaration_registry.py"
     for command in ("check-body", "check-references"):
-      result = subprocess.run([sys.executable, str(registry), command, "--skill-dir", str(ROOT / "skills/hanig-orchestrate")],
+      result = subprocess.run([sys.executable, str(registry), command, "--skill-dir", str(ROOT / "skills/brood-orchestrate")],
                   cwd=str(ROOT), capture_output=True)
       self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-    self.assertIn("report.scheduled-facts", (ROOT / "skills/hanig-orchestrate/SKILL.md").read_text())
+    self.assertIn("report.scheduled-facts", (ROOT / "skills/brood-orchestrate/SKILL.md").read_text())
 
 
 if __name__ == "__main__":

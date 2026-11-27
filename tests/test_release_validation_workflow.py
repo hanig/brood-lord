@@ -514,7 +514,7 @@ class TestReleaseValidationWorkflow(unittest.TestCase):
                 self.assertEqual(ast.literal_eval(result.stdout)["HOME"], directory)
 
     def assert_isolation(self, workflow, job):
-        denied = runpy.run_path(str(ROOT / "skills/hanig-swarm/scripts/child_environment.py"))["DENIED_ENV_NAMES"]
+        denied = runpy.run_path(str(ROOT / "skills/brood-swarm/scripts/child_environment.py"))["DENIED_ENV_NAMES"]
         homes = ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR")
         prepare = self.named_step(workflow, job, "Isolate self-hosted test environment")
         check = self.named_step(workflow, job, "Check self-hosted test isolation")

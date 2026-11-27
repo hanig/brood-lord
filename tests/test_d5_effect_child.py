@@ -10,7 +10,7 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'skills/hanig-orchestrate/scripts'))
+sys.path.insert(0, str(ROOT / 'skills/brood-orchestrate/scripts'))
 import d5_effect_child as child
 from tests import test_d5_submission as t
 

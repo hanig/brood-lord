@@ -5,7 +5,7 @@ import sys
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] /
-                       "skills/hanig-orchestrate/scripts"))
+                       "skills/brood-orchestrate/scripts"))
 import d5_locks as locks
 import d5_protocol_locks as protocol
 

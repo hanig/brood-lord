@@ -2,7 +2,7 @@
 """PostToolUse hook: after an outward action, report unsynced tracker state.
 
 Written because prose did not work. The obligation was documented in
-hanig-project SKILL.md step 6 and then skipped twice within the hour by the
+brood-project SKILL.md step 6 and then skipped twice within the hour by the
 session that wrote it. The harness runs this; the model cannot forget it.
 
 What it guarantees, exactly: it detects supported spellings of an outward
@@ -1205,7 +1205,7 @@ def read_outbox(repo, state):
     # unknown outbox while the real state sat there unread.
     root = os.path.abspath(repo)
     argv = [sys.executable or "python3",
-            os.path.join(root, "skills", "hanig-swarm", "scripts", "swarm.py"),
+            os.path.join(root, "skills", "brood-swarm", "scripts", "swarm.py"),
             "outbox", "--state-dir", state, "--json"]
     try:
         proc = subprocess.Popen(

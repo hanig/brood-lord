@@ -200,7 +200,7 @@ Sol: four specific things.
 
 - Repo B heartbeats and schedules as authority: a second scheduler creates
   split-brain. Diagnostic only, never closure.
-- `pi-fleet` as a second fleet coordinator: overlaps `hanig-swarm` with no gap
+- `pi-fleet` as a second fleet coordinator: overlaps `brood-swarm` with no gap
   addressed.
 - `paseo loop --verify-check`/`--verify` as authority: arbitrary shell strings
   and prompts are not policy authorization or content pinning.

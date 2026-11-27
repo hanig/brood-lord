@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills" / "hanig-swarm" / "scripts"
+SCRIPTS = ROOT / "skills" / "brood-swarm" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import swarm as S  # noqa: E402
 

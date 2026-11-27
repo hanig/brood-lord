@@ -11,7 +11,7 @@ from tests import test_validate_seeds as seed_fixture
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SWARM = ROOT / "skills/hanig-swarm/scripts/swarm.py"
+SWARM = ROOT / "skills/brood-swarm/scripts/swarm.py"
 
 
 class ContinueCommandTests(unittest.TestCase):
@@ -257,7 +257,7 @@ class ContinueCommandTests(unittest.TestCase):
         return json.loads(self.plan_path.read_text())
 
     def mapped_draft(self):
-        sys.path.insert(0, str(ROOT / "skills/hanig-project/scripts"))
+        sys.path.insert(0, str(ROOT / "skills/brood-project/scripts"))
         import tickets as T
         self.draft_file = self.tmp / "tickets.json"
         d = T.draft(self.plan)

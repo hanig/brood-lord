@@ -19,7 +19,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-REVIEW = ROOT / "skills" / "hanig-review-gate" / "scripts" / "review.py"
+REVIEW = ROOT / "skills" / "brood-review-gate" / "scripts" / "review.py"
 sys.path.insert(0, str(REVIEW.parent))
 import review as R  # noqa: E402
 from tests.review_round_fixture import isolated_reservation
@@ -288,7 +288,7 @@ class TestChangedPathProfiles(unittest.TestCase):
         self.git("config", "user.email", "test@example.invalid")
         self.git("config", "user.name", "Profile Test")
         self.doc = "docs/x.md"
-        self.code = "skills/hanig-swarm/scripts/swarm.py"
+        self.code = "skills/brood-swarm/scripts/swarm.py"
         self.write(self.doc, "base\n")
         self.write(self.code, "base\n")
         self.git("add", ".")
@@ -459,13 +459,13 @@ class TestChangedPathProfiles(unittest.TestCase):
 
     def test_documentation_globs_and_sensitive_locations(self):
         for name in ("README.md", "docs/guide.txt", "examples/config.json",
-                     "skills/hanig-review-gate/SKILL.md"):
+                     "skills/brood-review-gate/SKILL.md"):
             self.write(name)
             report, _ = self.report("--file", name)
             self.assertEqual(report["profile"], "fast", name)
         for name in ("scripts/guide.md", "lib/readme.md", "bin/help.md",
                      "tests/guide.md", "skills/demo/scripts/guide.md",
-                     "skills/hanig-review-gate/reviewers.json",
+                     "skills/brood-review-gate/reviewers.json",
                      "examples/reviewers.json", "config.json", "app.py"):
             self.write(name)
             report, _ = self.report("--file", name)
@@ -711,7 +711,7 @@ class TestAuthorExclusion(unittest.TestCase):
         self.assertIn("sol", [r["name"] for r in json.loads(out)["excluded"]])
 
     def test_shipped_author(self):
-        author = json.loads((ROOT / "skills/hanig-swarm/agents.json").read_text())["default"]["provider"]
+        author = json.loads((ROOT / "skills/brood-swarm/agents.json").read_text())["default"]["provider"]
         _, excluded = R.exclude_authors(R.load_reviewers(), R.author_model_ids([author]))
         self.assertTrue({"sol", "sol-tiebreak"} <= {r["name"] for r in excluded})
 

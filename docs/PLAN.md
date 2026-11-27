@@ -97,7 +97,7 @@ never earns the assurance of criteria declared beforehand.
 All personal skills are prefixed `hanig-` so they can never collide with an Arc
 org skill name.
 
-### 1. `hanig-verified-workflow` — build first
+### 1. `brood-verified-workflow` — build first
 
 Launch, monitor, resume, and verify Slurm / Nextflow / Snakemake work against
 predeclared output contracts.
@@ -149,7 +149,7 @@ convergence. Convergence requires a predicate declared before the run, e.g.
 beyond threshold AND minimum step count reached*. Picking the numerically best
 checkpoint after seeing results is legitimate but must be labeled post hoc.
 
-### 3. `hanig-portable-handoff`
+### 3. `brood-portable-handoff`
 
 Capture and restore durable research state across machines, clusters, and
 sessions. Attacks stated pain point #1 (context switching) head-on.
@@ -343,7 +343,7 @@ from that page, not merely unread.
      the install to live on `/mnt/weka/<user>/` with `CLAUDE_CONFIG_DIR` pointed
      at it — a **different install target from the other two clusters**.
    - **`sacct` may not exist.** SUNK deployments frequently run without
-     `slurmdbd`, meaning no job accounting history. `hanig-verified-workflow`
+     `slurmdbd`, meaning no job accounting history. `brood-verified-workflow`
      was designed to query `sacct` for terminal state. It must therefore treat
      scheduler history as *optional evidence* and fall back to wrapper exit
      status plus artifact predicates. This is a day-one design constraint, not
@@ -431,7 +431,7 @@ andromeda}.{txt,json}`. **No blockers on any host.**
    `/usr/bin/enroot` and `srun` shows extensive container flags — so containers
    are a *compute-node* concern, via enroot/pyxis on andromeda. If real
    workloads use Nextflow or Snakemake, they run from a conda env, not a system
-   install; `hanig-verified-workflow` must locate them per-project, not assume
+   install; `brood-verified-workflow` must locate them per-project, not assume
    a global binary.
 
 ### Storage pressure — worth acting on independently of this project
@@ -491,7 +491,7 @@ gawk-only constructs so it survives an old Linux login node.
 2. ~~Which clusters are in weekly use?~~ **ANSWERED 2026-08-25: chimera, lambda,
    andromeda.** state3 and the UCSF hosts are out of scope. See §6b.
 3. **Is andromeda Slurm?** Chimera and lambda both are; andromeda/gefion is
-   unconfirmed. If not, `hanig-verified-workflow` needs a scheduler adapter seam
+   unconfirmed. If not, `brood-verified-workflow` needs a scheduler adapter seam
    from the start. `probe.sh` answers this.
 4. **Repository visibility — settled 2026-11-05.** This repository is private
    by owner decision (2026-11-05). It was public by owner decision from

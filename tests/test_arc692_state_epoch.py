@@ -12,7 +12,7 @@ import unittest
 from unittest import mock
 
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "skills/hanig-swarm/scripts"
+SCRIPTS = Path(__file__).resolve().parents[1] / "skills/brood-swarm/scripts"
 sys.path.insert(0, str(SCRIPTS))
 SWARM = SCRIPTS / "swarm.py"
 HALT = "another coordinator has written state under us"

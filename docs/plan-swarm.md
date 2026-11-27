@@ -102,7 +102,7 @@ Common to all three: a never-reused attempt id, an exclusive write root, an immu
 
 **Code-editing agent.** Shreshth already solves this; take it UNCHANGED. Isolation: git worktree+branch via Paseo. Done: `bus await` artifact contract (`--base` HEAD advanced, `--require-clean`, optional `--status-file`). Route it straight through `bus launch-worker` / `bus await`. No redesign.
 
-> **SUPERSEDED by C11 on 2026-09-03, and this is the one place that mattered.** `bus` was never called -- `worktree.py`'s docstring records it: "We never called it, so nothing judged the worktree at all." The decision above is kept because it is why the mechanism looks the way it does, but do NOT implement it. A code attempt now gets a per-attempt Git worktree cut from a recorded base COMMIT (never a ref), verified by device+inode at launch and re-stat-ed at judgment, and closure is a merged pull request. See "What isolates a code unit" in `hanig-swarm/SKILL.md`.
+> **SUPERSEDED by C11 on 2026-09-03, and this is the one place that mattered.** `bus` was never called -- `worktree.py`'s docstring records it: "We never called it, so nothing judged the worktree at all." The decision above is kept because it is why the mechanism looks the way it does, but do NOT implement it. A code attempt now gets a per-attempt Git worktree cut from a recorded base COMMIT (never a ref), verified by device+inode at launch and re-stat-ed at judgment, and closure is a merged pull request. See "What isolates a code unit" in `brood-swarm/SKILL.md`.
 
 Analysis/figure jobs were not selected; `result.py`'s domain is out of scope for the unit boundary, which strengthens the case for deleting it.
 
@@ -608,7 +608,7 @@ asked for by name.
 
 Acceptance criteria:
 
-- a. BUILT via `hanig-project`, which runs survey then grill then plan then
+- a. BUILT via `brood-project`, which runs survey then grill then plan then
   tickets then dispatch, in that order. Before a swarm plan is dispatched for the first time, its open decisions
   have been grilled: every `NEEDS A DECISION` and every `ASSUMPTION:` line is
   either answered by Hani or explicitly deferred by him, not by me.

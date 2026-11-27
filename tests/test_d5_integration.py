@@ -14,7 +14,7 @@ class Captured(Exception):
   self.parser=parser
 
 def source(file):
- paths=list(ROOT.glob('skills/hanig-*/scripts/'+file))
+ paths=list(ROOT.glob('skills/brood-*/scripts/'+file))
  assert len(paths)==1, file
  return paths[0]
 

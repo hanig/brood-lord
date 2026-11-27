@@ -14,7 +14,7 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills" / "hanig-swarm" / "scripts"
+SCRIPTS = ROOT / "skills" / "brood-swarm" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import swarm as S  # noqa: E402
 import unit as U  # noqa: E402
@@ -152,7 +152,7 @@ class TestEnvironmentContainment(unittest.TestCase):
     def test_other_model_credentials_are_documented_as_coordinator_side(self):
         docs = (
             ROOT / "README.md",
-            ROOT / "skills" / "hanig-swarm" / "SKILL.md",
+            ROOT / "skills" / "brood-swarm" / "SKILL.md",
         )
         for path in docs:
             text = path.read_text()

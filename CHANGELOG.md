@@ -2,6 +2,19 @@
 
 ## Unreleased — 2026-11-22
 
+### Changed — Authored skills renamed from `hanig-*` to `brood-*`
+
+- **Skill names (PR 2/2 of the brood rename):** the nine authored bundles now ship as
+  `brood-debrief`, `brood-hillclimb`, `brood-orchestrate`, `brood-portable-handoff`,
+  `brood-project`, `brood-review-gate`, `brood-swarm`, `brood-verified-workflow` and
+  `brood-wandb-logging`. Reinstalling publishes each `brood-<suffix>` and then retires a
+  sibling `hanig-<suffix>` only when it carries this repository's exact recorded ownership.
+- **Unchanged on purpose:** runtime state (`~/.local/state/hanig-swarm`,
+  `~/.local/state/hanig-review-gate`, `~/.hanig-committee`, `.hanig/`), Git refs under
+  `refs/hanig-swarm*`, the `hanig-rev-` Slurm job prefix, the `hanig-debrief: ` issue title
+  prefix that de-duplicates filed packets, and every `HANIG_*` setting (still read after its
+  `BROOD_*` twin). Live runs continue without migration.
+
 ### Added — Dedicated environments per model line and for orchestration
 
 Field evidence: STAGE ran coordinator cron, hourly facts, merge helpers, and probes from

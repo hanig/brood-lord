@@ -202,7 +202,7 @@ issue per unit. The five-question record below is not required in research
 mode. That line, together with the unrelabelled verdict, is what honesty in the
 record requires here.
 
-Where the `hanig-orchestrate` skill or a task preamble restates the stricter
+Where the `brood-orchestrate` skill or a task preamble restates the stricter
 rule, this section governs until that text is updated.
 
 ## Adjudication policy

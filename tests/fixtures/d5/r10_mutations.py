@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-SCRIPTS = ROOT / 'skills/hanig-orchestrate/scripts'
+SCRIPTS = ROOT / 'skills/brood-orchestrate/scripts'
 MODULE = 'tests.test_d5_acceptance.TestAcceptance.'
 MUTATIONS = [
     ('M1-ACCEPT-REVOKED', 'd5_authority.py',

@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills" / "hanig-swarm" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "brood-swarm" / "scripts"))
 import swarm_preflight as SP
 import swarm as S
 import worktree as W
@@ -20,9 +20,9 @@ from tests.test_attempt_worktrees import ENV, FakePaseo, code_unit, git, repo_at
 from tests.scheduler_fixture import codex_environment, state_environment
 
 SHIPPED_SKILLS = (
-    "hanig-debrief", "hanig-hillclimb", "hanig-orchestrate", "hanig-portable-handoff", "hanig-project",
-    "hanig-review-gate", "hanig-swarm", "hanig-verified-workflow",
-    "hanig-wandb-logging",
+    "brood-debrief", "brood-hillclimb", "brood-orchestrate", "brood-portable-handoff", "brood-project",
+    "brood-review-gate", "brood-swarm", "brood-verified-workflow",
+    "brood-wandb-logging",
 )
 
 
@@ -95,8 +95,8 @@ class TestInstalledSkillDrift(unittest.TestCase):
 
     def test_uncached_dispatch_records_each_store_and_warns_on_drift(self):
         stale = "f" * 40
-        marker = self.install(".agents", "hanig-review-gate", stale)
-        matching = self.install(".claude", "hanig-review-gate", self.base)
+        marker = self.install(".agents", "brood-review-gate", stale)
+        matching = self.install(".claude", "brood-review-gate", self.base)
         self.install(".agents", "paseo", stale)
         attempt, facts, warning = self.dispatch()
 
@@ -120,7 +120,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
 
     def test_cached_source_dispatch_records_snapshot_and_warns(self):
         stale = "f" * 40
-        marker = self.install(".agents", "hanig-swarm", stale)
+        marker = self.install(".agents", "brood-swarm", stale)
         target, error = S._resolve_dispatch_target(self.unit)
         self.assertIsNone(error)
         source, error = S._dispatch_source_identity(self.unit, target)
@@ -138,7 +138,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
 
     def test_redispatch_warns_from_persisted_snapshot_without_resampling(self):
         stale = "f" * 40
-        marker = self.install(".agents", "hanig-swarm", stale)
+        marker = self.install(".agents", "brood-swarm", stale)
         for cached in (False, True):
             with self.subTest(cached=cached):
                 name = "redispatch-" + str(cached)
@@ -166,22 +166,22 @@ class TestInstalledSkillDrift(unittest.TestCase):
                 marker.write_text("source_version=" + stale + "\n")
 
     def test_warning_names_scanned_stores_and_excludes_custom_stores(self):
-        self.install(".agents", "hanig-swarm", "f" * 40)
+        self.install(".agents", "brood-swarm", "f" * 40)
         self.install("custom", "hanig-custom", "e" * 40)
-        project_skill = self.repo / ".agents" / "skills" / "hanig-project"
+        project_skill = self.repo / ".agents" / "skills" / "brood-project"
         project_skill.mkdir(parents=True)
         (project_skill / "SKILL.md").write_text("project fixture\n")
         (project_skill / ".installed-by-multi-agent-skills").write_text(
             "source_version=" + "d" * 40 + "\n")
         _attempt, facts, warning = self.dispatch()
         self.assertEqual([entry["skill"] for entry in facts["installed_skills"]["skills"]],
-                         ["hanig-swarm"])
+                         ["brood-swarm"])
         self.assertIn("Only ~/.agents/skills and ~/.claude/skills are scanned", warning)
         self.assertIn("project/custom stores are not scanned", warning)
 
     def test_equal_versions_dispatch_without_warning(self):
         for store in (".agents", ".claude"):
-            self.install(store, "hanig-swarm", self.base)
+            self.install(store, "brood-swarm", self.base)
         _attempt, facts, warning = self.dispatch()
         self.assertEqual(warning, "")
         self.assertEqual(len(facts["installed_skills"]["skills"]), 2)
@@ -194,7 +194,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
         self.assertEqual(facts["installed_skills"], {"skills": [], "errors": []})
 
     def test_shipped_skill_missing_marker_retains_warning(self):
-        markers = [self.install(store, "hanig-swarm", self.base)
+        markers = [self.install(store, "brood-swarm", self.base)
                    for store in (".agents", ".claude")]
         for marker in markers:
             marker.unlink()
@@ -219,15 +219,15 @@ class TestInstalledSkillDrift(unittest.TestCase):
         source, error = S._dispatch_source_identity(self.unit, target)
         self.assertIsNone(error)
         self.install(".agents", "hanig-foo", self.base).unlink()
-        self.install(".agents", "hanig-swarm", self.base).unlink()
+        self.install(".agents", "brood-swarm", self.base).unlink()
         (self.repo / "skills" / "hanig-foo").mkdir()
         (self.repo / "skills" / "hanig-foo" / "SKILL.md").write_text("later\n")
-        git(self.repo, "rm", "-r", "skills/hanig-swarm")
+        git(self.repo, "rm", "-r", "skills/brood-swarm")
         git(self.repo, "add", "skills")
         git(self.repo, "commit", "-qm", "change skill catalog after pinning")
         _attempt, facts, warning = self.dispatch(dispatch_source=source)
         self.assertEqual([row["skill"] for row in facts["installed_skills"]["skills"]],
-                         ["hanig-swarm"])
+                         ["brood-swarm"])
         self.assertEqual(warning.count("installed skill audit incomplete"), 1)
         self.assertNotIn("hanig-foo", warning)
 
@@ -249,15 +249,15 @@ class TestInstalledSkillDrift(unittest.TestCase):
         self.assertNotIn("hanig-foo", warning)
 
     def test_dangling_skill_entry_warns_and_persists_one_advisory_error(self):
-        marker = self.install(".agents", "hanig-swarm", self.base)
+        marker = self.install(".agents", "brood-swarm", self.base)
         for store in (".agents", ".claude"):
             with self.subTest(store=store):
-                skill = self.home / store / "skills" / "hanig-project"
+                skill = self.home / store / "skills" / "brood-project"
                 skill.parent.mkdir(parents=True, exist_ok=True)
                 skill.symlink_to(self.tmp / "missing-skill", target_is_directory=True)
                 skill.lstat()
                 expected = {
-                    "skills": [{"skill": "hanig-swarm", "path": str(marker.parent),
+                    "skills": [{"skill": "brood-swarm", "path": str(marker.parent),
                                 "marker": str(marker), "source_version": self.base}],
                     "errors": [{"path": str(skill), "error": "no loadable SKILL.md"}],
                 }
@@ -280,7 +280,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
     def test_partial_skill_entries_warn_without_refusing_dispatch(self):
         for kind in ("missing", "directory", "dangling-document", "file-entry"):
             with self.subTest(kind=kind):
-                skill = self.home / ".agents" / "skills" / "hanig-project"
+                skill = self.home / ".agents" / "skills" / "brood-project"
                 skill.parent.mkdir(parents=True, exist_ok=True)
                 if kind == "file-entry":
                     skill.write_text("incomplete install\n")
@@ -312,7 +312,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
 
     def test_installer_abbreviation_is_resolved_without_changing_raw_claim(self):
         short = git(self.repo, "rev-parse", "--short", "HEAD")
-        self.install(".agents", "hanig-swarm", short)
+        self.install(".agents", "brood-swarm", short)
         _attempt, facts, warning = self.dispatch()
         self.assertEqual(warning, "")
         entry = facts["installed_skills"]["skills"][0]
@@ -321,7 +321,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
 
     def test_unresolved_abbreviation_is_not_treated_as_equal(self):
         short = self.base[:7]
-        self.install(".agents", "hanig-swarm", short)
+        self.install(".agents", "brood-swarm", short)
         real_git = SP._git
 
         def ambiguous(repo, *args, **kwargs):
@@ -344,7 +344,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
         length = max(len(short), next((i + 1 for i, c in enumerate(self.base)
                                       if c in "abcdef"), len(self.base)))
         versions = (self.base[:length].upper(), self.base.upper())
-        for name, version in zip(("hanig-swarm", "hanig-project"), versions):
+        for name, version in zip(("brood-swarm", "brood-project"), versions):
             self.install(".agents", name, version)
         _attempt, facts, warning = self.dispatch()
         self.assertEqual(warning, "")
@@ -355,8 +355,8 @@ class TestInstalledSkillDrift(unittest.TestCase):
             self.assertEqual(entry["resolved_commit"], self.base)
 
     def test_broken_or_closed_warning_stream_does_not_abort_dispatch(self):
-        self.install(".agents", "hanig-swarm", "f" * 40)
-        self.install(".agents", "hanig-verified-workflow", self.base).unlink()
+        self.install(".agents", "brood-swarm", "f" * 40)
+        self.install(".agents", "brood-verified-workflow", self.base).unlink()
         broken = mock.Mock()
         broken.write.side_effect = BrokenPipeError("fixture broken stderr")
         closed = io.StringIO()
@@ -377,7 +377,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
 
     def test_dirty_marker_is_not_normalized_to_the_base(self):
         version = git(self.repo, "rev-parse", "--short", "HEAD") + "-dirty"
-        self.install(".agents", "hanig-swarm", version)
+        self.install(".agents", "brood-swarm", version)
         _attempt, facts, warning = self.dispatch()
         self.assertIn(version, warning)
         self.assertIn(self.base, warning)
@@ -387,7 +387,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
     def test_hash_named_refs_cannot_hide_installed_version_drift(self):
         old = self.advance_repo_base()
         short = git(self.repo, "rev-parse", "--short", old)
-        self.install(".agents", "hanig-swarm", short)
+        self.install(".agents", "brood-swarm", short)
         for kind in ("branch", "tag"):
             with self.subTest(kind=kind):
                 if kind == "branch":
@@ -404,7 +404,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
     def test_hash_named_refs_cannot_create_false_drift(self):
         old = self.advance_repo_base()
         short = git(self.repo, "rev-parse", "--short", "HEAD")
-        self.install(".agents", "hanig-swarm", short)
+        self.install(".agents", "brood-swarm", short)
         for kind in ("branch", "tag"):
             with self.subTest(kind=kind):
                 if kind == "branch":
@@ -440,7 +440,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
         candidates = git(self.repo, "rev-parse", "--disambiguate=" + prefix).splitlines()
         self.assertIn(self.base, candidates)
         self.assertIn(digest, candidates)
-        self.install(".agents", "hanig-swarm", prefix)
+        self.install(".agents", "brood-swarm", prefix)
         _attempt, facts, warning = self.dispatch()
         self.assertIn(prefix, warning)
         self.assertIn(self.base, warning)
@@ -448,7 +448,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
 
     def test_incomplete_object_lookup_stays_advisory_and_is_not_a_commit(self):
         short = git(self.repo, "rev-parse", "--short", "HEAD")
-        self.install(".agents", "hanig-swarm", short)
+        self.install(".agents", "brood-swarm", short)
         real_git = SP._git
         results = [(0, "", ""), (0, "malformed", ""),
                    (0, self.base + "\n" + "f" * 40, ""),
@@ -491,7 +491,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
             self.assertIn(repr(entry["error"]), warning)
 
     def test_unreadable_root_is_recorded_and_does_not_refuse_dispatch(self):
-        self.install(".claude", "hanig-swarm", self.base)
+        self.install(".claude", "brood-swarm", self.base)
         unreadable = self.home / ".agents" / "skills"
         real_iterdir = Path.iterdir
 
@@ -536,9 +536,9 @@ class TestInstalledSkillDrift(unittest.TestCase):
         (source / "SKILL.md").write_text("linked fixture\n")
         source_marker = source / ".installed-by-multi-agent-skills"
         source_marker.write_text("source_version=" + "f" * 40 + "\n")
-        destination = self.home / ".agents" / "skills" / "hanig-swarm"
+        destination = self.home / ".agents" / "skills" / "brood-swarm"
         target = lifecycle.LifecycleTarget(
-            "hanig-swarm", source, destination, "authored", mode="link",
+            "brood-swarm", source, destination, "authored", mode="link",
             consumers=("codex",), source_version=self.base)
         results = lifecycle.install((target,))
         self.assertEqual(results[0].status, "installed")
@@ -562,9 +562,9 @@ class TestInstalledSkillDrift(unittest.TestCase):
         source.mkdir()
         (source / "SKILL.md").write_text("linked fixture\n")
         store = self.home / ".agents" / "skills"
-        destination = store / "hanig-swarm"
+        destination = store / "brood-swarm"
         target = lifecycle.LifecycleTarget(
-            "hanig-swarm", source, destination, "authored", mode="link",
+            "brood-swarm", source, destination, "authored", mode="link",
             consumers=("codex",), source_version=self.base)
         self.assertEqual(lifecycle.install((target,))[0].status, "installed")
         marker = lifecycle.provenance_path(destination)
@@ -589,7 +589,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
 
     def test_snapshot_is_durable_before_paseo_and_survives_recovery(self):
         stale = "f" * 40
-        marker = self.install(".agents", "hanig-swarm", stale)
+        marker = self.install(".agents", "brood-swarm", stale)
         observed = []
 
         def launch(argv, **kwargs):
@@ -628,7 +628,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
         W.launch_record_path(attempt).write_bytes(payload)
         us["attempt_record_seals"][attempt.name] = hashlib.sha256(payload).hexdigest()
         del us["attempt_launch_facts"]
-        self.install(".agents", "hanig-swarm", "f" * 40)
+        self.install(".agents", "brood-swarm", "f" * 40)
         error = S._complete_code_launch(
             self.state, self.unit, str(attempt), facts["execution_workspace"],
             recovery=True)
@@ -637,7 +637,7 @@ class TestInstalledSkillDrift(unittest.TestCase):
         self.assertEqual(W.launch_record_path(attempt).read_bytes(), payload)
 
     def test_skill_claims_do_not_control_production_judgment(self):
-        self.install(".agents", "hanig-swarm", "f" * 40)
+        self.install(".agents", "brood-swarm", "f" * 40)
         attempt, facts, _warning = self.dispatch()
         workspace = Path(facts["execution_workspace"])
         (workspace / "result.txt").write_text("produced\n")
@@ -679,37 +679,37 @@ class TestInstalledInvocationPolicyDrift(unittest.TestCase):
             prefix, home = Path(raw) / "skills", Path(raw) / "home"
             home.mkdir()
             command = ["sh", str(ROOT / "install.sh"), "--prefix", str(prefix)]
-            for name in ("hanig-swarm", "hanig-project", "hanig-review-gate"):
+            for name in ("brood-swarm", "brood-project", "brood-review-gate"):
                 command += ["--only", name]
             installed = subprocess.run(
                 command, cwd=str(ROOT), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, universal_newlines=True, timeout=300,
                 env={**os.environ, "HOME": str(home)})
             self.assertEqual(installed.returncode, 0, installed.stdout)
-            canonical = (ROOT / "skills" / "hanig-swarm" / "agents" /
+            canonical = (ROOT / "skills" / "brood-swarm" / "agents" /
                          "openai.yaml").read_bytes()
-            for name in ("hanig-swarm", "hanig-project"):
+            for name in ("brood-swarm", "brood-project"):
                 policy = prefix / name / "agents" / "openai.yaml"
                 self.assertFalse((prefix / name).is_symlink())
                 self.assertEqual(policy.read_bytes(), canonical)
             code, section, output = self.doctor(prefix, home)
             self.assertEqual(code, 0, output)
             self.assertEqual(section.split(), [
-                "ok", "hanig-project", "ok", "hanig-review-gate", "ok",
-                "hanig-swarm", "(no", "problems)"], output)
+                "ok", "brood-project", "ok", "brood-review-gate", "ok",
+                "brood-swarm", "(no", "problems)"], output)
 
-            (prefix / "hanig-swarm" / "agents" / "openai.yaml").unlink()
-            (prefix / "hanig-project" / "agents" / "openai.yaml").write_bytes(
+            (prefix / "brood-swarm" / "agents" / "openai.yaml").unlink()
+            (prefix / "brood-project" / "agents" / "openai.yaml").write_bytes(
                 canonical + b"extra: true\n")
             code, section, output = self.doctor(prefix, home)
             self.assertEqual(code, 1, output)
-            self.assertIn("DRIFT hanig-swarm: agents/openai.yaml is missing", section)
-            self.assertIn("DRIFT hanig-project: agents/openai.yaml differs from the "
+            self.assertIn("DRIFT brood-swarm: agents/openai.yaml is missing", section)
+            self.assertIn("DRIFT brood-project: agents/openai.yaml differs from the "
                           "canonical bytes", section)
-            self.assertIn("ok    hanig-review-gate", section)
+            self.assertIn("ok    brood-review-gate", section)
             self.assertEqual(section.count("reinstall it with install.sh"), 2, section)
             self.assertNotIn("(no problems)", section)
-            self.assertEqual((ROOT / "skills" / "hanig-swarm" / "agents" /
+            self.assertEqual((ROOT / "skills" / "brood-swarm" / "agents" /
                               "openai.yaml").read_bytes(), canonical)
 
 

@@ -13,8 +13,8 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / 'skills/hanig-swarm/scripts'
-sys.path.insert(0, str(ROOT / 'skills/hanig-orchestrate/scripts'))
+SCRIPTS = ROOT / 'skills/brood-swarm/scripts'
+sys.path.insert(0, str(ROOT / 'skills/brood-orchestrate/scripts'))
 import d5_registry as registry
 import d5_activation as activation
 import d5_readiness as readiness
@@ -440,7 +440,7 @@ class TestD5Activation(unittest.TestCase):
         self.assertIn('d5_install', classifier.REPAIR_GUIDANCE)
         self.assertIn('promote', classifier.REPAIR_GUIDANCE)
         inventory = {}
-        for bundle in ('hanig-swarm', 'hanig-orchestrate'):
+        for bundle in ('brood-swarm', 'brood-orchestrate'):
             for path in sorted((ROOT / 'skills' / bundle / 'scripts').glob('*.py')):
                 tree = ast.parse(path.read_text())
                 for node in ast.walk(tree):

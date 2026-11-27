@@ -231,7 +231,7 @@ print(json.dumps(dict(outcome=outcome, writes=writes, launches=launches)))
         for held in (False, True):
             with self.subTest(held=held):
                 result = subprocess.run([sys.executable, "-c", code,
-                    str(fixtures.ROOT / "skills/hanig-orchestrate/scripts"),
+                    str(fixtures.ROOT / "skills/brood-orchestrate/scripts"),
                     str(self.state), str(self.fixture.d / ("cache-" + str(held))),
                     "held" if held else "unheld"], capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr)

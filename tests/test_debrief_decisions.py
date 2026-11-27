@@ -1,4 +1,4 @@
-"""hanig-debrief decisions.tsv trail and durability triage."""
+"""brood-debrief decisions.tsv trail and durability triage."""
 import ast
 from datetime import datetime, timezone
 import io
@@ -15,7 +15,7 @@ from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills/hanig-debrief/scripts"
+SCRIPTS = ROOT / "skills/brood-debrief/scripts"
 sys.path.insert(0, str(SCRIPTS))
 import debrief_schema as S
 import debrief_triage as T

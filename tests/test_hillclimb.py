@@ -1,4 +1,4 @@
-"""hanig-hillclimb. Property: rank_sum_p == brute force, random.Random(20261124), 300 cases, n 1..6."""
+"""brood-hillclimb. Property: rank_sum_p == brute force, random.Random(20261124), 300 cases, n 1..6."""
 import contextlib
 import importlib.util
 import io
@@ -10,7 +10,7 @@ import unittest
 from fractions import Fraction
 from pathlib import Path
 
-SKILL = Path(__file__).resolve().parents[1] / "skills" / "hanig-hillclimb"
+SKILL = Path(__file__).resolve().parents[1] / "skills" / "brood-hillclimb"
 spec = importlib.util.spec_from_file_location("hillclimb", SKILL / "scripts" / "hillclimb.py")
 hc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hc)

@@ -487,7 +487,7 @@ SWE-Marathon's premature termination are the two agent-side shapes this catches
 
 **Have you suffered it?** I cannot show you a run that hung, and I will not
 claim one. What the repository shows is that you know the shape:
-`hanig-project/SKILL.md` says an absent `mode` "presents as an agent that runs
+`brood-project/SKILL.md` says an absent `mode` "presents as an agent that runs
 forever doing nothing"; `maybe_continue` exists because agents settle
 empty-handed; `status_report`'s comment about `READY_FOR_PR` says the quiet part
 — "no mechanism can leave that state today, so a DAG parked in it is stalled,
@@ -981,7 +981,7 @@ Fetched but unusable (PDF text extraction failed; not used for any claim):
 - arXiv 2603.29231 — Beyond pass@1: A Reliability Science Framework for Long-Horizon LLM Agents
 
 Repository, read directly: `CLAUDE.md`, `docs/orchestrator-mandate.md`,
-`skills/hanig-review-gate/PROTOCOL.md`, `skills/hanig-project/SKILL.md`,
+`skills/brood-review-gate/PROTOCOL.md`, `skills/brood-project/SKILL.md`,
 `docs/tracker-outbox.md`, `docs/plan-field-reports.md`, and
-`skills/hanig-swarm/scripts/swarm.py` (outline plus the lease, state, digest,
+`skills/brood-swarm/scripts/swarm.py` (outline plus the lease, state, digest,
 continuation, watcher and status sections cited above).

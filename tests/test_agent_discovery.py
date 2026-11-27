@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills" / "hanig-project" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "brood-project" / "scripts"))
 import agent_discovery as discovery  # noqa: E402
 
 

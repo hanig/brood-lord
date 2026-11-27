@@ -32,7 +32,7 @@ import re
 import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG = os.path.join(REPO_ROOT, "skills", "hanig-review-gate", "reviewers.json")
+CONFIG = os.path.join(REPO_ROOT, "skills", "brood-review-gate", "reviewers.json")
 
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 

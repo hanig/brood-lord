@@ -7,7 +7,7 @@ import unicodedata
 import unittest
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills/hanig-orchestrate/scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills/brood-orchestrate/scripts"))
 import watch_pr as W
 
 HEAD, OLD = "a" * 40, "b" * 40

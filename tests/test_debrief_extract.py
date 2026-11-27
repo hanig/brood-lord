@@ -15,7 +15,7 @@ import types
 import unittest
 from unittest import mock
 
-SCRIPTS = Path(__file__).resolve().parents[1] / 'skills/hanig-debrief/scripts'
+SCRIPTS = Path(__file__).resolve().parents[1] / 'skills/brood-debrief/scripts'
 sys.path.insert(0, str(SCRIPTS))
 import debrief_extract as X
 import debrief_packet as P

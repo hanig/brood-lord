@@ -187,8 +187,8 @@ host accepts an argument that large. The shared reader also serves reviewer
 configuration, disposition maps and journal records; its callers already
 handle the error result. Prompt-body truncation is a separate later boundary.
 The mechanical sibling scan also found unchecked overflow-sentinel reads in
-`hanig-portable-handoff/scripts/handoff.py` and
-`hanig-verified-workflow/scripts/contract.py` under `skills/`. Those separate
+`brood-portable-handoff/scripts/handoff.py` and
+`brood-verified-workflow/scripts/contract.py` under `skills/`. Those separate
 readers were not changed or behaviorally reproduced in this authorized patch;
 this record does not claim repository-wide closure of that pattern.
 

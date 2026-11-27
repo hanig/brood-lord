@@ -23,8 +23,8 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills" / "hanig-swarm" / "scripts"
-ORCH = ROOT / "skills" / "hanig-orchestrate" / "scripts"
+SCRIPTS = ROOT / "skills" / "brood-swarm" / "scripts"
+ORCH = ROOT / "skills" / "brood-orchestrate" / "scripts"
 for _path in (SCRIPTS, ORCH):
     sys.path.insert(0, str(_path))
 import swarm as S  # noqa: E402

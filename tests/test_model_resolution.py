@@ -17,9 +17,9 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-GATE = ROOT / "skills" / "hanig-review-gate"
+GATE = ROOT / "skills" / "brood-review-gate"
 sys.path.insert(0, str(GATE / "scripts"))
-sys.path.insert(0, str(ROOT / "skills" / "hanig-swarm" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "brood-swarm" / "scripts"))
 
 import model_family as MF  # noqa: E402
 import resolve_models as RM  # noqa: E402
@@ -61,7 +61,7 @@ def fixture_roster():
 
 def shipped():
     reviewers = json.loads((GATE / "reviewers.json").read_text(encoding="utf-8"))
-    agents = json.loads((ROOT / "skills/hanig-swarm/agents.json")
+    agents = json.loads((ROOT / "skills/brood-swarm/agents.json")
                         .read_text(encoding="utf-8"))
     return reviewers["reviewers"], agents
 
@@ -877,7 +877,7 @@ class TestReaders(StateHome):
              "import swarm; swarm.apply_agent_resolution(sys.argv[2]); "
              "assert 'review' not in sys.modules and 'committee' not in sys.modules"
              " and 'resolve_models' not in sys.modules",
-             str(ROOT / "skills/hanig-swarm/scripts"), str(plan)],
+             str(ROOT / "skills/brood-swarm/scripts"), str(plan)],
             capture_output=True, text=True, timeout=60,
             env=dict(os.environ, XDG_STATE_HOME=str(self.state)))
         self.assertEqual(check.returncode, 0, check.stderr)

@@ -16,22 +16,22 @@ without one.
 
 ## Files
 
-- `skills/hanig-project/scripts/linear_api.py`: brought from the unmerged
+- `skills/brood-project/scripts/linear_api.py`: brought from the unmerged
   `hanig/linear-api` branch: stdlib GraphQL client, one `transport()` seam,
   key from `LINEAR_API_KEY` or `~/.config/hanig/linear.env` parsed with shell
   word splitting (quotes and trailing comments). Redaction applies to output
   streams and error text only, never to data files (D2: this program never
   copies the key it loads; a key an operator placed elsewhere is a declared
   limit).
-- `skills/hanig-project/scripts/linear_sync.py`: network-capable, read-only in
+- `skills/brood-project/scripts/linear_sync.py`: network-capable, read-only in
   this PR, with subcommands `bind`, `audit` and `section`. Later PRs add
   `drain`, `file` and `issue` to the same program.
-- `skills/hanig-project/scripts/tracker_audit.py`: offline. Validates an audit
+- `skills/brood-project/scripts/tracker_audit.py`: offline. Validates an audit
   record and renders the tracker section. Imported by `linear_sync.py
   section`, `report.py` and `merge_unit.py`, so all three apply one rule.
-- `skills/hanig-swarm/scripts/child_environment.py`: add `LINEAR_API_KEY` to
+- `skills/brood-swarm/scripts/child_environment.py`: add `LINEAR_API_KEY` to
   the exact-name strip list.
-- `report.py`, `merge_unit.py`, the `hanig-project` and `hanig-orchestrate`
+- `report.py`, `merge_unit.py`, the `brood-project` and `brood-orchestrate`
   declarations and references, `docs/tracker-outbox.md`, CLAUDE.md.
 
 `swarm.py`, `tickets.py` and `drain_contract.py` stay network-free and import
@@ -161,7 +161,7 @@ Consumers:
   or failed audit prints `Tracker: UNAVAILABLE (<reason>)`. The audit never
   changes merge_unit's exit code and never blocks a merge.
 
-`hanig-orchestrate`'s `report.three-parts` declaration changes so part (2) is
+`brood-orchestrate`'s `report.three-parts` declaration changes so part (2) is
 the output of `linear_sync.py section`, quoted verbatim, and `tracker.dag`
 names `audit` as the check. A conversational claim cannot be stopped by
 repository code; the generated report and these commands are what this PR

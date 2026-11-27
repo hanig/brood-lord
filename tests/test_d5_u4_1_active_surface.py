@@ -20,8 +20,8 @@ from unittest import mock
 from tests.test_d5_u4_0b1_issuance import no_effects
 
 ROOT = Path(__file__).resolve().parents[1]
-SWARM = ROOT / "skills/hanig-swarm/scripts"
-OPERATOR = ROOT / "skills/hanig-orchestrate/scripts"
+SWARM = ROOT / "skills/brood-swarm/scripts"
+OPERATOR = ROOT / "skills/brood-orchestrate/scripts"
 sys.path.insert(0, str(SWARM))
 sys.path.insert(0, str(OPERATOR))
 import swarm as S
@@ -208,7 +208,7 @@ class SurfaceFixture:
             binding = self.directory / ".hanig/linear-binding.json"
             binding.parent.mkdir()
             binding.write_text("{}")
-            project = ROOT / "skills/hanig-project"
+            project = ROOT / "skills/brood-project"
             sys.path.insert(0, str(project / "scripts"))
             import linear_api
             patch(linear_api, "load_key", "synthetic-fixture-key")
@@ -347,7 +347,7 @@ class TestActiveSurface(unittest.TestCase):
                     # Launches are trapped; no checkout or interpreter is installed.
                     stack.enter_context(mock.patch(__name__ + ".ROOT", checkout))
                     stack.enter_context(mock.patch.object(M, "SWARM",
-                        str(checkout / "skills/hanig-swarm/scripts/swarm.py")))
+                        str(checkout / "skills/brood-swarm/scripts/swarm.py")))
                     if local_venv:
                         stack.enter_context(mock.patch.object(sys, "executable",
                             str(checkout / ".venv space/bin/python")))
@@ -507,16 +507,16 @@ class TestActiveSurface(unittest.TestCase):
             destination.mkdir()
             installed_state = ready_installation(tmp)["state_dir"]
             # Real copy installation of swarm, then of the operator's declared closure.
-            for skill in ("hanig-swarm", "hanig-orchestrate"):
-                names = (skill,) if skill == "hanig-swarm" else (
-                    "hanig-orchestrate", "hanig-project", "hanig-review-gate", "hanig-portable-handoff")
+            for skill in ("brood-swarm", "brood-orchestrate"):
+                names = (skill,) if skill == "brood-swarm" else (
+                    "brood-orchestrate", "brood-project", "brood-review-gate", "brood-portable-handoff")
                 for name in names:
                     shutil.copytree(ROOT / "skills" / name, destination / name,
                                     ignore=shutil.ignore_patterns("__pycache__"))
                 probe = r'''
 import builtins, pathlib, sys
 root = pathlib.Path(sys.argv[1]).resolve()
-sys.path.insert(0, str(root / 'hanig-swarm/scripts'))
+sys.path.insert(0, str(root / 'brood-swarm/scripts'))
 real_import = builtins.__import__
 def checked(name, *args, **kwargs):
     if name.startswith('d5_') and name not in ('d5_activation', 'd5_installation'):
@@ -534,16 +534,16 @@ else:
     raise AssertionError('entry not refused')
 assert not any(n.startswith('d5_') and n not in ('d5_activation', 'd5_installation') for n in sys.modules)
 if sys.argv[2] == 'operator':
-    sys.path.insert(0, str(root / 'hanig-orchestrate/scripts'))
+    sys.path.insert(0, str(root / 'brood-orchestrate/scripts'))
     import merge_unit
-    assert merge_unit.SWARM == str(root / 'hanig-swarm/scripts/swarm.py')
+    assert merge_unit.SWARM == str(root / 'brood-swarm/scripts/swarm.py')
     assert merge_unit.main(['unused', '--state-dir', sys.argv[3], '--unit', 'u',
                             '--pr', '1', '--approver', 'Operator']) == 1
 print('installed refusal: OK')
 '''
                 env = {k: v for k, v in os.environ.items() if not k.startswith("HANIG_")}
                 result = subprocess.run([sys.executable, "-I", "-S", "-B", "-c", probe,
-                                         str(destination), "swarm" if skill == "hanig-swarm" else "operator", installed_state],
+                                         str(destination), "swarm" if skill == "brood-swarm" else "operator", installed_state],
                                         cwd=tmp, env=env, capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("installed refusal: OK", result.stdout)

@@ -164,7 +164,7 @@ comments are visible, not before.
   with the audit, the drain never changes merge_unit's exit code or blocks a
   merge, and a missing binding, key or sibling prints `Tracker drain:
   UNAVAILABLE (<reason>)`.
-- `hanig-project` step 6, the `outbox.receipt` and `tracker.drain`
+- `brood-project` step 6, the `outbox.receipt` and `tracker.drain`
   declarations, `docs/tracker-outbox.md` and the operating loop say to drain
   with `linear_sync.py drain`, then run `audit`.
 

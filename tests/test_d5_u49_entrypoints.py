@@ -13,8 +13,8 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'skills/hanig-orchestrate/scripts'))
-sys.path.insert(0, str(ROOT / 'skills/hanig-swarm/scripts'))
+sys.path.insert(0, str(ROOT / 'skills/brood-orchestrate/scripts'))
+sys.path.insert(0, str(ROOT / 'skills/brood-swarm/scripts'))
 import d5_activation as activation
 import swarm as S
 import merge_unit as M
@@ -108,7 +108,7 @@ class TestRoutes(InstallationFixture):
         routes = json.loads((FIXTURES / 'integration-manifest.json').read_text())['u49c_entrypoints']
         self.assertEqual(routes['entries'], {
             'swarm.py': ['cmd_run', 'cmd_advance', 'main'], 'merge_unit.py': ['main']})
-        self.assertEqual(routes['activation'], 'skills/hanig-swarm/scripts/d5_activation.py')
+        self.assertEqual(routes['activation'], 'skills/brood-swarm/scripts/d5_activation.py')
         self.assertEqual(routes['advisory_entries'], {'swarm.py': ['cmd_run', 'cmd_advance', 'main']})
         self.assertIs(S.D5, activation)
         self.assertIs(M.D5, activation)

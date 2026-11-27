@@ -36,9 +36,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 MARKER=".installed-by-multi-agent-skills"
-# The authorship namespace: this repo writes hanig-*, and vendors everything
+# The authorship namespace: this repo writes brood-*, and vendors everything
 # else it ships. Same rule install.sh classifies by, read off the tree.
-OWN_PREFIX="hanig-"
+OWN_PREFIX="brood-"
 
 case "$0" in */*) SCRIPT_DIR=${0%/*} ;; *) SCRIPT_DIR=. ;; esac
 REPO=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
@@ -490,7 +490,7 @@ bounded() {
 # bounded --version probes; it never opens an agent session or a credentialed
 # Linear connection.  Keep the legacy text output untouched by default.
 if [ "$DOCTOR_JSON" -eq 1 ]; then
-  DIAGNOSTICS="$REPO/skills/hanig-project/scripts/agent_diagnostics.py"
+  DIAGNOSTICS="$REPO/skills/brood-project/scripts/agent_diagnostics.py"
   if [ ! -f "$DIAGNOSTICS" ]; then
     printf '%s\n' '{"schema_version":1,"state":"unknown","reason":"agent diagnostics helper is absent"}'
   elif ! command -v python3 >/dev/null 2>&1; then
@@ -970,7 +970,7 @@ done
 [ "$policy_bad" -eq 0 ] && printf '  (no problems)\n'
 
 printf '\n=== AGENT READINESS ===\n'
-DIAGNOSTICS="$REPO/skills/hanig-project/scripts/agent_diagnostics.py"
+DIAGNOSTICS="$REPO/skills/brood-project/scripts/agent_diagnostics.py"
 if [ ! -f "$DIAGNOSTICS" ]; then
   printf '  COULD NOT DETERMINE — agent diagnostics helper is absent\n'
 elif ! command -v python3 >/dev/null 2>&1; then
@@ -990,7 +990,7 @@ else
 fi
 
 printf '\n=== CODEX API SOURCE ===\n'
-CODEX_HOME_CHECK="$REPO/skills/hanig-swarm/scripts/codex_home.py"
+CODEX_HOME_CHECK="$REPO/skills/brood-swarm/scripts/codex_home.py"
 if [ -f "$CODEX_HOME_CHECK" ] && command -v python3 >/dev/null 2>&1; then
   bounded "$RUN_SECONDS" python3 -B "$CODEX_HOME_CHECK"
   if [ "$PROBE_STATE:$PROBE_RC" = answered:0 ]; then

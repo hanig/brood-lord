@@ -20,7 +20,7 @@ from tests.test_d5_u4_0b1_issuance import no_effects
 from tests.test_d5_u4_1_active_surface import SurfaceFixture
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills/hanig-swarm/scripts"))
+sys.path.insert(0, str(ROOT / "skills/brood-swarm/scripts"))
 import swarm as S
 import swarm_outbox as SO
 import d5_activation as activation

@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[1]
-SCRIPTS = REPO / "skills" / "hanig-review-gate" / "scripts"
+SCRIPTS = REPO / "skills" / "brood-review-gate" / "scripts"
 SCRIPT, EVIDENCE = SCRIPTS / "review.py", SCRIPTS / "review_evidence.py"
 spec = importlib.util.spec_from_file_location("review_evidence_facade", SCRIPT)
 review = importlib.util.module_from_spec(spec)

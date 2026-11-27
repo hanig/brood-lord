@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'skills/hanig-swarm/scripts'))
+sys.path.insert(0, str(ROOT / 'skills/brood-swarm/scripts'))
 import swarm as S
 import unit as U
 

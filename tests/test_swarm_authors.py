@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills/hanig-swarm/scripts"))
+sys.path.insert(0, str(ROOT / "skills/brood-swarm/scripts"))
 import swarm as S
 import swarm_authors as SA
 from tests.test_attempt_worktrees import paseo_resolvable
@@ -225,7 +225,7 @@ class AuthorInstructionTests(unittest.TestCase):
         self.assertEqual(self.flags(self.intent(provider="p/valid", model="-override")), [])
 
     def test_leading_dash_history_reaches_guarded_real_parsers(self):
-        with mock.patch.object(sys, "path", [str(ROOT / "skills/hanig-review-gate/scripts")] + sys.path):
+        with mock.patch.object(sys, "path", [str(ROOT / "skills/brood-review-gate/scripts")] + sys.path):
             import review
             import committee
         invalid = "--definitely-unknown/legacy"
@@ -271,7 +271,7 @@ class AuthorInstructionTests(unittest.TestCase):
     def test_rendered_flags_reach_real_parsers_and_committee_binding(self):
         # Stop committee.main at its command handler: parse the real CLI,
         # with no provider calls, review worker or journal writes.
-        with mock.patch.object(sys, "path", [str(ROOT / "skills/hanig-review-gate/scripts")] + sys.path):
+        with mock.patch.object(sys, "path", [str(ROOT / "skills/brood-review-gate/scripts")] + sys.path):
             import review
             import committee
         authors = ["p/current", "q/vendor/prior", "r/old"]

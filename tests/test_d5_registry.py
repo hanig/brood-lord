@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills/hanig-orchestrate/scripts"))
+sys.path.insert(0, str(ROOT / "skills/brood-orchestrate/scripts"))
 import d5_registry as R
 import d5_lease as lease
 import d5_install as install

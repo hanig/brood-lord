@@ -14,12 +14,12 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SWARM = ROOT / "skills" / "hanig-swarm" / "scripts" / "swarm.py"
+SWARM = ROOT / "skills" / "brood-swarm" / "scripts" / "swarm.py"
 sys.path.insert(0, str(SWARM.parent))
 import swarm as S  # noqa: E402
 import swarm_evidence as SE
 import swarm_journal as SJ  # noqa: E402
-PROJECT_SCRIPTS = ROOT / "skills" / "hanig-project" / "scripts"
+PROJECT_SCRIPTS = ROOT / "skills" / "brood-project" / "scripts"
 sys.path.insert(0, str(PROJECT_SCRIPTS))
 import drain_contract as D  # noqa: E402
 
@@ -2813,7 +2813,7 @@ class TestClosureAuthorityIsFixedByKind(unittest.TestCase):
                          "predicate_receipt")
 
     def test_the_skill_tells_a_drainer_what_to_do_with_a_violation(self):
-        doc = (ROOT / "skills" / "hanig-project" / "SKILL.md").read_text()
+        doc = (ROOT / "skills" / "brood-project" / "SKILL.md").read_text()
         step = doc.split("## 6. Drain.", 1)[1].split("\n## ", 1)[0]
         self.assertIn("Never mark the intent applied", step)
         self.assertIn("An issue closed without its authorised evidence is an integrity violation.",
@@ -2997,7 +2997,7 @@ class TestApprovalDoesNotCarryOntoChangedWork(unittest.TestCase):
     else, including a one-run autopilot."""
 
     def test_an_unchanged_redraft_keeps_the_approval(self):
-        sys.path.insert(0, str((ROOT / "skills" / "hanig-project" / "scripts")))
+        sys.path.insert(0, str((ROOT / "skills" / "brood-project" / "scripts")))
         import tickets as T2
         plan = {"name": "p", "units": [
             {"id": "a", "kind": "slurm", "runtime": "none", "command": "true", "outputs": ["o"]}]}
@@ -3008,7 +3008,7 @@ class TestApprovalDoesNotCarryOntoChangedWork(unittest.TestCase):
                          "granted")
 
     def test_a_changed_command_re_arms_the_gate(self):
-        sys.path.insert(0, str((ROOT / "skills" / "hanig-project" / "scripts")))
+        sys.path.insert(0, str((ROOT / "skills" / "brood-project" / "scripts")))
         import tickets as T2
         plan = {"name": "p", "units": [
             {"id": "a", "kind": "slurm", "runtime": "none", "command": "true", "outputs": ["o"]}]}
@@ -3022,7 +3022,7 @@ class TestApprovalDoesNotCarryOntoChangedWork(unittest.TestCase):
         self.assertIn("changed since approval", got["how_to_skip_next_time"])
 
     def test_an_added_unit_re_arms_the_gate(self):
-        sys.path.insert(0, str((ROOT / "skills" / "hanig-project" / "scripts")))
+        sys.path.insert(0, str((ROOT / "skills" / "brood-project" / "scripts")))
         import tickets as T2
         plan = {"name": "p", "units": [
             {"id": "a", "kind": "slurm", "runtime": "none", "command": "true", "outputs": ["o"]}]}
@@ -3315,7 +3315,7 @@ class TestAPlanThatCannotRunIsRefused(unittest.TestCase):
         # sentence that spans a line break fails on the newline rather than
         # on the content.
         doc = " ".join(
-            (ROOT / "skills" / "hanig-project" / "SKILL.md").read_text().split())
+            (ROOT / "skills" / "brood-project" / "SKILL.md").read_text().split())
         self.assertIn("Stop when the plan can RUN", doc)
         self.assertIn("that is a QUESTION, not a detail to settle later", doc)
 

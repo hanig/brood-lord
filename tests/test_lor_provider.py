@@ -14,7 +14,7 @@ from unittest import mock
 
 from tests.watchdog_guard import guarded_main
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "skills/hanig-review-gate/scripts"
+SCRIPTS = Path(__file__).resolve().parents[1] / "skills/brood-review-gate/scripts"
 sys.path.insert(0, str(SCRIPTS))
 import committee as C  # noqa: E402
 import review as R  # noqa: E402

@@ -22,8 +22,8 @@ from unittest import mock
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'skills/hanig-orchestrate/scripts'))
-sys.path.insert(0, str(ROOT / 'skills/hanig-project/scripts'))
+sys.path.insert(0, str(ROOT / 'skills/brood-orchestrate/scripts'))
+sys.path.insert(0, str(ROOT / 'skills/brood-project/scripts'))
 import merge_unit as M
 import d5_activation as activation
 import d5_admission as admission

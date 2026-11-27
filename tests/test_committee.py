@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
-SCRIPT = (REPO / "skills" / "hanig-review-gate" / "scripts" /
+SCRIPT = (REPO / "skills" / "brood-review-gate" / "scripts" /
           "committee.py")
 
 spec = importlib.util.spec_from_file_location("committee", SCRIPT)
@@ -734,7 +734,7 @@ class TestCommitteeTiebreak(unittest.TestCase):
         self.assertNotIn("astra-tiebreak", [m["name"] for m in committee.pick_members([])])
 
     def test_swarm_import_graph_excludes_committee_and_review(self):
-        swarm_scripts = REPO / "skills/hanig-swarm/scripts"
+        swarm_scripts = REPO / "skills/brood-swarm/scripts"
         result = subprocess.run(
             [sys.executable, "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
              "import swarm; assert 'committee' not in sys.modules; "

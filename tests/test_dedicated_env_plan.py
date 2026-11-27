@@ -9,8 +9,8 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SWARM_SCRIPTS = ROOT / "skills/hanig-swarm/scripts"
-PROJECT_SCRIPTS = ROOT / "skills/hanig-project/scripts"
+SWARM_SCRIPTS = ROOT / "skills/brood-swarm/scripts"
+PROJECT_SCRIPTS = ROOT / "skills/brood-project/scripts"
 for _p in (SWARM_SCRIPTS, PROJECT_SCRIPTS, Path(__file__).resolve().parent):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
@@ -899,14 +899,14 @@ class TestPlanSurveyDocsAndDeclarations(unittest.TestCase):
     def test_declarations_and_references(self):
         rd = lambda rel: (ROOT / rel).read_text(encoding="utf-8")
         for skill, decl in (
-            ("hanig-project", "env.dedicated"),
-            ("hanig-project", "interview.orchestration-env"),
-            ("hanig-swarm", "env.dedicated"),
+            ("brood-project", "env.dedicated"),
+            ("brood-project", "interview.orchestration-env"),
+            ("brood-swarm", "env.dedicated"),
         ):
             self.assertIn(f"`{decl}`:", rd(f"skills/{skill}/SKILL.md"))
-        uc = rd("skills/hanig-project/references/unit-contract.md")
-        si = rd("skills/hanig-project/references/survey-interview.md")
-        fe = rd("skills/hanig-swarm/references/field-evidence.md")
+        uc = rd("skills/brood-project/references/unit-contract.md")
+        si = rd("skills/brood-project/references/survey-interview.md")
+        fe = rd("skills/brood-swarm/references/field-evidence.md")
         self.assertIn("Dedicated environments per model line", uc)
         self.assertIn("machine.python_env", si)
         self.assertIn("orch-venv", fe)

@@ -14,7 +14,7 @@ import weakref
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills/hanig-orchestrate/scripts"))
+sys.path.insert(0, str(ROOT / "skills/brood-orchestrate/scripts"))
 import d5_locks as locks
 import d5_protocol_locks as protocol
 import d5_effect_log as ledger

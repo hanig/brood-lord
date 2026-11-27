@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL = "hanig-portable-handoff"
+SKILL = "brood-portable-handoff"
 AGENTS = ("claude", "codex", "opencode", "pi")
 NON_CLAUDE_AGENTS = ("codex", "opencode", "pi")
 NON_CLAUDE_HELPERS = ("dirname", "git", "node", "python3", "sh")

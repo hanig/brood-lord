@@ -286,7 +286,7 @@ def fake_repo(script_body, root):
     repository is how the probe's behaviour gets controlled without a real
     coordinator, a real outbox, or the operator's own state.
     """
-    scripts = os.path.join(root, "skills", "hanig-swarm", "scripts")
+    scripts = os.path.join(root, "skills", "brood-swarm", "scripts")
     os.makedirs(scripts, exist_ok=True)
     with open(os.path.join(scripts, "swarm.py"), "w") as handle:
         handle.write(textwrap.dedent(script_body))

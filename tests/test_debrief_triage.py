@@ -13,7 +13,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "skills/hanig-debrief/scripts/debrief_triage.py"
+SCRIPT = ROOT / "skills/brood-debrief/scripts/debrief_triage.py"
 sys.path.insert(0, str(SCRIPT.parent))
 import debrief_schema as S
 import debrief_triage as T
@@ -242,7 +242,7 @@ class TestDebriefTriage(unittest.TestCase):
 
     def test_repository_directory_reference_with_trailing_slash(self):
         row = self.record["dispositions"]["L02"]
-        row["references"] = ["skills/hanig-debrief/", "docs/", "docs/café guide/"]
+        row["references"] = ["skills/brood-debrief/", "docs/", "docs/café guide/"]
         self.save()
         self.assertEqual(self.run_cli(), (0, "triage valid\n", ""))
         for ref in ("/", "/docs/", "docs//", "docs//guide/", "docs/./", "docs/../"):
@@ -310,7 +310,7 @@ class TestDebriefTriage(unittest.TestCase):
         self.assertEqual(self.run_cli()[0], 0)
 
     def test_cli_writes_nothing_and_coverage_stays_identical(self):
-        bundle = self.root / "skills/hanig-debrief"
+        bundle = self.root / "skills/brood-debrief"
         scripts = bundle / "scripts"
         scripts.mkdir(parents=True)
         for name in ("debrief_triage.py", "debrief_packet.py", "debrief_schema.py"):

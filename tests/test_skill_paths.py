@@ -4,16 +4,16 @@ from pathlib import Path
 
 
 SKILLS = Path(__file__).resolve().parents[1] / "skills"
-CANONICAL = SKILLS / "hanig-orchestrate" / "scripts" / "skill_paths.py"
+CANONICAL = SKILLS / "brood-orchestrate" / "scripts" / "skill_paths.py"
 
 
 class BundledSkillPaths(unittest.TestCase):
     def test_bundled_resolvers_match_canonical_bytes(self):
-        copies = sorted(SKILLS.glob("hanig-*/scripts/skill_paths.py"))
+        copies = sorted(SKILLS.glob("brood-*/scripts/skill_paths.py"))
         # Discovery includes future consumers; these current consumers must
         # not disappear and turn the byte comparison into a vacuous pass.
-        required = {CANONICAL, SKILLS / "hanig-project/scripts/skill_paths.py",
-                    SKILLS / "hanig-debrief/scripts/skill_paths.py"}
+        required = {CANONICAL, SKILLS / "brood-project/scripts/skill_paths.py",
+                    SKILLS / "brood-debrief/scripts/skill_paths.py"}
         self.assertTrue(required.issubset(copies), "missing bundled resolver")
         canonical = CANONICAL.read_bytes()
         for copy in copies:
