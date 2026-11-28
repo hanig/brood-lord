@@ -3,7 +3,6 @@ name: brood-hillclimb
 description: >-
   Hill-climb a metric on a frozen harness: pre-register each hypothesis, answer
   seven benchmark questions, keep or revert by a paired A/B noise screen.
-disable-model-invocation: true
 ---
 
 # brood-hillclimb

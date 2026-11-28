@@ -17,6 +17,8 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from tests.explicit_only_fixture import OPENAI_YAML, flag_skill, flagged_checkout  # noqa: E402
 spec = importlib.util.spec_from_file_location("skill_installer", ROOT / "lib" / "skill_installer.py")
 installer = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = installer
@@ -111,18 +113,21 @@ class TestSelectionBeforeWrites(unittest.TestCase):
                     installer.validate_payload(path)
 
     def test_payload_validation_rejects_invocation_policy_drift(self):
-        yaml = b"policy:\n  allow_implicit_invocation: false\n"
+        yaml = OPENAI_YAML
         cases = (
-            ("brood-swarm", "missing", "agents/openai.yaml is missing"),
-            ("brood-swarm", yaml + b"#\n", "differs from the canonical bytes"),
-            ("brood-review-gate", yaml, "exists without"),
+            ("brood-swarm", True, "missing", "agents/openai.yaml is missing"),
+            ("brood-swarm", True, yaml + b"#\n", "differs from the canonical bytes"),
+            ("brood-review-gate", False, yaml, "exists without"),
         )
-        for name, change, message in cases:
+        for name, flagged, change, message in cases:
             with self.subTest(name=name, change=change), \
                     tempfile.TemporaryDirectory() as raw:
                 payload = Path(raw) / name
                 shutil.copytree(str(ROOT / "skills" / name), str(payload))
                 installer.validate_payload(payload)
+                if flagged:
+                    flag_skill(payload)
+                    installer.validate_payload(payload)
                 target = payload / "agents" / "openai.yaml"
                 if change == "missing":
                     target.unlink()
@@ -132,13 +137,24 @@ class TestSelectionBeforeWrites(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     installer.validate_payload(payload)
 
+    def test_shipped_authored_skills_are_model_invocable(self):
+        for name, path, origin in installer.selected_sources(ROOT, ()):
+            if origin == "authored":
+                with self.subTest(skill=name):
+                    self.assertEqual(installer.agent_policy_errors(path), [])
+                    self.assertFalse(os.path.lexists(str(path / "agents")))
+
     def test_explicit_only_skill_without_flag_is_one_fault(self):
-        with tempfile.TemporaryDirectory() as raw:
+        from lib import skill_agent_policy as policy
+        with tempfile.TemporaryDirectory() as raw, \
+                mock.patch.object(policy, "EXPLICIT_ONLY_SKILLS", ("brood-swarm",)):
             payload = Path(raw) / "brood-swarm"
             shutil.copytree(str(ROOT / "skills" / "brood-swarm"), str(payload))
-            skill = payload / "SKILL.md"
-            text = skill.read_text()
-            skill.write_text(text.replace("disable-model-invocation: true\n", "", 1))
+            self.assertEqual(installer.agent_policy_errors(payload), [
+                "brood-swarm: explicit-only skill lacks "
+                "'disable-model-invocation: true'"])
+            (payload / "agents").mkdir()
+            (payload / "agents" / "openai.yaml").write_bytes(OPENAI_YAML)
             self.assertEqual(installer.agent_policy_errors(payload), [
                 "brood-swarm: explicit-only skill lacks "
                 "'disable-model-invocation: true'"])
@@ -254,7 +270,7 @@ class TestPublicCli(unittest.TestCase):
         interpreter.chmod(0o755)
         return bin_dir
 
-    def _run(self, *args, agents=(), extra_env=None, configured=()):
+    def _run(self, *args, agents=(), extra_env=None, configured=(), root=ROOT):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         base = Path(temp.name)
@@ -271,7 +287,7 @@ class TestPublicCli(unittest.TestCase):
                "PYTHONDONTWRITEBYTECODE": "1"}
         if extra_env:
             env.update(extra_env)
-        result = subprocess.run(["sh", str(ROOT / "install.sh"), *args], cwd=ROOT,
+        result = subprocess.run(["sh", str(Path(root) / "install.sh"), *args], cwd=root,
                                 env=env, text=True, capture_output=True)
         return result, home
 
@@ -520,13 +536,18 @@ class TestPublicCli(unittest.TestCase):
                                   for path in root.rglob("__pycache__")})
 
     def test_install_copies_policy_file_and_installed_drift_is_detected(self):
-        yaml = (ROOT / "skills" / "brood-swarm" / "agents" / "openai.yaml").read_bytes()
+        # No shipped skill is explicit-only, so a checkout copy flags one.
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        checkout = flagged_checkout(Path(temp.name) / "checkout", ("brood-swarm",))
+        yaml = (checkout / "skills" / "brood-swarm" / "agents" / "openai.yaml").read_bytes()
+        self.assertEqual(yaml, OPENAI_YAML)
         for mode in ("copy", "link"):
             with self.subTest(mode=mode):
                 result, home = self._run("--agent", "claude", "--mode", mode,
                                          "--only", "brood-swarm",
                                          "--only", "brood-review-gate",
-                                         "--json", agents=("claude",))
+                                         "--json", agents=("claude",), root=checkout)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 root = home / ".claude" / "skills"
                 installed = root / "brood-swarm"
@@ -541,10 +562,10 @@ class TestPublicCli(unittest.TestCase):
         # Mutate only the copy: the link install points into this checkout.
         self.assertFalse(target.is_symlink())
         shutil.rmtree(str(target / "agents"))
-        self.assertTrue((ROOT / "skills" / "brood-swarm" / "agents").is_dir())
+        self.assertTrue((checkout / "skills" / "brood-swarm" / "agents").is_dir())
         self.assertEqual(installer.agent_policy_errors(target),
                          ["brood-swarm: agents/openai.yaml is missing"])
-        shutil.copytree(str(ROOT / "skills" / "brood-swarm" / "agents"),
+        shutil.copytree(str(checkout / "skills" / "brood-swarm" / "agents"),
                         str(target / "agents"))
         (target / "agents" / "openai.yaml").write_bytes(
             yaml.replace(b"false", b"true"))

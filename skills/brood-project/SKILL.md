@@ -1,7 +1,6 @@
 ---
 name: brood-project
 description: Start a swarm project on this machine, or adopt a half-finished repo into one. Surveys the host and the code first, interviews the human only about what inspection cannot answer, writes a plan whose units have declared outputs, files a Linear project and issues after ONE approval, then dispatches and tracks it. Use when asked to start a project, set up work on a server, plan a repo, turn a repo into tickets, or file issues from a plan.
-disable-model-invocation: true
 ---
 
 # The front door

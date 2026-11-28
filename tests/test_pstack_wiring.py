@@ -13,6 +13,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from tests.explicit_only_fixture import flag_skill  # noqa: E402
 REG = "skills/brood-swarm/scripts/declaration_registry.py"  # closed inventories: test_skill_shape
 NEW = {"brood-orchestrate": ("review.counterexample-evidence", "review.premise-check",
                              "watch.pr-oracle"),
@@ -140,6 +142,7 @@ class TestPstackWiring(unittest.TestCase):
             skills = Path(temporary) / "skills"
             shutil.copytree(str(ROOT / "skills"), str(skills), symlinks=True,
                             ignore=shutil.ignore_patterns("__pycache__"))
+            flag_skill(skills / "brood-debrief")  # write-body must keep this frontmatter
             for skill in NEW:
                 for command in ("write-body", "check-body", "check-references"):
                     out = _run(ROOT / REG, "--skill-dir", skills / skill, command)
@@ -149,7 +152,7 @@ class TestPstackWiring(unittest.TestCase):
             target = skills / "brood-debrief" / "SKILL.md"  # the check must see lost frontmatter
             target.write_text(target.read_text(encoding="utf-8").replace(
                 "disable-model-invocation: true\n", "", 1), encoding="utf-8")
-            self.assertEqual(_run(*policy).returncode, 1)
+            self.assertEqual(_run(*policy).returncode, 1)  # orphan agents/openai.yaml
 
     def test_handoff_parses_at_python_37_and_claude_md_fits(self):
         ast.parse(_read(ROOT, "skills/brood-portable-handoff/scripts/handoff.py"),

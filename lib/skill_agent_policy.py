@@ -19,18 +19,13 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 # The single authoritative list of authored skills that must not be invoked
-# implicitly.  Unit h1-hillclimb-skill appends "brood-hillclimb".
-EXPLICIT_ONLY_SKILLS = (
-    "brood-debrief",
-    "brood-hillclimb",
-    "brood-orchestrate",
-    "brood-portable-handoff",
-    "brood-project",
-    "brood-swarm",
-)
+# implicitly.  Empty since the owner made every authored skill model-invocable
+# (2026-11-27).  The rules below still bind any skill that adds the flag, and a
+# name added here must carry it.
+EXPLICIT_ONLY_SKILLS = ()  # type: Tuple[str, ...]
 
 AUTHORED_PREFIX = "brood-"
 FLAG_KEY = "disable-model-invocation"
@@ -144,9 +139,15 @@ def _write_yaml(skill_dir):
         raise
 
 
-def run(skills_root, write=False, explicit_only=EXPLICIT_ONLY_SKILLS):
-    # type: (Path, bool, Sequence[str]) -> Dict[str, object]
-    """Inspect (and with ``write`` repair) the tree; return a JSON-ready report."""
+def run(skills_root, write=False, explicit_only=None):
+    # type: (Path, bool, Optional[Sequence[str]]) -> Dict[str, object]
+    """Inspect (and with ``write`` repair) the tree; return a JSON-ready report.
+
+    ``explicit_only`` defaults to ``EXPLICIT_ONLY_SKILLS`` read at call time,
+    the same late binding ``skill_installer.agent_policy_errors`` uses.
+    """
+    if explicit_only is None:
+        explicit_only = EXPLICIT_ONLY_SKILLS
     skills_root = Path(skills_root)
     errors = []  # type: List[Dict[str, str]]
     written = []  # type: List[str]

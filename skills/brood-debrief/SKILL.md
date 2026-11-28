@@ -3,7 +3,6 @@ name: brood-debrief
 description: >-
   Collect a project's lessons about brood-lord skills into a private dossier,
   draft a scrubbed packet for named owner approval, and triage its learnings.
-disable-model-invocation: true
 ---
 
 # brood-debrief

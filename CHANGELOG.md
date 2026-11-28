@@ -2,6 +2,20 @@
 
 ## Unreleased — 2026-11-22
 
+### Changed: every authored skill is model-invocable (2026-11-27)
+
+- **Invocation policy:** owner decision after Claude Code refused `Skill(brood-project)`.
+  `brood-debrief`, `brood-hillclimb`, `brood-orchestrate`, `brood-portable-handoff`,
+  `brood-project` and `brood-swarm` drop `disable-model-invocation: true` and their
+  `agents/openai.yaml`; `EXPLICIT_ONLY_SKILLS` is now empty. `lib/skill_agent_policy.py`,
+  the installer and `bin/doctor` still enforce the flag/file pairing for any skill that
+  adds the flag, and `run()` now reads the list at call time. Policy tests flag synthetic
+  copies (`tests/explicit_only_fixture.py`) so every drift class stays exercised.
+- **README:** rewritten from the ground up around the current system (daemonless coding
+  backends, orchestrator-owned review gate, conclave, mandates, install and compatibility).
+  The long-form mechanism prose it carried is recoverable from history at `4c72407e`; the
+  skills' `SKILL.md`, `references/` and `docs/` remain the detailed sources.
+
 ### Added — `brood-conclave`, the tenth authored skill (2026-11-27)
 
 - **Multi-model panel:** folds the standalone `hanig-conclave` repository in as
