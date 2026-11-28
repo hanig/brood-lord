@@ -290,18 +290,17 @@ class TestLor(unittest.TestCase):
         self.assertNotIn("fern-0.1" if seat == "kimi-k3" else "kimi-k3", report["seat_routes"])
 
     def test_profiles_and_escalation_select_advertised_replacement(self):
-        for flags, plan in (((), False), (("--profile", "standard"), False),
-                            (("--profile", "deep"), False), ((), True),
-                            (("--profile", "fast", "--escalate"), False)):
-            with self.subTest(flags=flags, plan=plan):
+        for flags in ((), ("--profile", "standard"), ("--profile", "deep"),
+                      ("--profile", "fast", "--escalate")):
+            with self.subTest(flags=flags):
                 self.mode("ok")
-                report, calls = self.invoke_review(*flags, plan=plan)
+                report, calls = self.invoke_review(*flags)
                 self.assert_route(report, "fern-0.1")
                 fern = [r for r in calls if r["name"] == "fern-0.1"]
-                self.assertEqual(len(fern), 2 if plan else 1)
+                self.assertEqual(len(fern), 1)
                 self.assertEqual(fern[0]["effort"], "xhigh")
                 self.assertEqual(fern[0]["_lor_replaced"], "kimi-k3")
-                self.assertEqual(fern[0]["profiles"], ["plan", "standard", "deep"])
+                self.assertEqual(fern[0]["profiles"], ["standard", "deep"])
                 self.assertEqual([c["argv"] for c in self.calls()], [["model", "list"]])
                 if "--escalate" in flags:
                     self.assertEqual(report["tiers_run"], ["fast", "standard", "deep"])
@@ -348,6 +347,13 @@ class TestLor(unittest.TestCase):
         report, _ = self.invoke_review("--profile", "fast")
         self.assertEqual(set(report["seat_routes"]), {"luna", "haiku-5.5"})
         self.assertEqual(self.calls(), [])
+        self.mode("ok")
+        report, calls = self.invoke_review(plan=True)
+        self.assertEqual(set(report["seat_routes"]), {"mythos-5.2", "astra"})
+        self.assertEqual(report["seat_routes"]["mythos-5.2"]["provider"], "claude")
+        self.assertEqual(report["seat_routes"]["astra"]["route"], "lor")
+        self.assertNotIn("fern-0.1", {r["name"] for r in calls})
+        self.assertEqual(self.calls(), [])
         roster = seats()
         selected = [roster[name] for name in ("kimi-k3", "fern-0.1")]
         self.assertEqual(L.resolve_lor_substitutions(
@@ -369,14 +375,14 @@ class TestLor(unittest.TestCase):
     def test_plan_and_committee_reserves_substitute_when_eligible(self):
         roster = seats()
         kimi = roster["kimi-k3"]
-        kimi["profiles"].remove("plan")
+        self.assertNotIn("plan", kimi["profiles"])
         for seat in roster.values():
             for profile in ("plan", "committee"):
                 seat.get("_reserve_order", {}).pop(profile, None)
         kimi["_reserve_order"].update(plan=0, committee=0)
-        roster["sonnet-5.5"]["profiles"].append("plan")
+        mythos = "claude/" + roster["mythos-5.2"]["model"]
         with mock.patch.object(R, "load_reviewers", return_value=list(roster.values())):
-            report, calls = self.invoke_review("--author", "claude/claude-sonnet-5-5", plan=True)
+            report, calls = self.invoke_review("--author", mythos, plan=True)
             self.assert_route(report, "fern-0.1")
             [fern, second_fern] = [r for r in calls if r["name"] == "fern-0.1"]
             self.assertEqual(fern, second_fern)
@@ -392,8 +398,13 @@ class TestLor(unittest.TestCase):
         primary, error = C.tiebreaker()
         self.assertIsNone(error)
         args = SimpleNamespace(name="split", timeout=1)
-        for voters, expected in (([primary], "fern-0.1"),
-                                  ([primary, seats()["fern-0.1"]], "kimi-k3")):
+        roster = seats()
+        self.assertEqual([r["name"] for r in R._panels.reserve_seats(
+            list(roster.values()), "tiebreak")], ["mythos-5.2", "gemini-neon", "kimi-k3"])
+        ahead = [primary, roster["mythos-5.2"], roster["gemini-neon"]]
+        for voters, expected in (([primary], "mythos-5.2"),
+                                  (ahead, "fern-0.1"),
+                                  ([*ahead, roster["fern-0.1"]], "kimi-k3")):
             with self.subTest(expected=expected), mock.patch.object(C, "save_session"), \
                     mock.patch.object(C, "decision_reply", return_value=(None, "offline")) as ask, \
                     mock.patch.object(C, "finish_decision"):

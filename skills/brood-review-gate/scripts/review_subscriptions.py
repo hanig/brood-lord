@@ -115,7 +115,9 @@ STRIPPED_ENV_SUFFIXES = (
 )
 CLAUDE_STRIPPED_ENV = STRIPPED_ENV
 CODEX_STRIPPED_ENV = STRIPPED_ENV
-CLAUDE_EFFORTS = ("low", "medium", "high", "max")
+# `claude --effort` levels; the native Anthropic API seat keeps ANTHROPIC_EFFORTS.
+CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+ANTHROPIC_EFFORTS = ("low", "medium", "high", "max")
 CODEX_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 CODEX_DISABLED_FEATURES = (
     "shell_tool",

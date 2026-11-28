@@ -383,6 +383,30 @@ class TestAnthropicCatalogEffort(unittest.TestCase):
                 post.assert_not_called()
                 urlopen.assert_not_called()
 
+    def test_claude_cli_accepts_xhigh_and_refuses_before_any_cli_call(self):
+        # `claude --effort` lists xhigh; the native API seat above still refuses it.
+        for effort in ("low", "medium", "high", "xhigh", "max"):
+            with self.subTest(effort=effort):
+                config, seat = self.catalog("claude", effort=effort)
+                with mock.patch.object(R, "CONFIG", config):
+                    self.assertEqual(R.load_reviewers(), [seat])
+        for effort in ("", "XHIGH", " xhigh", "minimal", "extra", 1, [], {}):
+            with self.subTest(effort=effort):
+                config, seat = self.catalog("claude", effort=effort)
+                error = io.StringIO()
+                with mock.patch.object(R, "CONFIG", config), \
+                        mock.patch.object(sys, "argv", ["review.py", "--list"]), \
+                        mock.patch.object(R._subs, "_run_cli") as run_cli, \
+                        mock.patch.object(R._subs, "claude_availability") as available, \
+                        redirect_stderr(error), redirect_stdout(io.StringIO()):
+                    with self.assertRaises(SystemExit) as raised:
+                        guarded_main(R.main)
+                    self.assertEqual(raised.exception.code, 4)
+                self.assertIn(seat["name"], error.getvalue())
+                self.assertIn(repr(effort), error.getvalue())
+                run_cli.assert_not_called()
+                available.assert_not_called()
+
     def test_openai_and_openrouter_efforts_are_unchanged(self):
         for provider in ("openai", "openrouter"):
             with self.subTest(provider=provider):

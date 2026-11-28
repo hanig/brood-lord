@@ -1766,11 +1766,16 @@ def load_reviewers():
             if not isinstance(val, str) or not val.strip():
                 config_error(f"reviewer '{field}' must be a non-empty string, "
                              f"got {val!r}")
-        if (r["provider"] in ("anthropic", "claude") and r.get("effort") is not None
+        if (r["provider"] == "anthropic" and r.get("effort") is not None
+                and r["effort"] not in _subs.ANTHROPIC_EFFORTS):
+            config_error(f"anthropic reviewer {r['name']!r} has unsupported "
+                         f"effort {r['effort']!r}; Pass "
+                         f"{', '.join(_subs.ANTHROPIC_EFFORTS)} or omit effort")
+        if (r["provider"] == "claude" and r.get("effort") is not None
                 and r["effort"] not in _subs.CLAUDE_EFFORTS):
-            config_error(f"{r['provider']} reviewer {r['name']!r} has unsupported "
-                         f"effort {r['effort']!r}; Pass low, medium, high, max "
-                         f"or omit effort")
+            config_error(f"claude reviewer {r['name']!r} has unsupported "
+                         f"effort {r['effort']!r}; Pass "
+                         f"{', '.join(_subs.CLAUDE_EFFORTS)} or omit effort")
         if (r["provider"] == "codex" and r.get("effort") is not None
                 and r["effort"] not in _subs.CODEX_EFFORTS):
             config_error(f"codex reviewer {r['name']!r} has unsupported "
