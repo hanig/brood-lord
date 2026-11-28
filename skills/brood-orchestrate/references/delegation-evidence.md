@@ -27,9 +27,9 @@ Keep a private `detector-ledger.jsonl` beside the plan, one record per consequen
 
 ## Checked review configuration
 
-These observations track `skills/brood-review-gate/reviewers.json` after the 2026-11-26 owner decision. <!-- declaration: evidence.checkable -->
+These observations track `skills/brood-review-gate/reviewers.json` after the 2026-11-27 owner decision. <!-- declaration: evidence.checkable -->
 
-`plan`: luna, kimi-k3.
+`plan`: mythos-5.2, astra.
 
 `fast`: luna, haiku-5.5.
 
@@ -37,13 +37,13 @@ These observations track `skills/brood-review-gate/reviewers.json` after the 202
 
 `deep`: terra, sonnet-5.5, kimi-k3, sol, astra.
 
-Owner decision 2026-10-28 replaces Luna with Terra in standard/deep; its price is unknown. Owner decision 2026-11-26 replaces kimi-k2.7-code (disabled) with Lor-served kimi-k3 in standard/deep, so the default profiles route only through Lor or the Claude/Codex subscriptions. Plan keeps Luna and the same Lor-routed seat. In a Lor session, `fern-0.1` at `xhigh` substitutes for `kimi-k3` when advertised by `lor model list` and eligible under author exclusion; the lists above show configured profile membership. Escalation retains Luna and Haiku from fast, adds the standard seats, then Sol and Astra (2026-11-06: Sol now writes code; author exclusion applies). Declare authors with repeatable `--author PROVIDER/MODEL` for exclusion. Keep review identity stable; advance `--round N` with `--dispositions FILE` after round 1. <!-- declaration: review.panel-source -->
+Owner decision 2026-10-28 replaces Luna with Terra in standard/deep; its price is unknown. Owner decision 2026-11-26 replaces kimi-k2.7-code (disabled) with Lor-served kimi-k3 in standard/deep, so the default profiles route only through Lor or the Claude/Codex subscriptions. Owner decision 2026-11-27 gives plan to mythos-5.2 (Claude CLI subscription) and astra, both at `xhigh`, so neither plan seat sits on the planning committee; Luna and kimi-k3 leave plan. In a Lor session, `fern-0.1` at `xhigh` substitutes for `kimi-k3` when advertised by `lor model list` and eligible under author exclusion; the lists above show configured profile membership. Escalation retains Luna and Haiku from fast, adds the standard seats, then Sol and Astra (2026-11-06: Sol now writes code; author exclusion applies). Declare authors with repeatable `--author PROVIDER/MODEL` for exclusion. Keep review identity stable; advance `--round N` with `--dispositions FILE` after round 1. <!-- declaration: review.panel-source -->
 
 `committee`: deepseek-v4-pro, gemini-neon, sonnet-5.5.
 
 `committee.py` starts with the one enabled reviewer whose profile list is exactly `["tiebreak"]`. It excludes declared authors and prior voters by canonical model maker and leaf. If the primary is excluded, it checks the ordered tiebreak reserves for an eligible model from a different maker than the primary. If none qualifies, the split goes to `OWNER`. See `reviewers.json` for current profiles and reserves.
 
-Enabled price hints recorded per million tokens are luna input $0.2 and output $1.2; sonnet-5.5 input $2.0 and output $10.0; deepseek-v4-pro input $0.87 and output $1.74; sol input $2.0 and output $10.0; and gemini-neon input $3.0 and output $15.0. Astra has no `_cost` record. Haiku pricing is unmeasured because models.json has no Anthropic price list; Kimi K3 also has no measured price hint. <!-- declaration: review.cost -->
+Enabled price hints recorded per million tokens are luna input $0.2 and output $1.2; sonnet-5.5 input $2.0 and output $10.0; deepseek-v4-pro input $0.87 and output $1.74; sol input $2.0 and output $10.0; and gemini-neon input $3.0 and output $15.0. Astra has no `_cost` record, and neither does the subscription seat mythos-5.2. Haiku pricing is unmeasured because models.json has no Anthropic price list; Kimi K3 also has no measured price hint. <!-- declaration: review.cost -->
 
 Panel reporting names actual answers and absences instead of describing configured membership as completed review. <!-- declaration: review.honesty -->
 

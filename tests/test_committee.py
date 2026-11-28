@@ -341,14 +341,22 @@ class TestCommitteeTiebreak(unittest.TestCase):
         primary = next(r for r in self.shipped if r["profiles"] == ["tiebreak"]
                        and r["enabled"])
 
+        mythos = next(r for r in self.shipped if r["name"] == "mythos-5.2")
+        self.assertEqual([r["name"] for r in committee.R._panels.reserve_seats(
+            self.shipped, "tiebreak")], ["mythos-5.2", "gemini-neon", "kimi-k3"])
+        expected = []
+
         def ask_reserve(*_, **_kwargs):
             selection = committee.load_session("split").get("tiebreak_selection", {})
-            self.assertEqual(selection["substituted"], ["kimi-k3"])
+            self.assertEqual(selection["substituted"], expected)
             return json.dumps(self.ruling), None, {}
 
-        for author, voters in (("openrouter/openai/" + primary["model"], []),
-                               ("codex/gpt-6.1-sol", [primary])):
+        for author, voters, reserve in (
+                ("openrouter/openai/" + primary["model"], [], "mythos-5.2"),
+                ("codex/gpt-6.1-sol", [primary], "mythos-5.2"),
+                ("claude/" + mythos["model"], [primary], "gemini-neon")):
             with self.subTest(author=author):
+                expected[:] = [reserve]
                 session = dict(self.session, members={
                     n: dict(rec, voters=voters) for n, rec in self.session["members"].items()})
                 committee.save_session("split", session)
@@ -356,9 +364,9 @@ class TestCommitteeTiebreak(unittest.TestCase):
                         mock.patch.object(committee, "ask_member", side_effect=ask_reserve) as ask:
                     code, output, saved = self.invoke("tiebreak", author=author)
                 self.assertEqual(code, 0, output)
-                self.assertEqual([c.args[0]["name"] for c in ask.call_args_list], ["kimi-k3"])
+                self.assertEqual([c.args[0]["name"] for c in ask.call_args_list], [reserve])
                 self.assertEqual(saved["resolution"]["tiebreak_selection"]["substituted"],
-                                 ["kimi-k3"])
+                                 [reserve])
 
     def test_tiebreaker_unavailable_routes_owner_with_reason(self):
         self.tie_error = "HTTP 503: provider unavailable"

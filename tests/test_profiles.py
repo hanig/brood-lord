@@ -171,7 +171,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
             "fast": {"luna", "haiku-5.5"},
             "standard": {"terra", "kimi-k3", "sonnet-5.5"},
             "deep": {"terra", "kimi-k3", "sonnet-5.5", "sol", "astra"},
-            "plan": {"luna", "kimi-k3"},
+            "plan": {"mythos-5.2", "astra"},
             "planning": {"terra", "gemini-neon", "muse-wonder"},
             "committee": {"deepseek-v4-pro", "gemini-neon", "sonnet-5.5"},
             "tiebreak": {"astra-tiebreak"},
@@ -195,6 +195,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
             "luna": ("codex", "gpt-6-luna", "max"),
             "terra": ("codex", "gpt-6.1-terra", "xhigh"),
             "haiku-5.5": ("claude", "claude-haiku-5-5", "high"),
+            "mythos-5.2": ("claude", "claude-mythos-5-2", "xhigh"),
             "astra": ("openai", "gpt-6.2-astra", "xhigh"),
             "kimi-k3": ("openrouter", "moonshotai/kimi-k3", "xhigh"),
             "fern-0.1": ("lor", "fern-0.1", "xhigh"),
@@ -223,7 +224,7 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
                 self.assertEqual(payload["model"], seat["model"])
                 self.assertEqual(payload["max_tokens"], 128000)
                 self.assertEqual(payload["reasoning"], {"effort": seat["effort"]})
-        for name in ("haiku-5.5", "sonnet-5.5"):
+        for name in ("haiku-5.5", "sonnet-5.5", "mythos-5.2"):
             seat = roster[name]
             with self.subTest(seat=name), \
                     patch.object(R._subs, "claude_availability", return_value=None), \
@@ -234,6 +235,10 @@ class TestShippedLadderAddsReviewers(unittest.TestCase):
                 cmd = run_cli.call_args.args[0]
                 self.assertEqual(cmd[cmd.index("--model") + 1], seat["model"])
                 self.assertEqual(cmd[cmd.index("--effort") + 1], seat["effort"])
+                self.assertEqual(
+                    run_cli.call_args.kwargs["extra_env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"],
+                    "128000")
+        self.assertEqual(roster["mythos-5.2"]["effort"], "xhigh")
 
     def test_planning_selects_exactly_three_members_across_two_providers(self):
         import committee
@@ -679,11 +684,11 @@ class TestAuthorExclusion(unittest.TestCase):
     def test_plan_cannot_drop_its_author_and_pass_with_one(self):
         with patch.object(R, "cmd_plan_review", return_value=0) as plan_review:
             code, output, _err, called = self.invoke(
-                "--author", "codex/gpt-6-luna", "--author", "openai/gpt-6.1-terra",
+                "--author", "claude/claude-mythos-5-2", "--author", "openai/gpt-6.1-terra",
                 "--author", "openrouter/deepseek/deepseek-v4-pro", kind="plan",
                 roster=[r for r in R.load_reviewers() if r["name"] != "sonnet-5.5"])
         self.assertEqual(code, R.STATES["REVIEW_UNAVAILABLE"], output)
-        self.assertIn("luna excluded: authored this change", output)
+        self.assertIn("mythos-5.2 excluded: authored this change", output)
         self.assertIn("author exclusion leaves 1 eligible reviewers", output)
         self.assertIn("required quorum is 2", output)
         self.assertEqual(called, [])
@@ -717,16 +722,17 @@ class TestAuthorExclusion(unittest.TestCase):
 
 
     def test_real_plan_reserves_restore_both_single_author_panels(self):
-        for author, kept in (("codex/gpt-6-luna", "kimi-k3"),
-                             ("openrouter/moonshotai/kimi-k3", "luna")):
+        # Sonnet shares Anthropic with mythos-5.2, so an Astra author skips it.
+        for author, kept, reserve in (("claude/claude-mythos-5-2", "astra", "sonnet-5.5"),
+                                      ("openai/gpt-6-astra", "mythos-5.2", "terra")):
             with self.subTest(author=author), patch.object(R, "cmd_plan_review",
                                                            return_value=0) as dispatch:
                 code, output, _, _ = self.invoke("--author", author, kind="plan")
                 self.assertEqual(code, 0, output)
                 self.assertIn("Panel substitution", output)
                 _, panel, *_ = dispatch.call_args.args
-                self.assertEqual([r["name"] for r in panel], [kept, "sonnet-5.5"])
-                self.assertIn('"substituted": ["sonnet-5.5"]', output)
+                self.assertEqual([r["name"] for r in panel], [kept, reserve])
+                self.assertIn('"substituted": ["%s"]' % reserve, output)
 
     def test_wrapped_author_excludes_both_seats(self):
         for prefix in ("openrouter/openai", "opencode", "copilot",
@@ -769,7 +775,7 @@ class TestAuthorExclusion(unittest.TestCase):
     def test_same_maker_primaries_without_exclusion_still_refuse(self):
         roster = R.load_reviewers()
         for seat in roster:
-            if seat["name"] == "kimi-k3":
+            if seat["name"] == "mythos-5.2":
                 seat.update(provider="openai", model="other")
         with patch.object(R, "cmd_plan_review", return_value=0):
             code, _, err, called = self.invoke(kind="plan", roster=roster)
@@ -784,7 +790,7 @@ class TestAuthorExclusion(unittest.TestCase):
 
         with patch.object(R, "cmd_plan_review", side_effect=dispatch):
             self.assertEqual(self.invoke(
-                "--author", "codex/gpt-6-luna", "--json", kind="plan")[0], 0)
+                "--author", "claude/claude-mythos-5-2", "--json", kind="plan")[0], 0)
 
     def test_unfamiliar_transport_cannot_adjudicate_its_author(self):
         native, wrapped = "openai/gpt-6-astra", "opencode/gpt-6-astra"

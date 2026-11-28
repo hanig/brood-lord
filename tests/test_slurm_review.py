@@ -891,7 +891,17 @@ class TestZeroApiRoster(unittest.TestCase):
                 with mock.patch.dict(os.environ, {"HANIG_REVIEW_NO_LOR": "", "LOR_SESSION_ID": ""}):
                     self.assertIn(R.effective_provider(dict(rev)), ("claude", "codex", "lor"))
         by_name = {r["name"]: r for r in roster["reviewers"]}
-        self.assertEqual(by_name["kimi-k3"]["profiles"], ["plan", "standard", "deep"])
+        self.assertEqual(by_name["kimi-k3"]["profiles"], ["standard", "deep"])
+        mythos = by_name["mythos-5.2"]
+        self.assertEqual((mythos["provider"], mythos["effort"], mythos["profiles"]),
+                         ("claude", "xhigh", ["plan"]))
+        self.assertNotIn("lor_model", mythos)
+        self.assertNotIn("_cost", mythos)
+        with mock.patch.dict(os.environ, {"HANIG_REVIEW_NO_LOR": "", "LOR_SESSION_ID": "lor"}):
+            self.assertEqual(R.effective_provider(dict(mythos)), "claude")
+        self.assertEqual(roster["reserves"]["tiebreak"], ["mythos-5.2", "gemini-neon", "kimi-k3"])
+        for name in ("mythos-5.2", "astra"):
+            self.assertIn(name, roster["_profiles"]["plan"])
         self.assertIs(by_name["kimi-k2.7-code"]["enabled"], False)
         self.assertEqual(by_name["kimi-k2.7-code"]["profiles"], [])
         for profile in ("standard", "deep"):

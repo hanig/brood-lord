@@ -3,17 +3,17 @@
   "plan": ["sonnet-5.5", "terra", "deepseek-v4-pro"],
   "committee": ["terra", "muse-wonder", "kimi-k3"],
   "planning": ["sonnet-5.5", "deepseek-v4-pro", "kimi-k3"],
-  "tiebreak": ["kimi-k3"]
+  "tiebreak": ["mythos-5.2", "gemini-neon", "kimi-k3"]
  },
  "_comment": "Routing config only \u2014 endpoint, model id, reasoning effort, profile membership. Carries NO quality scores: a stale ranking is worse than none. Availability is MEASURED by `review.py --list`, which probes each provider live; a key being set is not availability. All reviewers use DEFAULT_MAX_OUTPUT_TOKENS (64000) unless they set max_output_tokens: reasoning tokens come out of the answer's budget, and at 16000 a large review returned no content at all. Prices in _cost are per-million-token budgeting hints, not routing inputs; later owner decisions and unmeasured prices are noted on the seats.",
  "default_profile": "standard",
  "_profiles": {
-  "plan": "Two contrasting model makers, never escalated. For acceptance criteria and designs, before code exists. Ordered plan reserves can restore quorum and maker contrast after author exclusion. Owner decision 2026-10-19: luna and kimi-k3, OpenAI and Moonshot, chosen by the spec-case benchmark tie rule because the candidate pairs were not separated and Luna had 33% measured code-review recall. On Lor, fern-0.1 (xhigh) substitutes for kimi-k3 when advertised.",
+  "plan": "Two contrasting model makers, never escalated. For acceptance criteria and designs, before code exists. Ordered plan reserves can restore quorum and maker contrast after author exclusion. Owner decision 2026-10-19: luna and kimi-k3, OpenAI and Moonshot, chosen by the spec-case benchmark tie rule because the candidate pairs were not separated and Luna had 33% measured code-review recall.\nOwner decision 2026-11-27 (Option B): mythos-5.2 (xhigh, Claude CLI subscription) and astra (xhigh), Anthropic and OpenAI, replacing luna and kimi-k3. Neither seat sits on the planning committee (terra, gemini-neon, muse-wonder), so a plan review never repeats a planning vote. In a Lor session astra runs through Lor (lor_model); no plan primary has a fern-0.1 substitute.",
   "fast": "luna and haiku-5.5; cheapest implementation panel, the first tier of --escalate (owner decision 2026-10-12).",
   "standard": "terra, kimi-k3 and sonnet-5.5; the usual fixed implementation panel (owner decision 2026-11-26: Lor-served kimi-k3 replaces kimi-k2.7-code, so no seat spends OpenRouter/OpenAI API credit). Escalating from fast retains its verdicts and adds these three seats. On Lor, fern-0.1 (xhigh) substitutes for kimi-k3 when advertised.",
   "deep": "2026-11-06: standard + sol + astra. 2026-11-26: standard now carries kimi-k3 in place of kimi-k2.7-code. Final --escalate tier or fixed --profile deep. Sol now writes the code; an author does not review or tiebreak its own work, so author exclusion removes sol on Sol-authored units. On Lor, fern-0.1 (xhigh) substitutes for kimi-k3 when advertised.",
   "committee": "committee.py members, separate from gate profiles. Owner decision 2026-10-13: deepseek-v4-pro, gemini-argon and sonnet-5.5, three model makers. DeepSeek sits in no gate profile.\n2026-11-18: deepseek-v4-pro, gemini-neon and sonnet-5.5.",
-  "tiebreak": "2026-11-06: astra-tiebreak took the primary tiebreak seat. The primary is the one enabled reviewer whose profiles are exactly [\"tiebreak\"]. Selected by profile, never name or model. Sol became the code author on 2026-11-06, and sol-tiebreak was disabled. Authors and prior voters are excluded by canonical model identity. When the primary is excluded, an eligible ordered reserve must have a different maker from the primary.",
+  "tiebreak": "2026-11-06: astra-tiebreak took the primary tiebreak seat. The primary is the one enabled reviewer whose profiles are exactly [\"tiebreak\"]. Selected by profile, never name or model. Sol became the code author on 2026-11-06, and sol-tiebreak was disabled. Authors and prior voters are excluded by canonical model identity. When the primary is excluded, an eligible ordered reserve must have a different maker from the primary.\nOwner decision 2026-11-27: ordered reserves are mythos-5.2, gemini-neon, kimi-k3.",
   "planning": "2026-11-06: gemini-argon, muse-wonder and terra (orchestrator amendment: OpenRouter and OpenAI providers). Astra left planning and gained deep and tiebreak seats as Sol took over code authoring. A model that voted on the committee cannot tiebreak its split.\n2026-11-18: gemini-neon, muse-wonder and terra."
  },
  "reviewers": [
@@ -65,8 +65,7 @@
    },
    "effort": "max",
    "profiles": [
-    "fast",
-    "plan"
+    "fast"
    ],
    "enabled": true,
    "_cost": {
@@ -125,7 +124,7 @@
      "observed_in": "gate run, PR #39 fresh-cycle round 1"
     }
    ],
-   "_note": "Owner decision 2026-10-12: muse-wonder takes the committee seat; fast, standard and deep stay. Effort becomes max, accepted live by the coordinator on 2026-10-12. Owner decision 2026-11-24: routed through Codex CLI ChatGPT subscription (fail-closed, OPENAI_API_KEY stripped)."
+   "_note": "Owner decision 2026-10-12: muse-wonder takes the committee seat; fast, standard and deep stay. Effort becomes max, accepted live by the coordinator on 2026-10-12. Owner decision 2026-11-24: routed through Codex CLI ChatGPT subscription (fail-closed, OPENAI_API_KEY stripped). Owner decision 2026-11-27: leaves plan (mythos-5.2 and astra take it); fast stays."
   },
   {
    "name": "terra",
@@ -305,9 +304,10 @@
    },
    "effort": "xhigh",
    "profiles": [
+    "plan",
     "deep"
    ],
-   "_profiles_note": "2026-11-06: gains deep and leaves planning. Sol now writes the code; an author does not review or tiebreak its own work. Astra leaves planning so its tiebreak seat cannot rule among its own committee members.",
+   "_profiles_note": "2026-11-06: gains deep and leaves planning. Sol now writes the code; an author does not review or tiebreak its own work. Astra leaves planning so its tiebreak seat cannot rule among its own committee members. Owner decision 2026-11-27: joins plan at xhigh with mythos-5.2.",
    "enabled": true,
    "max_output_tokens": 128000,
    "_max_output_tokens": "MEASURED 2026-11-17 via review.PROVIDERS, xhigh/128000. Tiebreak repeats the same-model probe.",
@@ -608,6 +608,40 @@
    ]
   },
   {
+   "name": "mythos-5.2",
+   "provider": "claude",
+   "model": "claude-mythos-5-2",
+   "effort": "xhigh",
+   "max_output_tokens": 128000,
+   "enabled": true,
+   "profiles": [
+    "plan"
+   ],
+   "family": {
+    "listing": "paseo:claude",
+    "vendor": "",
+    "prefix": "claude-mythos-",
+    "separator": "-",
+    "suffix": "",
+    "major": 5
+   },
+   "_note": "Owner decision 2026-11-27 (Option B): joins plan with astra at xhigh and becomes the first tiebreak reserve. Routed through the Claude CLI on the Claude Enterprise subscription (fail-closed, ANTHROPIC_API_KEY stripped); on a Slurm login host the CLI runs as an sbatch job. No _cost: subscription seat with no per-token price.",
+   "_max_output_tokens": "MEASURED through review.PROVIDERS['claude'] (STRIPPED_ENV, --setting-sources \"\", CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000, claude.ai subscription login) with review.SYSTEM and input ping at effort xhigh. The probe host's scheduler refused a CPU-only offload job, so it ran with HANIG_REVIEW_SLURM=off (route cli_local); the sbatch route is unmeasured for this seat. Establishes budget acceptance and usable output, not capacity for every review.",
+   "_max_output_tokens_accepted": {
+    "date": "2026-11-27",
+    "max_output_tokens": 128000,
+    "provider": "claude",
+    "model": "claude-mythos-5-2",
+    "effort": "xhigh",
+    "outcome": "completed",
+    "input_tokens": 2,
+    "output_tokens": 3944,
+    "reasoning_tokens": 3836,
+    "response_id": "46ae983d-aa67-484d-b648-71cc8e869019",
+    "observed_in": "2026-11-27 owner roster decision; review.PROVIDERS['claude'] (STRIPPED_ENV, --setting-sources '', CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000, claude.ai subscription, HANIG_REVIEW_SLURM=off, route cli_local) with review.SYSTEM and input ping; served claude-mythos-5-2; observed 2026-11-28T01:53:42.129530+00:00 (2026-11-27 America/Los_Angeles)"
+   }
+  },
+  {
    "name": "kimi-k3",
    "provider": "openrouter",
    "model": "moonshotai/kimi-k3",
@@ -616,7 +650,6 @@
    "max_output_tokens": 128000,
    "enabled": true,
    "profiles": [
-    "plan",
     "standard",
     "deep"
    ],
@@ -628,7 +661,7 @@
     "suffix": "",
     "major": 3
    },
-   "_note": "Owner decision 2026-10-12: joins astra in the two-seat plan panel. OpenRouter accepted xhigh in the first live probe (finish_reason stop); no high fallback was needed.\nOwner decision 2026-11-26: joins standard and deep, replacing kimi-k2.7-code, served through Lor (lor_model) so the default implementation panels incur zero OpenRouter/OpenAI API spend.",
+   "_note": "Owner decision 2026-10-12: joins astra in the two-seat plan panel. OpenRouter accepted xhigh in the first live probe (finish_reason stop); no high fallback was needed.\nOwner decision 2026-11-26: joins standard and deep, replacing kimi-k2.7-code, served through Lor (lor_model) so the default implementation panels incur zero OpenRouter/OpenAI API spend.\nOwner decision 2026-11-27: leaves plan (mythos-5.2 and astra take it); standard, deep and the committee, planning and tiebreak reserves stay.",
    "_max_output_tokens": "MEASURED through review.PROVIDERS with review.SYSTEM and input ping at the configured effort and 128000 cap. Establishes budget acceptance and usable output, not capacity for every review.",
    "_max_output_tokens_accepted": {
     "date": "2026-10-13",
