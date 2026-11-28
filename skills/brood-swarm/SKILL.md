@@ -9,7 +9,6 @@ description: >-
   attempt, and reports DONE / RUNNING / FAILED / PREEMPTED / INCOMPLETE. A
   code unit runs a daemonless lor, claude, codex or pi agent in a per-attempt
   worktree and is judged here.
-disable-model-invocation: true
 ---
 
 # brood-swarm

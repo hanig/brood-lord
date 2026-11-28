@@ -47,7 +47,7 @@ No linter, no formatter, no build. Standard library only (`tests/test_stdlib_imp
 
 `lib/` is the installer: `skill_installer.py` plans and `skill_lifecycle.py` mutates, keeping discovery and writes at the edges so unsafe requests fail before touching any destination. It installs skill directories only (no Paseo, bus, `models.json`, routing state, credentials or connectors); `--uninstall` removes only what an exact copy marker or binding sidecar proves this repo installed.
 
-`lib/skill_agent_policy.py --write|--check` keeps `disable-model-invocation: true` skills (`EXPLICIT_ONLY_SKILLS`) paired with a byte-exact `agents/openai.yaml`; the installer and `bin/doctor` reject a missing or altered installed copy.
+`lib/skill_agent_policy.py --write|--check` keeps any `disable-model-invocation: true` skill paired with a byte-exact `agents/openai.yaml`; the installer and `bin/doctor` reject a missing or altered installed copy. `EXPLICIT_ONLY_SKILLS` is empty: all ten authored skills are model-invocable (owner, 2026-11-27).
 
 `skills/` holds two populations classified by the `brood-` prefix (`install.sh` and `bin/doctor`; the installer also reads legacy `hanig-` as authored): 10 authored bundles (`brood-project`, `brood-swarm`, `brood-verified-workflow`, `brood-review-gate`, `brood-portable-handoff`, `brood-orchestrate`, `brood-debrief`, `brood-wandb-logging`, `brood-hillclimb`, `brood-conclave`) and 8 vendored verbatim bundles (`paseo*`, `pi-fleet`, `agent-bus`, `start-a-sprint`, untouched by `--uninstall`). `brood-orchestrate` deliberately does NOT restate the mandate grant (`docs/orchestrator-mandate.md` is live authority).
 

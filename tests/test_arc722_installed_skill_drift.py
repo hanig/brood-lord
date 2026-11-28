@@ -18,6 +18,7 @@ import swarm as S
 import worktree as W
 from tests.test_attempt_worktrees import ENV, FakePaseo, code_unit, git, repo_at
 from tests.scheduler_fixture import codex_environment, state_environment
+from tests.explicit_only_fixture import OPENAI_YAML, flagged_checkout
 
 SHIPPED_SKILLS = (
     "brood-conclave", "brood-debrief", "brood-hillclimb", "brood-orchestrate", "brood-portable-handoff", "brood-project",
@@ -661,15 +662,17 @@ class TestInstalledSkillDrift(unittest.TestCase):
 
 
 class TestInstalledInvocationPolicyDrift(unittest.TestCase):
-    """bin/doctor checks the installed copy, not only the checkout."""
+    """bin/doctor checks the installed copy, not only the checkout.
 
-    def doctor(self, prefix, home):
+    No shipped skill is explicit-only, so a checkout copy flags two of them."""
+
+    def doctor(self, prefix, home, checkout):
         env = {"HOME": str(home), "LANG": "C", "LC_ALL": "C",
                "PATH": os.pathsep.join((str(Path(sys.executable).parent),
                                         "/usr/bin", "/bin"))}
         result = subprocess.run(
-            ["sh", str(ROOT / "bin" / "doctor"), "--prefix", str(prefix)],
-            cwd=str(ROOT), env=env, stdout=subprocess.PIPE,
+            ["sh", str(checkout / "bin" / "doctor"), "--prefix", str(prefix)],
+            cwd=str(checkout), env=env, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, universal_newlines=True, timeout=300)
         section = result.stdout.partition("=== INVOCATION POLICY ===")[2]
         return result.returncode, section.split("===", 1)[0], result.stdout
@@ -678,21 +681,25 @@ class TestInstalledInvocationPolicyDrift(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             prefix, home = Path(raw) / "skills", Path(raw) / "home"
             home.mkdir()
-            command = ["sh", str(ROOT / "install.sh"), "--prefix", str(prefix)]
+            checkout = flagged_checkout(Path(raw) / "checkout",
+                                        ("brood-swarm", "brood-project"))
+            command = ["sh", str(checkout / "install.sh"), "--prefix", str(prefix)]
             for name in ("brood-swarm", "brood-project", "brood-review-gate"):
                 command += ["--only", name]
             installed = subprocess.run(
-                command, cwd=str(ROOT), stdout=subprocess.PIPE,
+                command, cwd=str(checkout), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, universal_newlines=True, timeout=300,
                 env={**os.environ, "HOME": str(home)})
             self.assertEqual(installed.returncode, 0, installed.stdout)
-            canonical = (ROOT / "skills" / "brood-swarm" / "agents" /
+            canonical = (checkout / "skills" / "brood-swarm" / "agents" /
                          "openai.yaml").read_bytes()
+            self.assertEqual(canonical, OPENAI_YAML)
             for name in ("brood-swarm", "brood-project"):
                 policy = prefix / name / "agents" / "openai.yaml"
                 self.assertFalse((prefix / name).is_symlink())
                 self.assertEqual(policy.read_bytes(), canonical)
-            code, section, output = self.doctor(prefix, home)
+            self.assertFalse(os.path.lexists(str(prefix / "brood-review-gate" / "agents")))
+            code, section, output = self.doctor(prefix, home, checkout)
             self.assertEqual(code, 0, output)
             self.assertEqual(section.split(), [
                 "ok", "brood-project", "ok", "brood-review-gate", "ok",
@@ -701,7 +708,7 @@ class TestInstalledInvocationPolicyDrift(unittest.TestCase):
             (prefix / "brood-swarm" / "agents" / "openai.yaml").unlink()
             (prefix / "brood-project" / "agents" / "openai.yaml").write_bytes(
                 canonical + b"extra: true\n")
-            code, section, output = self.doctor(prefix, home)
+            code, section, output = self.doctor(prefix, home, checkout)
             self.assertEqual(code, 1, output)
             self.assertIn("DRIFT brood-swarm: agents/openai.yaml is missing", section)
             self.assertIn("DRIFT brood-project: agents/openai.yaml differs from the "
@@ -709,7 +716,7 @@ class TestInstalledInvocationPolicyDrift(unittest.TestCase):
             self.assertIn("ok    brood-review-gate", section)
             self.assertEqual(section.count("reinstall it with install.sh"), 2, section)
             self.assertNotIn("(no problems)", section)
-            self.assertEqual((ROOT / "skills" / "brood-swarm" / "agents" /
+            self.assertEqual((checkout / "skills" / "brood-swarm" / "agents" /
                               "openai.yaml").read_bytes(), canonical)
 
 

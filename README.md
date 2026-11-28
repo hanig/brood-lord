@@ -1,41 +1,37 @@
 # brood-lord
 
-An accountable swarm: agents' work is judged on evidence, under an owner's mandate.
+A portable, standard-library-only skill suite for multi-agent research
+engineering: plan work, dispatch coding agents and batch jobs, and refuse to
+call anything done without evidence that something other than the worker
+checked.
 
-Browse the [documentation index](docs/README.md) for document status, dates, and purpose.
+It ships ten authored `brood-*` skills plus eight vendored compatibility
+skills. Every authored script runs on the Python standard library alone (no
+third-party packages, no build step), and one installer puts the skills where
+Claude Code, Codex, OpenCode, Pi and other local agents load them.
 
-Portable coding-agent skills for dispatching autonomous work onto HPC clusters
-and refusing to call it done without evidence. Installable across laptops and
-login nodes with one script.
+Browse the [documentation index](docs/README.md) for every document's status,
+date and purpose. [`CLAUDE.md`](CLAUDE.md) holds the contributor rules and the
+live suite floor.
 
-This repository is private by owner decision (2026-11-05); it was public from
-2026-09-24 until then, so treat everything already pushed as published. It
-carries cluster hostnames, partition and account names, storage layouts and
-measured host probes; never commit credentials, tokens or secrets.
-Pull-request titles, bodies and comments must not add further cluster detail.
+This repository is private by owner decision (2026-11-05). It was public from
+2026-09-24 until then, so treat everything pushed before that as published.
+Never commit credentials, tokens or secrets, and never put cluster detail in
+pull-request titles, bodies or comments.
 
 ---
 
 ## The one idea
 
 A scheduler reporting `COMPLETED` is not evidence that work was produced.
-Neither is a zero exit code, a "done" line in a log, or an agent's own claim of
-success.
+Neither is a zero exit code, a "done" line in a log, or an agent saying it
+finished. Each of those looks like success to every tool that reports it.
 
-Python that catches an exception and returns 0, a pipeline stage that emits a
-header-only table, a training run that hit its wall-clock limit, an agent that
-reports "finished" because it stopped: all of these look like success to every
-tool that reports on them.
-
-So every skill here declares an **artifact contract**: a verifiable statement of
-what "done" means, written *before* execution and checked afterwards by
-something that did not do the work. The idea comes from code review, applied to
-schedulers and workflows instead of to commits.
-
-The corollary is the reason this repo exists at all. An agent reporting "done"
-is a bare self-assertion, and a self-assertion is exactly what these tools were
-built to refuse. Coordination without adjudication just moves the unverified
-claim one layer up.
+So every unit of work declares an **artifact contract** before it runs: what
+"done" means, checked afterwards by something that did not do the work. An
+agent's report of completion is a self-assertion, and these skills exist to
+refuse self-assertions. Coordination without adjudication only moves the
+unverified claim one layer up.
 
 ---
 
@@ -44,91 +40,452 @@ claim one layer up.
 ```bash
 git clone https://github.com/hanig/brood-lord.git
 cd brood-lord
-# Inspect automatic selection first; this changes nothing.
-./install.sh --dry-run --json
-# Name targets explicitly for a portable, auditable install.
+./install.sh --dry-run --json      # inspect automatic selection; changes nothing
 ./install.sh --agent claude --agent codex --agent opencode --agent pi \
   --allow-org-shadow
-./bin/doctor --json                # installed skills, provenance, and health
+./bin/doctor --json                # installed skills, provenance, health
 ```
 
-Existing checkouts may keep their old folder until the host migration runs.
-
-Doctor keeps the complete agent diagnostics document in a private temporary
-file, bounded to 256 KiB, instead of passing it through the 64 KiB diagnostic
-log tail. The supervisor creates and unlinks the file before launching the
-helper, retains its open handle until exit, and reads the result only after a
-successful bounded child. Oversized results report `state: "unknown"` and
-`truncated: true`; incomplete or invalid JSON reports unknown. For full detail
-beyond that transport bound, run
-`python3 skills/brood-project/scripts/agent_diagnostics.py --json` directly.
-The legacy helper `--doctor-json` option retains its 48,000-byte cap for older
-callers. Doctor's process deadlines and ordinary log-tail bound are unchanged.
-If the private file cannot be set up (including a Perl installation without
-`JSON::PP`), written, or read, doctor uses a summary capped at 48,000 bytes and validates it through
-Python's stdin inside the same supervised process group. These two stages share
-a nine-second run deadline and the existing two-second cleanup grace; report
-bytes never travel in command-line arguments. `detail: "summary"` identifies this fallback:
-it retains per-agent states, versions, certification, verification, next steps,
-root paths, and payload ownership/state counts; full per-payload and per-skill
-records remain available through the direct `--json` command. An oversized
-summary still returns an explicit truncation record.
-
-Then, on a cluster, in an empty directory or a half-finished repo:
+Then, in an empty directory or a half-finished repository, ask your agent:
 
 ```
 Use the brood-project skill to start a project here.
 ```
 
-That is the front door. It surveys the host, interviews you only about what
-inspection cannot answer, writes a plan, shows you the project overview and
-every issue title for approval, files them in Linear, and dispatches.
+`brood-project` is the front door. It surveys the host, interviews you only
+about what inspection cannot answer, writes `plan.json`, asks which coding
+agent should run code units, shows the project overview and every issue title
+for one approval, files them in Linear, and dispatches.
 
 ---
 
 ## The ten skills we wrote
 
-| Skill | One line |
-|---|---|
-| `brood-project` | The front door: survey, interview, plan, approve, file, dispatch, report. |
-| `brood-orchestrate` | The authorized loop: delegate, watch, adjudicate, merge, reconcile, report, hand off. |
-| `brood-swarm` | The coordinator: validate a DAG, isolate each attempt, dispatch, advance, judge. |
-| `brood-verified-workflow` | Declare and verify what "done" means for one batch job. |
-| `brood-review-gate` | Adversarial multi-model review of code and of the claims made about it. |
-| `brood-portable-handoff` | Capture and resume run state across machines. |
-| `brood-wandb-logging` | Make W&B runs readable; caller supplies W&B, contracts judge outcomes. |
-| `brood-debrief` | Collect project lessons into a private dossier, draft an owner-approved scrubbed packet, and triage/file learnings. |
-| `brood-hillclimb` | Hill-climb a metric by pre-registered hypotheses and a paired A/B noise screen. |
-| `brood-conclave` | Convene one frontier model per family: blind answers, anonymized cross-examination, a ratification vote. |
+| Skill | Purpose | Entry scripts |
+|---|---|---|
+| `brood-project` | Front door: survey, interview, plan, approve, file, dispatch, report. | `survey.py`, `tickets.py`, `linear_sync.py`, `report.py` |
+| `brood-orchestrate` | Authorized operating loop: delegate, watch, adjudicate, merge, reconcile, report, hand off. | `merge_unit.py`, `watch_pr.py`, `flake_triage.py`, `wait_event.py`, `hourly_facts.py` |
+| `brood-swarm` | Coordinator: validate a DAG, isolate each attempt, dispatch, advance, judge. | `swarm.py`, `unit.py`, `converge.py` |
+| `brood-review-gate` | Adversarial multi-model review of code and of the claims made about it. | `review.py`, `committee.py`, `resolve_models.py` |
+| `brood-conclave` | One frontier model per family deliberates to a ratified conclusion. | `conclave.py`, `allow.py` |
+| `brood-verified-workflow` | Declare and verify what "done" means for one batch job. | `contract.py` |
+| `brood-hillclimb` | Hill-climb a metric by pre-registered hypotheses and a paired A/B noise screen. | `hillclimb.py` |
+| `brood-portable-handoff` | Capture and resume run state across machines and agents. | `handoff.py` |
+| `brood-wandb-logging` | Make W&B runs readable; contracts, not W&B, judge outcomes. | `wbkit.py`, `audit_project.py` |
+| `brood-debrief` | Collect project lessons, draft an owner-approved scrubbed packet, triage and file it. | `debrief.py`, `decisions_log.py`, `debrief_audit.py`, `debrief_attention.py` |
 
-All ten are prefixed `brood-` (formerly `hanig-`) so they can never collide
-with an Arc org-managed skill name. That prefix is now load-bearing rather than tidy:
-`install.sh` reads it as the authorship namespace, and anything under
-`skills/` outside it is treated as vendored -- installed by us, written
-upstream, and **left alone by `--uninstall`**.
+All ten are model-invocable: an agent may load one from a plain-language
+request, and each is also available by name as a slash command (for example
+`/brood-project`). No authored skill carries `disable-model-invocation`, and
+none ships `agents/openai.yaml`. `lib/skill_agent_policy.py` still enforces
+the pairing (flag and byte-exact `agents/openai.yaml` together, or neither)
+for any skill that opts out later; the installer and `bin/doctor` apply the
+same rule to installed copies.
 
-## The eight skills we vendor
+The `brood-` prefix is load-bearing. `install.sh` and `bin/doctor` read it as
+the authorship namespace; everything else under `skills/` is vendored and
+**left alone by `--uninstall`**.
+
+---
+
+## How a run works
+
+The pipeline runs one direction:
+
+1. **Survey.** `survey.py` records host, Python, schedulers, partitions,
+   accounts, free disk and repository facts. Every fact in it is a question
+   the interview must not ask.
+2. **Interview and plan.** The interview ends when the plan can run, not when
+   the questions run out. `plan.json` declares each unit's `kind` (`code`,
+   `slurm`, `pipeline`), `needs`, `inputs`, `outputs` and retry exposure, plus
+   the project's `code_agent`.
+3. **Approve and file.** `tickets.py` drafts the Linear project and issues and
+   requires one named approval before anything is transmitted;
+   `linear_sync.py file` sends it.
+4. **Dispatch and advance.** `swarm.py validate`, `run` and `advance`
+   allocate an exclusive attempt root per unit, dispatch, and act only on the
+   exit code of `unit.py check`.
+5. **Review and merge.** The orchestrator gates each code attempt through
+   `review.py`, merges through `merge_unit.py` after integration verification
+   and green CI, and reconciles the tracker.
+6. **Report.** `report.py` assembles the verdict from `plan.json`,
+   coordinator state and receipts, never from narrative.
+
+---
+
+## Architecture
+
+### Coding-agent backends (`brood-swarm`)
+
+Code units run daemonless. Each attempt gets a coordinator-owned, verified Git
+worktree, whichever backend runs in it:
+
+- **Lor subagents.** `provider: "lor/<canonical_model_id>"` runs the unit as a
+  native subagent of the coordinator's own Lor session. It needs
+  `LOR_SESSION_ID` and `lor` on `PATH`; otherwise dispatch is refused before
+  any attempt exists.
+- **`claude` CLI.** Headless `claude -p` turns on the subscription login
+  (Claude Enterprise OAuth). API keys and `LOR_*` variables are withheld.
+- **`codex` CLI.** Headless `codex exec` turns on the ChatGPT subscription
+  login, with the same withholding.
+- **`pi` CLI, opt-in.** For OpenRouter models Lor does not serve. The key
+  reaches the turn only through a `0600` file the wrapper reads and unlinks
+  before exec; dispatch fails closed when the key is unset, output passes
+  through a redacting pump, and each turn gets its own `--session-dir` inside
+  the attempt run directory.
+
+On a Slurm login or agent host, `claude`, `codex` and `pi` turns are submitted
+with `sbatch --export=NONE` (`HANIG_SWARM_CLI_SLURM=auto|on|off`); a refused
+submission fails closed, and heavy CLIs never run on the login node. Each turn
+writes an exit receipt; a zero exit is lifecycle, not completion.
+
+The project chooses its agent at start through top-level `code_agent` in
+`plan.json`. `swarm.py set-agent` switches the agent mid-project for attempts
+not yet created, per project or per unit, in a revisioned
+`STATE_DIR/agent-overrides.json`. `plan.json` and its digest never change, and
+each attempt freezes its backend, provider, effort and mode in its launch
+intent.
+
+Paseo is retired from the authored skills. `validate` and `set-agent` refuse
+`backend: "paseo"`, and nothing authored needs a `paseo` binary when
+`code_agent` names one of the four backends. Plans that name no agent keep the
+legacy default route, and historical `backend="paseo"` attempts and overrides
+stay readable in `status` and `set-agent --show` with `paseo` absent.
+
+### Adversarial review gate (`brood-review-gate`)
+
+The orchestrator runs `review.py` and `committee.py` from its own Lor session;
+a worker never gates its own diff. Reviewers are prompted to refute claims,
+and any refuted claim fails the gate. `REVIEW_PASS` means the named panel
+failed to refute the claims; it is not proof.
+
+- **Lor seats run in-process** and fail closed without `LOR_SESSION_ID`
+  rather than falling back to a paid API. Only an explicit
+  `HANIG_REVIEW_NO_LOR=1` routes pinned API seats to their API.
+- **Default Lor seat.** When `lor model list` advertises `fern-0.1`, the
+  `plan`, `standard` and `deep` profiles seat it at `xhigh` in place of
+  `kimi-k3`; otherwise `kimi-k3` keeps its seat. `--only kimi-k3` selects it
+  explicitly.
+- **CLI seats offload.** On a Slurm login or agent host, `claude` and `codex`
+  seats run as `sbatch --export=NONE` jobs, choosing `<default>_batch` when
+  the default partition is interactive. The login node never spawns either
+  CLI.
+- **Receipts.** Every result records provider, model and route, and each
+  report carries per-seat `seat_routes`. The default profiles spend nothing on
+  OpenRouter or OpenAI APIs.
+
+Profiles, effort, reserves and tiebreak routing live in
+[`reviewers.json`](skills/brood-review-gate/reviewers.json); read routing
+there, not from prose. `--escalate` walks `fast`, `standard`, `deep`. Pass
+every author with repeatable `--author PROVIDER/MODEL`; the gate excludes the
+same canonical maker and exact model leaf across transports. The round ledger
+enforces the round number per change identity; the orchestrator tracks the
+three-round ceiling per plan unit.
+
+`review.py`'s `--record-evidence` (L1; `review_evidence.py` is a module, no CLI) appends audit-only counterexample
+evidence (`--head`, `--finding`, `--round`, `--method`, `--status`, optional
+`--tree`, `--test-ref`, `--note`) bound to identity, head and candidate tree; it
+never changes a verdict. `--require-premise-ack` (L2; module `review_premise.py`)
+refuses round N >= 2 when one `defect_class` struck in rounds N-2 and N-1,
+unless `--premise-memo FILE` or `--continue-patching REASON` acknowledges it.
+
+`committee.py` keeps a persistent two- or three-member committee that plans
+and then reviews its own plan's implementation, with the same author
+exclusion and a tiebreak that falls back to `OWNER`.
+[`PROTOCOL.md`](skills/brood-review-gate/PROTOCOL.md) states the full model.
+
+### Deliberation (`brood-conclave`)
+
+The conclave seats the top model from each of four families (GPT, Gemini,
+Claude, Muse) as Lor subagents by default. Round 0 is blind, with web search
+on. Later rounds cross-examine anonymized posts on the cruxes the moderator
+lists, one seat per round plays devil's advocate, and a ratification vote
+ends the panel. The moderator runs the protocol and never votes.
+
+### Authority and mandates (`brood-orchestrate`)
+
+Authority is owner-granted by merge, not by conversation. A session driving a
+run reads [`docs/orchestrator-mandate.md`](docs/orchestrator-mandate.md),
+shows the owner its enumerated grant and bounds, and gets confirmation before
+operating unattended. The owner chooses the mandate's expiry: a UTC time with
+no ceiling, or none, lasting until revoked. Research mode is the default
+review mode: one review round per unit by default, with workers repairing
+reproduced findings on the mandate's hard-block list. SWE mode applies only
+when the owner selects it.
+
+### Execution truth
+
+- **Nothing judges except `unit.py check`.** `run` and `advance` act solely
+  on its exit code; supporting judgment lives in `worktree.py`, `verify.py`
+  and `converge.py`.
+- **Isolation replaces attribution.** Each attempt gets an exclusive,
+  never-reused write root. `DONE` needs declared outputs, the pinned
+  pre-dispatch artifact basis, and kind execution evidence, such as an
+  attempt-owned terminal `sacct` row for `slurm` units.
+  `brood-verified-workflow` falls back to `scontrol show job` when `sacct`
+  returns nothing.
+- **Authority lives in coordinator state**, outside every operated worktree,
+  never in agent-writable files. One coordinator holds a plan at a time,
+  through an advisory `flock` the kernel frees on process death.
+- **Closure is fixed by kind.** `code` closes on a merged PR whose head
+  matches the judged attempt head; `slurm` and `pipeline` close on a predicate
+  receipt. A retry is always a fresh, empty attempt.
+- **Merge needs verification.** `merge_unit.py` requires passing integration
+  evidence for the exact judged head and observed target commit, plus green
+  CI. There is no integration override.
+- **Outward actions are gated once.** Filing needs one named approval;
+  `promote` needs `--approver`. The coordinator imports no network module:
+  tracker work flows through an idempotent outbox that an authorized session
+  drains with `linear_sync.py`.
+
+### Credential boundary
+
+**`models.json` is routing metadata, not a credential grant.** A model listed
+there can be considered for dispatch; that does not let a worker call it.
+`OPENAI_API_KEY` and `OPENROUTER_API_KEY` stay coordinator-side: review and
+committee programs use them, and `child_environment.py` strips both exact
+names, with the rest of its denylist, from every coordinator child. The `pi`
+backend's key-file handoff above is the one designed exception.
+
+---
+
+## CLI reference
+
+Each skill finds its programs through `BROOD_<SKILL>_DIR` (falling back to
+`HANIG_<SKILL>_DIR`), set to the directory of the loaded `SKILL.md`. Paths
+below are relative to that directory.
+
+### brood-project
+
+```sh
+python3 scripts/survey.py --repo . --out .swarm/survey.json
+python3 scripts/tickets.py draft   plan.json --team TEAM --out .swarm/tickets.json
+python3 scripts/tickets.py check   plan.json .swarm/tickets.json
+python3 scripts/tickets.py approve .swarm/tickets.json --approver NAME
+python3 scripts/report.py  .          --out report.html      # ends every run
+python3 scripts/report.py  . --state-dir "$STATE" --root "$RUNS" --out report.html
+```
+
+Tracker filing, draining and ad-hoc issues:
+
+```sh
+python3 "$HANIG_PROJECT_DIR/scripts/tickets.py" draft plan.json --repository OWNER/REPO
+python3 "$HANIG_PROJECT_DIR/scripts/tickets.py" approve tickets.json --approver NAME
+python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" file --draft tickets.json [--preview] [--adopt-checked]
+python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" replay OPERATION_ID --draft tickets.json
+python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" drain \
+  --binding .hanig/linear-binding.json --state-dir STATE [--state-dir OTHER_STATE] [--dry-run] [--full]
+python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" audit \
+  --binding .hanig/linear-binding.json --out AUDIT
+python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" issue new \
+  --binding .hanig/linear-binding.json --title 'Follow-up' --body-file body.md \
+  --blocked-by ARC-123 --approver NAME [--preview]
+python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" issue edit ARC-124 \
+  --binding .hanig/linear-binding.json --add-blocked-by ARC-125 \
+  --remove-blocked-by ARC-123 --approver NAME
+python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" issue replay OPERATION_ID \
+  --binding .hanig/linear-binding.json
+```
+
+The draft carries the plan's DAG as `blockedBy` and previews edges to remove,
+decided from a tracker read-back rather than the previous draft. An
+unacknowledged intent means no confirmation either way.
+
+### brood-orchestrate
+
+```sh
+python3 "$HANIG_ORCHESTRATE_DIR/scripts/merge_unit.py" plan.json \
+  --state-dir "$STATE" --unit impl --pr 123 --approver "Operator" \
+  --verify-integration --verification-timeout 1800
+python3 "$HANIG_ORCHESTRATE_DIR/scripts/flake_triage.py" --repo "$REPO" \
+  --head "$HEAD" --base "$BASE" --test tests.test_example.TestCase.test_method \
+  --python python3 --pr 123 --json
+```
+
+`--verify-integration` runs no merge: it runs the target's pinned verifiers in
+a disposable candidate-merge checkout and records the result in the
+coordinator's verification journal. The plain invocation then admits that
+evidence and issues one guarded merge. An optional
+`STATE_DIR/verification-execution.json` sends verification to an
+owner-authorized host, directly or through a Slurm allocation.
+
+`watch_pr.py --repo OWNER/REPO --pr 123 [--once] [--json] [--patch-id] [--interval S] [--max-polls N]`
+is the read-only PR-status oracle: exit 0 ready, 10 pending, 11 conflicts, 12 threads, 13 CI failed, 14 cancelled
+zero-step flake, 15 unknown, 16 fork, 2 error. It mutates nothing.
+
+### brood-swarm
+
+```sh
+python3 scripts/swarm.py schema                      # every unit field
+python3 scripts/swarm.py validate plan.json [--check-seeds]
+python3 scripts/swarm.py run      plan.json [--dry-run]
+python3 scripts/swarm.py advance  plan.json
+python3 scripts/swarm.py status   plan.json [--json]
+python3 scripts/swarm.py set-agent plan.json --state-dir DIR --backend codex --model MODEL [--unit ID]
+python3 scripts/swarm.py set-agent plan.json --state-dir DIR --show [--json]
+python3 scripts/swarm.py scope-check plan.json --state-dir DIR --unit ID [--head REV] [--json]
+python3 scripts/swarm.py abandon plan.json --state-dir DIR --unit ID \
+        --approver NAME --reason TEXT
+python3 scripts/swarm.py supersede plan.json --state-dir DIR --unit ID --by SUCCESSOR \
+        --approver NAME --reason TEXT
+python3 scripts/swarm.py promote  plan.json --unit ID --approve --approver NAME
+python3 scripts/swarm.py outbox            [--all] [--json]
+python3 scripts/swarm.py usage [--unit ID] [--since YYYY-MM-DD] [--tz UTC] [--json]
+
+python3 scripts/unit.py allocate --root /external/swarm-runs --task ID --kind slurm \
+                                 --command CMD --output PATH [--gpu-hours N]
+python3 scripts/unit.py bind  <unit_dir> --job-id 12345
+python3 scripts/unit.py check <unit_dir> [--json]
+```
+
+`swarm.py continue PLAN --state-dir DIR --unit OLD --new-id NEW --prompt-file FILE [--head-ref REF] [--repoint-dependents] [--tickets DRAFT] [--write]`
+copies OLD with a new id, prompt, description, author history and seed from
+coordinator state and live Git. Preview changes nothing; `--write` appends
+atomically. Omit either flag when its update is not needed. Use
+`swarm.py continue --repoint-dependents --tickets DRAFT` with the required
+arguments above to prepare both updates: repointing replaces OLD with NEW in
+dependent `needs` and refuses any dependent with recorded attempts, and the
+existing DRAFT gets a copied entry without filing tracker issues.
+
+`converge.py check` answers whether a training run converged or merely
+stopped; a unit that spent its budget without meeting its criterion becomes
+`NEEDS_HUMAN`, closing no ticket and releasing no dependent. Unit exit codes:
+
+```
+DONE 0   RUNNING 1   FAILED 2   PREEMPTED 3   INCOMPLETE 4   NEEDS_HUMAN 5
+USAGE_ERROR 64
+```
+
+### brood-verified-workflow
+
+```sh
+python3 scripts/contract.py init   --command CMD --output PATH [--input PATH] \
+                                   [--predicate EXPR] [--write-scope DIR] \
+                                   [--require-production-evidence]
+python3 scripts/contract.py submit <run_dir> [--sbatch-arg ARG]
+python3 scripts/contract.py record <run_dir> --exit-code N [--job-id ID]
+python3 scripts/contract.py check  <run_dir> [--json] [--watchdog SECS]
+```
+
+### brood-review-gate
+
+```sh
+python3 scripts/review.py --kind plan --file design.md
+python3 scripts/review.py --kind implementation --staged --escalate --round 1 \
+  --claim "This change cannot make an honest run fail."
+python3 scripts/review.py --list          # live provider probe
+python3 scripts/review.py --size --range BASE..HEAD  # offline PR size preflight
+python3 scripts/resolve_models.py --project .            # adopt point releases per project
+python3 scripts/resolve_models.py --project . --dry-run  # list and select only
+```
+
+Exit 0 is `REVIEW_PASS`; 2 (`REVIEW_UNAVAILABLE`) and 3 (`REVIEW_PARTIAL`)
+mean unreviewed, and 7 (`REVIEW_CLAIMS_REFUTED`) is not a pass.
+
+### brood-conclave
+
+```sh
+python3 scripts/conclave.py resolve
+python3 scripts/conclave.py doctor --refresh
+python3 scripts/conclave.py new BOARD --brief brief.md [--attach fig.png] [--no-lor]
+python3 scripts/conclave.py round BOARD 0 [--seats S] [--dry-run]
+python3 scripts/conclave.py ratify BOARD
+```
+
+### brood-portable-handoff, brood-debrief and brood-hillclimb
+
+```sh
+python3 scripts/handoff.py capture run1 run2 --out handoff.json
+python3 scripts/handoff.py resume handoff.json [--base DIR] [--watchdog SECS]
+python3 scripts/handoff.py memory .
+python3 scripts/decisions_log.py append --log L --run-id R --kind K --claim C [--evidence-ref E]
+python3 scripts/decisions_log.py verify --log L [--expect-head SHA256]
+python3 scripts/debrief_audit.py --decisions L --workspace DIR
+python3 scripts/debrief_attention.py pack --decisions L --audit A [--out F]
+python3 scripts/debrief_attention.py validate --report F [--pack P]
+python3 scripts/hillclimb.py init --state-dir S --harness F --metric M --min-effect X --direction lower
+python3 scripts/hillclimb.py record --state-dir S --id H --runs-json R --checklist-json C
+```
+
+Debrief drafting is offline; only `debrief_file.py` reaches the network, after
+one named approval of the exact packet.
+
+---
+
+## Install
+
+```bash
+./install.sh [--agent NAME ... | --exclude-agent NAME ... | --prefix DIR]
+             [--mode copy|link] [--only NAME] [--dry-run] [--json]
+             [--force] [--uninstall] [--allow-org-shadow]
+             [--allow-vendored-shadow] [--include-vendored]
+```
+
+- **Targets.** With no selector, the installer plans every detected agent's
+  preferred skill root. `--agent` (repeatable) picks an explicit set and is
+  the bootstrap route for an absent CLI; `--prefix` is the legacy single-root
+  spelling. `--only` limits the install to named skills.
+- **Copy by default.** `--mode link` is for skill development only; a link
+  into a live checkout changes under every branch switch.
+- **Validate before writing.** Frontmatter, skill identity, script syntax and
+  the invocation policy are checked before any destination is touched.
+  Org-managed name collisions abort unless `--allow-org-shadow` is passed;
+  copies of authored skills also arrive through the org catalog, so pass it
+  deliberately.
+- **Ownership.** `--uninstall` removes only what an exact copy marker or a
+  binding sidecar proves this repository installed.
+- **Certification.** Uncertified or stale agent versions are planned as
+  `unverified`, with warnings on stderr even with `--json`. Selection is not
+  a compatibility pass; see
+  [`docs/cross-agent-acceptance.md`](docs/cross-agent-acceptance.md) and
+  [`docs/agent-migration.md`](docs/agent-migration.md).
+
+Run `--dry-run --json` before a broad install: it reports each target,
+physical root, verification state, shared consumers, actions and conflicts.
+`./install.sh --dry-run --migrate-from DIR` previews a migration read-only.
+
+### The brood rename and backward compatibility
+
+- **Settings.** Every `HANIG_<X>` setting the authored scripts read also has
+  a `BROOD_<X>` spelling. A non-blank `BROOD_<X>` wins; otherwise `HANIG_<X>`
+  applies as before. `BROOD_SKILL_DEP_ROOTS` parents are searched before
+  `HANIG_SKILL_DEP_ROOTS` parents.
+- **Legacy installs.** After publishing `brood-<suffix>`, the installer
+  retires a sibling `hanig-<suffix>` only when it carries this repository's
+  exact recorded ownership. An unowned sibling stays untouched with a warning,
+  and `--dry-run` reports `would-retire-legacy`.
+- **Runtime state keeps its names** so live projects continue without
+  migration: `~/.local/state/hanig-swarm`, `~/.local/state/hanig-review-gate`,
+  `~/.hanig-committee`, `~/.local/state/hanig-conclave` and `.hanig/`, plus
+  Git refs under `refs/hanig-swarm*` and the `hanig-rev-` Slurm job prefix.
+
+Relative entries in `HANIG_SKILL_DEP_ROOTS` (or `BROOD_SKILL_DEP_ROOTS`) are
+anchored to the loaded skill directory, never to the project's working
+directory.
+
+### Diagnostics
+
+`./bin/doctor --json` reports what is installed, from where, whether each
+script still compiles, whether installed copies still satisfy the invocation
+policy, and per-agent readiness. For the full agent document, run
+`python3 skills/brood-project/scripts/agent_diagnostics.py --json`.
+`./bin/probe.sh` is a read-only environment probe for a new host.
+
+---
+
+## Vendored skills
 
 `skills/` also carries `paseo`, `paseo-advisor`, `paseo-committee`,
 `paseo-handoff`, `paseo-loop`, `pi-fleet`, `start-a-sprint` and `agent-bus`,
-taken **verbatim** from Shreshth's repo so the swarm's dependency lives here
-rather than in a second clone nobody's machine is guaranteed to have. They are
-not edited -- an upstream re-sync is meant to be a real diff -- so the routing
-decision they need goes in `~/.paseo/orchestration-preferences.json` instead
-(see "Orchestration preferences, per machine").
-
-The accompanying `bin/bus` has one deliberately tracked local correction for
-ARC-270 because the archived source has no reachable upstream remote. It keeps
-missing, unreadable, malformed, invalid, and empty model registries distinct
-without treating the runtime state directory as proof of a registry. The
-upstream report, provenance, and resync contract are in
-`docs/upstream-agent-bus-model-registry.md`; `tests/test_bus_models.py` pins the
-behavior so a future resync cannot silently discard the patch.
-
-Vendoring skills does **not** make this repo standalone at runtime: the hard
-dependency is the `paseo` binary, and copying markdown does not supply one.
-`bin/bus`, `bin/agent-manager`, `bin/agent-view` and `models.json` came across
-with them.
+copied **verbatim** from upstream. Authored workflows never edit them, so an
+upstream re-sync stays an honest diff. Corrections go in `docs/upstream-*.md`
+with a pinning test, and
+`tests/test_skill_capabilities.py` pins every vendored file against
+`docs/upstream-manifest.json`. The authored skills do not depend on them at
+runtime. `bin/bus`, `bin/agent-manager`, `bin/agent-view` and `models.json`
+came across with them; `bin/bus` carries one tracked local correction,
+described in `docs/upstream-agent-bus-model-registry.md` and pinned by
+`tests/test_bus_models.py`.
 
 ### Agent bus executable, in this checkout
 
@@ -226,1372 +583,42 @@ the executable there. They do not describe a path this repository installs.
 Until upstream discovers the executable instead of hardcoding an install
 layout, agents using only this repository need the checkout-local path above.
 Do not create `~/.agent-bus/bin/bus` merely to make the instruction true.
+The upstream-ready report is in `docs/upstream-agent-bus-path-discovery.md`.
 
-The upstream-ready report and proposed correction are in
-`docs/upstream-agent-bus-path-discovery.md`. The vendored skill files remain
-unchanged so a future upstream re-sync remains an honest diff.
+### Orchestration preferences for the vendored Paseo skills
 
-### brood-project
-
-Gets you from "I am on a server with an intention" to units of work that are
-dispatched, tracked, and verifiable.
-
-```sh
-python3 scripts/survey.py --repo . --out .swarm/survey.json
-
-python3 scripts/tickets.py draft   plan.json --team Arc --out .swarm/tickets.json
-python3 scripts/tickets.py check   plan.json .swarm/tickets.json
-python3 scripts/tickets.py approve .swarm/tickets.json --approver hani
-
-python3 scripts/report.py  .          --out report.html      # ends every run
-python3 scripts/report.py  . --fragment --out frag.html      # to publish
-python3 scripts/report.py  . --state-dir "$STATE" --root "$RUNS" --out report.html
-```
-
-`report.py --state-dir DIR --root RUNS` reads an external coordinator state
-directory and attempt root. Overrides use the shared coordinator path policy:
-relative paths start at the invocation directory, `~` and symlinks are resolved,
-and paths inside operated Git worktrees are refused. Omitting both options keeps
-the per-project defaults and legacy migration behavior.
-
-`draft` takes the plan positionally and accepts `--brief` and `--autopilot`.
-`approve` requires `--approver`: an approval with no one attached to it is not
-an approval.
-
-`survey.py` reports the host, python, schedulers, partitions, accounts, whether
-`--mem` is required here, free disk, and for a repo: git history, size, language
-mix, existing docs, and whether a swarm project already exists. **Every fact in
-it is a question you must not ask the human.**
-
-It is bounded three ways (entry count, depth, wall-clock) because an unbounded
-walk of a cluster home directory hangs. It neutralises `core.fsmonitor`,
-`core.hooksPath` and `core.sshCommand` before running git, because a surveyed
-repo is untrusted input and its config should not execute. It redacts anything
-that looks like a credential, after leaking a git token once.
-
-`tickets.py` drafts the Linear project and issues, requires **one** explicit
-approval before anything is transmitted, and re-arms that approval if the immutable project or issue
-specification changes, including repository and dependencies. Old approvals
-without a content digest require one re-approval. Default team is `Arc`. Full automation requires
-the literal phrase `swarm autopilot`; absent it, approval is always required.
-
-It carries the plan's DAG as `blockedBy`, and because that relation is
-append-only through this interface, it also previews the edges between current plan units to REMOVE.
-Ad-hoc, external and deleted-unit blockers are reported and kept; remove them
-explicitly with `linear_sync.py issue edit`. Not
-re-adding an edge does not delete it, so a shrunken `needs` list would
-otherwise leave the tracker asserting a dependency the plan has dropped. It
-decides that from a read-back of what the tracker holds, recorded by
-`linear_sync.py file` or supplied as an attested `--tracker-edges` file -- never
-from the previous draft, which records what was asked for rather than what landed. With no
-read-back, `remove_blocked_by` is `null` rather than `[]`, and `check` calls
-a filed project's edges unknown rather than in sync.
-
-**The stopping condition is the whole point.** The interview ends when the plan
-can RUN, not when the interviewer runs out of prepared questions. Every value
-dispatch needs (input paths and globs, output destinations, account, partition,
-any config file the command reads) must be settled before finishing. This is
-enforced, not remembered: `swarm.py validate` refuses a plan whose declared
-inputs are empty, still placeholders, or match nothing.
-
-### brood-orchestrate
-
-The operating mode for a session driving an existing run. It points to the
-owner-originated mandate as the sole authority and covers authority
-confirmation, delegated prompts, watcher honesty, preservation, review
-adjudication, merge, tracker reconciliation, the ordered three-part report,
-and takeover.
-
-The [mandate's judgment policy](docs/orchestrator-mandate.md#the-concurrence-rule)
-and the generated `adjudication.matrix` and `adjudication.concurrence`
-[declarations](skills/brood-orchestrate/SKILL.md) govern dispositions. An
-orchestrator that did not author the affected design or implementation may
-make reproduced findings nonblocking when unlikely to change design or outcome,
-consulting Astra only when unsure; otherwise the existing concurrence rule applies.
-Writing a unit's task specification is not authorship of its implementation.
-The mandate's non-overridable limits, evidence record and green merge checks
-still bind; a disposition never relabels a failing review as a pass.
-
-The session reads `HANIG_REPORT_TZ` under the generated `report.timezone`
-declaration for its own owner-facing observation times, ETAs, status lines and
-reports. Use a validated IANA zone with its abbreviation and daylight-time
-transitions. Unset or invalid means UTC, announced once per session. Internal
-logs may keep UTC, and verbatim tool output and quoted evidence keep their
-timestamps. This is a session instruction, not a `report.py` runtime option;
-the [operating loop](skills/brood-orchestrate/references/operating-loop.md#owner-facing-report-times)
-shows validation and conversion guidance.
-
-It has no coordinator executable of its own. Set `HANIG_ORCHESTRATE_DIR` to the
-loaded skill directory, then use the programs from the separately loaded
-`brood-project`, `brood-swarm`, `brood-review-gate`, and
-`brood-portable-handoff` skills through their own directory variables. A
-selective install names all five bundles:
-
-```sh
-./install.sh --agent codex \
-  --only brood-orchestrate --only brood-project --only brood-swarm \
-  --only brood-review-gate --only brood-portable-handoff
-```
-
-`swarm.py advance` remains one offline, locked pass that exits. A deterministic
-host scheduler repeats it; the orchestrating session performs connected review,
-merge, tracker, and reporting work around those passes.
-
-**D5 activation is installation-derived per state directory, and merge launch admission remains closed.**
-U8 has landed: [`d5_activation.py`](skills/brood-swarm/scripts/d5_activation.py)
-derives activation from each state directory's installation evidence
-(`state != NOT_INSTALLED`). Absent installation evidence stays inactive; the
-owner's `d5_install publish` at quiescence under
-[the cutover runbook](docs/d5-cutover-runbook.md) is the only valid activation
-path, while partial or invalid evidence fails closed as active-contained and
-refuses with `d5_install` repair guidance rather than falling back to inactive.
-Separately, `merge_launch_admitted()` in
-[`merge_unit.py`](skills/brood-orchestrate/scripts/merge_unit.py) still returns
-`False`, and post-activation `linear_sync` draining and row-75 refusals remain
-closed until P1 delivers per-item tracker lease authority and pre-D5 queue
-migration/disposition. The containment and entry-routing preparation is in
-place: the D5 merge child uses designated arguments, no shell, closed inherited
-descriptors and a filtered environment; active-D5 entry guards refuse
-unadmitted merge launch, direct unit commands and remote verification. These
-are not an OS or same-UID isolation boundary. In active D5, `swarm.py` warns
-when bytecode writing is enabled and recommends `-B` or
-`PYTHONDONTWRITEBYTECODE=1`; bytecode and temporary-directory readiness remain
-advisory preconditions.
-
-The [race tests](tests/test_d5_u7_races.py) exercise ordered histories with
-injected clocks and stub execution, not deployed death detection or exhaustive
-interleavings. The commands below describe the default inactive-D5 operation;
-shipped installation plumbing does not itself activate any state directory.
-
-`flake_triage.py` compares unittest outcomes on pinned head/base:
-
-```sh
-python3 "$HANIG_ORCHESTRATE_DIR/scripts/flake_triage.py" --repo "$REPO" \
-  --head "$HEAD" --base "$BASE" --test tests.test_example.TestCase.test_method \
-  --python python3 --pr 123 --json
-```
-
-Defaults: five runs/side, 60 seconds/run; repeat `--test` for more ids.
-Prints outcomes, touched files, class, issue draft and quoted command.
-Scratch repositories are removed on failure/interrupt. No CI rerun or recorded
-pass; merge still requires a complete green run.
-
-`watch_pr.py --repo OWNER/REPO --pr 123 [--once] [--json] [--patch-id]
-[--interval S] [--max-polls N]` is the read-only PR-status oracle: exit 0
-ready, 10 pending, 11 conflicts, 12 threads, 13 CI failed, 14 cancelled
-zero-step flake, 15 unknown, 16 fork, 2 error. It mutates nothing.
-
-The connected `merge_unit.py` operator requires passing `integration-tests`
-and, when declared by the target policy, `changed-tests-stable` evidence
-for the exact judged head and observed target commit, including the
-rederived merge base and candidate tree. The target comes from the anchored
-remote's `refs/heads/<target>` through the forge ref API; a PR's `baseRefOid`
-or `base.sha` can be stale and supplies no current-tip evidence. CI must also be green. There is no
-integration override. `--allow-unchecked-scope REASON` permits only a complete,
-schema-valid `unchecked` report with exit 2; exit 1 is never waivable. Every
-report must carry the exact coordinator binding and state epoch.
-
-```sh
-python3 "$HANIG_ORCHESTRATE_DIR/scripts/merge_unit.py" plan.json \
-  --state-dir "$STATE" --unit impl --pr 123 --approver "Operator" \
-  --verify-integration --verification-timeout 1800
-```
-
-This mode runs no merge. It reads `verifiers.json` and the pinned verifier
-programs from the observed target commit, runs both in the same disposable
-candidate-merge checkout, and records each result in the external coordinator
-verification journal. Supply both Git
-objects locally first; the verifier never fetches. The coordinator lease is
-released while the candidate verifier runs. Before appending evidence, the
-operator reacquires it and rechecks the exact unit, attempt, judged head,
-target ref tip, and state epoch, along with the plan and merge intent. Its own
-reacquisition advances the epoch once; any intervening coordinator acquisition
-invalidates the observation, even if that coordinator changed no unit. A changed
-binding or epoch refuses publication and asks for verification to be rerun.
-The real merge path retains its existing lease scope. Ordinary invocation then
-admits that evidence before issuing one guarded merge. A changed head or
-target needs fresh evidence. The operator re-observes the branch ref before
-publishing the durable intent and again immediately before requesting the merge,
-after intent publication. A moved or unreadable ref at that last read durably
-marks the intent `cancelled_before_request` and refuses without a merge call.
-The next invocation follows that resolved intent to a fresh operation, so
-verification can rerun without abandonment; the cancelled record is retained.
-If cancellation publication fails, the original intent remains unresolved and
-the operator refuses a second request. A pending cancellation record restores
-that barrier even if publication failed after rename. Only after cancellation's
-file and directory fsync succeed does the operator publish a separate
-`.cancellation-committed` marker bound to the complete resolved intent. A rerun
-with that marker and a leftover pending record retains the cancellation,
-persists the marker and removes the pending record before fresh verification.
-A visible cancelled phase without the marker remains unresolved when a pending
-record exists, including older ambiguous cancellations. Markers are retained so
-an interrupted cleanup cannot revive a committed request; they cannot resolve
-a successor operation's request. A crash before marker publication remains
-conservatively unresolved.
-A red run for the same exact binding cannot be
-hidden by an earlier or later pass. Coordinator-observed timeouts and
-launch/capture failures are recorded as `incomplete`, with an
-`incomplete_reason`; they neither admit nor poison that binding. A later
-completed pass may supply the missing evidence. Returned nonzero child statuses,
-including exit 127 and signals not sent by the coordinator, remain `fail`.
-Child diagnostic text never determines completion. Existing `fail` receipts
-retain their meaning, including historical timeout receipts.
-A failure already observed before timeout cleanup remains `fail`, including
-when a descendant keeps a capture pipe open after the verifier exits.
-A nonzero exit reaped during cleanup also remains `fail` when the coordinator's
-SIGKILL could not have caused that status; finishing between the initial poll
-and the kill does not erase the failure.
-
-The optional `verification-execution.json` belongs in the external coordinator
-state directory; plan/PR/candidate policies and symlink policies cannot supply it.
-Without a host declaration, verification stays local.
-
-```json
-{
-  "schema_version": 1,
-  "local": {"python": "/absolute/local/python3", "git": "/absolute/local/git"},
-  "verification_host": {
-    "ssh_alias": "verification-host",
-    "executor": "direct",
-    "workdir_root": "/absolute/remote/scratch",
-    "python": "/absolute/remote/python3",
-    "git": "/absolute/remote/git"
-  }
-}
-```
-
-Use direct SSH only on a quiet host authorized by the owner; never bypass a
-scheduler or run this suite on a cluster login node. The remote root must exist.
-All paths are absolute operator declarations, with no inferred host or username.
-Configuration does not grant authorization. To use a scheduler, set
-`executor: "slurm"` and add a `slurm` object with `partition`, `mem` and `time`.
-All three are required plain string tokens; `mem` has no implicit default.
-For example, use `{"partition": "fixture-cpu", "mem": "2G", "time": "00:05:00"}`
-with operator-selected values in the private coordinator policy. The supervisor
-only submits and polls; the worker runs inside the allocation. An optional
-`poll_seconds` (a number in (0, 60], default 2) sets the interval between
-scheduler polls; each poll is a squeue/sacct call on the login node.
-
-Local defaults use operator Python and prefer system Git, then absolute operator
-PATH directories. Git/SSH exclude relative entries and symlinks into operated
-repositories/candidate trees; external wrappers are allowed. Receipts record
-paths, versions and host identity; missing worker probes stay unavailable.
-
-Explicit Python handles shebangless programs and pinned Python shebangs, direct
-or via `env`/`env -S`. Other shebangs and undeclared local Python remain native;
-remote Python is explicit. Generic scripts retain their semantics. The bounded
-env selector preserves supported arguments, environment, cwd and argv0 before
-restoring tools; malformed/unsupported selectors are incomplete. Only the helper
-uses `-I -S`. Shipped verifiers reuse selected tools and require target-authorized
-digest pins; a candidate cannot authorize itself.
-
-The coordinator sends a local candidate bundle and harness over batch SSH,
-without forge writes. The worker rehashes the checkout before both claims.
-Publication reacquires the lease and applies existing observation fences,
-including execution policy. Invalid retained execution/tree evidence corrects
-verified labels and blocks advancement.
-
-Each completed claim becomes a write-once `claim-N.json` before the next claim;
-then come `worker-complete` and the separate supervision marker. Receipts bind
-launch, candidate, policy, claim, verifier digest, exit and completion facts.
-`result.json` is diagnostic. Completed PASS/FAIL survives transport, later-claim
-and cleanup failure. Retrieval preserves immutable bytes, using bounded,
-digest-checked chunks when aggregate JSON is unavailable or oversized, and
-fsyncs each claim before later reads. Output tails remain bounded.
-
-Before SSH, the coordinator fsyncs an external `remote-verifications/` ledger
-and write-once `<binding>.launches/` witness. Required witnesses and surviving
-coordinator journal launches must match the ledger. Missing/inconsistent state
-blocks reruns, local fallback and admission, including retained merges. Restore
-exact saved authority; a PASS cannot reconstruct it. Pre-witness records rely
-on surviving journal rows. Total evidence loss, or an unjournalled legacy launch
-losing its sole ledger, cannot be detected retrospectively.
-
-Only missing retrievable completed claims are `incomplete`. Unresolved or
-unpublished launches block their binding with `unresolved remote evidence at
-HOST:STAGE; retrieve or resolve it first`. Restore connectivity and repeat
-`--verify-integration`; it retrieves the original launch even after changing or
-removing host policy. `--retrieve-remote-evidence` is also idempotent after
-reconciliation and never starts a verifier. Raw receipts survive publication
-fence failures. Deleting authority is not resolution. A stale immutable
-`evidence_reconciled: false` row permits admission after authoritative recovery.
-Generic candidate admission rejects same-basis unresolved/local fallbacks and
-prior FAIL despite later PASS, while distinct valid bindings remain eligible.
-Legacy branch-local semantics remain unchanged.
-
-For a permanently fenced launch whose supervisor marker or current accounting
-is unavailable, the named operator can add `--remote-recovery-attestation FILE`
-to `--verify-integration --retrieve-remote-evidence`. The exact-launch testimony
-is journaled as **attested**, never verified, before reconciliation. It admits
-only already-complete bound receipts, preserves FAIL and Slurm terminal-success
-requirements, and retains the stage. Unreachable is not fenced. See the
-[recovery procedure](skills/brood-orchestrate/references/operating-loop.md#guarded-merge-and-reconciliation)
-for the three fencing assertions, binding format, and operator-owned residual risk.
-
-Missing local SSH is retryable and records no launch. After a possible launch,
-apparent connection failure may require investigation; changing hosts or going
-local cannot escape uncertainty. Cleanup requires quiescence and acknowledgment
-of exact reconciled evidence; otherwise retain the stage and cleanup diagnostic
-independently of verifier outcomes. Slurm discovers launch jobs by a deterministic
-job name through both `squeue` and `sacct`, even when `job-id` is missing or unreadable.
-Removal requires terminal accounting for every discovered or previously known job,
-no live queue rows, finished supervision, and reconciled evidence. Empty or failed
-discovery retains the stage. Cleanup-unconfirmed output names known job IDs and
-recovery files: inspect them, restore scheduler access, and retrieve evidence;
-do not delete the stage or launch a replacement to bypass unresolved evidence.
-After individual accounting/cancellation calls, cleanup always queries accounting
-by launch name and then the live queue, recording `scheduler_observed_at` in UTC.
-Any live row, query error, ambiguity, or newly discovered ID without previously
-collected terminal accounting retains the stage for the next bounded retrieval.
-A negative cleanup observation revokes stale reconciliation and publication flags;
-transport failure alone does not. Later positive observations can reconcile the
-same immutable receipts. This is a finite observation contract: a privileged
-requeue after the last queue observation remains possible, and `--no-requeue`
-and the worker-started guard do not provide an atomic scheduler/filesystem fence.
-Its locked cancellation journal permits
-four attempts/64 KiB; `requested` does not attest termination. Forced worker
-restarts cannot replace receipts. Same-UID writers and live descendants remain
-outside this trusted-writer storage convention.
-
-
-The designated `merge-precondition` verifier runs
-`python3 -m unittest discover -s tests` in the candidate tree. Its policy and
-program must first exist on the trusted target; missing policy or mismatched
-program bytes refuse. Reading target policy lets attempts whose launch bases
-predate installation use the new precondition without allowing a candidate
-to authorize itself. This merge-only authorization leaves ordinary
-anchored-base verification unchanged. Candidate tests remain candidate bytes;
-this policy does not promise an immutable test corpus.
-
-The second designated verifier, `changed-tests-stable`, runs
-`verifiers/changed_tests_stable.py`. It selects added or modified `test_*.py`
-files under `tests/` from the PR's merge-base-to-head diff (renames count as
-delete/add), then runs each module in a fresh host `python3` process five times.
-Each invocation loads that module by its dotted name, retaining package
-identities for relative imports and the integration runner's `tests/` helper
-import path. Package-level `load_tests` hooks cannot replace the module's
-suite; the module's own hook, including supervised delegation, is honored.
-Any failure, error, or unexpected success fails the claim; a selected module
-that executes zero tests also fails, even if its suite reports a positive size
-or another module ran tests. Every repetition must exit zero AND deliver a
-complete result through a fresh anonymous file descriptor outside the candidate
-tree. The verifier's runner writes counts only after unittest returns; the
-parent checks those counts, completion, and the original child PID independently
-of stdout and exit status. Missing, malformed, partial, zero-test, stopped, or
-unsuccessful results fail, including early successful exits and a forked
-descendant returning after its parent exits. No result pathname is supplied to
-candidate code, and the descriptor is closed across exec into delegates. This
-guards accidental termination within the existing trusted-writer model; it is
-not protection from hostile in-process introspection or same-UID writes.
-No changed test modules is a successful no-op. The target's
-verifier entry can set a positive integer `repetitions`; candidate policy and
-program edits cannot change that count or the pinned program used for this PR.
-Repeated passes sample stability; they do not prove a test cannot flake later.
-If the coordinator times out and kills the verifier and its repetition, the
-claim is `incomplete`; a child that exits on its own without the handshake still
-fails. A process killed outside the coordinator's observation cannot safely be
-distinguished from candidate-caused termination and is conservatively a failure.
-The declaration is the unique policy entry named `changed-tests-stable` or
-listing that claim. Its own name is used consistently for authorization and
-receipts, while the program path and digest pin remain designated by the
-coordinator. Multiple declarations or duplicate selected names refuse;
-malformed claims never grant authority.
-
-Bootstrap follows target authorization: a target without the new declaration
-keeps the original single-claim rule, so the PR introducing it is checked under
-the already-merged policy. Once the declaration lands, later merge requests
-require both claims with no waiver. Missing or invalid declared verifier bytes,
-policy, or evidence refuse. A retained failure for either claim at the exact
-binding cannot be hidden by another pass. New merge intents retain the required
-claim list and both admitted receipts for reconciliation after Git cleanup;
-legacy intents require readable target policy to establish the claim list.
-An unreadable legacy policy or missing required stability claim corrects any
-incorrect persisted integration label to `integration-unverified` and withholds
-advancement for human intervention. Unreadable policy never means no requirement.
-Retained reconciliation also reads the current verification journal. A later
-exact-binding `fail` for either retained claim, or an unreadable journal,
-corrects the intent, merge receipt and any matching saved receipt label to
-`integration-unverified` and withholds advancement. The journal remains
-append-only; old results are not rewritten. `swarm.py verify --claim
-integration-tests` checks coordinator merge-intent files under the lease both
-before running and before publishing evidence. Any intent for that unit refuses
-this generic path; use the connected operator, which understands cancellation
-and abandonment, for subsequent verification. The lease remains released during
-execution.
-
-After a merge, the operator compares its actual parent with the checked
-target. A race is recorded as `integration-unverified` in the intent and merge
-receipt, reported with a warning, and withholds advancement. It never retries
-the merge call. The ref read and merge are not atomic; this parent check remains
-the backstop for movement after the final read. Historical merges without a retained precondition can still
-be reconciled as attestations; unavailable integration evidence is explicitly
-labelled `integration-unverified`. Forge observations remain attestations,
-and the local lock and journals retain their same-node, trusted-writer limit.
-
-The operator drains tracker intents before auditing current state:
-
-```sh
-python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" drain \
-  --binding .hanig/linear-binding.json --state-dir STATE [--state-dir OTHER_STATE] [--dry-run] [--full]
-python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" audit \
-  --binding .hanig/linear-binding.json --out AUDIT
-```
-
-Drain is incremental by default: run it after merges. Fully receipted issues
-incur no issue requests. Incremental drains also skip superseded state intents
-once a later state intent on the same issue is receipted: the reference spelling
-and state directory must match, and both outbox line and intent order must advance.
-Run `drain --full` daily to repair drift and any superseded-intent comment the skip
-left missing. Receipts written before PR 306 confirmed comments per intent, so
-one could be missing.
-It preserves full selection and healthy-path reconciliation, with an intentional
-fail-closed correction: prepare local intents plus a complete comment listing
-before effects. Missing or edited receipted comments do not block. Only structural listing
-failures withhold preparation effects and receipts on that issue alone. Effects
-use prepared history without re-reading it; receipts follow confirmed effects.
-Binding audit detection is unchanged.
-
-`--draft tickets.json` supports named plans; nameless plans use the binding
-and intent tracker identifiers. Reconciliation is eventual across hosts,
-one state write per issue per run. Historical receipts and current audit
-state are separate; see [tracker outbox](docs/tracker-outbox.md).
-
-Approved plan drafts use the same lock and operation engine:
-
-```sh
-python3 "$HANIG_PROJECT_DIR/scripts/tickets.py" draft plan.json --repository OWNER/REPO
-python3 "$HANIG_PROJECT_DIR/scripts/tickets.py" approve tickets.json --approver NAME
-python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" file --draft tickets.json [--preview] [--adopt-checked]
-python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" replay OPERATION_ID --draft tickets.json
-```
-
-Repository defaults to the draft directory's origin. Filing proves project/unit
-identity with repository markers, refuses ambiguous adoption, and requires an
-owner-reviewed audit plus `--adopt-checked` for foreign projects or unmarked
-objects. It computes edges from `blocked_by`, preserving cross-boundary blockers
-and PR 3 trailers. Each step updates the draft atomically; the binding lives in
-`.hanig/linear-binding.json` beside it. Replay refuses a changed approved spec.
-Exits are 0 confirmed, 3 incomplete, 2 refused before mutation. Confirmation
-requires by-id read-back and CLEAN plan-scoped checks over the expanded graph.
-The offline 30-unit/40-edge filing fixture is bounded at 120 requests.
-
-Ad-hoc issues use the same project lock and declare their graph at filing:
-
-```sh
-python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" issue new \
-  --binding .hanig/linear-binding.json --title 'Follow-up' --body-file body.md \
-  --blocked-by ARC-123 --approver NAME [--preview]
-python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" issue edit ARC-124 \
-  --binding .hanig/linear-binding.json --add-blocked-by ARC-125 \
-  --remove-blocked-by ARC-123 --approver NAME
-python3 "$HANIG_PROJECT_DIR/scripts/linear_sync.py" issue replay OPERATION_ID \
-  --binding .hanig/linear-binding.json
-```
-
-`--blocked-by` and `--blocks` repeat and combine; an issue with no dependencies
-uses `--independent REASON` instead. Edits also support `--add-blocks`,
-`--remove-blocks`, optional title/body replacement and `--clear-independent`.
-Bodies come from a file or `--body-stdin`. Preview runs all prechecks without
-writes. Structured dependency lines must agree with the resulting graph.
-Marked counterparts are checked and rewritten too. Read-back compares full
-edge sets and rechecks cycles. Exits are 0 confirmed, 3 incomplete/drift and
-2 pre-mutation refusal. Replay resumes the recorded operation; invoking new
-again creates a different operation. Confirmed replay never repairs later
-drift or recreates a deleted issue.
-
-Fsynced operation records and progress live outside Git under
-`~/.local/state/hanig-swarm/linear-ops/WORKSPACE/PROJECT/`; tests can set
-`HANIG_LINEAR_OPS_DIR` to an external temporary directory. The audit reports
-`declared_edges` drift from Linear alone and supplementary local
-`op_incomplete` drift. See [tracker commands](skills/brood-project/references/tracker-sync.md)
-for replay rules and the same-host locking boundary.
-
-### brood-swarm
-
-The coordinator (`swarm.py`, `unit.py`, and their supporting modules).
-
-```sh
-python3 scripts/swarm.py validate plan.json [--check-seeds]
-python3 scripts/swarm.py run      plan.json [--dry-run]
-python3 scripts/swarm.py status   plan.json [--json]
-python3 scripts/swarm.py usage [--unit ID] [--since YYYY-MM-DD] [--tz UTC] [--json]
-python3 scripts/swarm.py scope-check plan.json --state-dir DIR --unit ID [--head REV] [--json]
-python3 scripts/swarm.py advance  plan.json
-python3 scripts/swarm.py seq-floor --state-dir DIR --floor N --approver NAME --reason TEXT
-python3 scripts/swarm.py abandon plan.json --state-dir DIR --unit ID \
-        --approver NAME --reason TEXT
-python3 scripts/swarm.py supersede plan.json --state-dir DIR --unit ID --by SUCCESSOR \
-        --approver NAME --reason TEXT
-python3 scripts/swarm.py outbox            [--all] [--json]
-python3 scripts/swarm.py outbox \
-        --record-receipt KEY --ref ARC-171     # compatibility attestation after confirmation
-python3 scripts/swarm.py promote  plan.json --unit ID --approve --approver hani
-python3 scripts/swarm.py merge    --unit ID --repo o/r \
-        --pr URL --head SHA --target main --merged-as SHA --method merge
-python3 scripts/swarm.py verify   --unit ID --attempt DIR --claim tests-pass \
-        --verifier NAME --path ./check.sh
-
-python3 scripts/unit.py allocate --root /external/swarm-runs --task ID --kind slurm \
-                                 --command CMD --output PATH [--gpu-hours N]
-python3 scripts/unit.py bind  <unit_dir> --job-id 12345
-python3 scripts/unit.py check <unit_dir> [--json]
-```
-
-`validate` stays offline by default and runs no Git. Add `--check-seeds` to
-check every declared seed before dispatch, using the same dispatch source
-resolution and seed reachability check as dispatch. It reports each failing
-unit and exits 1 if any fail. This opt-in check may contact the origin push
-destination and fetch Git metadata through a temporary ref; it does not allocate
-attempts, write coordinator state, or touch attempt worktrees. With no seeded
-units it runs no Git. A pass is a point-in-time observation, not a reservation
-or a guarantee that replay will be conflict-free.
-
-`swarm.py continue PLAN --state-dir DIR --unit OLD --new-id NEW --prompt-file FILE [--head-ref REF] [--repoint-dependents] [--tickets DRAFT] [--write]` copies OLD with a new id, prompt, description, author history and seed from coordinator state and live Git. Preview leaves the plan, coordinator state and worktree contents unchanged; Git fetch metadata may change, as with `validate --check-seeds`. `--write` atomically appends after those checks. Evidence is a path only. Omit either flag when its update is not needed. Use `swarm.py continue --repoint-dependents --tickets DRAFT` with the required arguments above to prepare both updates: repointing replaces OLD with NEW in dependent `needs` and refuses any dependent with recorded attempts. DRAFT must already exist; its predecessor entry is copied with `unit` and `continuation_of` adjusted, without filing tracker issues or rewriting tracker relations. Preview writes neither file. With `--write`, plan and draft are replaced sequentially, not as one transaction; rerun the same command after an interrupted draft write to finish that update.
-
-Code units may declare `author_history`, a JSON list of records with exactly
-`unit`, `attempt` (non-empty strings), and `identity` (`provider/model` or null).
-New schema-6 launch intents capture the plan's history followed by prior
-attempts in lexicographic attempt-id order; each contributes its captured
-history and then its frozen routing identity. `continue` carries the same
-history into the new unit. Identical records keep their first position.
-Missing legacy identities remain null; current routing never fills them in.
-Every recorded attempt is included even if it produced nothing. This metadata
-is excluded from the plan digest, launch facts and agent-readable launch
-record; redispatch preserves stored intents. The completion protocol renders
-each distinct known identity as its own shell-quoted `--author` flag: current
-attempt first, then history order. Unknown identities are named by unit and
-attempt and must be reported to the coordinator before review, without
-guessing; known inherited identities still render when the current one is
-unknown. This changes no admission, seed checks, judgment, scope checks or
-closure. Conservative attribution can exhaust the reviewer pool; exclusions
-are never relaxed to avoid `REVIEW_UNAVAILABLE`.
-
-`run` and `advance` take `--max-new-dispatches` to throttle a fan-out, and
-`--accept-plan-change` to proceed when the plan digest no longer matches the
-state directory. `promote` takes `--accept-weak-evidence`, which is exactly the
-kind of thing that should have to be typed out in full.
-
-`scope-check --head REV` lets a worker check committed changes against the
-attempt's recorded base before coordinator judgment. REV resolves to a full
-commit ID in the launch-intent repository. From an attempt worktree, pass
-`--head "$(git rev-parse --verify HEAD^{commit})"` to check that worktree's HEAD.
-Fix out-of-scope paths before review. JSON reports identify this advisory result
-as `head_source: "worker"`; it cannot satisfy the merge scope precondition.
-Without `--head`, scope-check uses the coordinator's judged head and reports
-`head_source: "judged"`. Exit 0 is in scope, 1 is out of scope (including
-deletions), and 2 is unchecked, including absent scope or an unresolved head.
-The dispatched completion protocol supplies the quoted command with the coordinator's plan, state directory and unit, clears Git repository overrides, and requires workers to resolve their own commit and fix named paths before review.
-
-`converge.py check` answers whether a training run converged or merely stopped.
-It was ported out of a deleted skill before that skill was removed, because it
-was the one capability with no replacement anywhere. A unit that declares a
-`converge` block is judged by it: a run that spent its step budget without
-meeting the criterion becomes `NEEDS_HUMAN`, not `DONE`, so it closes no ticket
-and releases no dependent. Units that declare none never reach that code.
-
-Coordinator state and attempt roots default to a stable per-project directory
-under `$XDG_STATE_HOME`, or `~/.local/state` when it is unset. Both resolve
-outside every operated Git worktree. Explicit paths that resolve inside one,
-including through a symlink, are refused before a directory is created.
-Existing `.swarm/state` and `.swarm/runs` trees are copied to the external
-default on first use; the legacy files are retained and historical attempt
-paths are not rewritten.
-
-For a fresh code repair attempt, optional unit `seed` records the previous
-work as `{"ref":"refs/heads/previous-attempt","base":"<full commit ID>",
-"head":"<full commit ID>","evidence":"/previous/attempt/evidence.md"}`.
-Both IDs must be 40 or 64 hex characters. Dispatch checks that `base` is an
-ancestor of `head` and `head` is reachable from the exact ref on origin's push
-destination, then persists the raw seed in coordinator launch intent. The
-worker receives instructions to fetch, cherry-pick `-x -m 1 base..head` (first-parent mainline), skip empty
-commits, and read the optional evidence; whole-file checkout is forbidden.
-Relative evidence paths use the source repository directory. The coordinator
-does not replay the seed, and reachability does not promise conflict-free
-replay. Judging, scope-check and merged-PR closure still use the fresh
-attempt's recorded base and produced head. Omission preserves existing intent,
-prompt and plan digests; a persisted attempt's seed is never replaced from a
-changed plan. See the [skill](skills/brood-swarm/SKILL.md#seed-a-fresh-code-repair-attempt).
-
-### brood-verified-workflow
-
-```sh
-python3 scripts/contract.py init   --command CMD --output PATH [--input PATH] \
-                                   [--predicate EXPR] [--write-scope DIR] \
-                                   [--require-production-evidence]
-python3 scripts/contract.py submit <run_dir> [--sbatch-arg ARG]
-python3 scripts/contract.py record <run_dir> --exit-code N [--job-id ID]
-python3 scripts/contract.py check  <run_dir> [--json] [--watchdog SECS]
-```
-
-Distinguishes `SCIENTIFIC_PASS` from `TECHNICALLY_COMPLETE`. Its Slurm state
-machine is the ancestor of `unit.py`'s.
-
-### brood-review-gate
-
-Sends the diff **and the specific claims made about it** to models that did not
-write the code, each prompted to refute rather than approve. A reviewer that
-cannot decide is instructed to refute, because a false "looks good" costs far
-more than one more look.
-
-```sh
-python3 scripts/review.py --kind plan --file design.md
-python3 scripts/review.py --kind implementation --staged --escalate --round 1 \
-  --claim "This change cannot make an honest run fail."
-python3 scripts/review.py --list          # live provider probe
-python3 scripts/review.py --size --range BASE..HEAD  # offline PR size preflight
-```
-
-Implementation reviews require `--round N` and a stable checkout identity.
-`--staged`, `--range`, `--diff` and file reviews derive it from the origin URL,
-target merge-base (default `origin/main`) and current branch. Use `--target REF`
-for another target; in detached HEAD, declare `--plan-name NAME --unit UNIT`.
-Either explicit identifier replaces the branch component; Git origin and shared
-target history are still required. Fix commits retain the identity while that
-merge-base is unchanged. Renames, remote changes, rebases, declaration changes or
-a different state home can create another history; this is an honest-caller
-bound, not a tamper barrier. The enforcing ledger refuses repeated, lower or
-skipped rounds. Start at 1 only for a new identity; subsequent rounds require
-`--dispositions FILE`. For an existing ledger history, fresh cycles require
-an exhausted predecessor plus `--fresh-cycle-from PROFILE`; an unseen identity
-records the explicit declaration as cycle 1 with no declared predecessor. Sizing, listing, plan reviews and adjudication do
-not reserve implementation rounds.
-
-`--size` measures the same gathered body as a review, before truncation,
-including file headers, separators and removal of recognized review-history
-signatures. It reports characters (not UTF-8 bytes or total prompt tokens), a
-100,000-character planning budget and the 180,000-character truncation limit.
-Exit 0 means below 100,000; 1 means 100,000–179,999; 2 means at least 180,000.
-It supports `--diff` (the default), `--staged`, `--range` and repeatable `--file`,
-plus `--json`, without provider configuration or network calls. Size results are
-not review verdicts. Plan code units to keep the complete PR below the budget.
-
-`review.py`'s `--record-evidence` (L1; `review_evidence.py` is a module, no CLI) appends audit-only counterexample
-evidence (`--head`, `--finding`, `--round`, `--method`, `--status`, optional
-`--tree`, `--test-ref`, `--note`) bound to identity, head and candidate tree; it
-never changes a verdict. `--require-premise-ack` (L2; module `review_premise.py`)
-refuses round N >= 2 when one `defect_class` struck in rounds N-2 and N-1,
-unless `--premise-memo FILE` or `--continue-patching REASON` acknowledges it.
-
-Panel snapshot measured 2026-10-30 at `c2556ad4`. Current routing comes from
-the `enabled`, `profiles`, `effort` and `reserves` fields in
-[`reviewers.json`](skills/brood-review-gate/reviewers.json), not this table:
-
-| profile | measured membership and effort | use |
-|---|---|---|
-| `plan` | luna `max`, kimi-k3 `xhigh` | acceptance criteria and designs, before code exists |
-| `fast` | luna `max`, haiku-5.5 `max` | cheapest implementation panel, first tier of `--escalate` |
-| `standard` | terra `xhigh`, kimi-k2.7-code `null`, sonnet-5.5 `high` | the usual implementation panel |
-| `deep` | terra `xhigh`, kimi-k2.7-code `null`, sonnet-5.5 `high`, sol `xhigh`, astra `xhigh` | final escalation tier or explicit `--profile deep` |
-
-Owner decision 2026-10-19 put Luna in plan with Kimi K3. The 2026-10-28
-changes seated Terra in standard and deep and then set its effort to `xhigh`,
-leaving Luna in fast and plan. Kimi K2.7 Code's `null` effort is deliberate;
-the measurement behind it, output caps, dated acceptance probes, committee
-profiles, ordered reserves and tiebreak routing live in `reviewers.json`.
-Pass every author's provider/model ID with repeatable `--author`. The review
-gate excludes the same canonical model maker and exact model leaf across
-transports, including a transport resolved through a roster model or pin.
-A profile-selected review draws on eligible reserves if author exclusion
-breaks quorum or plan maker contrast. An escalation retains earlier results
-and adds newly eligible reviewers at each tier. Both `--escalate` and
-`--only` skip reserve substitution.
-
-#### Model families
-
-Gate effort comes from the `effort` field in `reviewers.json`,
-which sets Terra to `xhigh`; the registry's prose is not a gate setting.
-
-A seat that declares a `family` in `reviewers.json` (or the code-agent
-`default` in `brood-swarm/agents.json`) can move to a newer point release per
-project, without anyone editing a model name:
-
-```sh
-python3 scripts/resolve_models.py --project .            # brood-project step 1
-python3 scripts/resolve_models.py --project . --dry-run  # list and select only
-```
-
-A family is a literal `vendor`, `prefix` and `suffix` around a version `N` or
-`N<separator>M`, plus `major`, the owner's ceiling. A `named_version` with
-`major: 0` admits only its exact name (Gemini 4 Argon); it has no automatic
-point-release upgrades. The resolver lists the
-provider's catalog (`openai`, `openrouter`, or `paseo:<provider>`), takes the
-greatest id with that major above the shipped pin, and probes it: an API seat
-must complete at its configured effort and output cap with the response naming
-exactly that id, and a Paseo seat's canary must inspect as exactly the
-requested provider, model and thinking. Only a passing probe is recorded, in
-one snapshot per project directory under the state home. The installed files
-never change. A listed id with a greater major prints `NEW_GENERATION`;
-adopting it is a reviewed change to `major`.
-
-`review.py` and `swarm.py` use the snapshot only when it
-matches the project and the exact bytes of the installed `reviewers.json` and
-`agents.json`, and only for entries that pass the family, major, pin and
-probe-record checks again; otherwise the pins apply. Reinstalling a release
-therefore returns every seat to its pin until the resolver runs again.
-`HANIG_ROUTING_SNAPSHOTS=off` ignores snapshots. A resolved gate seat that
-returns no usable verdict is retried once on its pin, so a resolution never
-leaves a seat without a verdict its pin would give; the report names both. A
-usable verdict, refutation included, stands: re-asking another model after an
-unwelcome answer would be reviewer shopping. Author
-exclusion compares the resolved model; a seat whose pin authored the change
-keeps its seat but loses the fallback, so the author never answers.
-`committee.py` keeps the shipped pins for its members and tie-breaker:
-it has no pin fallback, so resolution applies to the review gate only. The state home is writable by
-the owner's UID, which launched agents share; that is a declared limit, as for
-coordinator state. A family sibling on neither the pin nor the resolved model (an
-author on `gpt-6.2-astra`, a seat pinned to `gpt-6-astra` and resolved to
-`gpt-6.1-astra`) is not excluded. Seat names are labels and keep their names when the model
-moves.
-
-**Two contrasting model makers for a plan, never escalated.** A maker is the
-vendor segment of the model id when present, otherwise the provider. Two makers
-can use one gateway; one maker cannot fill both seats. A third adds agreement,
-not insight. That is measured, not assumed. `reviewers.json` carries routing
-only (endpoint, model id, effort, profile membership) and deliberately no
-quality scores, because a stale ranking is worse than none. Availability is
-probed live by `--list`; a key being set is not availability.
-
-`committee.py` keeps a persistent two- or three-member committee that plans,
-then reviews its own plan's implementation (`open`, `ask`, `review`, `show`).
-`open --profile NAME` selects enabled members. The default `committee` profile
-is for step-backs, and `planning` is a separate profile. Committees use the same
-canonical author exclusion as the review gate. When exclusion removes a
-profile member, `open` searches ordered reserve combinations for a panel of
-the original size with distinct model identities, at least two makers, and
-at least two providers. If it cannot restore the panel, it refuses. An
-explicit `--member` selection overrides the profile and skips substitution.
-Later commands retain the session's members.
-
-On a split, `synthesize` invokes the same tiebreak as `tiebreak SESSION`.
-It excludes authors and prior voters by canonical identity. If the primary
-is excluded, the first eligible ordered reserve of a different maker from
-the primary can rule. If no eligible tiebreaker remains, the split goes to
-`OWNER`. See [profiles and reserves](skills/brood-review-gate/reviewers.json).
-
-`PROTOCOL.md` states the full model. The enforceable parts are enforced by
-`review.py` rather than left to memory, because these rules were written down
-once and drifted anyway.
-
-Never tell the panel what a previous round decided. A round's `--context`
-describes what changed, not how the last round went; every `--file` follows
-the same rule. The guard strips the exact opening ARC-720 rerun annotation
-and whole matched JSON gate-report values, not arbitrary prose or quoted state
-names. Prompt and receipt notices identify each removal; unmatched allegations,
-commands and outputs remain unchanged. Paraphrases and embedded receipts remain
-blind spots. Synthetic receipts are stripped too: the loss is visible, but the
-removed material cannot be assessed. See the skill's declared input limitations.
-
-### brood-portable-handoff
-
-```sh
-python3 scripts/handoff.py capture run1 run2 --out handoff.json
-python3 scripts/handoff.py resume handoff.json [--base DIR] [--watchdog SECS]
-python3 scripts/handoff.py memory .
-```
-
-A handoff records identities and pointers. It never copies data, and it never
-decides anything a verifier already decided.
-
-| code | state | meaning |
-|---|---|---|
-| 0 | `HANDOFF_CLEAN` | code and inputs match, pointers resolve here |
-| 1 | `HANDOFF_DRIFTED` | code, input identity, or an artifact size differs |
-| 2 | `HANDOFF_ELSEWHERE` | code matches; an artifact is unreachable from here |
-| 3 | `HANDOFF_MALFORMED` | the handoff file is unusable; re-capture |
-
-### brood-debrief and brood-hillclimb
-
-```sh
-python3 scripts/decisions_log.py append --log L --run-id R --kind K --claim C [--evidence-ref E]
-python3 scripts/decisions_log.py verify --log L [--expect-head SHA256]
-python3 scripts/debrief_audit.py --decisions L --workspace DIR
-python3 scripts/debrief_attention.py pack --decisions L --audit A [--out F]
-python3 scripts/debrief_attention.py validate --report F [--pack P]
-python3 scripts/hillclimb.py init --state-dir S --harness F --metric M --min-effect X --direction lower
-python3 scripts/hillclimb.py record --state-dir S --id H --runs-json R --checklist-json C
-```
-
-Also `decisions_log.py show --log L --json` and
-`hillclimb.py hypothesize|summary|verify-log --state-dir S`. Nothing here calls a model.
-
-### brood-conclave
-
-```sh
-python3 scripts/conclave.py resolve
-python3 scripts/conclave.py doctor --refresh
-python3 scripts/conclave.py new BOARD --brief brief.md [--attach fig.png] [--no-lor]
-python3 scripts/conclave.py round BOARD 0 [--seats S] [--dry-run]
-python3 scripts/conclave.py ratify BOARD
-```
-
-The moderator writes the brief, cruxes and statement; it never votes. Seats run
-as Lor subagents by default (`"lor": true` in `families.json`; requires
-`LOR_SESSION_ID`); `--no-lor` or `CONCLAVE_LOR=0` routes them through
-`codex`/`agy`/`claude`/`pi`/`opencode` instead. Model ids come from live
-catalogs and `families.json`, never from the script. Also
-`conclave.py digest|status|cruxes|tally|export BOARD`. `scripts/allow.py` edits
-the owner's Claude Code permissions, so only the owner runs it.
-
----
-
-## The invariants
-
-These are the load-bearing decisions. Most were paid for with a real failure.
-
-**Isolation replaces attribution.** Observation shows that an artifact changed,
-never which process changed it. So each attempt gets an exclusive, never-reused
-write root, created with `mkdir(exist_ok=False)`, which enforces that no two
-attempts are ever handed the same root -- not that the OS keeps another process
-running as the same Unix user out of one. Given that allocation, a cheap
-predicate ("is there output under this root?") becomes conclusive, and the
-machinery built to *prove* which process wrote a file was answering a question
-that no longer needed asking.
-
-**A unit is the retry boundary.** A retry starts in a fresh, empty attempt
-directory, so a retry redoes the whole unit. The quantity that matters is
-therefore maximum unrecoverable work, not unit size, and it is the human's to
-set: what is the most work you are willing to repeat after one interruption?
-Absent an answer, the default is one independently executable shard per unit.
-
-`retry.mode: "resume"` is **refused** today. A checkpoint counts only if it
-survives the failed attempt, is made available to the new attempt, has an atomic
-completion marker, is validated before reuse, actually causes completed work to
-be skipped, and still yields the complete declared outputs. An engine that "can
-resume in principle" does not count.
-
-**Closure authority is fixed by kind, and is not configurable.** Configurable
-means configurable wrong.
-
-| kind | what closes it |
-|---|---|
-| `code` | a merged PR, attested and bound (below) |
-| `slurm` | a predicate receipt |
-| `pipeline` | a predicate receipt |
-
-**A `code` unit closes on a merged PR, and the merge is attested, not
-verified.** The coordinator has no network, so it cannot ask GitHub anything: a
-session that can see the PR records what it observed. That alone would let any
-attester close any unit, so the receipt is **bound**. The PR head it pins must
-equal the head the coordinator independently judged this attempt to have
-produced, from an anchor written before the agent existed. The attester can lie
-about whether a PR merged; it cannot make this unit's produced commit be a
-different commit. A merge method outside `merge`/`squash`/`rebase` fails closed,
-because an unrecorded method means `merged_as` cannot be interpreted.
-
-**What the verifier chain does not establish.** The agent runs as the same
-Unix user as the coordinator, so it can write any file the coordinator can,
-including the launch record and the attempt receipts. No arrangement of files
-defends against that. What is defended is an agent that fails to do the work
-and an operator who runs the wrong thing. A hostile agent would need a
-container or a separate Unix user, which is what the receipts have always said
-about isolation. Nor is the agent's process tree established to be dead when a
-check runs: no portable handle proves every same-UID descendant of a Paseo
-agent or a scheduler job is gone, so a lingering one could touch outputs
-mid-digest. That is recorded on each accepted receipt rather than claimed
-closed. Both are DECLARED limits, stated in full in `brood-swarm/SKILL.md`;
-neither is scheduled, and neither should be assumed closed by a later reader.
-
-**A verifier is admissible only if it is authorized, pinned and bound.** The
-policy naming it is read from the **anchored base commit**, never from the
-agent's branch, so a candidate change cannot authorize its own verifier. The
-policy records the verifier's content digest, and the bytes that run are the
-bytes that hashed, copied to a private temporary file: a path is not an
-identity. The receipt names the head it verified, the policy digest it ran
-under, and the claim it was authorized to make, so a pass for another commit or
-under different rules is refused. A unit gates on this only when it declares
-`requires_verification`, because a requirement everybody must satisfy is one
-everybody learns to satisfy trivially.
-
-**Enforce only declared facts.** Never infer exposure from a partition name, a
-walltime, a `gpu_hours` figure, or a fan-out width. If the plan does not declare
-it, the coordinator does not guess it.
-
-**Structural separation over semantic.** `<attempt-dir>/repo` and
-`<attempt-dir>/artifacts` are separated by location, not by banning file
-extensions.
-
-**The coordinator has no network imports.** It writes intents to an idempotent
-outbox; an authorized session runs `linear_sync.py drain` with its
-`LINEAR_API_KEY`, then `linear_sync.py audit`. A tracker that is unreachable can
-therefore never block dispatch, and draining twice cannot file an issue twice.
-
-Acknowledgment is an **attestation, not evidence**. The coordinator has no
-network imports, so it cannot ask the tracker whether ARC-171 really closed;
-anyone who can run the command can write any reference. The record establishes
-only that an identified writer said so at a given time, which is the same class
-of claim as an agent reporting "done". The mechanism stays, because across a
-deliberate network gap there is no other one, and the label carries the
-weakness: every display says attested, never verified.
-
-Status is derived from those attestations, never stored:
-`acknowledged`, `conflict` (two receipts, two refs, one intent), or
-`unacknowledged`. The last does **not** mean "not filed": it means this machine
-has no confirmation either way, and claiming otherwise asserts knowledge it does
-not have. A false acknowledgment is strictly worse than a missing one, because
-re-draining is safe and un-filing is not.
-
-**Non-vacuity by mutation.** A test that passes proves nothing until reverting
-the fix makes it fail. A broken test once gave a false negative on a CRITICAL
-finding: bad quoting meant a git filter never installed, and only a positive
-control revealed the filter did fire.
-
-**Correct the persisted state, not only the forward path.** Three consecutive
-review rounds fixed how a state would be computed next time and left the
-already-written state wrong on disk.
-
----
-
-## Data model
-
-A plan is JSON with a `units` list. Fields the coordinator reads:
-
-| field | meaning |
-|---|---|
-| `id` | unique unit id, used for the attempt directory and the env var |
-| `kind` | `slurm`, `pipeline`, or `code`; sets closure authority |
-| `needs` | ids this unit depends on; forms the DAG |
-| `inputs` | declared inputs; validated for existence and non-placeholder-ness |
-| `outputs` | declared outputs; the done-predicate checks these |
-| `command` | what to run (`slurm`, `pipeline`) |
-| `prompt`, `provider`, `model` | what to dispatch (`code`) |
-| `sbatch` | scheduler flags **as a list**, parsed for the declared partition |
-| `max_attempts` | retry budget; the attempts list *is* the budget |
-| `retry` | `{"mode": "restart"}`; `resume` is refused |
-| `promote_to` | where verified outputs are promoted after closure |
-| `runtime` | what this executes in, and what checks it (see below) |
-| `requires_verification` | claims an authorized verifier must establish before this closes |
-| `continuation` | `{"max": N}`: bounded nudges to a code agent that settled without producing |
-| `provider_resume` | `{"max": N}`: code, int 0..3, default off; same attempt; 5 minute initial / 15 minute later backoff |
-| `pool`, `gpu_hours`, `env` | declared resource facts |
-
-For code units with provider resumes enabled, an eligible content-filter stop
-or exhausted resume budget leaves the outcome FAILED and retains the worktree.
-Coordinator state records `attempt_provider_stops[attempt]`, including the
-anchored branch, `worktree_path`, `head_at_retention`, observation time, reason
-and `refs/heads/recovery/<unit>-<attempt>`, with phase `retained`. A missing or
-inconsistent checkout has a null head and a `retention_problem` diagnostic.
-This record is separate from `provider_resumes`: content filters create no
-resume ledger, and any earlier resume charges stay intact. Advance, status and
-operator dispositions name retained paths and refs, including historical
-attempts. Retention alone does not occupy execution slots or output claims and a
-plan edit cannot cancel it. Publication and release are not implemented here;
-these worktrees consume disk indefinitely until that operator workflow exists.
-
-Provider resumes send at most `max` per attempt without delivery confirmation; crashes may lose resumes, and persistent eligible errors spend budget.
-
-Every `code` unit runs in a coordinator-created linked worktree at its anchored
-base; Paseo receives that existing path and never owns its cleanup. Before the
-coordinator removes it, tracked and untracked bytes must be copied outside the
-checkout, restore-checked by content digest, and atomically published as a
-complete snapshot.
-Failed preservation retains the worktree. The recovery copy is audit-only,
-never completion evidence or resume authority. A non-code unit can require a
-NUL-safe clean checkout with `workspace_policy: {"requires_clean_git": true,
-"path":"/checkout"}`. No refusal stashes, resets, deletes, commits, or ignores
-a path.
-
-Only the exact coordinator-bound linked-worktree `.git` pointer is excluded as
-Git metadata; if that object is replaced, its bytes are preserved like any
-other worktree content. Legacy records with an absent path, remaining cleanup
-retries, and identified Paseo ownership can be annotated as unrecoverable.
-Known legacy limits remain: exhausted cleanup skips annotation; ID-only records
-can be marked absent without lookup; path-only records without an owner or
-workspace ID lack migration. An annotation cannot restore previously deleted
-bytes.
-
-**`needs`, `inputs`, `outputs` and `sbatch` must be JSON lists.** A string is
-refused, because the code that reads them iterates character by character: for
-one release `"sbatch": "--partition=cpu_batch"` validated clean, reported
-"declares no partition", and silently ran on the cluster default. Write
-`["--partition=cpu_batch"]`.
-
-**Every `slurm` and `pipeline` unit must declare a `runtime`**, either inline,
-as a reference into the plan's `runtimes` catalogue, or the literal `"none"`
-meaning it runs only tools the base image guarantees. A profile declares
-`resolution` (one of direct, path, conda, container, module, uv, wrapper),
-an `entrypoint`, and `verified_by`: `canary:<unit-id>`, `preflight`, or
-`unverified:<why>`. A canary must be an ancestor of every unit it verifies, and
-a unit may not be its own canary.
-
-The validator deliberately does NOT parse the command or stat the entrypoint.
-There is no reliable static shell chokepoint (`srun python`, `conda run`,
-`apptainer exec`, `uv run` and `bash -lc` with modules are all legitimate and
-unparseable), and a submit-host stat is an observed submit-host fact: concluding
-from it that the path resolves on a compute node would be inferring an
-undeclared fact, with both a false-accept and a false-refuse mode.
-
-`validate` refuses a plan that cannot run. Refused: empty inputs, placeholders
-(`<...>`, `TODO`, `FIXME`, `TBD`, `...`), and absolute paths or globs matching
-nothing. Deliberately allowed, to avoid blocking honest work: an input produced
-by an upstream unit, a relative path resolved against a working directory the
-validator cannot know, and a unit declaring no inputs at all.
-
-Dependencies reach a unit's command as shell-quoted environment variables:
-`SWARM_DEP_<UNIT_ID>`, `SWARM_UNIT_ID`, `SWARM_UNIT_DIR`.
-
-### Unit states
-
-```
-DONE 0   RUNNING 1   FAILED 2   PREEMPTED 3   INCOMPLETE 4   NEEDS_HUMAN 5
-USAGE_ERROR 64
-```
-
-`READY_FOR_PR` is a coordinator-level state for `code` units whose declared
-outputs exist but whose PR has not merged. No mechanism can leave that state
-today, so `status` explains it explicitly rather than letting a DAG stall
-silently.
-
-Per-attempt files: `unit.json`, `events.jsonl`, `receipt.json`.
-
----
-
-## End to end
-
-1. **Land on the cluster.** `git clone`, `./install.sh`, `./bin/doctor`.
-2. **Open a project directory** and start Claude Code there.
-3. **Survey.** The host, scheduler, partitions, accounts and repo are read, not
-   asked about.
-4. **Interview.** One question at a time, each with a recommended answer, only
-   about what inspection cannot settle. Ends when the plan can run.
-5. **Plan.** Units with declared inputs, outputs, kinds and retry exposure.
-   `validate` refuses anything that cannot dispatch.
-6. **Approve, once.** The project overview and every issue title are shown.
-   Nothing has been transmitted yet. Full automation needs `swarm autopilot`.
-7. **File.** Run `linear_sync.py file --draft tickets.json` after approval
-   to create the Linear project and issues (team `Arc`). Use
-   `linear_sync.py drain` for subsequent outbox intents, `issue` for ad-hoc changes, and
-   `audit` to check consistency. The operator uses its `LINEAR_API_KEY`.
-8. **Dispatch and advance.** Each attempt gets an exclusive write root; the
-   scheduler job is bound to the attempt.
-9. **Close on evidence.** A predicate receipt for `slurm` and `pipeline`, a
-   merged PR for `code`. Never on a self-report.
-10. **Report.** `report.py` assembles the run from `plan.json`, the
-    coordinator state and every `receipt.json`, and publishes it. A run is not
-    finished until it has one.
-
-Worked example: `vitrine-provenance-manifest` ran 2,406 files and 1.42 TiB
-across five Linear issues, each closed only on a predicate receipt.
-
----
-
-## Install
-
-Cross-agent installation and target selection are documented in
-[`docs/agent-migration.md`](docs/agent-migration.md).  The release acceptance
-record, including the native-CLI evidence that automated tests cannot supply,
-is in [`docs/cross-agent-acceptance.md`](docs/cross-agent-acceptance.md).
-
-```bash
-./install.sh [--agent NAME ... | --exclude-agent NAME ... | --prefix DIR]
-             [--mode copy|link] [--only NAME] [--dry-run] [--json]
-             [--force] [--uninstall] [--allow-org-shadow]
-             [--allow-vendored-shadow] [--include-vendored]
-```
-
-With no selector, the installer targets agents whose bounded `--version` probe
-succeeds or is slow. Cursor (`cursor-agent`) and Grok Build (`grok`) also qualify
-from `~/.cursor` or `~/.grok` alone, allowing an IDE/config-only host to install.
-Explicit `--agent cursor` and `--agent grok` plan `~/.cursor/skills` and
-`~/.grok/skills`; Cursor can also be covered by an already selected shared
-`~/.agents/skills` destination. Antigravity (`agy`) uses
-`--agent antigravity` and plans `~/.gemini/config/skills`. Its workspace
-root, `.agents/skills`, is separate from the global install plan. Cursor,
-Grok Build, and Antigravity remain uncertified. Cursor and Grok's
-same-name collision and symlink semantics are unverified, as is Grok
-consumption of Claude/shared roots. See [discovery details](docs/agent-discovery.md).
-
-Antigravity sandbox policy can vary by command. When a sandbox denies process
-inspection, D5 anchor checks return Unknown (narrow mode). Death requires
-positive evidence. Codex and Antigravity can hold D5 custody only when
-launched through `bin/brood-host`, under the custody amendment in
-`docs/orchestrator-mandate.md`. See the [D5 integration guide](docs/d5-integration.md).
-
-Exact-version certification is reported separately;
-unexercised or stale releases remain `unverified`, with warnings on stderr even
-with `--json`. Selection alone is not a compatibility or invocation pass.
-`--agent` is repeatable and is the right choice for a deliberate subset or a
-bootstrap install of an absent CLI.
-`--exclude-agent` applies only to automatic selection.  `--prefix` remains the
-legacy single-root compatibility spelling; it cannot be combined with agent
-selectors.  Inspect the JSON payload before a broad install: it reports each
-target, physical root, verification, shared consumers, requested actions,
-diagnostics, and conflicts.
-
-If one loader would see requested copies in multiple physical roots, the plan
-prominently reports `competing_visibility` and the unresolved adapter-specific
-precedence. The ordinary mixed-host install proceeds because every planned root
-receives the same source snapshot in that operation; deterministic selection
-prevents flag order from changing placement. Existing foreign paths and
-org-managed collisions remain hard failures, and separately edited copies can
-still drift later.
-
-**`--allow-org-shadow` is required here, and permanently.** Copies of authored skills are maintained on Claude Science and also arrive
-in the Arc org store through catalog sync. That is deliberate, not a mistake to clean up.
-
-The installer still refuses by default, because the hazard is real: which store
-the loader prefers is not guaranteed, so the copy that loads may not be the one
-you just installed, and the two copies drift as each is edited. Passing the flag
-says you know there are two and you mean to shadow the other. Rename ours
-instead only if a colliding name is ever an unrelated Arc skill rather than the
-Claude Science twin.
-
-Copy is the default deliberately. A symlink into a live checkout breaks when the
-checkout sits under a synced folder, when a branch switch silently mutates every
-installed skill, and when the checkout is mid-update. Use `--mode link` only
-when developing a skill.
-
-The installer performs bounded frontmatter validation (including exact skill
-identity) and script syntax checks before touching the destination. Its
-conservative stdlib-only scalar subset requires ambiguous YAML-like values such
-as numbers, dates, booleans, nulls, and sexagesimal forms to be quoted. It also
-aborts on a name collision with an org-managed skill, prunes skills that are no
-longer shipped, and refuses to replace a directory it did not install.
-
-### Dependency roots and migration
-
-For mixed or link installs, `HANIG_SKILL_DEP_ROOTS` lists known dependency
-parents separated by the platform path separator (`:` on macOS/Linux);
-`skill_paths.py sibling --root` adds a parent explicitly. Relative entries in
-either are anchored to the logical loaded skill directory containing `SKILL.md`,
-including the installed link path for a linked skill. They are not relative to
-the project's working directory.
-
-This is a compatibility break for `brood-project` consumers that previously
-resolved relative dependency roots from their project cwd. Migrate those entries
-to absolute paths, or rewrite them relative to the loaded skill directory. For
-example, with a loaded skill at `/opt/skills/brood-project` and dependencies in
-`/opt/deps`, use `/opt/deps` or `../../deps`. Plan, state, input and output paths
-remain relative to the project directory.
-
-### The brood rename (BROOD_* settings, retired hanig-* installs)
-
-Every `HANIG_<X>` setting the authored scripts read also has a `BROOD_<X>`
-spelling. A non-blank `BROOD_<X>` wins; otherwise `HANIG_<X>` applies exactly
-as before, so `BROOD_REVIEW_NO_LOR=0` overrides `HANIG_REVIEW_NO_LOR=1`.
-`BROOD_SKILL_DEP_ROOTS` parents are searched before `HANIG_SKILL_DEP_ROOTS`
-parents. Runtime state paths (`~/.local/state/hanig-*`, `~/.hanig-committee`,
-`.hanig/`) are unchanged. When the installer publishes an authored
-`brood-<suffix>` skill, it then uninstalls a sibling `hanig-<suffix>` only if
-that sibling carries this repository's exact recorded ownership and is no
-longer shipped. An unowned sibling stays untouched with a warning, and a failed
-`brood-<suffix>` install never retires anything. `--dry-run` reports the plan as
-`would-retire-legacy`.
-
-All ten authored skills now ship under `brood-*` names, so reinstalling from
-this checkout publishes `brood-<suffix>` and retires each owned `hanig-<suffix>`
-copy. Names that identify live state rather than a skill keep their `hanig-`
-spelling: the state directories above, Git refs under `refs/hanig-swarm*`, the
-`hanig-rev-` Slurm job prefix, and the `hanig-debrief: ` issue title prefix that
-de-duplicates filed packets.
-
-### Dated agent compatibility
-
-The **ARC-281 live run** (2026-09-25) checked native skill discovery,
-authenticated `brood-portable-handoff` invocation, and cross-agent handoff on
-the operator host:
-
-| Agent | Exact certified version | Date | Observed skill root |
-| --- | --- | --- | --- |
-| Claude Code | 2.1.282 | 2026-09-25 | `~/.claude/skills` |
-| Codex CLI | 0.154.0 | 2026-09-25 | `~/.agents/skills` |
-| OpenCode | 1.18.29 | 2026-09-25 | `~/.agents/skills` |
-| Pi | 0.86.1 | 2026-09-25 | `~/.agents/skills` |
-
-[The native validation record](docs/cross-agent-acceptance.md#arc-281-live-certification--2026-09-25)
-names the four exercised handoff directions and the limits of this evidence.
-One patch newer remains unverified. The 30-day review window ends on
-2026-10-25; older distinct versions retain their 2026-09-05 records and expire
-after 2026-10-05. No new OS, root policy, or untested handoff pair is certified.
-
-### Paseo, per machine
-
-`code` units dispatch a coding agent through the Paseo CLI, so it has to be on
-PATH on the machine that runs them:
-
-```bash
-npm install -g @getpaseo/cli && paseo
-```
-
-`swarm.py validate` refuses a plan containing a `code` unit when `paseo` is
-absent, before anything is dispatched, rather than failing at `paseo run` with
-half a DAG already live.
-
-Install it where you actually run agents. A `code` unit runs a coding agent as
-a local process, so putting Paseo on a shared cluster login node means running
-those processes there, which is usually a sign the unit is on the wrong machine.
-`slurm` and `pipeline` units need none of this.
-
-**`--uninstall` deletes only what this repo installed**, determined by an exact
-copy marker or a sidecar bound to the installed link's destination, target, and
-link-object identity. It is written that way because an earlier version inferred
-ownership from shape (`[ -L "$d" ]`, "any symlink is ours") and deleted two
-unrelated skills off a cluster. A symlink, including one into this checkout, is
-not evidence that we created it. Read a destructive command and dry-run it
-before trusting it, including one you wrote yourself, and especially then,
-because familiarity feels like knowledge.
-
-### Orchestration preferences, per machine
-
-Six of the vendored skills — `paseo`, `paseo-advisor`, `paseo-committee`,
-`paseo-handoff`, `paseo-loop` and `pi-fleet` — refuse to choose a provider
-until they have read `~/.paseo/orchestration-preferences.json`, and `agent-bus`
-names the same file as the policy layer over `bus models`. `skills/paseo/SKILL.md`
-is explicit that reading means an actual file read, and that no other skill may
-hardcode a provider string. So the routing decision lives in that one file, not
-in the skills — and this repo shipped the skills that need it without shipping
-an example of it.
-
-`examples/orchestration-preferences.json` is that example, carrying this
-project's routing decision of 2026-09-01 (`docs/plan-field-reports.md`, "Model
-routing"), amended on 2026-09-24 for the Astra driver and on 2026-09-25 for
-the Sol/Luna upgrade. Research and audit now use `codex/gpt-6-luna`; swarm
-dispatch retains Luna's `xhigh` and Sol's `high` effort intent. API acceptance
-does not certify a live Paseo dispatch. Copy it into place on the machine that
-runs agents:
+The vendored `paseo*` and `pi-fleet` skills refuse to choose a provider until
+they read `~/.paseo/orchestration-preferences.json`. To use them, copy the
+example into place on the machine that runs agents; `install.sh` never
+deploys it:
 
 ```bash
 mkdir -p ~/.paseo && cp examples/orchestration-preferences.json ~/.paseo/
 ```
 
-Nothing reads it from the repo. `install.sh` does not deploy it, because the
-live file is user-specific configuration and overwriting a machine's routing
-policy from a skill install is not a thing an installer should do.
-
-**`models.json` is routing metadata, not a credential grant.** A model appearing
-in `models.json` means it can be considered for a Paseo dispatch; it does not
-mean a dispatched worker can call that or any other model from inside its task.
-`OPENAI_API_KEY` and `OPENROUTER_API_KEY` stay coordinator-side: `review.py` and
-`committee.py` use them directly, while `child_environment.py` removes both
-exact names from every coordinator child. Paseo may still start the worker with
-credentials held independently by its daemon, but that does not put either
-ambient API key in the worker's environment. Keep additional-model calls in the
-coordinator-side review and committee paths unless a separately designed proxy
-or named exception deliberately changes that boundary.
-
-**Copying it is not the end of the job.** The file was written on a machine
-with no Paseo and no `~/.paseo`, so nothing in it was dispatched at the time.
-Measured on 2026-09-04: `claude/opus` and `codex/gpt-5.6-sol` came up on the
-intended model; `codex/gpt-5.6-luna` had not been dispatched. These measurements
-predate the model upgrade. Read current code-unit defaults from
-[`agents.json`](skills/brood-swarm/agents.json) and model metadata from
-[`models.json`](models.json).
-Every provider string in it is copied verbatim from an attested id — the
-examples in `skills/paseo/SKILL.md`, or an id in `models.json` — but a
+The file holds provider strings only and cannot set reasoning effort. A
 well-formed string is not evidence that an agent comes up on the intended
-model. Confirm that separately, on the host, with `paseo run` plus
-`paseo inspect`, or launch through `bus launch-worker`, which inspects the
-agent it created and stops it when the provider, model, thinking id, cwd or
-branch does not match the plan. For a worker something else launched,
-`bus await --expect-provider/--expect-model/--expect-thinking` makes the same
-comparison and exits 4 on a mismatch. Those two are the whole surface:
-`bus launch-worker` and `bus await`. This README and the template both used to
-point at a third subcommand, which has never existed.
-
-**The file cannot set reasoning effort, and no longer implies it can.** Effort
-is a separate axis — `paseo run --thinking <id>`, or
-`settings.thinkingOptionId` on `create_agent` — and the schema is provider
-strings plus freeform prompt text, with no slot for it. The per-model effort
-decision in `docs/plan-field-reports.md` therefore binds `brood-swarm`'s code
-units, which read it from `skills/brood-swarm/agents.json`'s `thinking_by_model`, and binds nothing
-else: a Paseo skill dispatching from these categories gets the provider
-default. Measured on 2026-09-04 by dispatching and inspecting real agents,
-`claude/opus` comes up at `auto` against an intended `high`, so `ui` and
-`planning` silently run below intent; `codex/gpt-5.6-sol` comes up at `xhigh`
-against an intended `high`, above it. Read the effort lines in that file as
-intent to pass through, and check with `--expect-thinking` rather than
-assuming they took.
-
-Two things in the file are worth knowing before you rely on it. Three of the
-five categories are judgement calls — `impl` is settled, `ui` is carried
-forward unchanged, and `planning`, `research` and `audit` are readings of a
-decision that was not written in these terms; each says so in its
-`_judgement_calls` entry rather than presenting a guess as settled. And the
-decision does not fully fit: `audit` is one provider string, while the real
-review gate selects a panel from the enabled profiles in
-[`reviewers.json`](skills/brood-review-gate/reviewers.json), and DeepSeek's
-Paseo route needs a provider *and* a model,
-which a one-string category cannot express. Those gaps are recorded in
-`_unmapped` instead of being papered over with invented strings.
-
----
-
-## Deployment targets
-
-Measured 2026-08-25 with `bin/probe.sh`. Full output in `docs/probes/`.
-Partition names, the rules for each cluster and which partition to use for what
-are in [docs/clusters.md](docs/clusters.md).
-
-| | chimera | lambda | andromeda |
-|---|---|---|---|
-| host | `chimera-login` | `vci-steady-state-login-001` | `ac-gefion-login-0` |
-| user | `hani` | `hani` | `hgoodarzi` |
-| `$HOME` | `/home/hani` (nfs4) | `/home/hani` (nfs) | `/mnt/weka/home/hgoodarzi` (wekafs) |
-| python3 | 3.10.12 | 3.12.3 | 3.10.12 |
-| Slurm | 25.11.0 | 25.05.0 | 24.11.5 (SUNK) |
-| `sacct` | works | works | works |
-| org skills | none | none | none |
-
-### Gotchas that bite
-
-- **Org skills reach none of the clusters.** Skills here must be self-sufficient.
-- **`claude` and `node` live behind conda/micromamba prefixes loaded by
-  `.bashrc`.** A non-interactive `ssh host 'command -v node'` reports ABSENT and
-  is wrong. Check with `bash -lic`.
-- **Usernames differ across clusters.** Never hardcode `$USER` or a home path.
-- **git is 2.34+ on the clusters but 2.23 on the Mac.** Avoid `git init -b`,
-  `git switch`, and GNU-only `sed`/`readlink` flags.
-- Use `chimera-login`, not `chimera`: the latter carries `RemoteCommand sh_dev`
-  and rejects a passed command.
-- Lambda's `/tmp` is not writable; stage to `$HOME`. Andromeda needs Tailscale up.
-- **`sacct` defaults to today** and needs `-S` for anything older. A `CANCELLED`
-  job can carry exit code `0:0`. Slurm reuses job ids, so a job id alone does not
-  identify a run.
-- **Partition QOS caps are real.** On chimera, partition `cpu` maps to QOS
-  `cpu_interact` with `MaxJobsPU=2`; a fan-out belongs on `cpu_batch`
-  (20 concurrent, 200 submitted).
+model: launch through `bus launch-worker`, which stops a mismatched agent, or
+check a running one with
+`bus await --expect-provider/--expect-model/--expect-thinking`, which exits 4
+on a mismatch.
 
 ---
 
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests
+python3 scripts/run_tests.py                     # full suite in parallel, one process per module
+python3 scripts/run_tests.py --fast              # inner loop; verify with the full run
+python3 -m unittest discover -s tests            # full suite, serial
+python3 tests/native_agent_validation.py         # release-time host harness, not a unit test
 ```
 
-`python3 -m unittest tests.test_review` and discovery that includes
-`test_review.py` run the whole review module through the supervised worker.
-The parent reports one delegated test and prints the audited worker's test
-count and skips; full discovery launches the module once. `-k` filters do
-not narrow this delegated module: the command announces that it runs the
-whole module, so module loading cannot silently report zero tests.
-Fully qualified class or method names (for example,
-`python3 -m unittest tests.test_review.TestVerdictSchema.test_empty_object_is_not_a_review`)
-bypass the module hook and run in-process under the existing per-test
-fixtures, without the worker's session and journal-manifest audit.
-A named class whose filter matches no methods fails with a delegation
-diagnostic instead of reporting success with zero tests.
-
-Standard library only; no network or cluster required. Green on macOS 3.10.16
-and on all three clusters (3.10.12, 3.12.3, 3.10.12).
-
-| file | lines | classes |
-|---|---|---|
-| `test_contract.py` | 2077 | 28 |
-| `test_outbox.py` | 2654 | 39 |
-| `test_review.py` | 1628 | 37 |
-| `test_project.py` | 1093 | 15 |
-| `test_swarm.py` | 854 | 8 |
-| `test_handoff.py` | 612 | 8 |
-
-Two failure modes this suite has actually suffered, both worth knowing:
-
-A `__main__` block placed above later class definitions silently hid 13 security
-tests in `test_project.py` and 9 classes in `test_outbox.py`. The suite was
-green and was not running them. Keep the guard at the bottom.
-
-Guards that match their own source produced three separate false passes: a grep
-matching the comment explaining an absence, and a `__main__` check finding its
-own string literal. A test must not be satisfiable by the text of the test.
+Standard library only; no network or cluster required. `CLAUDE.md` declares
+the suite floor and the Python floors (3.9 is the binding CI floor).
+`tests.test_review` always runs its whole module through a supervised worker,
+so `-k` does not narrow it. Keep each test file's `__main__` guard at the
+bottom, and never let a test be satisfiable by its own source text.
 
 ---
 
@@ -1601,73 +628,27 @@ own string literal. A test must not be satisfiable by the text of the test.
 install.sh                  copy-based installer (--mode link for development)
 bin/doctor                  what is installed, from where, and does it still run
 bin/probe.sh                read-only environment probe for a new host
-bin/make-release            release packaging
-skills/brood-project/       survey.py, tickets.py
-skills/brood-orchestrate/   authorized operating loop and takeover contract
-skills/brood-swarm/         swarm.py, unit.py, converge.py, swarm-cron.sh
+bin/bus                     vendored agent bus, one tracked local correction
+skills/brood-project/       survey.py, tickets.py, report.py, Linear sync and diagnostics
+skills/brood-orchestrate/   merge_unit.py, watch_pr.py, flake_triage.py, wait_event.py
+skills/brood-swarm/         swarm.py, unit.py, converge.py, cli_adapters.py, agents.json
 skills/brood-review-gate/   review.py, committee.py, reviewers.json, PROTOCOL.md
+skills/brood-conclave/      conclave.py, allow.py, families.json, templates/
 skills/brood-verified-workflow/  contract.py
+skills/brood-hillclimb/     hillclimb.py
 skills/brood-portable-handoff/   handoff.py
 skills/brood-wandb-logging/      wbkit.py, audit_project.py
-skills/brood-debrief/            debrief.py, debrief_extract.py, debrief_packet.py, debrief_triage.py, debrief_file.py, decisions_log.py, debrief_audit.py, debrief_attention.py
-skills/brood-hillclimb/          hillclimb.py
-skills/brood-conclave/           conclave.py, allow.py, families.json, templates/
-lib/skill_agent_policy.py   --check|--write [--json] [--skills-root DIR]: agents/openai.yaml of explicit-only skills
-tests/                      stdlib unittest
+skills/brood-debrief/       debrief.py, decisions_log.py, debrief_audit.py, debrief_attention.py, debrief_file.py
+lib/skill_installer.py      installer planning; lib/skill_lifecycle.py mutates
+lib/skill_agent_policy.py   --check|--write [--json] [--skills-root DIR]: disable-model-invocation pairing
+models.json                 model routing metadata (not a credential grant)
 examples/                   reference config to copy elsewhere; nothing reads it here
-docs/probes/                measured environment data per cluster
-MEMORY.md                   portable project state; read this first
+docs/                       plans, mandate, runbooks, upstream notes; index in docs/README.md
+tests/                      stdlib unittest
 ```
 
-### Docs
-
-| file | what it is |
-|---|---|
-| `docs/PLAN.md` | full design, and where two proposals disagreed |
-| `docs/plan-swarm.md` | 67 acceptance criteria for the swarm |
-| `docs/plan-swarm-sol-variant.md` | the contrasting design, kept for the disagreements |
-| `docs/tracker-outbox.md` | the network-free intent outbox |
-| `docs/first-real-workloads.md` | what the first real runs exposed |
-| `docs/audit-protocol-enforcement.md` | which written rules are actually enforced |
-| `docs/proposal-refusal-chokepoint.md` | where a refusal has to live to be real |
-| `docs/scenario-mach1-zebrafish.md` | a worked scenario |
-
----
-
-## Deleted, recoverable from history
-
-`hanig-verified-training` and `hanig-reproducible-result`, plus the conformance
-and symmetry suites, removed 2026-08-28.
-
-A committee concluded that isolation replaces attribution, so the machinery
-built to prove which process wrote a file was answering a question that no
-longer needed asking. `traincontract.py`'s convergence evaluator was ported to
-`brood-swarm/converge.py` **before** the deletion. `result.py` went because
-figures and tables are not a swarm unit kind. The two suites expired with their
-subject: a cross-tool conformance lock needs several tools, and a symmetry lock
-needs a twin.
-
----
-
-## Coordination: Paseo, and the fusion
-
-These verifiers adjudicate evidence. They answer "was the work actually done"
-and refuse a self-assertion. They do not dispatch work.
-
-Shreshth's `multi-agent-skills` (extracted to `~/paseo-multi-agent-skills`) is
-the other half: agent coordination on the Paseo daemon, covering who does the
-work, in what isolation, notified how. Its eleven skills install alongside these.
-
-**As of 2026-08-28 the two are being fused deliberately.** An earlier note in
-MEMORY.md recorded "do not port the coordination machinery" as a settled
-premise. It was not settled; it was a self-narrowed brief, and it was overturned.
-The reason it gave (do not rebuild a fleet and message bus) expired when Paseo
-was installed, because there is nothing left to rebuild.
-
-The fusion's point: his agents coordinate but cannot prove anything, and an
-agent reporting "done" is the bare claim these tools exist to refuse. Ours prove
-but cannot dispatch. Neither repo has the combination.
-
-**A conclusion two models agree on is still a proposal.** "Settled" requires the
-person whose project it is. Consensus between AI drafts does not get written
-into MEMORY.md as premise.
+Start with [`docs/orchestrator-mandate.md`](docs/orchestrator-mandate.md) to
+drive a run, [`docs/plan-field-reports.md`](docs/plan-field-reports.md) for
+the live plan, and
+[`docs/audit-protocol-enforcement.md`](docs/audit-protocol-enforcement.md) for
+which written rules are actually enforced.

@@ -1,7 +1,6 @@
 ---
 name: brood-orchestrate
 description: Drive an authorized swarm run from delegation through review, adjudication, merge, tracker reconciliation, reporting, and durable handoff. Use when starting, resuming, supervising, or taking over an autonomous run after its plan exists; load the owner-originated mandate before acting unattended.
-disable-model-invocation: true
 ---
 
 # brood-orchestrate

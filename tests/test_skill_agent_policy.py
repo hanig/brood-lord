@@ -1,5 +1,9 @@
 """Contract tests for lib/skill_agent_policy.py on synthetic skill trees and
-on the live repository, which unit p2-policy-apply brought into policy."""
+on the live repository.
+
+The live EXPLICIT_ONLY_SKILLS is empty (every authored skill is model-invocable
+since 2026-11-27), so tree tests patch in SYNTHETIC_EXPLICIT_ONLY to keep the
+listed-name rules exercised, in process and through the CLI."""
 
 import ast
 import hashlib
@@ -13,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -22,6 +27,15 @@ SCRIPT = ROOT / "lib" / "skill_agent_policy.py"
 YAML = b"policy:\n  allow_implicit_invocation: false\n"
 LISTED = "brood-swarm"
 UNLISTED = "brood-review-gate"
+SYNTHETIC_EXPLICIT_ONLY = ("brood-debrief", "brood-project", LISTED)
+# Runs main() with the module list replaced, so the CLI's exit codes and
+# rendering are checked against a non-empty list.
+PATCHED_CLI = (
+    "import json, sys\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "from lib import skill_agent_policy as s\n"
+    "s.EXPLICIT_ONLY_SKILLS = tuple(json.loads(sys.argv[2]))\n"
+    "sys.exit(s.main(sys.argv[3:]))\n")
 
 
 def skill_md(name, flag_line=None):
@@ -38,6 +52,9 @@ class TreeCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, str(self.tmp), ignore_errors=True)
         self.root = self.tmp / "skills"
         self.root.mkdir()
+        patcher = mock.patch.object(sap, "EXPLICIT_ONLY_SKILLS", SYNTHETIC_EXPLICIT_ONLY)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def make(self, name, flag_line=None, yaml=None, text=None):
         path = self.root / name
@@ -56,9 +73,15 @@ class TreeCase(unittest.TestCase):
     def codes(self, report):
         return sorted((e["code"], e["skill"]) for e in report["errors"])
 
-    def cli(self, *args):
+    def cli(self, *args, **kwargs):
+        listed = kwargs.pop("explicit_only", SYNTHETIC_EXPLICIT_ONLY)
+        assert not kwargs, kwargs
+        if listed is None:  # the real script with the live (empty) list
+            head = [sys.executable, str(SCRIPT)]
+        else:
+            head = [sys.executable, "-c", PATCHED_CLI, str(ROOT), json.dumps(list(listed))]
         return subprocess.run(
-            [sys.executable, str(SCRIPT), "--skills-root", str(self.root)] + list(args),
+            head + ["--skills-root", str(self.root)] + list(args),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
             timeout=60)
 
@@ -78,10 +101,21 @@ class TreeCase(unittest.TestCase):
 
 class TestConstants(unittest.TestCase):
     def test_explicit_only_list_and_canonical_bytes(self):
-        self.assertEqual(sap.EXPLICIT_ONLY_SKILLS, (
-            "brood-debrief", "brood-hillclimb", "brood-orchestrate", "brood-portable-handoff",
-            "brood-project", "brood-swarm"))
+        self.assertEqual(sap.EXPLICIT_ONLY_SKILLS, ())
         self.assertEqual(sap.OPENAI_YAML_BYTES, YAML)
+
+    def test_run_reads_the_list_at_call_time(self):
+        # A def-time default would freeze the list and make the patch below
+        # (and any future addition) invisible to run() and main().
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / LISTED).mkdir()
+            (root / LISTED / "SKILL.md").write_text(skill_md(LISTED))
+            self.assertTrue(sap.run(root)["ok"])
+            with mock.patch.object(sap, "EXPLICIT_ONLY_SKILLS", (LISTED,)):
+                codes = [e["code"] for e in sap.run(root)["errors"]]
+            self.assertEqual(codes, ["explicit_only_missing_flag"])
+            self.assertTrue(sap.run(root, explicit_only=())["ok"])
 
     def test_parses_under_python_38_grammar(self):
         ast.parse(SCRIPT.read_text(), filename=str(SCRIPT), feature_version=(3, 8))
@@ -213,6 +247,36 @@ class TestCheck(TreeCase):
         self.assertEqual(count, 42)
 
 
+class TestEmptyLiveList(TreeCase):
+    """The unpatched script still enforces the flag/file pairing per skill."""
+
+    def test_unflagged_tree_passes_and_new_flag_is_enforced(self):
+        for name in SYNTHETIC_EXPLICIT_ONLY + (UNLISTED,):
+            self.make(name)
+        result = self.cli("--check", "--json", explicit_only=None)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout)["errors"], [])
+
+        shutil.rmtree(str(self.root / UNLISTED))
+        self.make(UNLISTED, "disable-model-invocation: true")
+        result = self.cli("--check", "--json", explicit_only=None)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual([(e["code"], e["skill"]) for e in json.loads(result.stdout)["errors"]],
+                         [("missing_openai_yaml", UNLISTED)])
+
+        result = self.cli("--write", "--json", explicit_only=None)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout)["written"], [UNLISTED])
+        self.assertEqual((self.root / UNLISTED / "agents" / "openai.yaml").read_bytes(), YAML)
+        self.assertEqual(self.cli("--check", explicit_only=None).returncode, 0)
+
+    def test_orphan_yaml_still_fails_without_a_listed_name(self):
+        self.make(LISTED, None, YAML)
+        result = self.cli("--check", explicit_only=None)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ERROR orphan_openai_yaml %s" % LISTED, result.stderr)
+
+
 class TestWrite(TreeCase):
     def test_write_generates_only_for_flagged_skills_and_is_idempotent(self):
         for name in sap.EXPLICIT_ONLY_SKILLS:
@@ -272,13 +336,12 @@ class TestWrite(TreeCase):
 
 
 class TestLiveRepository(unittest.TestCase):
-    IMPLICIT = ("brood-conclave", "brood-review-gate", "brood-verified-workflow",
-                "brood-wandb-logging")
+    IMPLICIT = ("brood-conclave", "brood-debrief", "brood-hillclimb", "brood-orchestrate",
+                "brood-portable-handoff", "brood-project", "brood-review-gate",
+                "brood-swarm", "brood-verified-workflow", "brood-wandb-logging")
 
     def test_explicit_only_list_is_pinned_and_check_exits_zero(self):
-        self.assertEqual(sap.EXPLICIT_ONLY_SKILLS, (
-            "brood-debrief", "brood-hillclimb", "brood-orchestrate", "brood-portable-handoff",
-            "brood-project", "brood-swarm"))
+        self.assertEqual(sap.EXPLICIT_ONLY_SKILLS, ())
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--check", "--json"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
