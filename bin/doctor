@@ -603,18 +603,20 @@ printf '  claude: %s\n' "${cl:-ABSENT}"
 # --- prerequisites the skills gate on ---------------------------------------
 #
 # ARC-265. doctor answered "installed, from here, still works" on a host where
-# two prerequisites were missing, because the only thing it had ever looked at
-# was the skill tree. Neither is visible from there, and a skill refuses on
-# each:
+# prerequisites were missing, because the only thing it had ever looked at was
+# the skill tree. None of them is visible from there:
 #
-#   * swarm.py gates every kind=code unit on `command -v paseo`. The macOS
-#     install puts the CLI inside the app bundle, so the daemon can be up and
-#     ~/.paseo populated while the CLI is unreachable. That is the one state a
-#     reinstall does not fix and a symlink does, so the CLI and the daemon are
-#     reported as TWO facts here, never as one "is it installed".
-#   * `bus models` needs a registry at ~/.agent-bus/models.json. This repo
-#     ships models.json at its root and installs it nowhere, and the paseo
-#     skill tells skills to run `bus models --json` to route work.
+#   * brood-swarm kind=code units run daemonlessly through a direct coding CLI
+#     (lor, claude, codex or pi), resolved on PATH. On a Slurm login host the
+#     claude/codex/pi turns are submitted with sbatch automatically. Paseo is
+#     retired for these units, and swarm.py refuses it as a backend.
+#   * The vendored skills (paseo*, pi-fleet, agent-bus) still need the paseo
+#     CLI, its daemon, and the registry `bus models` reads at
+#     ~/.agent-bus/models.json. The macOS install puts the CLI inside the app
+#     bundle, so the daemon can be up while the CLI is unreachable. That is the
+#     one state a reinstall does not fix and a symlink does, so the CLI and the
+#     daemon are reported as TWO facts here, never as one "is it installed".
+#     These are optional: nothing brood-* requires them.
 #
 # Every fact below is PRESENT, NOT PRESENT, or COULD NOT DETERMINE, and the
 # third always says why -- survey.py's set/unrestricted/unknown rule, in the
@@ -679,8 +681,45 @@ fi
 
 printf '\n=== PREREQUISITES ===\n'
 
-# The CLI, on PATH, because on PATH is the only form swarm.py can use: it
-# calls shutil.which and refuses the unit if that is None.
+# Direct coding CLIs first: they are what brood-swarm kind=code units run on.
+# On PATH is the form the coordinator resolves, so a login-shell-only claude
+# (found above for the HOST section) is reported as not on PATH.
+printf '  direct coding CLIs (brood-swarm kind=code units; Paseo not required):\n'
+coding_found=
+for tool in lor claude codex pi; do
+  path=$(command -v "$tool" 2>/dev/null)
+  if [ -n "$path" ]; then
+    printf '    %s: %s\n' "$tool" "$path"
+    coding_found="${coding_found:+$coding_found, }$tool"
+  elif [ -z "${PATH:-}" ]; then
+    printf '    %s: COULD NOT DETERMINE — PATH is empty\n' "$tool"
+  elif [ "$tool" = claude ]; then
+    case "$cl" in
+      *"(login shell only)") printf '    claude: NOT ON PATH — found only by a login shell at %s\n' \
+                               "${cl% (login shell only)}" ;;
+      "COULD NOT DETERMINE"*) printf '    claude: NOT ON PATH — login-shell lookup: %s\n' "$cl" ;;
+      *) printf '    claude: NOT ON PATH\n' ;;
+    esac
+  else
+    printf '    %s: NOT ON PATH\n' "$tool"
+  fi
+done
+if [ -n "$coding_found" ]; then
+  printf '  coding backends: AVAILABLE (%s)\n' "$coding_found"
+  printf '      kind=code units run daemonlessly through lor, claude, codex or pi.\n'
+  printf '      On a Slurm login host claude/codex/pi turns are submitted with\n'
+  printf '      sbatch automatically. Paseo and ~/.agent-bus/models.json are not\n'
+  printf '      needed for them.\n'
+elif [ -z "${PATH:-}" ]; then
+  printf '  coding backends: COULD NOT DETERMINE — PATH is empty\n'
+else
+  printf '  coding backends: NONE ON PATH\n'
+  printf '      kind=code units need one of lor, claude, codex or pi on PATH to\n'
+  printf '      run here. Paseo is not a substitute: swarm.py refuses it as a backend.\n'
+fi
+
+printf '  optional, vendored skills only (paseo*, pi-fleet, agent-bus; not required for brood-* / kind=code units):\n'
+
 cli=$(command -v paseo 2>/dev/null)
 elsewhere=
 if [ -z "$cli" ]; then
@@ -693,20 +732,20 @@ if [ -z "$cli" ]; then
   done
 fi
 if [ -n "$cli" ]; then
-  printf '  paseo: %s\n' "$cli"
+  printf '    paseo: %s\n' "$cli"
 elif [ -z "${PATH:-}" ]; then
-  printf '  paseo: COULD NOT DETERMINE — PATH is empty, so finding nothing on it is not evidence of anything\n'
+  printf '    paseo: COULD NOT DETERMINE — PATH is empty, so finding nothing on it is not evidence of anything\n'
 elif [ -n "$elsewhere" ]; then
-  printf '  paseo: NOT ON PATH — the binary is at %s\n' "$elsewhere"
+  printf '    paseo: NOT ON PATH — the binary is at %s\n' "$elsewhere"
 else
-  printf '  paseo: NOT PRESENT — not on PATH, and not in any of the usual install locations\n'
+  printf '    paseo: NOT PRESENT — not on PATH, and not in any of the usual install locations\n'
 fi
 
 case "$DAEMON" in
-  up)      printf '  daemon: answering at %s (%s)\n' "$LISTEN" "$WHY" ;;
-  partial) printf '  daemon: something is listening at %s but %s\n' "$LISTEN" "$WHY" ;;
-  down)    printf '  daemon: not running — nothing is listening at %s (%s)\n' "$LISTEN" "$WHY" ;;
-  *)       printf '  daemon: COULD NOT DETERMINE at %s — %s\n' "$LISTEN" "$WHY" ;;
+  up)      printf '    daemon: answering at %s (%s)\n' "$LISTEN" "$WHY" ;;
+  partial) printf '    daemon: something is listening at %s but %s\n' "$LISTEN" "$WHY" ;;
+  down)    printf '    daemon: not running — nothing is listening at %s (%s)\n' "$LISTEN" "$WHY" ;;
+  *)       printf '    daemon: COULD NOT DETERMINE at %s — %s\n' "$LISTEN" "$WHY" ;;
 esac
 
 # The combination is the finding, not either line on its own. Say it here in
@@ -714,8 +753,8 @@ esac
 # the app -- is what the previous version of this file sent someone on.
 if [ -n "$cli" ]; then
   case "$DAEMON" in
-    down) printf '      NOTE: the CLI is here but nothing is serving %s. Start the\n' "$LISTEN"
-          printf '      daemon before dispatching a kind=code unit.\n' ;;
+    down) printf '      NOTE: the paseo CLI is here but nothing is serving %s. The\n' "$LISTEN"
+          printf '      vendored paseo skills need the daemon running; brood-* does not.\n' ;;
   esac
 elif [ -z "${PATH:-}" ]; then
   :
@@ -725,8 +764,8 @@ else
       printf '      WARNING: the daemon is up and the CLI is NOT on PATH. Paseo is\n'
       printf '      installed on this host, so reinstalling it will not change this;\n'
       printf '      the CLI ships inside the app bundle and nothing puts it on PATH.\n'
-      printf '      swarm.py refuses every kind=code unit on `command -v paseo`, so\n'
-      printf '      those units are dead here until the binary is linked:\n'
+      printf '      The vendored paseo skills call `paseo` on PATH, so they cannot\n'
+      printf '      dispatch here until the binary is linked:\n'
       if [ -n "$elsewhere" ]; then
         printf '        mkdir -p %s/.local/bin && ln -s %s %s/.local/bin/\n' \
           "$HOME" "$elsewhere" "$HOME"
@@ -735,9 +774,8 @@ else
         printf '        app bundle and link it into a directory on your PATH)\n'
       fi ;;
     down)
-      printf '      NOTE: no CLI and no daemon, so kind=code units are refused here.\n'
-      printf '      On a cluster login node that is the correct state: a code unit\n'
-      printf '      runs a coding agent as a local process and does not belong there.\n' ;;
+      printf '      NOTE: no paseo CLI and no daemon. Only the vendored paseo skills\n'
+      printf '      use them; brood-swarm kind=code units do not.\n' ;;
     *)
       printf '      NOTE: the CLI is not on PATH and the daemon could not be probed,\n'
       printf '      so whether Paseo is installed here is UNKNOWN -- not absent.\n' ;;
@@ -782,7 +820,7 @@ else:
 if [ -d "$BUS_HOME" ] && { [ ! -r "$BUS_HOME" ] || [ ! -x "$BUS_HOME" ]; }; then
   # Not readable is not empty. Whether the file is in there cannot be seen
   # from out here, and saying "absent" would be a guess wearing a fact's face.
-  printf '  models registry: COULD NOT DETERMINE — %s is not readable\n' "$BUS_HOME"
+  printf '    models registry: COULD NOT DETERMINE — %s is not readable\n' "$BUS_HOME"
 elif [ -f "$REG" ] && [ -r "$REG" ]; then
   if command -v python3 >/dev/null 2>&1; then
     bounded "$RUN_SECONDS" python3 -c "$COUNT_PY" "$REG"
@@ -791,20 +829,20 @@ elif [ -f "$REG" ] && [ -r "$REG" ]; then
     PROBE_WHY="there is no python3 here to read it with"
   fi
   case "$PROBE_STATE:$PROBE_RC:$PROBE_OUT" in
-    answered:0:ok:*)  printf '  models registry: %s (%s models)\n' "$REG" "${PROBE_OUT#ok:}" ;;
-    answered:0:bad:*) printf '  models registry: %s — PRESENT BUT UNUSABLE (%s)\n' \
+    answered:0:ok:*)  printf '    models registry: %s (%s models)\n' "$REG" "${PROBE_OUT#ok:}" ;;
+    answered:0:bad:*) printf '    models registry: %s — PRESENT BUT UNUSABLE (%s)\n' \
              "$REG" "${PROBE_OUT#bad:}"
            printf '      `bus models` reports malformed or invalid content separately from absence.\n' ;;
-    *)     printf '  models registry: %s — present, but its CONTENTS COULD NOT BE DETERMINED: %s\n' \
+    *)     printf '    models registry: %s — present, but its CONTENTS COULD NOT BE DETERMINED: %s\n' \
              "$REG" "$PROBE_WHY" ;;
   esac
 elif [ -e "$REG" ] || [ -L "$REG" ]; then
-  printf '  models registry: COULD NOT DETERMINE — %s exists but is not a readable regular file\n' "$REG"
+  printf '    models registry: COULD NOT DETERMINE — %s exists but is not a readable regular file\n' "$REG"
 else
-  printf '  models registry: NOT PRESENT at %s\n' "$REG"
+  printf '    models registry: NOT PRESENT at %s\n' "$REG"
   printf '      `bus models` exits with "models registry is absent" without it, and the\n'
-  printf '      paseo skill tells skills to run `bus models --json` to pick a model,\n'
-  printf '      so routing has nothing to read.\n'
+  printf '      vendored paseo skill tells skills to run `bus models --json` to pick a\n'
+  printf '      model, so that routing has nothing to read. brood-* skills do not need it.\n'
   if [ -f "$REPO/models.json" ]; then
     printf '      This repo ships the file that belongs there:\n'
     printf '        mkdir -p %s && cp %s/models.json %s\n' "$BUS_HOME" "$REPO" "$REG"

@@ -3456,7 +3456,8 @@ class TestDoctorSeesThePrerequisitesTheSkillsRefuseWithout(_FixtureTestCase):
     TOOLS = ("sh", "bash", "hostname", "git", "perl", "readlink",
              "mktemp", "sleep", "rm", "mv")
 
-    def _bin(self, d, cli=False, python=True, claude=True, overrides=None):
+    def _bin(self, d, cli=False, python=True, claude=True, overrides=None,
+             extra=()):
         """A PATH with nothing on it but what doctor needs, so this host's own
         ~/.local/bin cannot answer a question the test is asking. `claude` is
         stubbed only to stop doctor falling back to `bash -lic`, which is slow
@@ -3464,7 +3465,8 @@ class TestDoctorSeesThePrerequisitesTheSkillsRefuseWithout(_FixtureTestCase):
         overrides = overrides or {}
         b = Path(d) / "bin"
         b.mkdir()
-        for name in (["paseo"] if cli else []) + (["claude"] if claude else []):
+        for name in ((["paseo"] if cli else []) + (["claude"] if claude else [])
+                     + list(extra)):
             p = b / name
             p.write_text("#!/bin/sh\necho 0.0.0-test\n")
             p.chmod(0o755)
@@ -3486,10 +3488,10 @@ class TestDoctorSeesThePrerequisitesTheSkillsRefuseWithout(_FixtureTestCase):
         return b
 
     def _doctor(self, d, cli=False, python=True, listen=None, bus_home=None,
-                home=None, claude=True, overrides=None, prefix=None):
+                home=None, claude=True, overrides=None, prefix=None, extra=()):
         home = Path(home) if home else Path(d) / "home"
         home.mkdir(parents=True, exist_ok=True)
-        env = {"PATH": str(self._bin(d, cli, python, claude, overrides)),
+        env = {"PATH": str(self._bin(d, cli, python, claude, overrides, extra)),
                "HOME": str(home),
                "USER": os.environ.get("USER", "test"),
                "PASEO_LISTEN": listen or _closed_port()}
@@ -3563,7 +3565,88 @@ class TestDoctorSeesThePrerequisitesTheSkillsRefuseWithout(_FixtureTestCase):
             self.assertIn("not running", daemon)
             self.assertNotIn("COULD NOT DETERMINE", daemon)
             self.assertRegex(self._field(out, "paseo"), r"^NOT ")
-            self.assertIn("kind=code units are refused", self._section(out))
+            sec = self._section(out)
+            self.assertIn("Only the vendored paseo skills", sec)
+            self.assertNotIn("kind=code units are refused", sec)
+
+    # --- direct coding CLIs are what kind=code units need, not Paseo --------
+
+    STALE_PASEO_CLAIMS = ("kind=code units are refused",
+                          "refuses every kind=code unit",
+                          "before dispatching a kind=code unit")
+
+    def _assert_no_stale_paseo_claims(self, out):
+        for claim in self.STALE_PASEO_CLAIMS:
+            self.assertNotIn(claim, out)
+
+    def test_claude_without_paseo_reports_a_coding_backend_available(self):
+        """brood-swarm kind=code units run daemonlessly on a direct CLI.
+        With paseo absent and claude on PATH, doctor must say a backend is
+        available and must not repeat the retired Paseo-gate claim."""
+        with self._fixture_directory() as d:
+            out = self._doctor(d, cli=False, claude=True).stdout
+            sec = self._section(out)
+            self.assertEqual(self._field(out, "claude"),
+                             str(Path(d) / "bin" / "claude"))
+            self.assertEqual(self._field(out, "coding backends"),
+                             "AVAILABLE (claude)")
+            for tool in ("lor", "codex", "pi"):
+                self.assertEqual(self._field(out, tool), "NOT ON PATH")
+            self.assertRegex(self._field(out, "paseo"), r"^NOT ")
+            self.assertIn("Paseo not required", sec)
+            self.assertIn("not required for brood-* / kind=code units", sec)
+            self.assertIn("sbatch", sec)
+            self._assert_no_stale_paseo_claims(out)
+            self.assertLess(sec.index("coding backends:"),
+                            sec.index("paseo:"),
+                            "direct coding CLIs must be reported before "
+                            "the optional Paseo checks")
+            self.assertLess(sec.index("optional, vendored skills only"),
+                            sec.index("models registry:"))
+
+    def test_lor_alone_is_a_coding_backend(self):
+        with self._fixture_directory() as d:
+            absent = "#!/bin/sh\nprintf 'absent:\\n'\n"
+            out = self._doctor(d, cli=False, claude=False, extra=("lor",),
+                               overrides={"bash": absent}).stdout
+            self.assertEqual(self._field(out, "lor"),
+                             str(Path(d) / "bin" / "lor"))
+            self.assertEqual(self._field(out, "claude"), "NOT ON PATH")
+            self.assertEqual(self._field(out, "coding backends"),
+                             "AVAILABLE (lor)")
+            self._assert_no_stale_paseo_claims(out)
+
+    def test_every_direct_cli_on_PATH_is_listed(self):
+        with self._fixture_directory() as d:
+            out = self._doctor(d, claude=True,
+                               extra=("lor", "codex", "pi")).stdout
+            self.assertEqual(self._field(out, "coding backends"),
+                             "AVAILABLE (lor, claude, codex, pi)")
+
+    def test_no_direct_cli_says_so_and_does_not_offer_paseo(self):
+        with self._fixture_directory() as d:
+            absent = "#!/bin/sh\nprintf 'absent:\\n'\n"
+            out = self._doctor(d, cli=True, claude=False,
+                               overrides={"bash": absent}).stdout
+            sec = self._section(out)
+            self.assertEqual(self._field(out, "coding backends"),
+                             "NONE ON PATH")
+            self.assertIn("Paseo is not a substitute", sec)
+            self._assert_no_stale_paseo_claims(out)
+
+    def test_a_login_shell_only_claude_is_not_counted_as_on_PATH(self):
+        """The coordinator resolves backends on PATH, so a claude only a
+        login shell can see is reported, but not as an available backend."""
+        with self._fixture_directory() as d:
+            bash = "#!/bin/sh\nprintf 'found:/profile/bin/claude\\n'\n"
+            out = self._doctor(d, claude=False,
+                               overrides={"bash": bash}).stdout
+            self.assertEqual(
+                self._field(out, "claude"),
+                "NOT ON PATH — found only by a login shell at "
+                "/profile/bin/claude")
+            self.assertEqual(self._field(out, "coding backends"),
+                             "NONE ON PATH")
 
     def test_a_daemon_that_cannot_be_probed_reads_unknown_never_absent(self):
         """survey.py's rule, in doctor's words: `unknown` is not `absent`, and
