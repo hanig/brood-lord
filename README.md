@@ -224,8 +224,10 @@ when the owner selects it.
   attempt-owned terminal `sacct` row for `slurm` units.
   `brood-verified-workflow` falls back to `scontrol show job` when `sacct`
   returns nothing.
-- **Authority lives in coordinator state**, outside every operated worktree,
-  never in agent-writable files. One coordinator holds a plan at a time,
+- **Authority lives in coordinator state**, kept outside every operated
+  worktree and repository, never inside them. Worktrees isolate paths, not
+  Unix principals: a code agent running as the same user still has OS write
+  permission on coordinator state files. One coordinator holds a plan at a time,
   through an advisory `flock` the kernel frees on process death.
 - **Closure is fixed by kind.** `code` closes on a merged PR whose head
   matches the judged attempt head; `slurm` and `pipeline` close on a predicate
@@ -340,7 +342,9 @@ python3 scripts/unit.py check <unit_dir> [--json]
 
 `swarm.py continue PLAN --state-dir DIR --unit OLD --new-id NEW --prompt-file FILE [--head-ref REF] [--repoint-dependents] [--tickets DRAFT] [--write]`
 copies OLD with a new id, prompt, description, author history and seed from
-coordinator state and live Git. Preview changes nothing; `--write` appends
+coordinator state and live Git. Preview leaves `plan.json` and coordinator
+state unchanged, though Git may still update fetch metadata such as
+`FETCH_HEAD` when resolving remote refs; `--write` appends
 atomically. Omit either flag when its update is not needed. Use
 `swarm.py continue --repoint-dependents --tickets DRAFT` with the required
 arguments above to prepare both updates: repointing replaces OLD with NEW in
